@@ -29,8 +29,8 @@ public interface TransactionalOperation {
   /**
    * Executes a transactional operation.
    * 
-   * @throws Exception
+   * @throws Throwable
    *           if an error occurs while executing the transactional operation
    */
-  void perform() throws Exception;
+  void perform() throws Throwable;
 }

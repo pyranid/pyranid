@@ -165,9 +165,9 @@ public class Database {
       }
 
       throw e;
-    } catch (Exception e) {
+    } catch (Throwable t) {
       transaction.rollback();
-      throw new RuntimeException(e);
+      throw new RuntimeException(t);
     } finally {
       TRANSACTION_STACK_HOLDER.get().pop();
 
@@ -213,9 +213,9 @@ public class Database {
     } catch (RuntimeException e) {
       transaction.setRollbackOnly(true);
       throw e;
-    } catch (Exception e) {
+    } catch (Throwable t) {
       transaction.setRollbackOnly(true);
-      throw new RuntimeException(e);
+      throw new RuntimeException(t);
     } finally {
       TRANSACTION_STACK_HOLDER.get().pop();
     }
