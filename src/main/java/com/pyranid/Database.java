@@ -42,7 +42,7 @@ import javax.sql.DataSource;
  */
 public class Database {
   private static final ThreadLocal<Deque<Transaction>> TRANSACTION_STACK_HOLDER = ThreadLocal
-    .withInitial(() -> new ArrayDeque<Transaction>());
+    .withInitial(() -> new ArrayDeque<>());
 
   private final DataSource dataSource;
   private final InstanceProvider instanceProvider;
