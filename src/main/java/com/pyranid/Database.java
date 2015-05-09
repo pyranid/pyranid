@@ -49,7 +49,7 @@ public class Database {
   private final PreparedStatementBinder preparedStatementBinder;
   private final ResultSetMapper resultSetMapper;
   private final StatementLogger statementLogger;
-  private final Logger logger = Logger.getLogger(getClass().getName());
+  private final Logger logger = Logger.getLogger(Database.class.getName());
 
   public static Builder forDataSource(DataSource dataSource) {
     return new Builder(requireNonNull(dataSource));

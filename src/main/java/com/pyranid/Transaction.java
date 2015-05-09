@@ -40,7 +40,7 @@ public class Transaction {
   private Optional<Connection> connection;
   private boolean rollbackOnly;
   private Optional<Boolean> initialAutoCommit;
-  private final Logger logger = Logger.getLogger(getClass().getName());
+  private final Logger logger = Logger.getLogger(Transaction.class.getName());
 
   Transaction(DataSource dataSource, TransactionIsolation transactionIsolation) {
     this.dataSource = Optional.of(requireNonNull(dataSource));
