@@ -4,7 +4,7 @@
 
 A minimalist JDBC interface for modern Java applications.
 
-It's under active development and will be available for production use soon.
+**Note:** Pyranid is under active development and will be ready for production use soon.
 
 #### Design Goals
 
@@ -21,19 +21,17 @@ It's under active development and will be available for production use soon.
 
 #### Maven Installation
 
-Coming soon
-<!--
 ```xml
 <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid</artifactId>
-  <version>1.0.0</version>
+  <version>0.1.0</version>
 </dependency>
 ```
--->
+
 #### Direct Download
 
-Coming soon
+Coming soon, will coincide with 1.0.0 release
 <!-- [https://www.pyranid.com/releases/pyranid-1.0.0.jar](https://www.pyranid.com/releases/pyranid-1.0.0.jar) -->
 ## Configuration
 
