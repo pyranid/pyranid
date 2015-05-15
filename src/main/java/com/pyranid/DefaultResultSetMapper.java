@@ -250,6 +250,19 @@ public class DefaultResultSetMapper implements ResultSetMapper {
       if (columnLabelsToValues.containsKey(propertyName)) {
         Object value = convertResultSetValueToPropertyType(columnLabelsToValues.get(propertyName), parameter.getType());
 
+        Class<?> writeMethodParameterType = writeMethod.getParameterTypes()[0];
+
+        if (!writeMethodParameterType.isAssignableFrom(value.getClass())) {
+          String resultSetTypeDescription = value == null ? "null" : value.getClass().toString();
+
+          throw new DatabaseException(
+            format(
+              "Property '%s' of %s has a write method of type %s, but the ResultSet type %s does not match. "
+                  + "Consider creating your own %s and overriding convertResultSetValueToPropertyType() to detect instances of %s and convert them to %s",
+              propertyDescriptor.getName(), resultClass, writeMethodParameterType, resultSetTypeDescription,
+              DefaultResultSetMapper.class.getSimpleName(), resultSetTypeDescription, writeMethodParameterType));
+        }
+
         writeMethod.invoke(object, value);
       }
     }
@@ -286,6 +299,13 @@ public class DefaultResultSetMapper implements ResultSetMapper {
         return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
       if (LocalDateTime.class.isAssignableFrom(propertyType))
         return date.toLocalDateTime();
+    }
+
+    if (resultSetValue instanceof java.sql.Time) {
+      java.sql.Time time = (java.sql.Time) resultSetValue;
+
+      if (LocalTime.class.isAssignableFrom(propertyType))
+        return time.toLocalTime();
     }
 
     return resultSetValue;
