@@ -176,6 +176,8 @@ public class DefaultResultSetMapper implements ResultSetMapper {
       value = resultSet.getObject(1); // TIMESTAMP WITH TIMEZONE
     } else if (resultClass.isAssignableFrom(java.sql.Date.class)) {
       value = resultSet.getDate(1);
+    } else if (resultClass.isEnum()) {
+      value = extractEnumValue(resultClass, resultSet.getObject(1));
 
       // TODO: revisit java.sql.* handling
 
@@ -299,16 +301,49 @@ public class DefaultResultSetMapper implements ResultSetMapper {
         return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
       if (LocalDateTime.class.isAssignableFrom(propertyType))
         return date.toLocalDateTime();
-    }
-
-    if (resultSetValue instanceof java.sql.Time) {
+    } else if (resultSetValue instanceof java.sql.Time) {
       java.sql.Time time = (java.sql.Time) resultSetValue;
 
       if (LocalTime.class.isAssignableFrom(propertyType))
         return time.toLocalTime();
+    } else if (propertyType.isEnum()) {
+      return extractEnumValue(propertyType, resultSetValue);
     }
 
     return resultSetValue;
+  }
+
+  /**
+   * Attempts to convert {@code object} to a corresponding value for enum type {@code enumClass}.
+   * <p>
+   * Normally {@code object} is a {@code String}, but other types may be used - the {@code toString()} method of
+   * {@code object} will be invoked to determine the final value for conversion.
+   * 
+   * @param enumClass
+   *          the enum to which we'd like to convert {@code object}
+   * @param object
+   *          the object to convert to an enum value
+   * @return the enum value of {@code object} for {@code enumClass}
+   * @throws IllegalArgumentException
+   *           if {@code enumClass} is not an enum
+   * @throws DatabaseException
+   *           if {@code object} does not correspond to a valid enum value
+   */
+  @SuppressWarnings({ "unchecked", "rawtypes" })
+  protected Enum<?> extractEnumValue(Class<?> enumClass, Object object) {
+    requireNonNull(enumClass);
+    requireNonNull(object);
+
+    if (!enumClass.isEnum())
+      throw new IllegalArgumentException(format("%s is not an enum type", enumClass));
+
+    String objectAsString = object.toString();
+
+    try {
+      return Enum.valueOf((Class<? extends Enum>) enumClass, objectAsString);
+    } catch (IllegalArgumentException e) {
+      throw new DatabaseException(format("The value '%s' is not present in enum %s", objectAsString, enumClass), e);
+    }
   }
 
   /**
