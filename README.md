@@ -4,8 +4,6 @@
 
 A minimalist JDBC interface for modern Java applications.
 
-**Note:** Pyranid is under active development and will be ready for production use soon.
-
 #### Design Goals
 
 * Simple
@@ -25,14 +23,14 @@ A minimalist JDBC interface for modern Java applications.
 <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid</artifactId>
-  <version>0.1.0</version>
+  <version>1.0.0</version>
 </dependency>
 ```
 
 #### Direct Download
 
-Coming soon, will coincide with 1.0.0 release
-<!-- [https://www.pyranid.com/releases/pyranid-1.0.0.jar](https://www.pyranid.com/releases/pyranid-1.0.0.jar) -->
+If you don't use Maven, you can drop [pyranid-1.0.0.jar](http://central.maven.org/maven2/com/pyranid/pyranid/1.0.0/pyranid-1.0.0.jar) directly into your project.  No other dependencies are required.
+
 ## Configuration
 
 ```java
