@@ -46,6 +46,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TimeZone;
 import java.util.UUID;
 
 /**
@@ -176,6 +177,16 @@ public class DefaultResultSetMapper implements ResultSetMapper {
       value = resultSet.getObject(1); // TIMESTAMP WITH TIMEZONE
     } else if (resultClass.isAssignableFrom(java.sql.Date.class)) {
       value = resultSet.getDate(1);
+    } else if (resultClass.isAssignableFrom(ZoneId.class)) {
+      String zoneId = resultSet.getString(1);
+
+      if (zoneId != null)
+        value = ZoneId.of(zoneId);
+    } else if (resultClass.isAssignableFrom(TimeZone.class)) {
+      String timeZone = resultSet.getString(1);
+
+      if (timeZone != null)
+        value = TimeZone.getTimeZone(timeZone);
     } else if (resultClass.isEnum()) {
       value = extractEnumValue(resultClass, resultSet.getObject(1));
 
@@ -306,6 +317,10 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 
       if (LocalTime.class.isAssignableFrom(propertyType))
         return time.toLocalTime();
+    } else if (propertyType.isAssignableFrom(ZoneId.class)) {
+      return ZoneId.of(resultSetValue.toString());
+    } else if (propertyType.isAssignableFrom(TimeZone.class)) {
+      return TimeZone.getTimeZone(resultSetValue.toString());
     } else if (propertyType.isEnum()) {
       return extractEnumValue(propertyType, resultSetValue);
     }

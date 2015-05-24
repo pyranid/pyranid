@@ -353,6 +353,8 @@ car = database.queryForObject("SELECT some_id AS car_id, some_color AS color_nam
 * ```LocalDateTime``` for ```TIMESTAMP```
 * ```OffsetTime``` for ```TIME WITH TIMEZONE```
 * ```OffsetDateTime``` for ```TIMESTAMP WITH TIMEZONE```
+* ```ZoneId```
+* ```TimeZone```
 
 ## Error Handling
 
