@@ -124,7 +124,7 @@ List<List<Object>> parameterGroups = new ArrayList<>();
 parameterGroups.add(new ArrayList<Object>() {
   {
     add(123);
-    add("blue");
+    add(Color.BLUE);
   }
 });
 
@@ -132,7 +132,7 @@ parameterGroups.add(new ArrayList<Object>() {
 parameterGroups.add(new ArrayList<Object>() {
   {
     add(456);
-    add("red");
+    add(Color.RED);
   }
 });
 
