@@ -51,6 +51,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TimeZone;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Basic implementation of {@link ResultSetMapper}.
@@ -61,6 +62,8 @@ import java.util.UUID;
 public class DefaultResultSetMapper implements ResultSetMapper {
   private final DatabaseType databaseType;
   private final InstanceProvider instanceProvider;
+  private final Map<Class<?>, Map<String, Set<String>>> columnLabelAliasesByPropertyNameCache =
+      new ConcurrentHashMap<>();
 
   /**
    * Creates a {@code ResultSetMapper} for the given {@code databaseType} and {@code instanceProvider}.
@@ -254,16 +257,21 @@ public class DefaultResultSetMapper implements ResultSetMapper {
     for (String columnLabel : columnLabels)
       columnLabelsToValues.put(normalizeColumnLabel(columnLabel), resultSet.getObject(columnLabel));
 
-    Map<String, Set<String>> columnLabelAliasesByPropertyName = new HashMap<>();
+    Map<String, Set<String>> columnLabelAliasesByPropertyName =
+        columnLabelAliasesByPropertyNameCache.computeIfAbsent(
+          resultClass,
+          (key) -> {
+            Map<String, Set<String>> cachedColumnLabelAliasesByPropertyName = new HashMap<>();
+            for (Field field : resultClass.getDeclaredFields()) {
+              DatabaseColumn databaseColumn = field.getAnnotation(DatabaseColumn.class);
 
-    for (Field field : resultClass.getDeclaredFields()) {
-      DatabaseColumn databaseColumn = field.getAnnotation(DatabaseColumn.class);
+              if (databaseColumn != null)
+                cachedColumnLabelAliasesByPropertyName.put(field.getName(), asList(databaseColumn.value()).stream()
+                  .map(columnLabel -> normalizeColumnLabel(columnLabel)).collect(toSet()));
+            }
 
-      if (databaseColumn != null)
-        columnLabelAliasesByPropertyName.put(field.getName(),
-          asList(databaseColumn.value()).stream().map(columnLabel -> normalizeColumnLabel(columnLabel))
-            .collect(toSet()));
-    }
+            return cachedColumnLabelAliasesByPropertyName;
+          });
 
     for (PropertyDescriptor propertyDescriptor : beanInfo.getPropertyDescriptors()) {
       Method writeMethod = propertyDescriptor.getWriteMethod();
@@ -272,12 +280,17 @@ public class DefaultResultSetMapper implements ResultSetMapper {
         continue;
 
       Parameter parameter = writeMethod.getParameters()[0];
+
+      // Pull in property names, taking into account any aliases defined by @DatabaseColumn
       Set<String> propertyNames = columnLabelAliasesByPropertyName.get(propertyDescriptor.getName());
 
       if (propertyNames == null)
         propertyNames = new HashSet<>();
 
-      propertyNames.add(propertyDescriptor.getName());
+      // If no @DatabaseColumn annotation, then use the field name itself
+      if (propertyNames.size() == 0)
+        propertyNames.add(propertyDescriptor.getName());
+
       propertyNames = propertyNames.stream().map(propertyName -> normalizePropertyName(propertyName)).collect(toSet());
 
       for (String propertyName : propertyNames) {
