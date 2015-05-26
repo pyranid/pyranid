@@ -17,13 +17,16 @@
 package com.pyranid;
 
 import static java.lang.String.format;
+import static java.util.Arrays.asList;
 import static java.util.Locale.ENGLISH;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.joining;
+import static java.util.stream.Collectors.toSet;
 
 import java.beans.BeanInfo;
 import java.beans.Introspector;
 import java.beans.PropertyDescriptor;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.math.BigDecimal;
@@ -251,6 +254,17 @@ public class DefaultResultSetMapper implements ResultSetMapper {
     for (String columnLabel : columnLabels)
       columnLabelsToValues.put(normalizeColumnLabel(columnLabel), resultSet.getObject(columnLabel));
 
+    Map<String, Set<String>> columnLabelAliasesByPropertyName = new HashMap<>();
+
+    for (Field field : resultClass.getDeclaredFields()) {
+      DatabaseColumn databaseColumn = field.getAnnotation(DatabaseColumn.class);
+
+      if (databaseColumn != null)
+        columnLabelAliasesByPropertyName.put(field.getName(),
+          asList(databaseColumn.value()).stream().map(columnLabel -> normalizeColumnLabel(columnLabel))
+            .collect(toSet()));
+    }
+
     for (PropertyDescriptor propertyDescriptor : beanInfo.getPropertyDescriptors()) {
       Method writeMethod = propertyDescriptor.getWriteMethod();
 
@@ -258,25 +272,34 @@ public class DefaultResultSetMapper implements ResultSetMapper {
         continue;
 
       Parameter parameter = writeMethod.getParameters()[0];
-      String propertyName = normalizePropertyName(propertyDescriptor.getName());
+      Set<String> propertyNames = columnLabelAliasesByPropertyName.get(propertyDescriptor.getName());
 
-      if (columnLabelsToValues.containsKey(propertyName)) {
-        Object value = convertResultSetValueToPropertyType(columnLabelsToValues.get(propertyName), parameter.getType());
+      if (propertyNames == null)
+        propertyNames = new HashSet<>();
 
-        Class<?> writeMethodParameterType = writeMethod.getParameterTypes()[0];
+      propertyNames.add(propertyDescriptor.getName());
+      propertyNames = propertyNames.stream().map(propertyName -> normalizePropertyName(propertyName)).collect(toSet());
 
-        if (!writeMethodParameterType.isAssignableFrom(value.getClass())) {
-          String resultSetTypeDescription = value == null ? "null" : value.getClass().toString();
+      for (String propertyName : propertyNames) {
+        if (columnLabelsToValues.containsKey(propertyName)) {
+          Object value =
+              convertResultSetValueToPropertyType(columnLabelsToValues.get(propertyName), parameter.getType());
 
-          throw new DatabaseException(
-            format(
-              "Property '%s' of %s has a write method of type %s, but the ResultSet type %s does not match. "
-                  + "Consider creating your own %s and overriding convertResultSetValueToPropertyType() to detect instances of %s and convert them to %s",
-              propertyDescriptor.getName(), resultClass, writeMethodParameterType, resultSetTypeDescription,
-              DefaultResultSetMapper.class.getSimpleName(), resultSetTypeDescription, writeMethodParameterType));
+          Class<?> writeMethodParameterType = writeMethod.getParameterTypes()[0];
+
+          if (!writeMethodParameterType.isAssignableFrom(value.getClass())) {
+            String resultSetTypeDescription = value == null ? "null" : value.getClass().toString();
+
+            throw new DatabaseException(
+              format(
+                "Property '%s' of %s has a write method of type %s, but the ResultSet type %s does not match. "
+                    + "Consider creating your own %s and overriding convertResultSetValueToPropertyType() to detect instances of %s and convert them to %s",
+                propertyDescriptor.getName(), resultClass, writeMethodParameterType, resultSetTypeDescription,
+                DefaultResultSetMapper.class.getSimpleName(), resultSetTypeDescription, writeMethodParameterType));
+          }
+
+          writeMethod.invoke(object, value);
         }
-
-        writeMethod.invoke(object, value);
       }
     }
 
