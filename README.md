@@ -23,13 +23,13 @@ A minimalist JDBC interface for modern Java applications.
 <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid</artifactId>
-  <version>1.0.1</version>
+  <version>1.0.2</version>
 </dependency>
 ```
 
 #### Direct Download
 
-If you don't use Maven, you can drop [pyranid-1.0.1.jar](http://central.maven.org/maven2/com/pyranid/pyranid/1.0.1/pyranid-1.0.1.jar) directly into your project.  No other dependencies are required.
+If you don't use Maven, you can drop [pyranid-1.0.2.jar](http://central.maven.org/maven2/com/pyranid/pyranid/1.0.2/pyranid-1.0.2.jar) directly into your project.  No other dependencies are required.
 
 ## Configuration
 
@@ -65,6 +65,20 @@ Database customDatabase = Database.forDataSource(dataSource)
                                       out.println(statementLog);
                                     }
                                   }).build();
+```
+
+#### Obtaining a DataSource
+
+Pyranid works with any ```DataSource``` implementation. If you have the freedom to choose, [HikariCP](https://github.com/brettwooldridge/HikariCP) is a great option.
+
+```java
+DataSource dataSource = new HikariDataSource(new HikariConfig() {
+  {
+    setJdbcUrl("jdbc:postgresql://localhost:5432/my-database");
+    setUsername("example");
+    setPassword("secret");
+  }
+});
 ```
 
 ## Queries
