@@ -18,6 +18,8 @@ package com.pyranid;
 
 import static java.lang.String.format;
 import static java.util.Arrays.asList;
+import static java.util.Collections.unmodifiableMap;
+import static java.util.Collections.unmodifiableSet;
 import static java.util.Locale.ENGLISH;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.joining;
@@ -262,15 +264,18 @@ public class DefaultResultSetMapper implements ResultSetMapper {
           resultClass,
           (key) -> {
             Map<String, Set<String>> cachedColumnLabelAliasesByPropertyName = new HashMap<>();
+
             for (Field field : resultClass.getDeclaredFields()) {
               DatabaseColumn databaseColumn = field.getAnnotation(DatabaseColumn.class);
 
               if (databaseColumn != null)
-                cachedColumnLabelAliasesByPropertyName.put(field.getName(), asList(databaseColumn.value()).stream()
-                  .map(columnLabel -> normalizeColumnLabel(columnLabel)).collect(toSet()));
+                cachedColumnLabelAliasesByPropertyName.put(
+                  field.getName(),
+                  unmodifiableSet(asList(databaseColumn.value()).stream()
+                    .map(columnLabel -> normalizeColumnLabel(columnLabel)).collect(toSet())));
             }
 
-            return cachedColumnLabelAliasesByPropertyName;
+            return unmodifiableMap(cachedColumnLabelAliasesByPropertyName);
           });
 
     for (PropertyDescriptor propertyDescriptor : beanInfo.getPropertyDescriptors()) {
@@ -286,6 +291,8 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 
       if (propertyNames == null)
         propertyNames = new HashSet<>();
+      else
+        propertyNames = new HashSet<>(propertyNames);
 
       // If no @DatabaseColumn annotation, then use the field name itself
       if (propertyNames.size() == 0)
