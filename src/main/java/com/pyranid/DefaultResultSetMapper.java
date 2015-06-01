@@ -344,7 +344,41 @@ public class DefaultResultSetMapper implements ResultSetMapper {
     if (resultSetValue == null)
       return null;
 
-    if (resultSetValue instanceof java.sql.Timestamp) {
+    if (resultSetValue instanceof BigDecimal) {
+      BigDecimal bigDecimal = (BigDecimal) resultSetValue;
+
+      if (BigDecimal.class.isAssignableFrom(propertyType))
+        return bigDecimal;
+      if (Byte.class.isAssignableFrom(propertyType))
+        return bigDecimal.byteValue();
+      if (Short.class.isAssignableFrom(propertyType))
+        return bigDecimal.shortValue();
+      if (Integer.class.isAssignableFrom(propertyType))
+        return bigDecimal.intValue();
+      if (Long.class.isAssignableFrom(propertyType))
+        return bigDecimal.longValue();
+      if (Float.class.isAssignableFrom(propertyType))
+        return bigDecimal.floatValue();
+      if (Double.class.isAssignableFrom(propertyType))
+        return bigDecimal.doubleValue();
+    } else if (resultSetValue instanceof BigInteger) {
+      BigInteger bigInteger = (BigInteger) resultSetValue;
+
+      if (BigInteger.class.isAssignableFrom(propertyType))
+        return bigInteger;
+      if (Byte.class.isAssignableFrom(propertyType))
+        return bigInteger.byteValue();
+      if (Short.class.isAssignableFrom(propertyType))
+        return bigInteger.shortValue();
+      if (Integer.class.isAssignableFrom(propertyType))
+        return bigInteger.intValue();
+      if (Long.class.isAssignableFrom(propertyType))
+        return bigInteger.longValue();
+      if (Float.class.isAssignableFrom(propertyType))
+        return bigInteger.floatValue();
+      if (Double.class.isAssignableFrom(propertyType))
+        return bigInteger.doubleValue();
+    } else if (resultSetValue instanceof java.sql.Timestamp) {
       java.sql.Timestamp date = (java.sql.Timestamp) resultSetValue;
 
       if (Date.class.isAssignableFrom(propertyType))
