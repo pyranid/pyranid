@@ -307,8 +307,8 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 
           Class<?> writeMethodParameterType = writeMethod.getParameterTypes()[0];
 
-          if (!writeMethodParameterType.isAssignableFrom(value.getClass())) {
-            String resultSetTypeDescription = value == null ? "null" : value.getClass().toString();
+          if (value != null && !writeMethodParameterType.isAssignableFrom(value.getClass())) {
+            String resultSetTypeDescription = value.getClass().toString();
 
             throw new DatabaseException(
               format(
