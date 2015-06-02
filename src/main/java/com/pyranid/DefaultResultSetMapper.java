@@ -346,38 +346,41 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 
     if (resultSetValue instanceof BigDecimal) {
       BigDecimal bigDecimal = (BigDecimal) resultSetValue;
-
+      
       if (BigDecimal.class.isAssignableFrom(propertyType))
         return bigDecimal;
-      if (Byte.class.isAssignableFrom(propertyType))
-        return bigDecimal.byteValue();
-      if (Short.class.isAssignableFrom(propertyType))
-        return bigDecimal.shortValue();
-      if (Integer.class.isAssignableFrom(propertyType))
-        return bigDecimal.intValue();
-      if (Long.class.isAssignableFrom(propertyType))
-        return bigDecimal.longValue();
-      if (Float.class.isAssignableFrom(propertyType))
-        return bigDecimal.floatValue();
-      if (Double.class.isAssignableFrom(propertyType))
-        return bigDecimal.doubleValue();
-    } else if (resultSetValue instanceof BigInteger) {
+      if (BigInteger.class.isAssignableFrom(propertyType))
+        return bigDecimal.toBigInteger();
+    }
+    
+    if (resultSetValue instanceof BigInteger) {
       BigInteger bigInteger = (BigInteger) resultSetValue;
-
+      
+      if (BigDecimal.class.isAssignableFrom(propertyType))
+        return new BigDecimal(bigInteger);
       if (BigInteger.class.isAssignableFrom(propertyType))
         return bigInteger;
+    }    
+    
+    if (resultSetValue instanceof Number) {
+      Number number = (Number) resultSetValue;
+  
       if (Byte.class.isAssignableFrom(propertyType))
-        return bigInteger.byteValue();
+        return number.byteValue();
       if (Short.class.isAssignableFrom(propertyType))
-        return bigInteger.shortValue();
+        return number.shortValue();
       if (Integer.class.isAssignableFrom(propertyType))
-        return bigInteger.intValue();
+        return number.intValue();
       if (Long.class.isAssignableFrom(propertyType))
-        return bigInteger.longValue();
+        return number.longValue();
       if (Float.class.isAssignableFrom(propertyType))
-        return bigInteger.floatValue();
+        return number.floatValue();
       if (Double.class.isAssignableFrom(propertyType))
-        return bigInteger.doubleValue();
+        return number.doubleValue();
+      if (BigDecimal.class.isAssignableFrom(propertyType))
+        return new BigDecimal(number.doubleValue());
+      if (BigInteger.class.isAssignableFrom(propertyType))
+        return new BigDecimal(number.doubleValue()).toBigInteger();
     } else if (resultSetValue instanceof java.sql.Timestamp) {
       java.sql.Timestamp date = (java.sql.Timestamp) resultSetValue;
 
