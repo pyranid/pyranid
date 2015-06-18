@@ -298,7 +298,12 @@ public class DefaultResultSetMapper implements ResultSetMapper {
       if (propertyNames.size() == 0)
         propertyNames.add(propertyDescriptor.getName());
 
-      propertyNames = propertyNames.stream().map(propertyName -> normalizePropertyName(propertyName)).collect(toSet());
+      // Normalize property names to database column names.
+      // For example, a property name of "address1" would get normalized to the set of "address1" and "address_1" by
+      // default
+      propertyNames =
+          propertyNames.stream().map(propertyName -> databaseColumnNamesForPropertyName(propertyName))
+            .flatMap(columnNames -> columnNames.stream()).collect(toSet());
 
       for (String propertyName : propertyNames) {
         if (columnLabelsToValues.containsKey(propertyName)) {
@@ -346,25 +351,25 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 
     if (resultSetValue instanceof BigDecimal) {
       BigDecimal bigDecimal = (BigDecimal) resultSetValue;
-      
+
       if (BigDecimal.class.isAssignableFrom(propertyType))
         return bigDecimal;
       if (BigInteger.class.isAssignableFrom(propertyType))
         return bigDecimal.toBigInteger();
     }
-    
+
     if (resultSetValue instanceof BigInteger) {
       BigInteger bigInteger = (BigInteger) resultSetValue;
-      
+
       if (BigDecimal.class.isAssignableFrom(propertyType))
         return new BigDecimal(bigInteger);
       if (BigInteger.class.isAssignableFrom(propertyType))
         return bigInteger;
-    }    
-    
+    }
+
     if (resultSetValue instanceof Number) {
       Number number = (Number) resultSetValue;
-  
+
       if (Byte.class.isAssignableFrom(propertyType))
         return number.byteValue();
       if (Short.class.isAssignableFrom(propertyType))
@@ -459,18 +464,32 @@ public class DefaultResultSetMapper implements ResultSetMapper {
    * Massages a JavaBean property name to match standard database column name (camelCase -> camel_case).
    * <p>
    * Uses {@link #normalizationLocale()} to perform case-changing.
+   * <p>
+   * There may be multiple database column name mappings, for example property {@code address1} might map to both
+   * {@code address1} and {@code address_1} column names.
    * 
    * @param propertyName
    *          the JavaBean property name to massage
-   * @return the massaged JavaBean property name
+   * @return the column names that match the JavaBean property name
    */
-  protected String normalizePropertyName(String propertyName) {
+  protected Set<String> databaseColumnNamesForPropertyName(String propertyName) {
     requireNonNull(propertyName);
+    Set<String> normalizedPropertyNames = new HashSet<>(2);
+
     // Converts camelCase to camel_case
-    // TODO: what's the best way to handle numbers? Underscore after each?
-    String regex = "([a-z])([A-Z]+)";
+    String camelCaseRegex = "([a-z])([A-Z]+)";
     String replacement = "$1_$2";
-    return propertyName.replaceAll(regex, replacement).toLowerCase(normalizationLocale());
+
+    String normalizedPropertyName =
+        propertyName.replaceAll(camelCaseRegex, replacement).toLowerCase(normalizationLocale());
+    normalizedPropertyNames.add(normalizedPropertyName);
+
+    // Converts address1 to address_1
+    String letterFollowedByNumberRegex = "(\\D)(\\d)";
+    String normalizedNumberPropertyName = normalizedPropertyName.replaceAll(letterFollowedByNumberRegex, replacement);
+    normalizedPropertyNames.add(normalizedNumberPropertyName);
+
+    return normalizedPropertyNames;
   }
 
   /**

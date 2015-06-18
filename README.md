@@ -23,13 +23,13 @@ A minimalist JDBC interface for modern Java applications.
 <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid</artifactId>
-  <version>1.0.5</version>
+  <version>1.0.6</version>
 </dependency>
 ```
 
 #### Direct Download
 
-If you don't use Maven, you can drop [pyranid-1.0.5.jar](http://central.maven.org/maven2/com/pyranid/pyranid/1.0.5/pyranid-1.0.5.jar) directly into your project.  No other dependencies are required.
+If you don't use Maven, you can drop [pyranid-1.0.6.jar](http://central.maven.org/maven2/com/pyranid/pyranid/1.0.6/pyranid-1.0.6.jar) directly into your project.  No other dependencies are required.
 
 ## Configuration
 
@@ -311,7 +311,10 @@ By default, database column names are assumed to be separated by ```_``` charact
 ```java
 class Car {
   Long carId;
-  String colorName;
+  Color color;
+  
+  // For schema flexibility, Pyranid will match both "deposit_amount1" and "deposit_amount_1" column names
+  BigDecimal depositAmount1;
   
   // Use this annotation to specify variants if the field name doesn't match the column name
   @DatabaseColumn({"systok", "sys_tok"})
@@ -320,8 +323,11 @@ class Car {
   Long getCarId() { return this.carId; }
   void setCarId(Long carId) { this.carId = carId; }
 
-  String getColorName() { return this.colorName; }
-  void setColorName(String colorName) { this.colorName = colorName; }
+  Color getColor() { return this.color; }
+  void setColor(Color color) { this.color = color; }
+  
+  BigDecimal getDepositAmount1() { return this.depositAmount1; }
+  void setDepositAmount1(BigDecimal depositAmount1) { this.depositAmount1 = depositAmount1; }  
 
   UUID getSystemToken() { return this.systemToken; }
   void setSystemToken(UUID systemToken) { this.systemToken = systemToken; }
