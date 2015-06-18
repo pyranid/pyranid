@@ -333,17 +333,17 @@ class Car {
   void setSystemToken(UUID systemToken) { this.systemToken = systemToken; }
 }
 
-Car car = database.queryForObject("SELECT car_id, color_name, systok FROM car LIMIT 1", Car.class).get();
+Car car = database.queryForObject("SELECT car_id, color, systok FROM car LIMIT 1", Car.class).get();
 
-// Output might be "Car ID is 123 and color name is blue. Token is d73c523a-8344-44ef-819c-40467662d619"
-out.println(format("Car ID is %s and color name is %s. Token is %s",
-                   car.getCarId(), car.getColorName(), car.getSystemToken()));
+// Output might be "Car ID is 123 and color is BLUE. Token is d73c523a-8344-44ef-819c-40467662d619"
+out.println(format("Car ID is %s and color is %s. Token is %s",
+                   car.getCarId(), car.getColor(), car.getSystemToken()));
 
 // Column names will work with wildcard queries as well
 car = database.queryForObject("SELECT * FROM car LIMIT 1", Car.class).get();
 
 // Column aliases work too
-car = database.queryForObject("SELECT some_id AS car_id, some_color AS color_name FROM car LIMIT 1",
+car = database.queryForObject("SELECT some_id AS car_id, some_color AS color FROM car LIMIT 1",
                               Car.class).get();
 ```
 
