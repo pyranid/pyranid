@@ -397,6 +397,17 @@ public class DefaultResultSetMapper implements ResultSetMapper {
         return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
       if (LocalDateTime.class.isAssignableFrom(propertyType))
         return date.toLocalDateTime();
+    } else if (resultSetValue instanceof java.sql.Date) {
+      java.sql.Date date = (java.sql.Date) resultSetValue;
+      
+      if (Date.class.isAssignableFrom(propertyType))
+        return date;
+      if (Instant.class.isAssignableFrom(propertyType))
+        return date.toInstant();
+      if (LocalDate.class.isAssignableFrom(propertyType))
+        return date.toLocalDate();      
+      if (LocalDateTime.class.isAssignableFrom(propertyType))
+        return LocalDateTime.ofInstant(date.toInstant(), ZoneId.systemDefault());      
     } else if (resultSetValue instanceof java.sql.Time) {
       java.sql.Time time = (java.sql.Time) resultSetValue;
 
