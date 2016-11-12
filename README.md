@@ -23,13 +23,13 @@ A minimalist JDBC interface for modern Java applications.
 <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid</artifactId>
-  <version>1.0.7</version>
+  <version>1.0.8</version>
 </dependency>
 ```
 
 #### Direct Download
 
-If you don't use Maven, you can drop [pyranid-1.0.7.jar](http://central.maven.org/maven2/com/pyranid/pyranid/1.0.7/pyranid-1.0.7.jar) directly into your project.  No other dependencies are required.
+If you don't use Maven, you can drop [pyranid-1.0.8.jar](http://central.maven.org/maven2/com/pyranid/pyranid/1.0.8/pyranid-1.0.8.jar) directly into your project.  No other dependencies are required.
 
 ## Configuration
 
@@ -375,6 +375,7 @@ car = database.queryForObject("SELECT some_id AS car_id, some_color AS color FRO
 * ```OffsetDateTime``` for ```TIMESTAMP WITH TIMEZONE```
 * ```ZoneId```
 * ```TimeZone```
+* ```Locale``` (IETF BCP 47 "language tag" format)
 
 ## Error Handling
 
