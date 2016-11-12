@@ -195,6 +195,11 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 
       if (timeZone != null)
         value = TimeZone.getTimeZone(timeZone);
+    } else if (resultClass.isAssignableFrom(Locale.class)) {
+      String locale = resultSet.getString(1);
+
+      if (locale != null)
+        value = Locale.forLanguageTag(locale);
     } else if (resultClass.isEnum()) {
       value = extractEnumValue(resultClass, resultSet.getObject(1));
 
@@ -417,6 +422,8 @@ public class DefaultResultSetMapper implements ResultSetMapper {
       return ZoneId.of(resultSetValue.toString());
     } else if (propertyType.isAssignableFrom(TimeZone.class)) {
       return TimeZone.getTimeZone(resultSetValue.toString());
+    } else if (propertyType.isAssignableFrom(Locale.class)) {
+      return Locale.forLanguageTag(resultSetValue.toString());
     } else if (propertyType.isEnum()) {
       return extractEnumValue(propertyType, resultSetValue);
     }

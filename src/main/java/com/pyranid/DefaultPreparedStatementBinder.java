@@ -24,6 +24,7 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 /**
@@ -75,6 +76,8 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
       return new Timestamp(((Date) parameter).getTime());
     if (parameter instanceof Instant)
       return new Timestamp(((Instant) parameter).toEpochMilli());
+    if (parameter instanceof Locale)
+      return ((Locale) parameter).toLanguageTag();
     if (parameter instanceof Enum)
       return ((Enum<?>) parameter).name();
 
