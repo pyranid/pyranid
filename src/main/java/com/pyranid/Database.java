@@ -32,6 +32,7 @@ import java.util.Arrays;
 import java.util.Deque;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.Callable;
 import java.util.logging.Logger;
 
 import javax.sql.DataSource;
@@ -147,19 +148,25 @@ public class Database {
 
     Transaction transaction = new Transaction(dataSource, transactionIsolation);
     TRANSACTION_STACK_HOLDER.get().push(transaction);
+    boolean committed = false;
+    boolean rolledBack = false;
 
     try {
       T returnValue = transactionalOperation.perform();
 
-      if (transaction.isRollbackOnly())
+      if (transaction.isRollbackOnly()) {
         transaction.rollback();
-      else
+        rolledBack = true;
+      } else {
         transaction.commit();
+        committed = true;
+      }
 
       return returnValue;
     } catch (RuntimeException e) {
       try {
         transaction.rollback();
+        rolledBack = true;
       } catch (Exception rollbackException) {
         logger.log(WARNING, "Unable to roll back transaction", rollbackException);
       }
@@ -168,21 +175,33 @@ public class Database {
     } catch (Throwable t) {
       try {
         transaction.rollback();
+        rolledBack = true;
       } catch (Exception rollbackException) {
         logger.log(WARNING, "Unable to roll back transaction", rollbackException);
       }
-      
+
       throw new RuntimeException(t);
     } finally {
       TRANSACTION_STACK_HOLDER.get().pop();
 
       try {
-        if (transaction.initialAutoCommit().isPresent() && transaction.initialAutoCommit().get())
-          // Autocommit was true initially, so restoring to true now that transaction has completed
-          transaction.setAutoCommit(true);
+        try {
+          if (transaction.initialAutoCommit().isPresent() && transaction.initialAutoCommit().get())
+            // Autocommit was true initially, so restoring to true now that transaction has completed
+            transaction.setAutoCommit(true);
+        } finally {
+          if (transaction.hasConnection())
+            closeConnection(transaction.connection());
+        }
       } finally {
-        if (transaction.hasConnection())
-          closeConnection(transaction.connection());
+        // Execute any user-supplied post-execution hooks
+        if(committed) {
+          for(Runnable postCommitOperation : transaction.postCommitOperations())
+            postCommitOperation.run();
+        } else if(rolledBack) {
+          for(Runnable postRollbackOperation : transaction.postRollbackOperations())
+            postRollbackOperation.run();
+        }
       }
     }
   }

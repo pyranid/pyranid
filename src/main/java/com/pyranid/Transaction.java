@@ -6,7 +6,11 @@ import static java.util.Objects.requireNonNull;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Savepoint;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Logger;
 
@@ -40,6 +44,8 @@ public class Transaction {
   private Optional<Connection> connection;
   private boolean rollbackOnly;
   private Optional<Boolean> initialAutoCommit;
+  private final List<Runnable> postCommitOperations;
+  private final List<Runnable> postRollbackOperations;
   private final Logger logger = Logger.getLogger(Transaction.class.getName());
 
   Transaction(DataSource dataSource, TransactionIsolation transactionIsolation) {
@@ -48,6 +54,8 @@ public class Transaction {
     this.connection = Optional.empty();
     this.rollbackOnly = false;
     this.initialAutoCommit = Optional.empty();
+    this.postCommitOperations = new ArrayList<>();
+    this.postRollbackOperations = new ArrayList<>();
   }
 
   @Override
@@ -87,6 +95,26 @@ public class Transaction {
 
   public void setRollbackOnly(boolean rollbackOnly) {
     this.rollbackOnly = rollbackOnly;
+  }
+
+  public void addPostCommitOperation(Runnable postCommitOperation) {
+    requireNonNull(postCommitOperation);
+    postCommitOperations.add(postCommitOperation);
+  }
+
+  public boolean removePostCommitOperation(Runnable postCommitOperation) {
+    requireNonNull(postCommitOperation);
+    return postCommitOperations.remove(postCommitOperation);
+  }
+
+  public void addPostRollbackOperation(Runnable postRollbackOperation) {
+    requireNonNull(postRollbackOperation);
+    postRollbackOperations.add(postRollbackOperation);
+  }
+
+  public boolean removePostRollbackOperation(Runnable postRollbackOperation) {
+    requireNonNull(postRollbackOperation);
+    return postRollbackOperations.remove(postRollbackOperation);
   }
 
   long id() {
@@ -178,5 +206,13 @@ public class Transaction {
 
   public TransactionIsolation transactionIsolation() {
     return transactionIsolation;
+  }
+
+  public List<Runnable> postCommitOperations() {
+    return Collections.unmodifiableList(postCommitOperations);
+  }
+
+  public List<Runnable> postRollbackOperations() {
+    return Collections.unmodifiableList(postRollbackOperations);
   }
 }
