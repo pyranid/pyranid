@@ -166,7 +166,12 @@ public class Database {
 
       throw e;
     } catch (Throwable t) {
-      transaction.rollback();
+      try {
+        transaction.rollback();
+      } catch (Exception rollbackException) {
+        logger.log(WARNING, "Unable to roll back transaction", rollbackException);
+      }
+      
       throw new RuntimeException(t);
     } finally {
       TRANSACTION_STACK_HOLDER.get().pop();
