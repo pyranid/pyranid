@@ -39,32 +39,32 @@ Database database = Database.forDataSource(dataSource).build();
 
 // Customized setup
 Database customDatabase = Database.forDataSource(dataSource)
-                                  .instanceProvider(new InstanceProvider() {
-                                    @Override
-                                    public <T> T provide(Class<T> instanceClass) {
-                                      // You might have your DI framework vend resultset row instances
-                                      return guiceInjector.getInstance(instanceClass);
-                                    }
-                                  })
-                                  .resultSetMapper(new ResultSetMapper() {
-                                    @Override
-                                    public <T> T map(ResultSet rs, Class<T> resultClass) {
-                                       // Do some custom mapping here
-                                    }
-                                  })
-                                  .preparedStatementBinder(new PreparedStatementBinder() {
-                                    @Override
-                                    public void bind(PreparedStatement ps, List<Object> parameters) {
-                                       // Do some custom binding here
-                                    }
-                                  })
-                                  .statementLogger(new StatementLogger() {
-                                    @Override
-                                    public void log(StatementLog statementLog) {
-                                      // Send log to whatever output sink you'd like
-                                      out.println(statementLog);
-                                    }
-                                  }).build();
+  .instanceProvider(new InstanceProvider() {
+    @Override
+    public <T> T provide(Class<T> instanceClass) {
+      // You might have your DI framework vend resultset row instances
+      return guiceInjector.getInstance(instanceClass);
+    }
+  })
+  .resultSetMapper(new ResultSetMapper() {
+    @Override
+    public <T> T map(ResultSet rs, Class<T> resultClass) {
+      // Do some custom mapping here
+    }
+  })
+  .preparedStatementBinder(new PreparedStatementBinder() {
+    @Override
+    public void bind(PreparedStatement ps, List<Object> parameters) {
+      // Do some custom binding here
+    }
+  })
+  .statementLogger(new StatementLogger() {
+    @Override
+    public void log(StatementLog statementLog) {
+      // Send log to whatever output sink you'd like
+      out.println(statementLog);
+    }
+  }).build();
 ```
 
 #### Obtaining a DataSource
@@ -298,6 +298,61 @@ database.transaction(TransactionIsolation.SERIALIZABLE, () -> {
   database.execute("UPDATE account SET balance = balance - 10 WHERE id = 1");
   database.execute("UPDATE account SET balance = balance + 10 WHERE id = 2");
 });
+```
+
+#### Post-Transaction Operations
+
+It is useful to be able to schedule code to run after a transaction has been fully committed or rolled back.  Often, transaction management happens at a higher layer of code than business logic (e.g. a transaction-per-web-request pattern), so it is helpful to have a mechanism to "warp" local logic out to the higher layer.
+
+Without this, you might run into subtle bugs like
+
+* Write to database
+* Inform listeners of system state change
+* (later) Current transaction is rolled back
+* Listeners are in an inconsistent state because they were notified of a change that was reversed by the rollback
+
+```java
+// Business logic
+class EmployeeService {
+  // Once we know raises are applied successfully, inform our listeners
+  public void giveEveryoneRaises() {
+    database.executeUpdate("UPDATE employee SET salary=salary + 10000");
+
+    // Schedule listener-firing for after the current transaction commits
+    database.currentTransaction().get().addPostCommitOperation(() ->
+      // Simplified implementation; real systems might need
+      // listener list synchronization, would schedule execution
+      // on an ExecutorService, etc.
+      for(EmployeeServiceListener listener : listeners)
+        listener.onSalaryChanged();
+    );
+  }
+
+  static interface EmployeeServiceListener {
+    void onSalaryChanged();
+  }
+
+  // Rest of implementation elided
+}
+
+// Servlet filter which wraps requests in transactions
+class DatabaseTransactionFilter implements Filter {
+  @Override
+  public void doFilter(ServletRequest servletRequest, ServletResponse servletResponse,
+                       FilterChain filterChain) throws IOException, ServletException {
+    database.transaction(() -> {
+      // Above business logic would happen somewhere down the filter chain
+      filterChain.doFilter(servletRequest, servletResponse);
+
+      // Business logic has completed at this point but post-commit
+      // operations will not run until the closure exits
+    });
+
+    // By this point, post-commit operations will have been run
+  }
+
+  // Rest of implementation elided
+}
 ```
 
 ## ResultSet Mapping
