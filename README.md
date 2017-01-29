@@ -316,7 +316,7 @@ Without this, you might run into subtle bugs like
 class EmployeeService {
   // Once we know raises are applied successfully, inform our listeners
   public void giveEveryoneRaises() {
-    database.executeUpdate("UPDATE employee SET salary=salary + 10000");
+    database.execute("UPDATE employee SET salary=salary + 10000");
     payrollSystem.startLengthyWarmupProcess();
 
     // Schedule listener-firing for after the current transaction commits
