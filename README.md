@@ -317,6 +317,7 @@ class EmployeeService {
   // Once we know raises are applied successfully, inform our listeners
   public void giveEveryoneRaises() {
     database.executeUpdate("UPDATE employee SET salary=salary + 10000");
+    payrollSystem.startLengthyWarmupProcess();
 
     // Schedule listener-firing for after the current transaction commits
     database.currentTransaction().get().addPostCommitOperation(() ->
@@ -325,6 +326,11 @@ class EmployeeService {
       // on an ExecutorService, etc.
       for(EmployeeServiceListener listener : listeners)
         listener.onSalaryChanged();
+    );
+
+    // You can also schedule code to execute in event of a rollback
+    database.currentTransaction().get().addPostRollbackOperation(() ->
+      payrollSystem.cancelLengthyWarmupProcess();
     );
   }
 
@@ -344,11 +350,11 @@ class DatabaseTransactionFilter implements Filter {
       // Above business logic would happen somewhere down the filter chain
       filterChain.doFilter(servletRequest, servletResponse);
 
-      // Business logic has completed at this point but post-commit
+      // Business logic has completed at this point but post-transaction
       // operations will not run until the closure exits
     });
 
-    // By this point, post-commit operations will have been run
+    // By this point, post-transaction operations will have been run
   }
 
   // Rest of implementation elided
