@@ -524,9 +524,14 @@ Pyranid uses ```java.util.Logging``` internally.  The usual way to hook into thi
 
 ```xml
 <dependency>
+  <groupId>ch.qos.logback</groupId>
+  <artifactId>logback-classic</artifactId>
+  <version>1.1.9</version>
+</dependency>
+<dependency>
   <groupId>org.slf4j</groupId>
   <artifactId>jul-to-slf4j</artifactId>
-  <version>1.7.7</version>
+  <version>1.7.22</version>
 </dependency>
 ```
 
