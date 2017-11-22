@@ -23,13 +23,13 @@ A minimalist JDBC interface for modern Java applications.
 <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid</artifactId>
-  <version>1.0.9</version>
+  <version>1.0.10</version>
 </dependency>
 ```
 
 #### Direct Download
 
-If you don't use Maven, you can drop [pyranid-1.0.9.jar](http://central.maven.org/maven2/com/pyranid/pyranid/1.0.9/pyranid-1.0.9.jar) directly into your project.  No other dependencies are required.
+If you don't use Maven, you can drop [pyranid-1.0.10.jar](http://central.maven.org/maven2/com/pyranid/pyranid/1.0.10/pyranid-1.0.10.jar) directly into your project.  No other dependencies are required.
 
 ## Configuration
 
@@ -437,6 +437,10 @@ car = database.queryForObject("SELECT some_id AS car_id, some_color AS color FRO
 * ```ZoneId```
 * ```TimeZone```
 * ```Locale``` (IETF BCP 47 "language tag" format)
+
+#### Other Types
+
+* Store Postgres JSONB data using a SQL cast of `String`, e.g. `CAST(? AS JSONB)`. Retrieve JSONB data using `String`
 
 ## Error Handling
 
