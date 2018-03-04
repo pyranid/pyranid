@@ -151,6 +151,21 @@ public class StatementLog implements Serializable {
   }
 
   /**
+   * How long did it take to perform the database operation in total?
+   * <p>
+   * This is the sum of {@link #connectionAcquisitionTime()} + {@link #preparationTime()} +
+   * {@link #executionTime()} + {@link #resultSetMappingTime()}.
+   *
+   * @return how long the database operation took in total
+   */
+  public Long totalTime() {
+    return connectionAcquisitionTime().orElse(0L)
+        + preparationTime().orElse(0L)
+        + executionTime().orElse(0L)
+        + resultSetMappingTime().orElse(0L);
+  }
+
+  /**
    * The SQL statement that was executed.
    * 
    * @return the SQL statement that was executed.
