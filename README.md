@@ -531,7 +531,10 @@ You may specify arbitrary metadata when executing database operations via the `S
 // App-specific metadata which means "don't log this statement"
 StatementMetadata IGNORE_LOGGING = new StatementMetadata();
 
-// App-specific metadata which means "this is sensitive, restrict parameter logging"
+// App-specific metadata which means "this is sensitive, restrict parameter logging".
+// This may alternatively be expressed using shorthand: 
+// 
+// HIGHLY_SENSITIVE_DATA = StatementMetadata.with("com.myapp.SENSITIVITY_LEVEL", "HIGH")
 StatementMetadata HIGHLY_SENSITIVE_DATA = new StatementMetadata.Builder()
   .add("com.myapp.SENSITIVITY_LEVEL", "HIGH");
   .build(); 
