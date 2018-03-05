@@ -488,19 +488,20 @@ You may customize your ```Database``` with a ```StatementLogger```.
 
 ```java
 Database database = Database.forDataSource(dataSource)
-                            .statementLogger(new StatementLogger() {
-                              @Override
-                              public void log(StatementLog statementLog) {
-                                // Do anything you'd like here
-                                out.println(statementLog);
-                              }
-                            }).build();
+  .statementLogger(new StatementLogger() {
+    @Override
+    public void log(StatementLog statementLog) {
+      // Do anything you'd like here
+      out.println(statementLog);
+    }
+  }).build();
 ```
 
 ```StatementLog``` instances give you access to the following for each SQL statement executed.  All time values are in nanoseconds.
 
 * ```sql```
 * ```parameters```
+* ```statementMetadata``` (optional)
 * ```connectionAcquisitionTime``` (optional)
 * ```preparationTime``` (optional)
 * ```executionTime``` (optional)
@@ -521,6 +522,52 @@ SELECT * FROM car WHERE color = ?
 Parameters: 'BLUE'
 0.04ms acquiring connection, 0.03ms preparing statement, 0.82ms executing statement, 0.40ms processing resultset
 ````
+
+#### Statement Metadata
+
+You may specify arbitrary metadata when executing database operations via the `StatementMetadata` type.
+
+```java
+// App-specific metadata which means "don't log this statement"
+StatementMetadata IGNORE_LOGGING = new StatementMetadata();
+
+// App-specific metadata which means "this is sensitive, restrict parameter logging"
+StatementMetadata HIGHLY_SENSITIVE_DATA = new StatementMetadata.Builder()
+  .add("com.myapp.SENSITIVITY_LEVEL", "HIGH");
+  .build(); 
+
+// Set up our database with custom logging
+Database database = Database.forDataSource(dataSource)
+  .statementLogger(new StatementLogger() {
+    @Override
+    public void log(StatementLog statementLog) {
+      StatementMetadata statementMetadata = statementLog.statementMetadata().orElse(null);
+                                
+      // Bail if we encounter our custom metadata
+      if(statementMetadata == IGNORE_LOGGING)
+        return;
+                                
+      // Only log SQL, not parameters
+      if(statementMetadata == HIGHLY_SENSITIVE_DATA) {
+        out.println("SENSITIVE: " + statementLog.sql());
+        return;
+      }
+                               
+      // Log as normal
+      out.println(statementLog);
+    }
+  }).build();
+
+// This "hot" query is run frequently in the background, so we don't want to log it
+Optional<Message> message = database.queryForObject("SELECT * FROM message " + 
+  "WHERE message_status_id='UNSENT' " + 
+  "ORDER BY created_timestamp FOR UPDATE SKIP LOCKED LIMIT 1", 
+  IGNORE_LOGGING, Message.class);
+
+// We want to log this sensitive statement specially
+database.execute("UPDATE customer SET social_security_number=? WHERE customer_id=?", 
+  HIGHLY_SENSITIVE_DATA, socialSecurityNumber, customerId);
+```
 
 #### java.util.Logging
 
