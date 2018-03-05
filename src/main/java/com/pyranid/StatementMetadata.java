@@ -62,6 +62,11 @@ public class StatementMetadata {
     return Optional.ofNullable(getMetadata().get(key));
   }
 
+  @Nonnull
+  public Map<String, Object> asMap() {
+    return getMetadata();
+  }
+
   @Override
   public String toString() {
     return format("%s{metadata=%s}", getClass().getSimpleName(), getMetadata());
