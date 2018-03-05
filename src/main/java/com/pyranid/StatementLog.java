@@ -31,11 +31,11 @@ import java.util.Optional;
  * A collection of SQL statement execution diagnostics.
  * <p>
  * Created via builder, for example
- * 
+ *
  * <pre>
  * StatementLog statementLog = StatementLog.forSql(&quot;SELECT * FROM car WHERE id=?&quot;).parameters(singletonList(123)).build();
  * </pre>
- * 
+ *
  * @author <a href="http://revetkn.com">Mark Allen</a>
  * @since 1.0.0
  */
@@ -50,10 +50,11 @@ public class StatementLog implements Serializable {
   private final List<Object> parameters;
   private final Optional<Integer> batchSize;
   private final Optional<Exception> exception;
+  private final Optional<StatementMetadata> statementMetadata;
 
   /**
    * Creates a {@code StatementLog} for the given {@code builder}.
-   * 
+   *
    * @param builder
    *          the builder used to construct this {@code StatementLog}
    */
@@ -67,14 +68,15 @@ public class StatementLog implements Serializable {
     this.parameters = requireNonNull(builder.parameters);
     this.batchSize = requireNonNull(builder.batchSize);
     this.exception = requireNonNull(builder.exception);
+    this.statementMetadata = builder.statementMetadata;
   }
 
   @Override
   public String toString() {
     return format(
-      "%s{connectionAcquisitionTime=%s, preparationTime=%s, executionTime=%s, resultSetMappingTime=%s, sql=%s, "
-          + "parameters=%s, batchSize=%s, exception=%s}", getClass().getSimpleName(), connectionAcquisitionTime(),
-      preparationTime(), executionTime(), resultSetMappingTime(), sql(), parameters(), batchSize(), exception());
+      "%s{connectionAcquisitionTime=%s, preparationTime=%s, executionTime=%s, resultSetMappingTime=%s, totalTime=%s, sql=%s, "
+          + "parameters=%s, batchSize=%s, exception=%s, statementMetadata=%s}", getClass().getSimpleName(), connectionAcquisitionTime(),
+      preparationTime(), executionTime(), resultSetMappingTime(), totalTime(), sql(), parameters(), batchSize(), exception(), statementMetadata());
   }
 
   @Override
@@ -93,18 +95,19 @@ public class StatementLog implements Serializable {
         && Objects.equals(resultSetMappingTime(), statementLog.resultSetMappingTime())
         && Objects.equals(sql(), statementLog.sql()) && Objects.equals(parameters(), statementLog.parameters())
         && Objects.equals(batchSize(), statementLog.batchSize())
-        && Objects.equals(exception(), statementLog.exception());
+        && Objects.equals(exception(), statementLog.exception())
+        && Objects.equals(statementMetadata(), statementLog.statementMetadata());
   }
 
   @Override
   public int hashCode() {
     return Objects.hash(connectionAcquisitionTime(), preparationTime(), executionTime(), resultSetMappingTime(), sql(),
-      parameters(), batchSize(), exception());
+      parameters(), batchSize(), exception(), statementMetadata());
   }
 
   /**
    * Creates a {@link StatementLog} builder for the given {@code sql}.
-   * 
+   *
    * @param sql
    *          the SQL statement
    * @return a {@link StatementLog} builder
@@ -116,7 +119,7 @@ public class StatementLog implements Serializable {
   /**
    * How long did it take to acquire a {@link java.sql.Connection} from the {@link javax.sql.DataSource}, in
    * nanoseconds?
-   * 
+   *
    * @return how long it took to acquire a {@link java.sql.Connection}, if available
    */
   public Optional<Long> connectionAcquisitionTime() {
@@ -125,7 +128,7 @@ public class StatementLog implements Serializable {
 
   /**
    * How long did it take to bind data to the {@link java.sql.PreparedStatement}, in nanoseconds?
-   * 
+   *
    * @return how long it took to bind data to the {@link java.sql.PreparedStatement}, if available
    */
   public Optional<Long> preparationTime() {
@@ -134,7 +137,7 @@ public class StatementLog implements Serializable {
 
   /**
    * How long did it take to execute the SQL statement, in nanoseconds?
-   * 
+   *
    * @return how long it took to execute the SQL statement, if available
    */
   public Optional<Long> executionTime() {
@@ -143,7 +146,7 @@ public class StatementLog implements Serializable {
 
   /**
    * How long did it take to extract data from the {@link java.sql.ResultSet}, in nanoseconds?
-   * 
+   *
    * @return how long it took to extract data from the {@link java.sql.ResultSet}, if available
    */
   public Optional<Long> resultSetMappingTime() {
@@ -167,7 +170,7 @@ public class StatementLog implements Serializable {
 
   /**
    * The SQL statement that was executed.
-   * 
+   *
    * @return the SQL statement that was executed.
    */
   public String sql() {
@@ -176,7 +179,7 @@ public class StatementLog implements Serializable {
 
   /**
    * The parameters bound to the SQL statement that was executed.
-   * 
+   *
    * @return the parameters bound to the SQL statement that was executed, or an empty {@code List} if none
    */
   public List<Object> parameters() {
@@ -185,7 +188,7 @@ public class StatementLog implements Serializable {
 
   /**
    * The size of the batch operation.
-   * 
+   *
    * @return how many records were processed as part of the batch operation, if available
    */
   public Optional<Integer> batchSize() {
@@ -194,7 +197,7 @@ public class StatementLog implements Serializable {
 
   /**
    * The exception that occurred during SQL statement execution.
-   * 
+   *
    * @return the exception that occurred during SQL statement execution, if available
    */
   public Optional<Exception> exception() {
@@ -202,15 +205,24 @@ public class StatementLog implements Serializable {
   }
 
   /**
+   * The metadata associated with this SQL statement.
+   *
+   * @return he metadata associated with this SQL statement, if available
+   */
+  public Optional<StatementMetadata> statementMetadata() {
+    return statementMetadata;
+  }
+
+  /**
    * Builder for {@link StatementLog} instances.
    * <p>
    * Created via {@link StatementLog#forSql(String)}, for example
-   * 
+   *
    * <pre>
    * StatementLog.Builder builder = StatementLog.forSql(&quot;SELECT * FROM car WHERE id=?&quot;).parameters(singletonList(123));
    * StatementLog statementLog = builder.build();
    * </pre>
-   * 
+   *
    * @author <a href="http://revetkn.com">Mark Allen</a>
    * @since 1.0.0
    */
@@ -223,10 +235,11 @@ public class StatementLog implements Serializable {
     private List<Object> parameters = emptyList();
     private Optional<Integer> batchSize = Optional.empty();
     private Optional<Exception> exception = Optional.empty();
+    private Optional<StatementMetadata> statementMetadata;
 
     /**
      * Creates a {@code Builder} for the given {@code sql}.
-     * 
+     *
      * @param sql
      *          the SQL statement
      */
@@ -237,7 +250,7 @@ public class StatementLog implements Serializable {
     /**
      * Specifies how long it took to acquire a {@link java.sql.Connection} from the {@link javax.sql.DataSource}, in
      * nanoseconds.
-     * 
+     *
      * @param connectionAcquisitionTime
      *          how long it took to acquire a {@link java.sql.Connection}, if available
      * @return this {@code Builder}, for chaining
@@ -249,7 +262,7 @@ public class StatementLog implements Serializable {
 
     /**
      * Specifies how long it took to bind data to a {@link java.sql.PreparedStatement}, in nanoseconds.
-     * 
+     *
      * @param preparationTime
      *          how long it took to bind data to a {@link java.sql.PreparedStatement}, if available
      * @return this {@code Builder}, for chaining
@@ -261,7 +274,7 @@ public class StatementLog implements Serializable {
 
     /**
      * Specifies how long it took to execute a SQL statement, in nanoseconds.
-     * 
+     *
      * @param executionTime
      *          how long it took to execute a SQL statement, if available
      * @return this {@code Builder}, for chaining
@@ -273,7 +286,7 @@ public class StatementLog implements Serializable {
 
     /**
      * Specifies how long it took to extract data from a {@link java.sql.ResultSet}, in nanoseconds.
-     * 
+     *
      * @param resultSetMappingTime
      *          how long it took to extract data from a {@link java.sql.ResultSet}, if available
      * @return this {@code Builder}, for chaining
@@ -285,7 +298,7 @@ public class StatementLog implements Serializable {
 
     /**
      * The parameters bound to the SQL statement that was executed.
-     * 
+     *
      * @param parameters
      *          the parameters bound to the SQL statement that was executed, or an empty {@code List} if none
      * @return this {@code Builder}, for chaining
@@ -297,7 +310,7 @@ public class StatementLog implements Serializable {
 
     /**
      * Specifies the size of the batch operation.
-     * 
+     *
      * @param batchSize
      *          how many records were processed as part of the batch operation, if available
      * @return this {@code Builder}, for chaining
@@ -309,7 +322,7 @@ public class StatementLog implements Serializable {
 
     /**
      * Specifies the exception that occurred during SQL statement execution.
-     * 
+     *
      * @param exception
      *          the exception that occurred during SQL statement execution, if available
      * @return this {@code Builder}, for chaining
@@ -320,8 +333,20 @@ public class StatementLog implements Serializable {
     }
 
     /**
+     * Specifies metadata associated with this SQL statement.
+     *
+     * @param statementMetadata
+     *          the metadata associated with this SQL statement, if available
+     * @return this {@code Builder}, for chaining
+     */
+    public Builder statementMetadata(Optional<StatementMetadata> statementMetadata) {
+      this.statementMetadata = requireNonNull(statementMetadata);
+      return this;
+    }
+
+    /**
      * Constructs a {@code StatementLog} instance.
-     * 
+     *
      * @return a {@code StatementLog} instance
      */
     public StatementLog build() {
