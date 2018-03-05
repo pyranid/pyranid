@@ -534,8 +534,8 @@ StatementMetadata IGNORE_LOGGING = new StatementMetadata();
 // App-specific metadata which means "this is sensitive, restrict parameter logging".
 // This may alternatively be expressed using shorthand: 
 // 
-// HIGHLY_SENSITIVE_DATA = StatementMetadata.with("com.myapp.SENSITIVITY_LEVEL", "HIGH")
-StatementMetadata HIGHLY_SENSITIVE_DATA = new StatementMetadata.Builder()
+// SENSITIVE_DATA = StatementMetadata.with("com.myapp.SENSITIVITY_LEVEL", "HIGH")
+StatementMetadata SENSITIVE_DATA = new StatementMetadata.Builder()
   .add("com.myapp.SENSITIVITY_LEVEL", "HIGH");
   .build(); 
 
@@ -550,9 +550,11 @@ Database database = Database.forDataSource(dataSource)
       if(statementMetadata == IGNORE_LOGGING)
         return;
                                 
-      // Only log SQL, not parameters
-      if(statementMetadata == HIGHLY_SENSITIVE_DATA) {
-        out.println("SENSITIVE: " + statementLog.sql());
+      // Only log SQL, not parameters. For example:
+      // SENSITIVE[HIGH]: UPDATE customer SET social_security_number=? WHERE customer_id=?
+      if(statementMetadata == SENSITIVE_DATA) {
+        String sensitivityLevel = (String) SENSITIVE_DATA.get("com.myapp.SENSITIVITY_LEVEL");
+        out.printf("SENSITIVE[%s]: %s\n", sensitivityLevel, statementLog.sql());
         return;
       }
                                
@@ -569,7 +571,7 @@ Optional<Message> message = database.queryForObject("SELECT * FROM message " +
 
 // We want to log this sensitive statement specially
 database.execute("UPDATE customer SET social_security_number=? WHERE customer_id=?", 
-  HIGHLY_SENSITIVE_DATA, socialSecurityNumber, customerId);
+  SENSITIVE_DATA, socialSecurityNumber, customerId);
 ```
 
 #### java.util.Logging
