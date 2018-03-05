@@ -40,6 +40,10 @@ public class StatementMetadata {
   @Nonnull
   private final Map<String, Object> metadata;
 
+  public StatementMetadata() {
+    this(new Builder());
+  }
+
   private StatementMetadata(@Nonnull Builder builder) {
     requireNonNull(builder);
     this.metadata = Collections.unmodifiableMap(new HashMap<>(builder.getMetadata()));

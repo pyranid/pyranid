@@ -525,7 +525,9 @@ Parameters: 'BLUE'
 
 #### Statement Metadata
 
-You may specify arbitrary metadata when executing database operations via the `StatementMetadata` type.
+You may specify arbitrary metadata with database operations via the `StatementMetadata` type.
+
+This is useful for supporting custom logging scenarios your application might require.
 
 ```java
 // App-specific metadata which means "don't log this statement"
