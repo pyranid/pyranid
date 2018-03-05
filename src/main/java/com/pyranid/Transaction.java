@@ -1,21 +1,5 @@
-package com.pyranid;
-
-import static java.lang.String.format;
-import static java.util.Objects.requireNonNull;
-
-import java.sql.Connection;
-import java.sql.SQLException;
-import java.sql.Savepoint;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Optional;
-import java.util.concurrent.Callable;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.logging.Logger;
-
 /*
- * Copyright 2015 Transmogrify LLC.
+ * Copyright 2015-2018 Transmogrify LLC.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,6 +13,21 @@ import java.util.logging.Logger;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+package com.pyranid;
+
+import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
+
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Savepoint;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.logging.Logger;
 import javax.sql.DataSource;
 
 /**
