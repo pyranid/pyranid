@@ -16,8 +16,6 @@
 
 package com.pyranid;
 
-import org.postgresql.util.PGobject;
-
 import static java.lang.String.format;
 import static java.util.Arrays.asList;
 import static java.util.Collections.unmodifiableMap;
@@ -429,7 +427,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
     } else if (propertyType.isEnum()) {
       return extractEnumValue(propertyType, resultSetValue);
     } else if ("org.postgresql.util.PGobject".equals(resultSetValue.getClass().getName())) {
-      PGobject pgObject = (PGobject) resultSetValue;
+      org.postgresql.util.PGobject pgObject = (org.postgresql.util.PGobject) resultSetValue;
       return pgObject.getValue();
     }
 

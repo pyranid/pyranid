@@ -3,7 +3,7 @@
 	<modelVersion>4.0.0</modelVersion>
 	<groupId>com.pyranid</groupId>
 	<artifactId>pyranid</artifactId>
-	<version>1.0.11</version>
+	<version>1.0.12</version>
 	<packaging>jar</packaging>
 	<name>Pyranid</name>
 	<description>Pyranid is a minimalist JDBC interface for modern Java applications.</description>
@@ -128,7 +128,8 @@
 			<groupId>org.postgresql</groupId>
 			<artifactId>postgresql</artifactId>
 			<version>42.1.4</version>
-			<scope>compile</scope>
+			<scope>provided</scope>
+			<optional>true</optional>
 		</dependency>
 
 		<dependency>

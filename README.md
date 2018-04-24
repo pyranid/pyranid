@@ -23,13 +23,13 @@ A minimalist JDBC interface for modern Java applications.
 <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid</artifactId>
-  <version>1.0.11</version>
+  <version>1.0.12</version>
 </dependency>
 ```
 
 #### Direct Download
 
-If you don't use Maven, you can drop [pyranid-1.0.11.jar](http://central.maven.org/maven2/com/pyranid/pyranid/1.0.11/pyranid-1.0.11.jar) directly into your project.  No other dependencies are required.
+If you don't use Maven, you can drop [pyranid-1.0.12.jar](http://central.maven.org/maven2/com/pyranid/pyranid/1.0.12/pyranid-1.0.12.jar) directly into your project.  No other dependencies are required.
 
 ## Configuration
 
@@ -446,10 +446,31 @@ car = database.queryForObject("SELECT some_id AS car_id, some_color AS color FRO
 
 In general, a runtime ```DatabaseException``` will be thrown when errors occur.  Often this will wrap the checked ```java.sql.SQLException```.
 
-For convenience, ```DatabaseException``` exposes two additional properties, which are only populated if provided by the underlying ```java.sql.SQLException```:
+For convenience, ```DatabaseException``` exposes additional properties, which are only populated if provided by the underlying ```java.sql.SQLException```:
 
 * ```errorCode``` (optional)
 * ```sqlState``` (optional)
+
+For PostgreSQL, the following properties are also available:
+
+* `column` (optional)
+* `constraint` (optional)
+* `datatype` (optional)
+* `detail` (optional)
+* `file` (optional)
+* `hint` (optional)
+* `internalPosition` (optional)
+* `internalQuery` (optional)
+* `line` (optional)
+* `dbmsMessage` (optional)
+* `position` (optional)
+* `routine` (optional)
+* `schema` (optional)
+* `severity` (optional)
+* `table` (optional)
+* `where` (optional)
+
+Extended property support for Oracle and MySQL is planned.
 
 #### Practical Application
 
@@ -466,9 +487,7 @@ database.transaction(() -> {
                      accountId, AwardType.BIG);
   } catch(DatabaseException e) {
     // Detect a unique constraint violation and gracefully continue on.
-    // The 23505 code is specific to Postgres, other DBMSes will be different.
-    // See all Postgres codes at http://www.postgresql.org/docs/9.4/static/errcodes-appendix.html
-    if("23505".equals(e.sqlState().orElse(null)) {
+    if("account_award_unique_idx".equals(e.constraint().orElse(null)) {
       out.println(format("The %s award was already given to account ID %s", AwardType.BIG, accountId)); 
       // Puts transaction back in good state (prior to constraint violation)
       transaction.rollback(savepoint);
@@ -521,7 +540,7 @@ The log output for ```DefaultStatementLogger``` might look like:
 SELECT * FROM car WHERE color = ?
 Parameters: 'BLUE'
 0.04ms acquiring connection, 0.03ms preparing statement, 0.82ms executing statement, 0.40ms processing resultset
-````
+```
 
 #### Statement Metadata
 
