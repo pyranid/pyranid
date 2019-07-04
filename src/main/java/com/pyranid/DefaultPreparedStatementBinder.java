@@ -22,6 +22,7 @@ import java.nio.ByteBuffer;
 import java.sql.PreparedStatement;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
@@ -80,6 +81,10 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
       return ((Locale) parameter).toLanguageTag();
     if (parameter instanceof Enum)
       return ((Enum<?>) parameter).name();
+    // Java 11 uses internal implementation java.time.ZoneRegion, which Postgres JDBC driver does not support.
+    // Force ZoneId to use its ID here
+    if (parameter instanceof ZoneId)
+      return ((ZoneId) parameter).getId();
 
     // Special handling for Oracle
     if (databaseType() == DatabaseType.ORACLE) {
