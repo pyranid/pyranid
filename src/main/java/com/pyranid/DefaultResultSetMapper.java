@@ -28,6 +28,7 @@ import static java.util.stream.Collectors.toSet;
 import java.beans.BeanInfo;
 import java.beans.Introspector;
 import java.beans.PropertyDescriptor;
+import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
@@ -35,6 +36,7 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -202,6 +204,8 @@ public class DefaultResultSetMapper implements ResultSetMapper {
         value = Locale.forLanguageTag(locale);
     } else if (resultClass.isEnum()) {
       value = extractEnumValue(resultClass, resultSet.getObject(1));
+    } else if(resultClass.isArray()) {
+      value = extractArrayValue(resultClass, resultSet.getObject(1));
 
       // TODO: revisit java.sql.* handling
 
@@ -429,6 +433,8 @@ public class DefaultResultSetMapper implements ResultSetMapper {
     } else if ("org.postgresql.util.PGobject".equals(resultSetValue.getClass().getName())) {
       org.postgresql.util.PGobject pgObject = (org.postgresql.util.PGobject) resultSetValue;
       return pgObject.getValue();
+    } else if(propertyType.isArray()) {
+      return extractArrayValue(propertyType, resultSetValue);
     }
 
     return resultSetValue;
@@ -464,6 +470,75 @@ public class DefaultResultSetMapper implements ResultSetMapper {
       return Enum.valueOf((Class<? extends Enum>) enumClass, objectAsString);
     } catch (IllegalArgumentException e) {
       throw new DatabaseException(format("The value '%s' is not present in enum %s", objectAsString, enumClass), e);
+    }
+  }
+
+  /**
+   * Attempts to convert {@code object} to a corresponding value for array type {@code arrayClass}.
+   *
+   * @param arrayClass
+   *          the array type to which we'd like to convert {@code object}
+   * @param object
+   *          the object to convert to an array
+   * @return the array value of {@code object} for {@code arrayClass}
+   * @throws IllegalArgumentException
+   *           if {@code arrayClass} is not an enum
+   * @throws DatabaseException
+   *           if {@code object} does not correspond to a valid array value
+   */
+  protected Object extractArrayValue(Class<?> arrayClass, Object object) {
+    requireNonNull(arrayClass);
+    requireNonNull(object);
+
+    if (!arrayClass.isArray())
+      throw new IllegalArgumentException(format("%s is not an array type", arrayClass));
+
+    try {
+      java.sql.Array array = (java.sql.Array) object;
+      List<Object> arrayValues = new ArrayList<>();
+      // What's inside of the array - e.g. this would be String.class for String[]
+      Class<?> componentType = arrayClass.getComponentType();
+
+      // The result set contains one row for each array element, with two columns in each row.
+      // The second column stores the element value; the first column stores the index into the array for that element
+      // (with the first array element being at index 1). The rows are in ascending order corresponding to the order of
+      // the indices.
+      try (ResultSet arrayResultSet = array.getResultSet()) {
+        while (arrayResultSet.next()) {
+          Object arrayResultSetValue = arrayResultSet.getObject(2);
+          Object arrayValue = convertResultSetValueToPropertyType(arrayResultSetValue, componentType);
+          arrayValues.add(arrayValue);
+        }
+      }
+
+      // TODO: support primitive classes
+      // byte[].class
+      // short[].class
+      // int
+      // long
+      // float
+      // double
+      // char
+      // boolean
+
+      // Something like this
+      if(componentType.isAssignableFrom(int.class)) {
+        int[] finalArray = (int[]) Array.newInstance(int.class, arrayValues.size());
+
+        for(int i = 0; i < arrayValues.size(); ++i)
+          finalArray[i] = (int) arrayValues.get(i);
+
+        return finalArray;
+      }
+
+      Object[] finalArray = (Object[]) Array.newInstance(componentType, arrayValues.size());
+
+      for(int i = 0; i < arrayValues.size(); ++i)
+        finalArray[i] = arrayValues.get(i);
+
+      return finalArray;
+    } catch(Exception e) {
+      throw new DatabaseException(format("Unable to map value '%s' to property type '%s'", object, arrayClass), e);
     }
   }
 
