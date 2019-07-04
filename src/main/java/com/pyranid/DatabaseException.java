@@ -70,7 +70,7 @@ public class DatabaseException extends RuntimeException {
    * @param cause the cause of this exception
    */
   public DatabaseException(Throwable cause) {
-    this(null, cause);
+    this(cause == null ? null : cause.getMessage(), cause);
   }
 
   /**
@@ -157,6 +157,9 @@ public class DatabaseException extends RuntimeException {
   @Override
   public String toString() {
     List<String> components = new ArrayList<>(20);
+
+    if(getMessage() != null && getMessage().trim().length() > 0)
+      components.add(format("message=%s", getMessage()));
 
     if(errorCode().isPresent())
       components.add(format("errorCode=%s", errorCode().get()));
