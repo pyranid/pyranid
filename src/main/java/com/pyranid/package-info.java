@@ -15,9 +15,9 @@
  */
 
 /**
- * <a target="_blank" href="http://pyranid.com">Pyranid</a> is a minimalist JDBC interface for modern Java applications.
+ * <a target="_blank" href="https://www.pyranid.com">Pyranid</a> is a minimalist JDBC interface for modern Java applications.
  * <p>
- * See <a target="_blank" href="http://pyranid.com">http://pyranid.com</a> for more detailed documentation and code samples.
+ * See <a target="_blank" href="https://www.pyranid.com">https://www.pyranid.com</a> for more detailed documentation and code samples.
  * 
  * <pre>
 // Minimal setup, uses defaults
