@@ -3,7 +3,7 @@
 	<modelVersion>4.0.0</modelVersion>
 	<groupId>com.pyranid</groupId>
 	<artifactId>pyranid</artifactId>
-	<version>1.0.15-SNAPSHOT</version>
+	<version>1.0.15</version>
 	<packaging>jar</packaging>
 	<name>Pyranid</name>
 	<description>Pyranid is a minimalist JDBC interface for modern Java applications.</description>
@@ -21,7 +21,7 @@
 			<name>Mark Allen</name>
 			<email>maa@xmog.com</email>
 			<organization>Transmogrify, LLC.</organization>
-			<organizationUrl>http://www.xmog.com</organizationUrl>
+			<organizationUrl>https://www.xmog.com</organizationUrl>
 		</developer>
 	</developers>
 
