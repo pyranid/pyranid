@@ -23,9 +23,11 @@ import java.sql.PreparedStatement;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.TimeZone;
 import java.util.UUID;
 
 /**
@@ -36,15 +38,32 @@ import java.util.UUID;
  */
 public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
   private final DatabaseType databaseType;
+  private final ZoneId timeZone;
+  private final Calendar timeZoneCalendar;
+
+  /**
+   * Creates a {@code PreparedStatementBinder} for the given {@code databaseType}.
+   *
+   * @param databaseType
+   *          the type of database we're working with
+   */
+  public DefaultPreparedStatementBinder(DatabaseType databaseType) {
+    this(databaseType, ZoneId.systemDefault());
+  }
 
   /**
    * Creates a {@code PreparedStatementBinder} for the given {@code databaseType}.
    * 
    * @param databaseType
    *          the type of database we're working with
+   * @param timeZone
+   *          the timezone to use when working with {@link java.sql.Timestamp} and similar values
+   * @since 1.0.15
    */
-  public DefaultPreparedStatementBinder(DatabaseType databaseType) {
+  public DefaultPreparedStatementBinder(DatabaseType databaseType, ZoneId timeZone) {
     this.databaseType = requireNonNull(databaseType);
+    this.timeZone = timeZone == null ? ZoneId.systemDefault() : timeZone;
+    this.timeZoneCalendar = Calendar.getInstance(TimeZone.getTimeZone(this.timeZone));
   }
 
   @Override
@@ -53,8 +72,28 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
     requireNonNull(parameters);
 
     try {
-      for (int i = 0; i < parameters.size(); ++i)
-        preparedStatement.setObject(i + 1, normalizeParameter(parameters.get(i)));
+      for (int i = 0; i < parameters.size(); ++i) {
+        Object parameter = parameters.get(i);
+
+        if (parameter != null) {
+          Object normalizedParameter = normalizeParameter(parameter);
+
+          if(normalizedParameter instanceof java.sql.Timestamp) {
+            java.sql.Timestamp timestamp = (java.sql.Timestamp) normalizedParameter;
+            preparedStatement.setTimestamp(i + 1, timestamp, getTimeZoneCalendar());
+          } else if(normalizedParameter instanceof java.sql.Date) {
+            java.sql.Date date = (java.sql.Date) normalizedParameter;
+            preparedStatement.setDate(i + 1, date, getTimeZoneCalendar());
+          } else if(normalizedParameter instanceof java.sql.Time) {
+            java.sql.Time time = (java.sql.Time) normalizedParameter;
+            preparedStatement.setTime(i + 1, time, getTimeZoneCalendar());
+          } else {
+            preparedStatement.setObject(i + 1, normalizedParameter);
+          }
+        } else {
+          preparedStatement.setObject(i + 1, parameter);
+        }
+      }
     } catch (Exception e) {
       throw new DatabaseException(e);
     }
@@ -108,5 +147,13 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
    */
   protected DatabaseType databaseType() {
     return this.databaseType;
+  }
+
+  protected ZoneId getTimeZone() {
+    return timeZone;
+  }
+
+  protected Calendar getTimeZoneCalendar() {
+    return timeZoneCalendar;
   }
 }

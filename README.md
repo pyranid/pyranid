@@ -39,6 +39,7 @@ Database database = Database.forDataSource(dataSource).build();
 
 // Customized setup
 Database customDatabase = Database.forDataSource(dataSource)
+  .timeZone(ZoneId.of("UTC")) // Override JVM default timezone
   .instanceProvider(new InstanceProvider() {
     @Override
     public <T> T provide(Class<T> instanceClass) {
@@ -76,6 +77,7 @@ DataSource dataSource = new HikariDataSource(new HikariConfig() {{
   setJdbcUrl("jdbc:postgresql://localhost:5432/my-database");
   setUsername("example");
   setPassword("secret");
+  setConnectionInitSql("SET TIME ZONE 'UTC'");
 }});
 ```
 

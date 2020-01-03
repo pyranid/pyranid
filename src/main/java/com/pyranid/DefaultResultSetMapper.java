@@ -44,6 +44,7 @@ import java.time.OffsetDateTime;
 import java.time.OffsetTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -64,8 +65,22 @@ import java.util.concurrent.ConcurrentHashMap;
 public class DefaultResultSetMapper implements ResultSetMapper {
   private final DatabaseType databaseType;
   private final InstanceProvider instanceProvider;
+  private final ZoneId timeZone;
+  private final Calendar timeZoneCalendar;
   private final Map<Class<?>, Map<String, Set<String>>> columnLabelAliasesByPropertyNameCache =
       new ConcurrentHashMap<>();
+
+  /**
+   * Creates a {@code ResultSetMapper} for the given {@code databaseType} and {@code instanceProvider}.
+   *
+   * @param databaseType
+   *          the type of database we're working with
+   * @param instanceProvider
+   *          instance-creation factory, used to instantiate resultset row objects as needed
+   */
+  public DefaultResultSetMapper(DatabaseType databaseType, InstanceProvider instanceProvider) {
+    this(databaseType, instanceProvider, ZoneId.systemDefault());
+  }
 
   /**
    * Creates a {@code ResultSetMapper} for the given {@code databaseType} and {@code instanceProvider}.
@@ -74,10 +89,15 @@ public class DefaultResultSetMapper implements ResultSetMapper {
    *          the type of database we're working with
    * @param instanceProvider
    *          instance-creation factory, used to instantiate resultset row objects as needed
+   * @param timeZone
+   *          the timezone to use when working with {@link java.sql.Timestamp} and similar values
+   * @since 1.0.15
    */
-  public DefaultResultSetMapper(DatabaseType databaseType, InstanceProvider instanceProvider) {
+  public DefaultResultSetMapper(DatabaseType databaseType, InstanceProvider instanceProvider, ZoneId timeZone) {
     this.databaseType = requireNonNull(databaseType);
     this.instanceProvider = requireNonNull(instanceProvider);
+    this.timeZone = timeZone == null ? ZoneId.systemDefault() : timeZone;
+    this.timeZoneCalendar = Calendar.getInstance(TimeZone.getTimeZone(this.timeZone));
   }
 
   @Override
@@ -167,9 +187,9 @@ public class DefaultResultSetMapper implements ResultSetMapper {
       if (bigDecimal != null)
         value = bigDecimal.toBigInteger();
     } else if (resultClass.isAssignableFrom(Date.class)) {
-      value = resultSet.getTimestamp(1);
+      value = resultSet.getTimestamp(1, getTimeZoneCalendar());
     } else if (resultClass.isAssignableFrom(Instant.class)) {
-      Timestamp timestamp = resultSet.getTimestamp(1);
+      Timestamp timestamp = resultSet.getTimestamp(1, getTimeZoneCalendar());
 
       if (timestamp != null)
         value = timestamp.toInstant();
@@ -184,7 +204,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
     } else if (resultClass.isAssignableFrom(OffsetDateTime.class)) {
       value = resultSet.getObject(1); // TIMESTAMP WITH TIMEZONE
     } else if (resultClass.isAssignableFrom(java.sql.Date.class)) {
-      value = resultSet.getDate(1);
+      value = resultSet.getDate(1, getTimeZoneCalendar());
     } else if (resultClass.isAssignableFrom(ZoneId.class)) {
       String zoneId = resultSet.getString(1);
 
@@ -261,8 +281,22 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 
     Map<String, Object> columnLabelsToValues = new HashMap<>(columnLabels.size());
 
-    for (String columnLabel : columnLabels)
-      columnLabelsToValues.put(normalizeColumnLabel(columnLabel), resultSet.getObject(columnLabel));
+    for (String columnLabel : columnLabels) {
+      Object resultSetValue = resultSet.getObject(columnLabel);
+
+      // If DB gives us time-related values, re-pull using specific RS methods so we can apply a timezone
+      if(resultSetValue != null) {
+        if (resultSetValue instanceof java.sql.Timestamp) {
+          resultSetValue = resultSet.getTimestamp(columnLabel, getTimeZoneCalendar());
+        } else if (resultSetValue instanceof java.sql.Date) {
+          resultSetValue = resultSet.getDate(columnLabel, getTimeZoneCalendar());
+        } else if (resultSetValue instanceof java.sql.Time) {
+          resultSetValue = resultSet.getTime(columnLabel, getTimeZoneCalendar());
+        }
+      }
+
+      columnLabelsToValues.put(normalizeColumnLabel(columnLabel), resultSetValue);
+    }
 
     Map<String, Set<String>> columnLabelAliasesByPropertyName =
         columnLabelAliasesByPropertyNameCache.computeIfAbsent(
@@ -399,7 +433,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
       if (Instant.class.isAssignableFrom(propertyType))
         return date.toInstant();
       if (LocalDate.class.isAssignableFrom(propertyType))
-        return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
+        return date.toInstant().atZone(getTimeZone()).toLocalDate();
       if (LocalDateTime.class.isAssignableFrom(propertyType))
         return date.toLocalDateTime();
     } else if (resultSetValue instanceof java.sql.Date) {
@@ -412,7 +446,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
       if (LocalDate.class.isAssignableFrom(propertyType))
         return date.toLocalDate();      
       if (LocalDateTime.class.isAssignableFrom(propertyType))
-        return LocalDateTime.ofInstant(date.toInstant(), ZoneId.systemDefault());      
+        return LocalDateTime.ofInstant(date.toInstant(), getTimeZone());
     } else if (resultSetValue instanceof java.sql.Time) {
       java.sql.Time time = (java.sql.Time) resultSetValue;
 
@@ -582,5 +616,13 @@ public class DefaultResultSetMapper implements ResultSetMapper {
     public boolean isStandardType() {
       return this.standardType;
     }
+  }
+
+  protected ZoneId getTimeZone() {
+    return timeZone;
+  }
+
+  protected Calendar getTimeZoneCalendar() {
+    return timeZoneCalendar;
   }
 }

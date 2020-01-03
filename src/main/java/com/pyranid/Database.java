@@ -21,12 +21,14 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.ZoneId;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Deque;
 import java.util.List;
 import java.util.Optional;
+import java.util.TimeZone;
 import java.util.logging.Logger;
 
 import static java.lang.String.format;
@@ -44,6 +46,7 @@ public class Database {
       .withInitial(() -> new ArrayDeque<>());
 
   private final DataSource dataSource;
+  private final ZoneId timeZone;
   private final InstanceProvider instanceProvider;
   private final PreparedStatementBinder preparedStatementBinder;
   private final ResultSetMapper resultSetMapper;
@@ -57,6 +60,7 @@ public class Database {
   protected Database(Builder builder) {
     requireNonNull(builder);
     this.dataSource = requireNonNull(builder.dataSource);
+    this.timeZone = builder.timeZone == null ? ZoneId.systemDefault() : builder.timeZone;
     this.instanceProvider = requireNonNull(builder.instanceProvider);
     this.preparedStatementBinder = requireNonNull(builder.preparedStatementBinder);
     this.resultSetMapper = requireNonNull(builder.resultSetMapper);
@@ -66,6 +70,7 @@ public class Database {
   public static class Builder {
     private final DataSource dataSource;
     private final DatabaseType databaseType;
+    private ZoneId timeZone;
     private InstanceProvider instanceProvider;
     private PreparedStatementBinder preparedStatementBinder;
     private ResultSetMapper resultSetMapper;
@@ -74,19 +79,30 @@ public class Database {
     // See build() method for explanation of why we keep track of whether these fields have changed
     private final InstanceProvider initialInstanceProvider;
     private final ResultSetMapper initialResultSetMapper;
+    private final PreparedStatementBinder initialPreparedStatementBinder;
+    private final ZoneId initialTimeZone;
 
     private Builder(DataSource dataSource) {
       this.dataSource = requireNonNull(dataSource);
       this.databaseType = DatabaseType.fromDataSource(dataSource);
-
-      this.preparedStatementBinder = new DefaultPreparedStatementBinder(this.databaseType);
       this.statementLogger = new DefaultStatementLogger();
+
+      this.timeZone = ZoneId.systemDefault();
+      this.initialTimeZone = this.timeZone;
+
+      this.preparedStatementBinder = new DefaultPreparedStatementBinder(this.databaseType, this.timeZone);
+      this.initialPreparedStatementBinder = this.preparedStatementBinder;
 
       this.instanceProvider = new DefaultInstanceProvider();
       this.initialInstanceProvider = this.instanceProvider;
 
-      this.resultSetMapper = new DefaultResultSetMapper(this.databaseType, this.instanceProvider);
+      this.resultSetMapper = new DefaultResultSetMapper(this.databaseType, this.instanceProvider, this.timeZone);
       this.initialResultSetMapper = resultSetMapper;
+    }
+
+    public Builder timeZone(ZoneId timeZone) {
+      this.timeZone = requireNonNull(timeZone);
+      return this;
     }
 
     public Builder instanceProvider(InstanceProvider instanceProvider) {
@@ -111,10 +127,16 @@ public class Database {
 
     public Database build() {
       // A little sleight-of-hand to make the 99% case easier for users...
-      // If at build time the InstanceProvider has been changed but the ResultSetMapper is unchanged,
+      // If at build time the InstanceProvider or time zone has been changed but the ResultSetMapper is unchanged,
       // wire the custom InstanceProvider into the DefaultResultSetMapper
-      if (this.instanceProvider != this.initialInstanceProvider && this.resultSetMapper == this.initialResultSetMapper)
-        this.resultSetMapper = new DefaultResultSetMapper(this.databaseType, this.instanceProvider);
+      if (((this.instanceProvider != this.initialInstanceProvider) || (this.timeZone != this.initialTimeZone))
+          && this.resultSetMapper == this.initialResultSetMapper)
+        this.resultSetMapper = new DefaultResultSetMapper(this.databaseType, this.instanceProvider, this.timeZone);
+
+      // If at build time the time zone has been changed but the PreparedStatementBinder is unchanged,
+      // wire the custom time zone into the PreparedStatementBinder
+      if (this.timeZone != this.initialTimeZone && this.preparedStatementBinder == this.initialPreparedStatementBinder)
+        this.preparedStatementBinder = new DefaultPreparedStatementBinder(this.databaseType, this.timeZone);
 
       return new Database(this);
     }
