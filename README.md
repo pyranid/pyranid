@@ -23,13 +23,13 @@ A minimalist JDBC interface for modern Java applications.
 <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid</artifactId>
-  <version>1.0.14</version>
+  <version>1.0.15-SNAPSHOT</version>
 </dependency>
 ```
 
 #### Direct Download
 
-If you don't use Maven, you can drop [pyranid-1.0.14.jar](http://central.maven.org/maven2/com/pyranid/pyranid/1.0.14/pyranid-1.0.14.jar) directly into your project.  No other dependencies are required.
+If you don't use Maven, you can drop [pyranid-1.0.15-SNAPSHOT.jar](http://central.maven.org/maven2/com/pyranid/pyranid/1.0.15-SNAPSHOT/pyranid-1.0.15-SNAPSHOT.jar) directly into your project.  No other dependencies are required.
 
 ## Configuration
 
