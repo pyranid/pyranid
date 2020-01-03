@@ -72,13 +72,11 @@ Database customDatabase = Database.forDataSource(dataSource)
 Pyranid works with any ```DataSource``` implementation. If you have the freedom to choose, [HikariCP](https://github.com/brettwooldridge/HikariCP) is a great option.
 
 ```java
-DataSource dataSource = new HikariDataSource(new HikariConfig() {
-  {
-    setJdbcUrl("jdbc:postgresql://localhost:5432/my-database");
-    setUsername("example");
-    setPassword("secret");
-  }
-});
+DataSource dataSource = new HikariDataSource(new HikariConfig() {{
+  setJdbcUrl("jdbc:postgresql://localhost:5432/my-database");
+  setUsername("example");
+  setPassword("secret");
+}});
 ```
 
 ## Queries
@@ -135,20 +133,16 @@ Optional<UUID> id = database.executeReturning("INSERT INTO book VALUES (?) RETUR
 List<List<Object>> parameterGroups = new ArrayList<>();
 
 // Blue car
-parameterGroups.add(new ArrayList<Object>() {
-  {
-    add(123);
-    add(Color.BLUE);
-  }
-});
+parameterGroups.add(new ArrayList<Object>() {{
+  add(123);
+  add(Color.BLUE);
+}});
 
 // Red car
-parameterGroups.add(new ArrayList<Object>() {
-  {
-    add(456);
-    add(Color.RED);
-  }
-});
+parameterGroups.add(new ArrayList<Object>() {{
+  add(456);
+  add(Color.RED);
+}});
 
 // Insert both cars
 long[] updateCounts = database.executeBatch("INSERT INTO car VALUES (?,?)", parameterGroups);
@@ -334,7 +328,7 @@ class EmployeeService {
     );
   }
 
-  static interface EmployeeServiceListener {
+  interface EmployeeServiceListener {
     void onSalaryChanged();
   }
 
@@ -603,12 +597,12 @@ Pyranid uses ```java.util.Logging``` internally.  The usual way to hook into thi
 <dependency>
   <groupId>ch.qos.logback</groupId>
   <artifactId>logback-classic</artifactId>
-  <version>1.1.9</version>
+  <version>1.2.3</version>
 </dependency>
 <dependency>
   <groupId>org.slf4j</groupId>
   <artifactId>jul-to-slf4j</artifactId>
-  <version>1.7.22</version>
+  <version>1.7.30</version>
 </dependency>
 ```
 
@@ -639,7 +633,7 @@ Note: ```SLF4JBridgeHandler``` can impact performance.  You can mitigate that wi
 
 ## About
 
-Pyranid was created by [Mark Allen](http://revetkn.com) and sponsored by [Transmogrify, LLC.](http://xmog.com)
+Pyranid was created by [Mark Allen](https://www.revetkn.com) and sponsored by [Transmogrify, LLC.](https://www.xmog.com)
 
 Development was aided by
 
