@@ -23,13 +23,13 @@ A minimalist JDBC interface for modern Java applications.
 <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid</artifactId>
-  <version>1.0.15</version>
+  <version>1.0.16</version>
 </dependency>
 ```
 
 #### Direct Download
 
-If you don't use Maven, you can drop [pyranid-1.0.15.jar](http://central.maven.org/maven2/com/pyranid/pyranid/1.0.15/pyranid-1.0.15.jar) directly into your project.  No other dependencies are required.
+If you don't use Maven, you can drop [pyranid-1.0.16.jar](http://central.maven.org/maven2/com/pyranid/pyranid/1.0.16/pyranid-1.0.16.jar) directly into your project.  No other dependencies are required.
 
 ## Configuration
 
@@ -452,7 +452,7 @@ Data classes support the same list of JDK types as above
 
 Extension functions for direct KClass support are provided
 
-```
+```kotlin
 data class Car(carId: UUID, color: Color = Color.BLUE, ownerId: String?)
 
 val cars = database.queryForList("SELECT * FROM cars", Car::class)
@@ -460,7 +460,7 @@ val cars = database.queryForList("SELECT * FROM cars", Car::class)
 
 When query parameters are supplied as a list they must be flattened first, either as separate lists or one big list
 
-```
+```kotlin
 val cars = database.queryForList("SELECT * FROM cars WHERE car_id IN (?, ?) LIMIT ?",
                                  Car::class,
                                  car1Id, car2Id, 10)
