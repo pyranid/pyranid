@@ -438,6 +438,43 @@ car = database.queryForObject("SELECT some_id AS car_id, some_color AS color FRO
 
 * Store Postgres JSONB data using a SQL cast of `String`, e.g. `CAST(? AS JSONB)`. Retrieve JSONB data using `String`
 
+#### Kotlin support
+
+##### Data class
+
+Kotlin data class result set mapping is possible through the primary constructor of the data class.
+
+Nullable and non null columns are supported.
+
+Default parameters are supported.
+
+Data classes support the same list of JDK types as above
+
+Extension functions for direct KClass support are provided
+
+```
+data class Car(carId: UUID, color: Color = Color.BLUE, ownerId: String?)
+
+val cars = database.queryForList("SELECT * FROM cars", Car::class)
+```
+
+When query parameters are supplied as a list they must be flattened first, either as separate lists or one big list
+
+```
+val cars = database.queryForList("SELECT * FROM cars WHERE car_id IN (?, ?) LIMIT ?",
+                                 Car::class,
+                                 car1Id, car2Id, 10)
+
+
+val cars = database.queryForList("SELECT * FROM cars WHERE car_id IN (?, ?) LIMIT ?",
+                                 Car::class,
+                                 *listOf(car1Id, car2Id).toTypedArray(), 10)
+
+val cars = database.queryForList("SELECT * FROM cars WHERE car_id IN (?, ?) LIMIT ?",
+                                 Car::class,
+                                 *listOf(car1Id, car2Id, 10).toTypedArray())
+```
+
 ## Error Handling
 
 In general, a runtime ```DatabaseException``` will be thrown when errors occur.  Often this will wrap the checked ```java.sql.SQLException```.
