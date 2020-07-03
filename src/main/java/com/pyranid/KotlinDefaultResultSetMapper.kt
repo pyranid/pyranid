@@ -1,12 +1,18 @@
 package com.pyranid
 
+import org.postgresql.util.PGobject
+import java.math.BigDecimal
+import java.math.BigInteger
 import java.sql.ResultSet
-import java.time.ZoneId
+import java.sql.Timestamp
+import java.time.*
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.reflect.KClass
 import kotlin.reflect.KFunction
 import kotlin.reflect.KParameter
+import kotlin.reflect.full.functions
+import kotlin.reflect.full.isSuperclassOf
 import kotlin.reflect.full.primaryConstructor
 
 /**
@@ -16,8 +22,7 @@ import kotlin.reflect.full.primaryConstructor
 
 /**
  * Creates a {@code ResultSetMapper} for the given {@code databaseType} and {@code instanceProvider}.
- *@param javaDefaultResultSetMapper
- *          an instance of a result set mapper for standard java classes
+ *
  * @param databaseType
  *          the type of database we're working with
  * @param instanceProvider
@@ -49,8 +54,9 @@ open class KotlinDefaultResultSetMapper(private val javaDefaultResultSetMapper: 
     private val parameterNamesForDataClassCache = ConcurrentHashMap<KClass<out Any>, CtorParameters>()
     private val kotlinClassForJavaClass = ConcurrentHashMap<Class<out Any>, KClass<out Any>>()
 
-    data class CtorParameters(val ctor: KFunction<Any>, val ctorParameters: List<ParameterName>)
-    data class ParameterName(val name: String, val parameter: KParameter)
+    data class CtorParameters(val ctor: KFunction<Any>, val ctorParameters: List<ParameterMetadata>)
+    data class ParameterMetadata(val name: String, val parameter: KParameter, val paramaterType: KClass<*>)
+
 
     override fun <T : Any> map(resultSet: ResultSet, resultClass: Class<T>): T {
 
@@ -93,11 +99,11 @@ open class KotlinDefaultResultSetMapper(private val javaDefaultResultSetMapper: 
                 parameterNamesForDataClassCache.computeIfAbsent(resultClass) { dataClass ->
                     val ctor = dataClass.primaryConstructor
                             ?: throw DatabaseException("Missing primary constructor for class ${resultClass.simpleName}")
-                    val parameterNames: List<ParameterName> = ctor.parameters.map { parameter ->
+                    val parameterNames: List<ParameterMetadata> = ctor.parameters.map { parameter ->
                         if (parameter.name == null) {
                             throw DatabaseException("Parameter was not readable for ${dataClass.simpleName}. Examples of nameless parameters include this instance for member functions, extension receiver for extension functions or properties, parameters of Java methods compiled without the debug information, and others.")
                         }
-                        return@map ParameterName(parameter.name!!, parameter)
+                        return@map ParameterMetadata(parameter.name!!, parameter, parameter.type.classifier as KClass<*>)
                     }.toList()
                     return@computeIfAbsent CtorParameters(ctor, parameterNames)
                 }
@@ -110,14 +116,92 @@ open class KotlinDefaultResultSetMapper(private val javaDefaultResultSetMapper: 
                 .map { ctorParameter ->
                     val possibleColumnNamesForParameter: Set<String> = columnNamesForParameters[ctorParameter.name]
                             ?: throw DatabaseException("Unable to find columns for parameter name ${ctorParameter.name}")
+                    return@map ctorParameter.parameter to columnLabelsToValues
+                            .filter { columnLabelValues ->
+                                possibleColumnNamesForParameter.contains(columnLabelValues.key)
+                            }.map {
+                                convertResultSetValueToPropertyType(it.value, ctorParameter.paramaterType)
+                                        ?: throw DatabaseException("Property ${it.key} of ${resultClass} has a write " +
+                                                "method of type ${ctorParameter.paramaterType.simpleName}, " +
+                                                "but the ResultSet type ${it.value::class.simpleName} does not match. " +
+                                                "Consider creating your own ${KotlinDefaultResultSetMapper::class.simpleName} and " +
+                                                "overriding convertResultSetValueToPropertyType() to detect instances of " +
+                                                "${it.value::class.simpleName} and convert them to ${ctorParameter.paramaterType.simpleName}")
+                            }.firstOrNull()
 
-                    return@map ctorParameter.parameter to columnLabelsToValues.filter { columnLabelValues ->
-                        possibleColumnNamesForParameter.contains(columnLabelValues.key)
-                    }.map { it.value }.firstOrNull()
-
-                }.filter { it.second != null }
+                }.filter {
+                    it.second != null
+                }
                 .toMap()
+
         return ctor.callBy(callByArgs) as T
+    }
+
+
+    /**
+     * Massages a {@link ResultSet#getObject(String)} value to match the given {@code propertyType}.
+     * <p>
+     * For example, the JDBC driver might give us {@link java.sql.Timestamp} but our corresponding JavaBean field is of
+     * type {@link java.util.Date}, so we need to manually convert that ourselves.
+     *
+     * @param resultSetValue
+     *          the value returned by {@link ResultSet#getObject(String)}
+     * @param propertyType
+     *          the JavaBean property type we'd like to map {@code resultSetValue} to
+     * @return a representation of {@code resultSetValue} that is of type {@code propertyType}
+     */
+    protected fun convertResultSetValueToPropertyType(resultSetValue: Any, propertyType: KClass<*>): Any? {
+
+
+        if (resultSetValue is BigDecimal) {
+            val bigDecimal = resultSetValue
+            if (BigDecimal::class.isSuperclassOf(propertyType)) return bigDecimal
+            if (BigInteger::class.isSuperclassOf(propertyType)) return bigDecimal.toBigInteger()
+        }
+
+        if (resultSetValue is BigInteger) {
+            val bigInteger = resultSetValue
+            if (BigDecimal::class.isSuperclassOf(propertyType)) return BigDecimal(bigInteger)
+            if (BigInteger::class.isSuperclassOf(propertyType)) return bigInteger
+        }
+
+        if (resultSetValue is Number) {
+            val number = resultSetValue
+            if (Byte::class.isSuperclassOf(propertyType)) return number.toByte()
+            if (Short::class.isSuperclassOf(propertyType)) return number.toShort()
+            if (Int::class.isSuperclassOf(propertyType)) return number.toInt()
+            if (Long::class.isSuperclassOf(propertyType)) return number.toLong()
+            if (Float::class.isSuperclassOf(propertyType)) return number.toFloat()
+            if (Double::class.isSuperclassOf(propertyType)) return number.toDouble()
+            if (BigDecimal::class.isSuperclassOf(propertyType)) return BigDecimal(number.toDouble())
+            if (BigInteger::class.isSuperclassOf(propertyType)) return BigDecimal(number.toDouble()).toBigInteger()
+        } else if (resultSetValue is Timestamp) {
+            val date = resultSetValue
+            if (Date::class.isSuperclassOf(propertyType)) return date
+            if (Instant::class.isSuperclassOf(propertyType)) return date.toInstant()
+            if (LocalDate::class.isSuperclassOf(propertyType)) return date.toInstant().atZone(timeZone).toLocalDate()
+            if (LocalDateTime::class.isSuperclassOf(propertyType)) return date.toLocalDateTime()
+        } else if (resultSetValue is java.sql.Date) {
+            val date = resultSetValue
+            if (Date::class.isSuperclassOf(propertyType)) return date
+            if (Instant::class.isSuperclassOf(propertyType)) return date.toInstant()
+            if (LocalDate::class.isSuperclassOf(propertyType)) return date.toLocalDate()
+            if (LocalDateTime::class.isSuperclassOf(propertyType)) return LocalDateTime.ofInstant(date.toInstant(), timeZone)
+        } else if (resultSetValue is java.sql.Time) {
+            if (LocalTime::class.isSuperclassOf(propertyType)) return resultSetValue.toLocalTime()
+        } else if (ZoneId::class.isSuperclassOf(propertyType)) {
+            return ZoneId.of(resultSetValue.toString())
+        } else if (TimeZone::class.isSuperclassOf(propertyType)) {
+            return TimeZone.getTimeZone(resultSetValue.toString())
+        } else if (Locale::class.isSuperclassOf(propertyType)) {
+            return Locale.forLanguageTag(resultSetValue.toString())
+        } else if (Enum::class.isSuperclassOf(propertyType)) {
+            return propertyType.functions.first { func -> func.name == "valueOf" }.call(resultSetValue)
+        } else if ("org.postgresql.util.PGobject" == resultSetValue.javaClass.name) {
+            val pgObject = resultSetValue as PGobject
+            return pgObject.value
+        }
+        return resultSetValue
     }
 
 
@@ -129,17 +213,17 @@ open class KotlinDefaultResultSetMapper(private val javaDefaultResultSetMapper: 
      * There may be multiple database column name mappings, for example property {@code address1} might map to both
      * {@code address1} and {@code address_1} column names.
      *
-     * @param parameterName
+     * @param propertyName
      *          the Data Class property name to massage
      * @return the column names that match the Data Class property name
      */
 
-    protected fun databaseColumnNamesForParameterName(parameterName: String): Set<String> {
+    protected fun databaseColumnNamesForParameterName(propertyName: String): Set<String> {
         val normalizedPropertyNames: MutableSet<String> = HashSet(2)
         // Converts camelCase to camel_case
         val camelCaseRegex = "([a-z])([A-Z]+)"
         val replacement = "$1_$2"
-        val normalizedPropertyName = parameterName.replace(camelCaseRegex.toRegex(), replacement).toLowerCase(normalizationLocale())
+        val normalizedPropertyName = propertyName.replace(camelCaseRegex.toRegex(), replacement).toLowerCase(normalizationLocale())
         normalizedPropertyNames.add(normalizedPropertyName)
         // Converts address1 to address_1
         val letterFollowedByNumberRegex = "(\\D)(\\d)"
@@ -166,4 +250,6 @@ open class KotlinDefaultResultSetMapper(private val javaDefaultResultSetMapper: 
             else -> obj
         }
     }
+
+
 }
