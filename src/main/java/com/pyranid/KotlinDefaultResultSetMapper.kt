@@ -1,6 +1,5 @@
 package com.pyranid
 
-import org.postgresql.util.PGobject
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.sql.ResultSet
@@ -198,7 +197,7 @@ open class KotlinDefaultResultSetMapper(private val javaDefaultResultSetMapper: 
         } else if (Enum::class.isSuperclassOf(propertyType)) {
             return propertyType.functions.first { func -> func.name == "valueOf" }.call(resultSetValue)
         } else if ("org.postgresql.util.PGobject" == resultSetValue.javaClass.name) {
-            val pgObject = resultSetValue as PGobject
+            val pgObject = resultSetValue as org.postgresql.util.PGobject
             return pgObject.value
         }
         return resultSetValue
