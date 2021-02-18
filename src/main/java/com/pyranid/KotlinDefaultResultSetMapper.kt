@@ -14,6 +14,11 @@ import kotlin.reflect.full.functions
 import kotlin.reflect.full.isSuperclassOf
 import kotlin.reflect.full.primaryConstructor
 
+
+
+
+
+
 /**
  * @author Casey Watson
  * @since 1.0.16
@@ -54,7 +59,7 @@ open class KotlinDefaultResultSetMapper(private val javaDefaultResultSetMapper: 
     private val kotlinClassForJavaClass = ConcurrentHashMap<Class<out Any>, KClass<out Any>>()
 
     data class CtorParameters(val ctor: KFunction<Any>, val ctorParameters: List<ParameterMetadata>)
-    data class ParameterMetadata(val name: String, val parameter: KParameter, val paramaterType: KClass<*>)
+    data class ParameterMetadata(val name: String, val parameter: KParameter, val parameterType: KClass<*>)
 
 
     override fun <T : Any> map(resultSet: ResultSet, resultClass: Class<T>): T {
@@ -117,15 +122,15 @@ open class KotlinDefaultResultSetMapper(private val javaDefaultResultSetMapper: 
                             ?: throw DatabaseException("Unable to find columns for parameter name ${ctorParameter.name}")
                     return@map ctorParameter.parameter to columnLabelsToValues
                             .filter { columnLabelValues ->
-                                possibleColumnNamesForParameter.contains(columnLabelValues.key)
+                                possibleColumnNamesForParameter.contains(columnLabelValues.key) && columnLabelValues.value != null
                             }.map {
-                                convertResultSetValueToPropertyType(it.value, ctorParameter.paramaterType)
+                                convertResultSetValueToPropertyType(it.value!!, ctorParameter.parameterType)
                                         ?: throw DatabaseException("Property ${it.key} of ${resultClass} has a write " +
-                                                "method of type ${ctorParameter.paramaterType.simpleName}, " +
-                                                "but the ResultSet type ${it.value::class.simpleName} does not match. " +
+                                                "method of type ${ctorParameter.parameterType.simpleName}, " +
+                                                "but the ResultSet type ${it.value!!::class.simpleName} does not match. " +
                                                 "Consider creating your own ${KotlinDefaultResultSetMapper::class.simpleName} and " +
                                                 "overriding convertResultSetValueToPropertyType() to detect instances of " +
-                                                "${it.value::class.simpleName} and convert them to ${ctorParameter.paramaterType.simpleName}")
+                                                "${it.value!!::class.simpleName} and convert them to ${ctorParameter.parameterType.simpleName}")
                             }.firstOrNull()
 
                 }.filter {
@@ -133,7 +138,11 @@ open class KotlinDefaultResultSetMapper(private val javaDefaultResultSetMapper: 
                 }
                 .toMap()
 
-        return ctor.callBy(callByArgs) as T
+        try {
+            return ctor.callBy(callByArgs) as T
+        } catch (e :Exception){
+            throw DatabaseException("Unable to instantiate class ${resultClass.simpleName} with parameters and arguments ${callByArgs.map{it.key.name to it.value}.joinToString(separator = ", "){"${it.first}: ${it.second}"}}", e)
+        }
     }
 
 
@@ -150,7 +159,6 @@ open class KotlinDefaultResultSetMapper(private val javaDefaultResultSetMapper: 
      * @return a representation of {@code resultSetValue} that is of type {@code propertyType}
      */
     protected fun convertResultSetValueToPropertyType(resultSetValue: Any, propertyType: KClass<*>): Any? {
-
 
         if (resultSetValue is BigDecimal) {
             val bigDecimal = resultSetValue
@@ -229,7 +237,6 @@ open class KotlinDefaultResultSetMapper(private val javaDefaultResultSetMapper: 
         val normalizedNumberPropertyName = normalizedPropertyName.replace(letterFollowedByNumberRegex.toRegex(), replacement)
         normalizedPropertyNames.add(normalizedNumberPropertyName)
         return normalizedPropertyNames.toSet()
-
     }
 
     protected fun normalizeColumnLabel(columnLabel: String): String {
@@ -240,8 +247,8 @@ open class KotlinDefaultResultSetMapper(private val javaDefaultResultSetMapper: 
         return Locale.ENGLISH
     }
 
-    protected fun mapResultSetValueToObject(resultSet: ResultSet, columnLabel: String): Any {
-        val obj = resultSet.getObject(columnLabel)
+    protected fun mapResultSetValueToObject(resultSet: ResultSet, columnLabel: String): Any? {
+        val obj = resultSet.getObject(columnLabel) ?: return null
         return when (obj) {
             is java.sql.Timestamp -> resultSet.getTimestamp(columnLabel, timeZoneCalendar)
             is java.sql.Date -> resultSet.getDate(columnLabel, timeZoneCalendar)
@@ -249,6 +256,4 @@ open class KotlinDefaultResultSetMapper(private val javaDefaultResultSetMapper: 
             else -> obj
         }
     }
-
-
 }
