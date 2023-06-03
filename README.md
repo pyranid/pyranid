@@ -23,13 +23,13 @@ A minimalist JDBC interface for modern Java applications.
 <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid</artifactId>
-  <version>1.0.17</version>
+  <version>1.1.0-SNAPSHOT</version>
 </dependency>
 ```
 
 #### Direct Download
 
-If you don't use Maven, you can drop [pyranid-1.0.17.jar](http://central.maven.org/maven2/com/pyranid/pyranid/1.0.17/pyranid-1.0.17.jar) directly into your project.  No other dependencies are required.
+If you don't use Maven, you can drop [pyranid-1.1.0-SNAPSHOT.jar](https://repo1.maven.org/maven2/com/pyranid/pyranid/1.1.0-SNAPSHOT/pyranid-1.1.0-SNAPSHOT.jar) directly into your project.  No other dependencies are required.
 
 ## Configuration
 
@@ -672,7 +672,7 @@ Note: ```SLF4JBridgeHandler``` can impact performance.  You can mitigate that wi
 
 ## About
 
-Pyranid was created by [Mark Allen](https://www.revetkn.com) and sponsored by [Transmogrify, LLC.](https://www.xmog.com)
+Pyranid was created by [Mark Allen](https://www.revetware.com) and sponsored by [Revetware LLC](https://www.xmog.com).
 
 Development was aided by
 
