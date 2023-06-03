@@ -33,7 +33,7 @@ import java.util.UUID;
 /**
  * Basic implementation of {@link PreparedStatementBinder}.
  * 
- * @author <a href="http://revetkn.com">Mark Allen</a>
+ * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
 public class DefaultPreparedStatementBinder implements PreparedStatementBinder {

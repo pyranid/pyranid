@@ -45,7 +45,7 @@ import java.lang.annotation.Target;
  * database.queryForObject(&quot;SELECT systok FROM example&quot;, Example.class);
  * </pre>
  * 
- * @author <a href="http://revetkn.com">Mark Allen</a>
+ * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
 @Target(ElementType.FIELD)

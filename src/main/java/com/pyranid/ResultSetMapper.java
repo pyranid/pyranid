@@ -21,7 +21,7 @@ import java.sql.ResultSet;
 /**
  * Contract for mapping a {@link ResultSet} row to a different type.
  * 
- * @author <a href="http://revetkn.com">Mark Allen</a>
+ * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
 public interface ResultSetMapper {

@@ -32,7 +32,7 @@ import static java.util.Objects.requireNonNull;
  * <p>
  * This is used in conjunction with {@link StatementLog} - for example, you might want to mark a query as "hot", or should not be logged, or ...
  *
- * @author <a href="http://revetkn.com">Mark Allen</a>
+ * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.11
  */
 @Immutable

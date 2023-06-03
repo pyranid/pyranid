@@ -21,7 +21,7 @@ import static java.lang.String.format;
 /**
  * Basic implementation of {@link InstanceProvider} which uses {@link Class#newInstance()}.
  * 
- * @author <a href="http://revetkn.com">Mark Allen</a>
+ * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
 public class DefaultInstanceProvider implements InstanceProvider {

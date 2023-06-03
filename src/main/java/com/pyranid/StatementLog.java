@@ -36,7 +36,7 @@ import java.util.Optional;
  * StatementLog statementLog = StatementLog.forSql(&quot;SELECT * FROM car WHERE id=?&quot;).parameters(singletonList(123)).build();
  * </pre>
  *
- * @author <a href="http://revetkn.com">Mark Allen</a>
+ * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
 public class StatementLog implements Serializable {
@@ -223,7 +223,7 @@ public class StatementLog implements Serializable {
    * StatementLog statementLog = builder.build();
    * </pre>
    *
-   * @author <a href="http://revetkn.com">Mark Allen</a>
+   * @author <a href="https://www.revetware.com">Mark Allen</a>
    * @since 1.0.0
    */
   public static class Builder {

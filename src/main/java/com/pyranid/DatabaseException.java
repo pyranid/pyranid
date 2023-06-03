@@ -30,7 +30,7 @@ import static java.lang.String.format;
  * If the {@code cause} of this exception is a {@link SQLException}, the {@link #errorCode()} and {@link #sqlState()}
  * accessors are shorthand for retrieving the corresponding {@link SQLException} values.
  *
- * @author <a href="http://revetkn.com">Mark Allen</a>
+ * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
 public class DatabaseException extends RuntimeException {

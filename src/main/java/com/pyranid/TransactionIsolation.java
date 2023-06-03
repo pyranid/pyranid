@@ -22,7 +22,7 @@ import java.util.Optional;
 /**
  * Strategies for database locking during transactional operations.
  * 
- * @author <a href="http://revetkn.com">Mark Allen</a>
+ * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
 public enum TransactionIsolation {

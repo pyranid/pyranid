@@ -29,7 +29,7 @@ import java.util.logging.Logger;
  * Basic implementation of {@link StatementLogger} which logs to <code>{@value #LOGGER_NAME}</code> at
  * {@link Level#FINE}.
  * 
- * @author <a href="http://revetkn.com">Mark Allen</a>
+ * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
 public class DefaultStatementLogger implements StatementLogger {

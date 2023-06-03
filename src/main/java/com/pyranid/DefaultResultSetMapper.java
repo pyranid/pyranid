@@ -59,7 +59,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Basic implementation of {@link ResultSetMapper}.
  * 
- * @author <a href="http://revetkn.com">Mark Allen</a>
+ * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
 public class DefaultResultSetMapper implements ResultSetMapper {
@@ -579,7 +579,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
   /**
    * The result of attempting to map a {@link ResultSet} to a "standard" type like primitive or {@link UUID}.
    * 
-   * @author <a href="http://revetkn.com">Mark Allen</a>
+   * @author <a href="https://www.revetware.com">Mark Allen</a>
    * @since 1.0.0
    */
   protected static class StandardTypeResult<T> {

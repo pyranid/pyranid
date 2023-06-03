@@ -19,7 +19,7 @@ package com.pyranid;
 /**
  * Contract for handling database statements log events.
  * 
- * @author <a href="http://revetkn.com">Mark Allen</a>
+ * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
 public interface StatementLogger {

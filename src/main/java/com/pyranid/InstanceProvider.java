@@ -24,7 +24,7 @@ package com.pyranid;
  * Implementors are suggested to employ application-specific strategies, such as having a DI container handle instance
  * creation.
  * 
- * @author <a href="http://revetkn.com">Mark Allen</a>
+ * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
 public interface InstanceProvider {
