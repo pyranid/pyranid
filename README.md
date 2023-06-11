@@ -11,7 +11,6 @@ A minimalist JDBC interface for modern Java applications.
 * Threadsafe
 * No dependencies
 * DI-friendly
-* Java 8+
 
 #### License
 
@@ -19,11 +18,23 @@ A minimalist JDBC interface for modern Java applications.
 
 #### Maven Installation
 
+Java 16+
+
 ```xml
 <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid</artifactId>
   <version>1.1.0-SNAPSHOT</version>
+</dependency>
+```
+
+Java 8+ (Legacy; only critical fixes will be applied)
+
+```xml
+<dependency>
+  <groupId>com.pyranid</groupId>
+  <artifactId>pyranid</artifactId>
+  <version>1.0.17</version>
 </dependency>
 ```
 
