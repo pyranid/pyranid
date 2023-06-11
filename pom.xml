@@ -56,8 +56,8 @@
 				<version>3.2</version>
 				<configuration>
 					<fork>true</fork>
-					<source>1.8</source>
-					<target>1.8</target>
+					<source>16</source>
+					<target>16</target>
 					<compilerArgument>-parameters</compilerArgument>
 				</configuration>
 			</plugin>
@@ -76,7 +76,7 @@
 			</plugin>
 			<plugin>
 				<artifactId>maven-javadoc-plugin</artifactId>
-				<version>3.4.0</version>
+				<version>3.5.0</version>
 				<configuration>
 					<quiet>true</quiet>
 					<notimestamp>true</notimestamp>
