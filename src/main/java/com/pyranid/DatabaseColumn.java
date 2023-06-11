@@ -48,7 +48,7 @@ import java.lang.annotation.Target;
  * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
-@Target(ElementType.FIELD)
+@Target({ElementType.FIELD, ElementType.RECORD_COMPONENT})
 @Retention(RetentionPolicy.RUNTIME)
 public @interface DatabaseColumn {
 	String[] value();

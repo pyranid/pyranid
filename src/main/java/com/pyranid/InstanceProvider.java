@@ -16,6 +16,12 @@
 
 package com.pyranid;
 
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
+import java.util.Arrays;
+
+import static java.util.Objects.requireNonNull;
+
 /**
  * Contract for a factory that creates instances given a type.
  * <p>
@@ -38,4 +44,34 @@ public interface InstanceProvider {
 	 * @return an instance of the given {@code instanceClass}
 	 */
 	<T> T provide(Class<T> instanceClass);
+
+	/**
+	 * Provides an instance of the given {@code recordClass}.
+	 * <p>
+	 * Whether the instance is new every time or shared/reused is implementation-dependent.
+	 *
+	 * @param <T>         instance type token
+	 * @param recordClass the type of instance to create (must be a record)
+	 * @param initargs    values used to construct the record instance
+	 * @return an instance of the given {@code recordClass}
+	 * @since 1.1.0
+	 */
+	default <T extends Record> T provideRecord(Class<T> recordClass, Object... initargs) {
+		requireNonNull(recordClass);
+
+		try {
+			// Find the canonical constructor for the record.
+			// Hat tip to https://stackoverflow.com/a/67127067
+			Class<?>[] componentTypes = Arrays.stream(recordClass.getRecordComponents())
+					.map(rc -> rc.getType())
+					.toArray(Class<?>[]::new);
+
+			Constructor<T> constructor = recordClass.getDeclaredConstructor(componentTypes);
+			return constructor.newInstance(initargs);
+		} catch (NoSuchMethodException | InstantiationException | IllegalAccessException |
+						 IllegalArgumentException | InvocationTargetException e) {
+			throw new DatabaseException(String.format("Unable to instantiate Record type %s with args %s", recordClass,
+					initargs == null ? "[none]" : Arrays.asList(initargs)), e);
+		}
+	}
 }
