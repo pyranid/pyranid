@@ -230,7 +230,7 @@ open class KotlinDefaultResultSetMapper(private val javaDefaultResultSetMapper: 
         // Converts camelCase to camel_case
         val camelCaseRegex = "([a-z])([A-Z]+)"
         val replacement = "$1_$2"
-        val normalizedPropertyName = propertyName.replace(camelCaseRegex.toRegex(), replacement).toLowerCase(normalizationLocale())
+        val normalizedPropertyName = propertyName.replace(camelCaseRegex.toRegex(), replacement).lowercase(normalizationLocale())
         normalizedPropertyNames.add(normalizedPropertyName)
         // Converts address1 to address_1
         val letterFollowedByNumberRegex = "(\\D)(\\d)"
@@ -240,7 +240,7 @@ open class KotlinDefaultResultSetMapper(private val javaDefaultResultSetMapper: 
     }
 
     protected fun normalizeColumnLabel(columnLabel: String): String {
-        return columnLabel.toLowerCase(normalizationLocale())
+        return columnLabel.lowercase(normalizationLocale())
     }
 
     protected fun normalizationLocale(): Locale {
