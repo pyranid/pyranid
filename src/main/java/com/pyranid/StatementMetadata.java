@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2018 Transmogrify LLC.
+ * Copyright 2015-2022 Transmogrify LLC, 2022-2023 Revetware LLC.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,94 +37,94 @@ import static java.util.Objects.requireNonNull;
  */
 @Immutable
 public class StatementMetadata {
-  @Nonnull
-  private final Map<String, Object> metadata;
+	@Nonnull
+	private final Map<String, Object> metadata;
 
-  public StatementMetadata() {
-    this(new Builder());
-  }
+	public StatementMetadata() {
+		this(new Builder());
+	}
 
-  private StatementMetadata(@Nonnull Builder builder) {
-    requireNonNull(builder);
-    this.metadata = Collections.unmodifiableMap(new HashMap<>(builder.getMetadata()));
-  }
+	private StatementMetadata(@Nonnull Builder builder) {
+		requireNonNull(builder);
+		this.metadata = Collections.unmodifiableMap(new HashMap<>(builder.getMetadata()));
+	}
 
-  @Nonnull
-  public static StatementMetadata with(@Nonnull String key, @Nonnull Object value) {
-    requireNonNull(key);
-    requireNonNull(value);
-    return new Builder().add(key, value).build();
-  }
+	@Nonnull
+	public static StatementMetadata with(@Nonnull String key, @Nonnull Object value) {
+		requireNonNull(key);
+		requireNonNull(value);
+		return new Builder().add(key, value).build();
+	}
 
-  @Nonnull
-  public Optional<Object> get(@Nonnull String key) {
-    requireNonNull(key);
-    return Optional.ofNullable(getMetadata().get(key));
-  }
+	@Nonnull
+	public Optional<Object> get(@Nonnull String key) {
+		requireNonNull(key);
+		return Optional.ofNullable(getMetadata().get(key));
+	}
 
-  @Nonnull
-  public Map<String, Object> asMap() {
-    return getMetadata();
-  }
+	@Nonnull
+	public Map<String, Object> asMap() {
+		return getMetadata();
+	}
 
-  @Override
-  public String toString() {
-    return format("%s{metadata=%s}", getClass().getSimpleName(), getMetadata());
-  }
+	@Override
+	public String toString() {
+		return format("%s{metadata=%s}", getClass().getSimpleName(), getMetadata());
+	}
 
-  @Override
-  public boolean equals(Object object) {
-    if (this == object)
-      return true;
+	@Override
+	public boolean equals(Object object) {
+		if (this == object)
+			return true;
 
-    if (!(object instanceof StatementMetadata))
-      return false;
+		if (!(object instanceof StatementMetadata))
+			return false;
 
-    StatementMetadata statementMetadata = (StatementMetadata) object;
+		StatementMetadata statementMetadata = (StatementMetadata) object;
 
-    return Objects.equals(getMetadata(), statementMetadata.getMetadata());
-  }
+		return Objects.equals(getMetadata(), statementMetadata.getMetadata());
+	}
 
-  @Override
-  public int hashCode() {
-    return Objects.hash(getMetadata());
-  }
+	@Override
+	public int hashCode() {
+		return Objects.hash(getMetadata());
+	}
 
-  @Nonnull
-  private Map<String, Object> getMetadata() {
-    return metadata;
-  }
+	@Nonnull
+	private Map<String, Object> getMetadata() {
+		return metadata;
+	}
 
-  @NotThreadSafe
-  public static class Builder {
-    @Nonnull
-    private final Map<String, Object> metadata;
+	@NotThreadSafe
+	public static class Builder {
+		@Nonnull
+		private final Map<String, Object> metadata;
 
-    public Builder() {
-      this.metadata = new HashMap<>();
-    }
+		public Builder() {
+			this.metadata = new HashMap<>();
+		}
 
-    public Builder add(@Nonnull String key, @Nonnull Object value) {
-      requireNonNull(key);
-      requireNonNull(value);
-      getMetadata().put(key, value);
-      return this;
-    }
+		public Builder add(@Nonnull String key, @Nonnull Object value) {
+			requireNonNull(key);
+			requireNonNull(value);
+			getMetadata().put(key, value);
+			return this;
+		}
 
-    public Builder remove(@Nonnull String key) {
-      requireNonNull(key);
-      getMetadata().remove(key);
-      return this;
-    }
+		public Builder remove(@Nonnull String key) {
+			requireNonNull(key);
+			getMetadata().remove(key);
+			return this;
+		}
 
-    @Nonnull
-    public StatementMetadata build() {
-      return new StatementMetadata(this);
-    }
+		@Nonnull
+		public StatementMetadata build() {
+			return new StatementMetadata(this);
+		}
 
-    @Nonnull
-    private Map<String, Object> getMetadata() {
-      return metadata;
-    }
-  }
+		@Nonnull
+		private Map<String, Object> getMetadata() {
+			return metadata;
+		}
+	}
 }

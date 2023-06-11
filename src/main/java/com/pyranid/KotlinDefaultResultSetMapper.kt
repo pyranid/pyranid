@@ -15,10 +15,6 @@ import kotlin.reflect.full.isSuperclassOf
 import kotlin.reflect.full.primaryConstructor
 
 
-
-
-
-
 /**
  * @author Casey Watson
  * @since 1.0.16
@@ -35,10 +31,12 @@ import kotlin.reflect.full.primaryConstructor
  *          the timezone to use when working with {@link java.sql.Timestamp} and similar values
  * @since 1.0.16
  */
-open class KotlinDefaultResultSetMapper(private val javaDefaultResultSetMapper: ResultSetMapper,
-                                        private val databaseType: DatabaseType,
-                                        private val instanceProvider: InstanceProvider,
-                                        private val timeZone: ZoneId) : ResultSetMapper {
+open class KotlinDefaultResultSetMapper(
+    private val javaDefaultResultSetMapper: ResultSetMapper,
+    private val databaseType: DatabaseType,
+    private val instanceProvider: InstanceProvider,
+    private val timeZone: ZoneId
+) : ResultSetMapper {
 
     /**
      * Creates a {@code ResultSetMapper} for the given {@code databaseType} and {@code instanceProvider}.
@@ -50,7 +48,11 @@ open class KotlinDefaultResultSetMapper(private val javaDefaultResultSetMapper: 
      *          instance-creation factory, used to instantiate resultset row objects as needed
      * @since 1.0.16
      */
-    constructor(javaDefaultResultSetMapper: ResultSetMapper, databaseType: DatabaseType, instanceProvider: InstanceProvider)
+    constructor(
+        javaDefaultResultSetMapper: ResultSetMapper,
+        databaseType: DatabaseType,
+        instanceProvider: InstanceProvider
+    )
             : this(javaDefaultResultSetMapper, databaseType, instanceProvider, ZoneId.systemDefault())
 
     private val timeZoneCalendar = Calendar.getInstance(TimeZone.getTimeZone(timeZone))
@@ -96,52 +98,61 @@ open class KotlinDefaultResultSetMapper(private val javaDefaultResultSetMapper: 
         val columnLabels = (1..metadata.columnCount).map { metadata.getColumnLabel(it) }
 
         val columnLabelsToValues = columnLabels
-                .map { normalizeColumnLabel(it) to mapResultSetValueToObject(resultSet, it) }
-                .toMap()
+            .map { normalizeColumnLabel(it) to mapResultSetValueToObject(resultSet, it) }
+            .toMap()
 
         val (ctor, ctorParameters) =
-                parameterNamesForDataClassCache.computeIfAbsent(resultClass) { dataClass ->
-                    val ctor = dataClass.primaryConstructor
-                            ?: throw DatabaseException("Missing primary constructor for class ${resultClass.simpleName}")
-                    val parameterNames: List<ParameterMetadata> = ctor.parameters.map { parameter ->
-                        if (parameter.name == null) {
-                            throw DatabaseException("Parameter was not readable for ${dataClass.simpleName}. Examples of nameless parameters include this instance for member functions, extension receiver for extension functions or properties, parameters of Java methods compiled without the debug information, and others.")
-                        }
-                        return@map ParameterMetadata(parameter.name!!, parameter, parameter.type.classifier as KClass<*>)
-                    }.toList()
-                    return@computeIfAbsent CtorParameters(ctor, parameterNames)
-                }
+            parameterNamesForDataClassCache.computeIfAbsent(resultClass) { dataClass ->
+                val ctor = dataClass.primaryConstructor
+                    ?: throw DatabaseException("Missing primary constructor for class ${resultClass.simpleName}")
+                val parameterNames: List<ParameterMetadata> = ctor.parameters.map { parameter ->
+                    if (parameter.name == null) {
+                        throw DatabaseException("Parameter was not readable for ${dataClass.simpleName}. Examples of nameless parameters include this instance for member functions, extension receiver for extension functions or properties, parameters of Java methods compiled without the debug information, and others.")
+                    }
+                    return@map ParameterMetadata(parameter.name!!, parameter, parameter.type.classifier as KClass<*>)
+                }.toList()
+                return@computeIfAbsent CtorParameters(ctor, parameterNames)
+            }
 
-        val columnNamesForParameters: Map<String, Set<String>> = columnNamesForParameterCache.computeIfAbsent(resultClass) {
-            ctorParameters.map { parameter -> parameter.name to databaseColumnNamesForParameterName(parameter.name) }.toMap()
-        }
+        val columnNamesForParameters: Map<String, Set<String>> =
+            columnNamesForParameterCache.computeIfAbsent(resultClass) {
+                ctorParameters.map { parameter -> parameter.name to databaseColumnNamesForParameterName(parameter.name) }
+                    .toMap()
+            }
 
         val callByArgs = ctorParameters
-                .map { ctorParameter ->
-                    val possibleColumnNamesForParameter: Set<String> = columnNamesForParameters[ctorParameter.name]
-                            ?: throw DatabaseException("Unable to find columns for parameter name ${ctorParameter.name}")
-                    return@map ctorParameter.parameter to columnLabelsToValues
-                            .filter { columnLabelValues ->
-                                possibleColumnNamesForParameter.contains(columnLabelValues.key) && columnLabelValues.value != null
-                            }.map {
-                                convertResultSetValueToPropertyType(it.value!!, ctorParameter.parameterType)
-                                        ?: throw DatabaseException("Property ${it.key} of ${resultClass} has a write " +
-                                                "method of type ${ctorParameter.parameterType.simpleName}, " +
-                                                "but the ResultSet type ${it.value!!::class.simpleName} does not match. " +
-                                                "Consider creating your own ${KotlinDefaultResultSetMapper::class.simpleName} and " +
-                                                "overriding convertResultSetValueToPropertyType() to detect instances of " +
-                                                "${it.value!!::class.simpleName} and convert them to ${ctorParameter.parameterType.simpleName}")
-                            }.firstOrNull()
+            .map { ctorParameter ->
+                val possibleColumnNamesForParameter: Set<String> = columnNamesForParameters[ctorParameter.name]
+                    ?: throw DatabaseException("Unable to find columns for parameter name ${ctorParameter.name}")
+                return@map ctorParameter.parameter to columnLabelsToValues
+                    .filter { columnLabelValues ->
+                        possibleColumnNamesForParameter.contains(columnLabelValues.key) && columnLabelValues.value != null
+                    }.map {
+                        convertResultSetValueToPropertyType(it.value!!, ctorParameter.parameterType)
+                            ?: throw DatabaseException(
+                                "Property ${it.key} of ${resultClass} has a write " +
+                                        "method of type ${ctorParameter.parameterType.simpleName}, " +
+                                        "but the ResultSet type ${it.value!!::class.simpleName} does not match. " +
+                                        "Consider creating your own ${KotlinDefaultResultSetMapper::class.simpleName} and " +
+                                        "overriding convertResultSetValueToPropertyType() to detect instances of " +
+                                        "${it.value!!::class.simpleName} and convert them to ${ctorParameter.parameterType.simpleName}"
+                            )
+                    }.firstOrNull()
 
-                }.filter {
-                    it.second != null
-                }
-                .toMap()
+            }.filter {
+                it.second != null
+            }
+            .toMap()
 
         try {
             return ctor.callBy(callByArgs) as T
-        } catch (e :Exception){
-            throw DatabaseException("Unable to instantiate class ${resultClass.simpleName} with parameters and arguments ${callByArgs.map{it.key.name to it.value}.joinToString(separator = ", "){"${it.first}: ${it.second}"}}", e)
+        } catch (e: Exception) {
+            throw DatabaseException(
+                "Unable to instantiate class ${resultClass.simpleName} with parameters and arguments ${
+                    callByArgs.map { it.key.name to it.value }
+                        .joinToString(separator = ", ") { "${it.first}: ${it.second}" }
+                }", e
+            )
         }
     }
 
@@ -193,7 +204,10 @@ open class KotlinDefaultResultSetMapper(private val javaDefaultResultSetMapper: 
             if (Date::class.isSuperclassOf(propertyType)) return date
             if (Instant::class.isSuperclassOf(propertyType)) return date.toInstant()
             if (LocalDate::class.isSuperclassOf(propertyType)) return date.toLocalDate()
-            if (LocalDateTime::class.isSuperclassOf(propertyType)) return LocalDateTime.ofInstant(date.toInstant(), timeZone)
+            if (LocalDateTime::class.isSuperclassOf(propertyType)) return LocalDateTime.ofInstant(
+                date.toInstant(),
+                timeZone
+            )
         } else if (resultSetValue is java.sql.Time) {
             if (LocalTime::class.isSuperclassOf(propertyType)) return resultSetValue.toLocalTime()
         } else if (ZoneId::class.isSuperclassOf(propertyType)) {
@@ -230,11 +244,13 @@ open class KotlinDefaultResultSetMapper(private val javaDefaultResultSetMapper: 
         // Converts camelCase to camel_case
         val camelCaseRegex = "([a-z])([A-Z]+)"
         val replacement = "$1_$2"
-        val normalizedPropertyName = propertyName.replace(camelCaseRegex.toRegex(), replacement).lowercase(normalizationLocale())
+        val normalizedPropertyName =
+            propertyName.replace(camelCaseRegex.toRegex(), replacement).lowercase(normalizationLocale())
         normalizedPropertyNames.add(normalizedPropertyName)
         // Converts address1 to address_1
         val letterFollowedByNumberRegex = "(\\D)(\\d)"
-        val normalizedNumberPropertyName = normalizedPropertyName.replace(letterFollowedByNumberRegex.toRegex(), replacement)
+        val normalizedNumberPropertyName =
+            normalizedPropertyName.replace(letterFollowedByNumberRegex.toRegex(), replacement)
         normalizedPropertyNames.add(normalizedNumberPropertyName)
         return normalizedPropertyNames.toSet()
     }

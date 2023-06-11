@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2018 Transmogrify LLC.
+ * Copyright 2015-2022 Transmogrify LLC, 2022-2023 Revetware LLC.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,21 +23,19 @@ package com.pyranid;
  * <p>
  * Implementors are suggested to employ application-specific strategies, such as having a DI container handle instance
  * creation.
- * 
+ *
  * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
 public interface InstanceProvider {
-  /**
-   * Provides an instance of the given {@code instanceClass}.
-   * <p>
-   * Whether the instance is new every time or shared/reused is implementation-dependent.
-   * 
-   * @param <T>
-   *          instance type token
-   * @param instanceClass
-   *          the type of instance to create
-   * @return an instance of the given {@code instanceClass}
-   */
-  <T> T provide(Class<T> instanceClass);
+	/**
+	 * Provides an instance of the given {@code instanceClass}.
+	 * <p>
+	 * Whether the instance is new every time or shared/reused is implementation-dependent.
+	 *
+	 * @param <T>           instance type token
+	 * @param instanceClass the type of instance to create
+	 * @return an instance of the given {@code instanceClass}
+	 */
+	<T> T provide(Class<T> instanceClass);
 }

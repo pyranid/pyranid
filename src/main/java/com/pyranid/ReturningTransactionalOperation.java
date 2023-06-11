@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2018 Transmogrify LLC.
+ * Copyright 2015-2022 Transmogrify LLC, 2022-2023 Revetware LLC.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,18 +20,17 @@ package com.pyranid;
  * Represents a transactional operation capable of returning a value.
  * <p>
  * See {@link TransactionalOperation} for a variant with a {@code void} return type.
- * 
+ *
  * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
 @FunctionalInterface
 public interface ReturningTransactionalOperation<T> {
-  /**
-   * Executes a transactional operation.
-   * 
-   * @return the result of execution, may be {@code null}
-   * @throws Throwable
-   *           if an error occurs while executing the transactional operation
-   */
-  T perform() throws Throwable;
+	/**
+	 * Executes a transactional operation.
+	 *
+	 * @return the result of execution, may be {@code null}
+	 * @throws Throwable if an error occurs while executing the transactional operation
+	 */
+	T perform() throws Throwable;
 }

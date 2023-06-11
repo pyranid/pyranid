@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2018 Transmogrify LLC.
+ * Copyright 2015-2022 Transmogrify LLC, 2022-2023 Revetware LLC.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,19 +18,18 @@ package com.pyranid;
 
 /**
  * Contract for handling database statements log events.
- * 
+ *
  * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
 public interface StatementLogger {
-  /**
-   * Performs a logging operation on the given {@code statementLog}.
-   * <p>
-   * Implementors might choose to no-op, write to stdout or a logging framework, send alerts about slow queries, and so
-   * on.
-   * 
-   * @param statementLog
-   *          The event to log
-   */
-  void log(StatementLog statementLog);
+	/**
+	 * Performs a logging operation on the given {@code statementLog}.
+	 * <p>
+	 * Implementors might choose to no-op, write to stdout or a logging framework, send alerts about slow queries, and so
+	 * on.
+	 *
+	 * @param statementLog The event to log
+	 */
+	void log(StatementLog statementLog);
 }

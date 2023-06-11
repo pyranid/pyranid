@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2018 Transmogrify LLC.
+ * Copyright 2015-2022 Transmogrify LLC, 2022-2023 Revetware LLC.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,19 +20,19 @@ import static java.lang.String.format;
 
 /**
  * Basic implementation of {@link InstanceProvider} which uses {@link Class#newInstance()}.
- * 
+ *
  * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
 public class DefaultInstanceProvider implements InstanceProvider {
-  @Override
-  public <T> T provide(Class<T> instanceClass) {
-    try {
-      return instanceClass.newInstance();
-    } catch (Exception e) {
-      throw new RuntimeException(format(
-        "Unable to create an instance of %s. Please verify that %s has a public no-argument constructor",
-        instanceClass, instanceClass.getSimpleName()), e);
-    }
-  }
+	@Override
+	public <T> T provide(Class<T> instanceClass) {
+		try {
+			return instanceClass.newInstance();
+		} catch (Exception e) {
+			throw new RuntimeException(format(
+					"Unable to create an instance of %s. Please verify that %s has a public no-argument constructor",
+					instanceClass, instanceClass.getSimpleName()), e);
+		}
+	}
 }

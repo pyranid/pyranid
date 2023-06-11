@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2018 Transmogrify LLC.
+ * Copyright 2015-2022 Transmogrify LLC, 2022-2023 Revetware LLC.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,29 +27,29 @@ import java.lang.annotation.Target;
  * Useful in situations where column names are ugly, inconsistent, or do not map well to camel-case Java property names.
  * <p>
  * For example:
- * 
+ *
  * <pre>
  * class Example {
  *   &#064;DatabaseColumn({ &quot;systok&quot;, &quot;sys_tok&quot; })
  *   UUID systemToken;
- * 
+ *
  *   UUID getSystemToken() {
  *     return systemToken;
  *   }
- * 
+ *
  *   void setSystemToken(UUID systemToken) {
  *     this.systemToken = systemToken;
  *   }
  * }
- * 
+ *
  * database.queryForObject(&quot;SELECT systok FROM example&quot;, Example.class);
  * </pre>
- * 
+ *
  * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
 @Target(ElementType.FIELD)
 @Retention(RetentionPolicy.RUNTIME)
 public @interface DatabaseColumn {
-  String[] value();
+	String[] value();
 }

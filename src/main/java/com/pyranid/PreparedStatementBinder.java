@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2018 Transmogrify LLC.
+ * Copyright 2015-2022 Transmogrify LLC, 2022-2023 Revetware LLC.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,20 +21,17 @@ import java.util.List;
 
 /**
  * Contract for binding parameters to SQL prepared statements.
- * 
+ *
  * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
 public interface PreparedStatementBinder {
-  /**
-   * Binds parameters to a SQL prepared statement.
-   * 
-   * @param preparedStatement
-   *          the prepared statement to bind to
-   * @param parameters
-   *          the parameters to bind
-   * @throws DatabaseException
-   *           if an error occurs during binding
-   */
-  void bind(PreparedStatement preparedStatement, List<Object> parameters);
+	/**
+	 * Binds parameters to a SQL prepared statement.
+	 *
+	 * @param preparedStatement the prepared statement to bind to
+	 * @param parameters        the parameters to bind
+	 * @throws DatabaseException if an error occurs during binding
+	 */
+	void bind(PreparedStatement preparedStatement, List<Object> parameters);
 }
