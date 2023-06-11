@@ -2,11 +2,11 @@
 
 #### What Is It?
 
-A minimalist JDBC interface for modern Java applications.
+A minimalist JDBC interface for modern Java applications, powering production systems since 2015.
 
 #### Design Goals
 
-* Simple
+* Small codebase
 * Customizable
 * Threadsafe
 * No dependencies
@@ -449,19 +449,16 @@ car = database.queryForObject("SELECT some_id AS car_id, some_color AS color FRO
 
 * Store Postgres JSONB data using a SQL cast of `String`, e.g. `CAST(? AS JSONB)`. Retrieve JSONB data using `String`
 
-#### Kotlin support
+#### Kotlin Types
 
-##### Data class
+##### Data Class
 
 Kotlin data class result set mapping is possible through the primary constructor of the data class.
 
-Nullable and non null columns are supported.
-
-Default parameters are supported.
-
-Data classes support the same list of JDK types as above
-
-Extension functions for direct KClass support are provided
+* Nullable and non-null columns are supported.
+* Default parameters are supported.
+* Data classes support the same list of JDK types as above
+* Extension functions for direct `KClass` support are provided
 
 ```kotlin
 data class Car(carId: UUID, color: Color = Color.BLUE, ownerId: String?)
@@ -469,13 +466,12 @@ data class Car(carId: UUID, color: Color = Color.BLUE, ownerId: String?)
 val cars = database.queryForList("SELECT * FROM cars", Car::class)
 ```
 
-When query parameters are supplied as a list they must be flattened first, either as separate lists or one big list
+When query parameters are supplied as a list they must be flattened first, either as separate lists or one big list:
 
 ```kotlin
 val cars = database.queryForList("SELECT * FROM cars WHERE car_id IN (?, ?) LIMIT ?",
                                  Car::class,
                                  car1Id, car2Id, 10)
-
 
 val cars = database.queryForList("SELECT * FROM cars WHERE car_id IN (?, ?) LIMIT ?",
                                  Car::class,
