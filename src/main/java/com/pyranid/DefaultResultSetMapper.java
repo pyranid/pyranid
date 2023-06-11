@@ -164,7 +164,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		} else if (resultClass.isAssignableFrom(byte[].class)) {
 			value = resultSet.getBytes(1);
 		} else if (resultClass.isAssignableFrom(Enum.class)) {
-			value = (Object) Enum.valueOf((Class) resultClass, resultSet.getString(1));
+			value = Enum.valueOf((Class) resultClass, resultSet.getString(1));
 		} else if (resultClass.isAssignableFrom(UUID.class)) {
 			String string = resultSet.getString(1);
 
