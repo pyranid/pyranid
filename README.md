@@ -338,18 +338,22 @@ class EmployeeService {
     database.execute("UPDATE employee SET salary=salary + 10000");
     payrollSystem.startLengthyWarmupProcess();
 
-    // Schedule listener-firing for after the current transaction commits
-    database.currentTransaction().get().addPostCommitOperation(() ->
-      // Simplified implementation; real systems might need
-      // listener list synchronization, would schedule execution
-      // on an ExecutorService, etc.
-      for(EmployeeServiceListener listener : listeners)
-        listener.onSalaryChanged();
+    // Schedule listener-firing for after the current transaction successfully commits
+    database.currentTransaction().get().addPostTransactionOperation((transactionResult) ->
+      if(transactionResult == TransactionResult.COMMITTED) {  
+        // Simplified implementation; real systems might need
+        // listener list synchronization, would schedule execution
+        // on an ExecutorService, etc.
+        for(EmployeeServiceListener listener : listeners)
+          listener.onSalaryChanged();
+      }
     );
 
     // You can also schedule code to execute in event of a rollback
-    database.currentTransaction().get().addPostRollbackOperation(() ->
-      payrollSystem.cancelLengthyWarmupProcess();
+    database.currentTransaction().get().addPostTransactionOperation((transactionResult) ->
+      if(transactionResult == TransactionResult.ROLLED_BACK) {
+        payrollSystem.cancelLengthyWarmupProcess();
+      }
     );
   }
 

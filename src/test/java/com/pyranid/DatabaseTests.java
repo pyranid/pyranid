@@ -22,7 +22,9 @@ import org.junit.Test;
 
 import javax.annotation.Nonnull;
 import javax.sql.DataSource;
+import java.math.BigDecimal;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * @author <a href="https://www.revetware.com">Mark Allen</a>
@@ -67,6 +69,46 @@ public class DatabaseTests {
 		List<EmployeeClass> employeeClasses = database.queryForList("SELECT * FROM employee ORDER BY name", EmployeeClass.class);
 		Assert.assertEquals("Wrong number of employees", 2, employeeClasses.size());
 		Assert.assertEquals("Didn't detect DB column name override", "Employee One", employeeClasses.get(0).getDisplayName());
+	}
+
+	public record Product(Long productId, String name, BigDecimal price) {}
+
+	@Test
+	public void testTransactions() {
+		Database database = Database.forDataSource(createInMemoryDataSource()).build();
+
+		database.execute("CREATE TABLE product (product_id BIGINT, name VARCHAR(255) NOT NULL, price DECIMAL)");
+
+		AtomicBoolean ranPostTransactionOperation = new AtomicBoolean(false);
+
+		database.transaction(() -> {
+			database.currentTransaction().get().addPostTransactionOperation((transactionResult -> {
+				Assert.assertEquals("Wrong transaction result", TransactionResult.COMMITTED, transactionResult);
+				ranPostTransactionOperation.set(true);
+			}));
+
+			database.execute("INSERT INTO product VALUES (1, 'VR Goggles', 3500.99)");
+
+			Product product = database.queryForObject("""
+					SELECT * 
+					FROM product 
+					WHERE product_id=?
+					""", Product.class, 1L).orElse(null);
+
+			Assert.assertNotNull("Product failed to insert", product);
+
+			database.currentTransaction().get().rollback();
+
+			product = database.queryForObject("""
+					SELECT * 
+					FROM product 
+					WHERE product_id=?
+					""", Product.class, 1L).orElse(null);
+
+			Assert.assertNull("Product failed to roll back", product);
+		});
+
+		Assert.assertTrue("Did not run post-transaction operation", ranPostTransactionOperation.get());
 	}
 
 	@Nonnull

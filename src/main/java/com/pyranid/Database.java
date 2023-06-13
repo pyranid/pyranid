@@ -28,6 +28,7 @@ import java.util.Arrays;
 import java.util.Deque;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Consumer;
 import java.util.logging.Logger;
 
 import static java.lang.String.format;
@@ -139,13 +140,8 @@ public class Database {
 				}
 			} finally {
 				// Execute any user-supplied post-execution hooks
-				if (committed) {
-					for (Runnable postCommitOperation : transaction.postCommitOperations())
-						postCommitOperation.run();
-				} else if (rolledBack) {
-					for (Runnable postRollbackOperation : transaction.postRollbackOperations())
-						postRollbackOperation.run();
-				}
+				for (Consumer<TransactionResult> postTransactionOperation : transaction.postTransactionOperations())
+					postTransactionOperation.accept(committed ? TransactionResult.COMMITTED : TransactionResult.ROLLED_BACK);
 			}
 		}
 	}

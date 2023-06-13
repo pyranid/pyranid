@@ -25,6 +25,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import java.util.logging.Logger;
 
 import static java.lang.String.format;
@@ -40,8 +41,7 @@ public class Transaction {
 	private final long id = ID_GENERATOR.incrementAndGet();
 	private final Optional<DataSource> dataSource;
 	private final TransactionIsolation transactionIsolation;
-	private final List<Runnable> postCommitOperations;
-	private final List<Runnable> postRollbackOperations;
+	private final List<Consumer<TransactionResult>> postTransactionOperations;
 	private final Logger logger = Logger.getLogger(Transaction.class.getName());
 	private Optional<Connection> connection;
 	private boolean rollbackOnly;
@@ -53,8 +53,7 @@ public class Transaction {
 		this.connection = Optional.empty();
 		this.rollbackOnly = false;
 		this.initialAutoCommit = Optional.empty();
-		this.postCommitOperations = new ArrayList<>();
-		this.postRollbackOperations = new ArrayList<>();
+		this.postTransactionOperations = new ArrayList<>();
 	}
 
 	@Override
@@ -96,24 +95,14 @@ public class Transaction {
 		this.rollbackOnly = rollbackOnly;
 	}
 
-	public void addPostCommitOperation(Runnable postCommitOperation) {
-		requireNonNull(postCommitOperation);
-		postCommitOperations.add(postCommitOperation);
+	public void addPostTransactionOperation(Consumer<TransactionResult> postTransactionOperation) {
+		requireNonNull(postTransactionOperation);
+		postTransactionOperations.add(postTransactionOperation);
 	}
 
-	public boolean removePostCommitOperation(Runnable postCommitOperation) {
-		requireNonNull(postCommitOperation);
-		return postCommitOperations.remove(postCommitOperation);
-	}
-
-	public void addPostRollbackOperation(Runnable postRollbackOperation) {
-		requireNonNull(postRollbackOperation);
-		postRollbackOperations.add(postRollbackOperation);
-	}
-
-	public boolean removePostRollbackOperation(Runnable postRollbackOperation) {
-		requireNonNull(postRollbackOperation);
-		return postRollbackOperations.remove(postRollbackOperation);
+	public boolean removePostTransactionOperation(Consumer<TransactionResult> postTransactionOperation) {
+		requireNonNull(postTransactionOperation);
+		return postTransactionOperations.remove(postTransactionOperation);
 	}
 
 	long id() {
@@ -206,11 +195,7 @@ public class Transaction {
 		return transactionIsolation;
 	}
 
-	public List<Runnable> postCommitOperations() {
-		return Collections.unmodifiableList(postCommitOperations);
-	}
-
-	public List<Runnable> postRollbackOperations() {
-		return Collections.unmodifiableList(postRollbackOperations);
+	public List<Consumer<TransactionResult>> postTransactionOperations() {
+		return Collections.unmodifiableList(postTransactionOperations);
 	}
 }
