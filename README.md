@@ -81,7 +81,7 @@ Database customDatabase = Database.forDataSource(dataSource)
 
 #### Obtaining a DataSource
 
-Pyranid works with any ```DataSource``` implementation. If you have the freedom to choose, [HikariCP](https://github.com/brettwooldridge/HikariCP) is a great option.
+Pyranid works with any [`DataSource`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/javax/sql/DataSource.html) implementation. If you have the freedom to choose, [HikariCP](https://github.com/brettwooldridge/HikariCP) (application-level) and [PgBouncer](https://www.pgbouncer.org/) (global) are great options.
 
 ```java
 DataSource dataSource = new HikariDataSource(new HikariConfig() {{
@@ -94,7 +94,7 @@ DataSource dataSource = new HikariDataSource(new HikariConfig() {{
 
 ## Queries
 
-Suppose we have a custom ```Car``` like this:
+Suppose we have a custom `Car` like this:
 
 ```java
 enum Color { BLUE, RED }
@@ -178,8 +178,8 @@ long[] updateCounts = database.executeBatch("INSERT INTO car VALUES (?,?)", para
 #### Design goals
 
 * Minimal closure-based API: rollback if exception bubbles out, commit at end of closure otherwise
-* Standard data access APIs (```queryForObject()``` and friends) automatically participate in transactions
-* No ```Connection``` is fetched from the ```DataSource``` until the first data access operation occurs
+* Standard data access APIs (`queryForObject()` and friends) automatically participate in transactions
+* No [`Connection`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/java/sql/Connection.html) is fetched from the [`DataSource`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/javax/sql/DataSource.html) until the first data access operation occurs
 * Must be able to share a transaction across multiple threads
 
 #### Basics
@@ -236,7 +236,7 @@ database.transaction(() -> {
 
 #### Multi-threaded Transactions
 
-Internally, ```Database``` manages a threadlocal stack of ```Transaction``` instances to simplify single-threaded usage.  Should you need to share the same transaction across multiple threads, use the ```participate()``` API.
+Internally, Database` manages a threadlocal stack of `Transaction` instances to simplify single-threaded usage.  Should you need to share the same transaction across multiple threads, use the `participate()` API.
 
 ```java
 database.transaction(() -> {
@@ -382,11 +382,11 @@ class DatabaseTransactionFilter implements Filter {
 
 ## ResultSet Mapping
 
-The ```DefaultResultSetMapper``` supports user-defined types that follow the JavaBean getter/setter conventions, primitives, and some additional common JDK types.
+The `DefaultResultSetMapper` supports user-defined types that follow the JavaBean getter/setter conventions, primitives, and some additional common JDK types.
 
 #### User-defined Types
 
-By default, database column names are assumed to be separated by ```_``` characters and are mapped to their camel-case equivalent.  For example:
+By default, database column names are assumed to be separated by `_` characters and are mapped to their camel-case equivalent.  For example:
 
 ```java
 class Car {
@@ -429,33 +429,33 @@ car = database.queryForObject("SELECT some_id AS car_id, some_color AS color FRO
 
 #### Supported Primitives
 
-* ```Byte```
-* ```Short```
-* ```Integer```
-* ```Long```
-* ```Float```
-* ```Double```
-* ```Boolean```
-* ```Char```
-* ```String```
-* ```byte[]```
+* `Byte`
+* `Short`
+* `Integer`
+* `Long`
+* `Float`
+* `Double`
+* `Boolean`
+* `Char`
+* `String`
+* `byte[]`
 
 #### Supported JDK Types
 
-* ```Enum<E>```
-* ```UUID```
-* ```BigDecimal```
-* ```BigInteger```
-* ```Date```
-* ```Instant```
-* ```LocalDate``` for ```DATE```
-* ```LocalTime``` for ```TIME```
-* ```LocalDateTime``` for ```TIMESTAMP```
-* ```OffsetTime``` for ```TIME WITH TIMEZONE```
-* ```OffsetDateTime``` for ```TIMESTAMP WITH TIMEZONE```
-* ```ZoneId```
-* ```TimeZone```
-* ```Locale``` (IETF BCP 47 "language tag" format)
+* `Enum<E>`
+* `UUID`
+* `BigDecimal`
+* `BigInteger`
+* `Date`
+* `Instant`
+* `LocalDate` for `DATE`
+* `LocalTime` for `TIME`
+* `LocalDateTime` for `TIMESTAMP`
+* `OffsetTime` for `TIME WITH TIMEZONE`
+* `OffsetDateTime` for `TIMESTAMP WITH TIMEZONE`
+* `ZoneId`
+* `TimeZone`
+* `Locale` (IETF BCP 47 "language tag" format)
 
 #### Other Types
 
@@ -496,12 +496,12 @@ val cars = database.queryForList("SELECT * FROM cars WHERE car_id IN (?, ?) LIMI
 
 ## Error Handling
 
-In general, a runtime ```DatabaseException``` will be thrown when errors occur.  Often this will wrap the checked ```java.sql.SQLException```.
+In general, a runtime `DatabaseException` will be thrown when errors occur.  Often this will wrap the checked `java.sql.SQLException`.
 
-For convenience, ```DatabaseException``` exposes additional properties, which are only populated if provided by the underlying ```java.sql.SQLException```:
+For convenience, `DatabaseException` exposes additional properties, which are only populated if provided by the underlying `java.sql.SQLException`:
 
-* ```errorCode``` (optional)
-* ```sqlState``` (optional)
+* `errorCode` (optional)
+* `sqlState` (optional)
 
 For PostgreSQL, the following properties are also available:
 
@@ -555,7 +555,7 @@ database.transaction(() -> {
 
 #### StatementLogger
 
-You may customize your ```Database``` with a ```StatementLogger```.
+You may customize your `Database` with a `StatementLogger`.
 
 ```java
 Database database = Database.forDataSource(dataSource)
@@ -568,17 +568,17 @@ Database database = Database.forDataSource(dataSource)
   }).build();
 ```
 
-```StatementLog``` instances give you access to the following for each SQL statement executed.  All time values are in nanoseconds.
+`StatementLog` instances give you access to the following for each SQL statement executed.  All time values are in nanoseconds.
 
-* ```sql```
-* ```parameters```
-* ```statementMetadata``` (optional)
-* ```connectionAcquisitionTime``` (optional)
-* ```preparationTime``` (optional)
-* ```executionTime``` (optional)
-* ```resultSetMappingTime``` (optional)
-* ```batchSize``` (optional)
-* ```exception``` (optional)
+* `sql`
+* `parameters`
+* `statementMetadata` (optional)
+* `connectionAcquisitionTime` (optional)
+* `preparationTime` (optional)
+* `executionTime` (optional)
+* `resultSetMappingTime` (optional)
+* `batchSize` (optional)
+* `exception` (optional)
 
 Given this query:
 
@@ -586,7 +586,7 @@ Given this query:
 Optional<Car> car = database.queryForObject("SELECT * FROM car WHERE color = ?", Car.class, Color.BLUE);
 ```
 
-The log output for ```DefaultStatementLogger``` might look like:
+The log output for `DefaultStatementLogger` might look like:
 
 ```
 SELECT * FROM car WHERE color = ?
@@ -649,7 +649,7 @@ database.execute("UPDATE customer SET social_security_number=? WHERE customer_id
 
 #### java.util.Logging
 
-Pyranid uses ```java.util.Logging``` internally.  The usual way to hook into this is with [SLF4J](http://slf4j.org), which can funnel all the different logging mechanisms in your app through a single one, normally [Logback](http://logback.qos.ch).  Your Maven configuration might look like this:
+Pyranid uses `java.util.Logging` internally.  The usual way to hook into this is with [SLF4J](http://slf4j.org), which can funnel all the different logging mechanisms in your app through a single one, normally [Logback](http://logback.qos.ch).  Your Maven configuration might look like this:
 
 ```xml
 <dependency>
@@ -682,7 +682,7 @@ Don't forget to uninstall the bridge at shutdown time:
 SLF4JBridgeHandler.uninstall();
 ```
 
-Note: ```SLF4JBridgeHandler``` can impact performance.  You can mitigate that with Logback's ```LevelChangePropagator``` configuration option [as described here](http://logback.qos.ch/manual/configuration.html#LevelChangePropagator).
+Note: `SLF4JBridgeHandler` can impact performance.  You can mitigate that with Logback's `LevelChangePropagator` configuration option [as described here](http://logback.qos.ch/manual/configuration.html#LevelChangePropagator).
 
 ## TODOs
 
