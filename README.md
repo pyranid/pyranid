@@ -130,6 +130,18 @@ Optional<UUID> id = database.queryForObject("SELECT id FROM widget LIMIT 1", UUI
 List<BigDecimal> balances = database.queryForList("SELECT balance FROM account", BigDecimal.class);
 ```
 
+[Record](https://openjdk.org/jeps/395) types are also supported:
+
+```java
+record Employee(String name, @DatabaseColumn("email") String emailAddress) {}
+
+Optional<Employee> employee = database.queryForObject("""
+  SELECT *
+  FROM employee
+  WHERE email=?
+  """, Employee.class, "mark@revetware.com");
+```
+
 ## Statements
 
 ```java

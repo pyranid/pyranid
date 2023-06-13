@@ -29,8 +29,7 @@ import java.util.List;
  * @since 1.1.0
  */
 public class DatabaseTests {
-	public record Employee(@DatabaseColumn("name") String displayName, String emailAddress) {
-	}
+	public record Employee(@DatabaseColumn("name") String displayName, String emailAddress) {}
 
 	@Test
 	public void testRecords() {
