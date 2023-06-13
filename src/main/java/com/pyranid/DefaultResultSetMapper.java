@@ -16,16 +16,19 @@
 
 package com.pyranid;
 
+import javax.annotation.Nonnull;
 import java.beans.BeanInfo;
 import java.beans.Introspector;
 import java.beans.PropertyDescriptor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
+import java.lang.reflect.RecordComponent;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -105,6 +108,9 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 
 			if (standardTypeResult.isStandardType())
 				return standardTypeResult.value();
+
+			if (resultClass.isRecord())
+				return (T) mapResultSetToRecord(resultSet, (Class<? extends Record>) resultClass);
 
 			return mapResultSetToBean(resultSet, resultClass);
 		} catch (DatabaseException e) {
@@ -245,6 +251,51 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	/**
+	 * Attempts to map the current {@code resultSet} row to an instance of {@code resultClass}, which must be a
+	 * Record.
+	 * <p>
+	 * The {@code resultClass} instance will be created via {@link #instanceProvider()}.
+	 *
+	 * @param <T>         result instance type token
+	 * @param resultSet   provides raw row data to pull from
+	 * @param resultClass the type of instance to map to
+	 * @return the result of the mapping
+	 * @throws Exception if an error occurs during mapping
+	 */
+	protected <T extends Record> T mapResultSetToRecord(@Nonnull ResultSet resultSet,
+																											@Nonnull Class<T> resultClass) throws Exception {
+		requireNonNull(resultSet);
+		requireNonNull(resultClass);
+
+		RecordComponent[] recordComponents = resultClass.getRecordComponents();
+		Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(resultClass);
+		Map<String, Object> columnLabelsToValues = extractColumnLabelsToValues(resultSet);
+		Object[] args = new Object[recordComponents.length];
+
+		for (int i = 0; i < recordComponents.length; ++i) {
+			RecordComponent recordComponent = recordComponents[i];
+
+			String propertyName = recordComponent.getName();
+
+			// If there are any @DatabaseColumn annotations on this field, respect them
+			Set<String> potentialPropertyNames = columnLabelAliasesByPropertyName.get(propertyName);
+
+			// There were no @DatabaseColumn annotations, use the default naming strategy
+			if (potentialPropertyNames == null || potentialPropertyNames.size() == 0)
+				potentialPropertyNames = databaseColumnNamesForPropertyName(propertyName);
+
+			// Set the value for the Record ctor
+			for (String potentialPropertyName : potentialPropertyNames)
+				if (columnLabelsToValues.containsKey(potentialPropertyName))
+					args[i] = columnLabelsToValues.get(potentialPropertyName);
+		}
+
+		T record = instanceProvider().provideRecord(resultClass, args);
+
+		return record;
+	}
+
+	/**
 	 * Attempts to map the current {@code resultSet} row to an instance of {@code resultClass}, which should be a
 	 * JavaBean.
 	 * <p>
@@ -259,50 +310,8 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	protected <T> T mapResultSetToBean(ResultSet resultSet, Class<T> resultClass) throws Exception {
 		T object = instanceProvider().provide(resultClass);
 		BeanInfo beanInfo = Introspector.getBeanInfo(resultClass);
-		ResultSetMetaData resultSetMetaData = resultSet.getMetaData();
-		int columnCount = resultSetMetaData.getColumnCount();
-		Set<String> columnLabels = new HashSet<>(columnCount);
-
-		for (int i = 0; i < columnCount; i++)
-			columnLabels.add(resultSetMetaData.getColumnLabel(i + 1));
-
-		Map<String, Object> columnLabelsToValues = new HashMap<>(columnLabels.size());
-
-		for (String columnLabel : columnLabels) {
-			Object resultSetValue = resultSet.getObject(columnLabel);
-
-			// If DB gives us time-related values, re-pull using specific RS methods so we can apply a timezone
-			if (resultSetValue != null) {
-				if (resultSetValue instanceof java.sql.Timestamp) {
-					resultSetValue = resultSet.getTimestamp(columnLabel, getTimeZoneCalendar());
-				} else if (resultSetValue instanceof java.sql.Date) {
-					resultSetValue = resultSet.getDate(columnLabel, getTimeZoneCalendar());
-				} else if (resultSetValue instanceof java.sql.Time) {
-					resultSetValue = resultSet.getTime(columnLabel, getTimeZoneCalendar());
-				}
-			}
-
-			columnLabelsToValues.put(normalizeColumnLabel(columnLabel), resultSetValue);
-		}
-
-		Map<String, Set<String>> columnLabelAliasesByPropertyName =
-				columnLabelAliasesByPropertyNameCache.computeIfAbsent(
-						resultClass,
-						(key) -> {
-							Map<String, Set<String>> cachedColumnLabelAliasesByPropertyName = new HashMap<>();
-
-							for (Field field : resultClass.getDeclaredFields()) {
-								DatabaseColumn databaseColumn = field.getAnnotation(DatabaseColumn.class);
-
-								if (databaseColumn != null)
-									cachedColumnLabelAliasesByPropertyName.put(
-											field.getName(),
-											unmodifiableSet(asList(databaseColumn.value()).stream()
-													.map(columnLabel -> normalizeColumnLabel(columnLabel)).collect(toSet())));
-							}
-
-							return unmodifiableMap(cachedColumnLabelAliasesByPropertyName);
-						});
+		Map<String, Object> columnLabelsToValues = extractColumnLabelsToValues(resultSet);
+		Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(resultClass);
 
 		for (PropertyDescriptor propertyDescriptor : beanInfo.getPropertyDescriptors()) {
 			Method writeMethod = propertyDescriptor.getWriteMethod();
@@ -355,6 +364,62 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		return object;
+	}
+
+	@Nonnull
+	protected Map<String, Set<String>> determineColumnLabelAliasesByPropertyName(@Nonnull Class<?> resultClass) {
+		requireNonNull(resultClass);
+
+		return columnLabelAliasesByPropertyNameCache.computeIfAbsent(
+				resultClass,
+				(key) -> {
+					Map<String, Set<String>> cachedColumnLabelAliasesByPropertyName = new HashMap<>();
+
+					for (Field field : resultClass.getDeclaredFields()) {
+						DatabaseColumn databaseColumn = field.getAnnotation(DatabaseColumn.class);
+
+						if (databaseColumn != null)
+							cachedColumnLabelAliasesByPropertyName.put(
+									field.getName(),
+									unmodifiableSet(asList(databaseColumn.value()).stream()
+											.map(columnLabel -> normalizeColumnLabel(columnLabel)).collect(toSet())));
+					}
+
+					return unmodifiableMap(cachedColumnLabelAliasesByPropertyName);
+				});
+	}
+
+	@Nonnull
+	protected Map<String, Object> extractColumnLabelsToValues(@Nonnull ResultSet resultSet) throws SQLException {
+		requireNonNull(resultSet);
+
+		ResultSetMetaData resultSetMetaData = resultSet.getMetaData();
+		int columnCount = resultSetMetaData.getColumnCount();
+		Set<String> columnLabels = new HashSet<>(columnCount);
+
+		for (int i = 0; i < columnCount; i++)
+			columnLabels.add(resultSetMetaData.getColumnLabel(i + 1));
+
+		Map<String, Object> columnLabelsToValues = new HashMap<>(columnLabels.size());
+
+		for (String columnLabel : columnLabels) {
+			Object resultSetValue = resultSet.getObject(columnLabel);
+
+			// If DB gives us time-related values, re-pull using specific RS methods so we can apply a timezone
+			if (resultSetValue != null) {
+				if (resultSetValue instanceof java.sql.Timestamp) {
+					resultSetValue = resultSet.getTimestamp(columnLabel, getTimeZoneCalendar());
+				} else if (resultSetValue instanceof java.sql.Date) {
+					resultSetValue = resultSet.getDate(columnLabel, getTimeZoneCalendar());
+				} else if (resultSetValue instanceof java.sql.Time) {
+					resultSetValue = resultSet.getTime(columnLabel, getTimeZoneCalendar());
+				}
+			}
+
+			columnLabelsToValues.put(normalizeColumnLabel(columnLabel), resultSetValue);
+		}
+
+		return columnLabelsToValues;
 	}
 
 	/**
