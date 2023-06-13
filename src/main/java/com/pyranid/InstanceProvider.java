@@ -54,7 +54,7 @@ public interface InstanceProvider {
 	 * @param recordClass the type of instance to create (must be a record)
 	 * @param initargs    values used to construct the record instance
 	 * @return an instance of the given {@code recordClass}
-	 * @since 1.1.0
+	 * @since 2.0.0
 	 */
 	default <T extends Record> T provideRecord(Class<T> recordClass, Object... initargs) {
 		requireNonNull(recordClass);

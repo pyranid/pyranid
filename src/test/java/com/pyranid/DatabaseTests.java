@@ -26,22 +26,47 @@ import java.util.List;
 
 /**
  * @author <a href="https://www.revetware.com">Mark Allen</a>
- * @since 1.1.0
+ * @since 2.0.0
  */
 public class DatabaseTests {
-	public record Employee(@DatabaseColumn("name") String displayName, String emailAddress) {}
+	public record EmployeeRecord(@DatabaseColumn("name") String displayName, String emailAddress) {}
+
+	public static class EmployeeClass {
+		private @DatabaseColumn("name") String displayName;
+		private String emailAddress;
+
+		public String getDisplayName() {
+			return this.displayName;
+		}
+
+		public void setDisplayName(String displayName) {
+			this.displayName = displayName;
+		}
+
+		public String getEmailAddress() {
+			return this.emailAddress;
+		}
+
+		public void setEmailAddress(String emailAddress) {
+			this.emailAddress = emailAddress;
+		}
+	}
 
 	@Test
-	public void testRecords() {
+	public void testBasicQueries() {
 		Database database = Database.forDataSource(createInMemoryDataSource()).build();
 
 		database.execute("CREATE TABLE employee (employee_id BIGINT, name VARCHAR(255) NOT NULL, email_address VARCHAR(255))");
 		database.execute("INSERT INTO employee VALUES (1, 'Employee One', 'employee-one@company.com')");
 		database.execute("INSERT INTO employee VALUES (2, 'Employee Two', NULL)");
 
-		List<Employee> employees = database.queryForList("SELECT * FROM employee ORDER BY name", Employee.class);
-		Assert.assertEquals("Wrong number of employees", 2, employees.size());
-		Assert.assertEquals("Didn't detect DB column name override", "Employee One", employees.get(0).displayName());
+		List<EmployeeRecord> employeeRecords = database.queryForList("SELECT * FROM employee ORDER BY name", EmployeeRecord.class);
+		Assert.assertEquals("Wrong number of employees", 2, employeeRecords.size());
+		Assert.assertEquals("Didn't detect DB column name override", "Employee One", employeeRecords.get(0).displayName());
+
+		List<EmployeeClass> employeeClasses = database.queryForList("SELECT * FROM employee ORDER BY name", EmployeeClass.class);
+		Assert.assertEquals("Wrong number of employees", 2, employeeClasses.size());
+		Assert.assertEquals("Didn't detect DB column name override", "Employee One", employeeClasses.get(0).getDisplayName());
 	}
 
 	@Nonnull

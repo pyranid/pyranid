@@ -24,7 +24,7 @@ Java 16+
 <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid</artifactId>
-  <version>1.1.0-SNAPSHOT</version>
+  <version>2.0.0-SNAPSHOT</version>
 </dependency>
 ```
 
@@ -40,7 +40,7 @@ Java 8+ (Legacy; only critical fixes will be applied)
 
 #### Direct Download
 
-If you don't use Maven, you can drop [pyranid-1.1.0-SNAPSHOT.jar](https://repo1.maven.org/maven2/com/pyranid/pyranid/1.1.0-SNAPSHOT/pyranid-1.1.0-SNAPSHOT.jar) directly into your project.  No other dependencies are required.
+If you don't use Maven, you can drop [pyranid-2.0.0-SNAPSHOT.jar](https://repo1.maven.org/maven2/com/pyranid/pyranid/2.0.0-SNAPSHOT/pyranid-2.0.0-SNAPSHOT.jar) directly into your project.  No other dependencies are required.
 
 ## Configuration
 
