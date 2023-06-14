@@ -81,15 +81,26 @@ Database customDatabase = Database.forDataSource(dataSource)
 
 #### Obtaining a DataSource
 
-Pyranid works with any [`DataSource`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/javax/sql/DataSource.html) implementation. If you have the freedom to choose, [HikariCP](https://github.com/brettwooldridge/HikariCP) (application-level) and [PgBouncer](https://www.pgbouncer.org/) (global) are great options.
+Pyranid works with any [`DataSource`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/javax/sql/DataSource.html) implementation. If you have the freedom to choose, [HikariCP](https://github.com/brettwooldridge/HikariCP) (application-level) and [PgBouncer](https://www.pgbouncer.org/) (global; Postgres-only) are great options.
 
 ```java
-DataSource dataSource = new HikariDataSource(new HikariConfig() {{
+// HikariCP
+DataSource hikariDataSource = new HikariDataSource(new HikariConfig() {{
   setJdbcUrl("jdbc:postgresql://localhost:5432/my-database");
   setUsername("example");
   setPassword("secret");
   setConnectionInitSql("SET TIME ZONE 'UTC'");
 }});
+
+// PgBouncer (using Postgres' bundled JDBC driver DataSource)
+PGSimpleDataSource pgBouncerDataSource = new PGSimpleDataSource() {{
+  setServerNames(new String[] {"localhost"});
+  setPortNumber(5432);
+  setDatabaseName("my-database");
+  setUser("example");
+  setPassword("secret");
+  setPreferQueryMode(PreferQueryMode.SIMPLE);
+}};
 ```
 
 ## Queries
