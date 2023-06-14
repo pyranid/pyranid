@@ -4,6 +4,8 @@
 
 A minimalist JDBC interface for modern Java applications, powering production systems since 2015.
 
+Pyranid takes care of boilerplate and lets you focus on writing and thinking in SQL.
+
 #### Design Goals
 
 * Small codebase
