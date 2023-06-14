@@ -17,7 +17,7 @@
 package com.pyranid;
 
 /**
- * Represents a transactional operation.
+ * Represents an operation performed with a transactional context.
  * <p>
  * See {@link ReturningTransactionalOperation} for a variant which supports returning a value.
  *

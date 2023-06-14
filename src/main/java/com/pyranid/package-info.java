@@ -25,27 +25,27 @@
  *
  * // Customized setup
  * Database customDatabase = Database.forDataSource(dataSource).instanceProvider(new InstanceProvider() {
- * &#064;Override
- * public &lt;T&gt; T provide(Class&lt;T&gt; instanceClass) {
- * // You might have your DI framework vend resultset row instances
- * return guiceInjector.getInstance(instanceClass);
- * }
+ *   &#064;Override
+ *   public &lt;T&gt; T provide(Class&lt;T&gt; instanceClass) {
+ *     // You might have your DI framework vend resultset row instances
+ *     return guiceInjector.getInstance(instanceClass);
+ *   }
  * }).resultSetMapper(new ResultSetMapper() {
- * &#064;Override
- * public &lt;T&gt; T map(ResultSet rs, Class&lt;T&gt; resultClass) {
- * // Do some custom mapping here
- * }
+ *   &#064;Override
+ *   public &lt;T&gt; T map(ResultSet rs, Class&lt;T&gt; resultClass) {
+ *   // Do some custom mapping here
+ *   }
  * }).preparedStatementBinder(new PreparedStatementBinder() {
- * &#064;Override
- * public void bind(PreparedStatement ps, List&lt;Object&gt; parameters) {
- * // Do some custom binding here
- * }
+ *   &#064;Override
+ *   public void bind(PreparedStatement ps, List&lt;Object&gt; parameters) {
+ *     // Do some custom binding here
+ *   }
  * }).statementLogger(new StatementLogger() {
- * &#064;Override
- * public void log(StatementLog statementLog) {
- * // Send log to whatever output sink you'd like
- * out.println(statementLog);
- * }
+ *   &#064;Override
+ *   public void log(StatementLog statementLog) {
+ *     // Send log to whatever output sink you'd like
+ *     out.println(statementLog);
+ *   }
  * }).build();
  *
  * // Queries
@@ -60,14 +60,14 @@
  *
  * // Transactions
  * database.transaction(() -&gt; {
- * BigDecimal balance1 = database.queryForObject("SELECT balance FROM account WHERE id = 1", BigDecimal.class).get();
- * BigDecimal balance2 = database.queryForObject("SELECT balance FROM account WHERE id = 2", BigDecimal.class).get();
+ *   BigDecimal balance1 = database.queryForObject("SELECT balance FROM account WHERE id = 1", BigDecimal.class).get();
+ *   BigDecimal balance2 = database.queryForObject("SELECT balance FROM account WHERE id = 2", BigDecimal.class).get();
  *
- * balance1 = balance1.subtract(amount);
- * balance2 = balance2.add(amount);
+ *   balance1 = balance1.subtract(amount);
+ *   balance2 = balance2.add(amount);
  *
- * database.execute("UPDATE account SET balance = ? WHERE id = 1", balance1);
- * database.execute("UPDATE account SET balance = ? WHERE id = 2", balance2);
+ *   database.execute("UPDATE account SET balance = ? WHERE id = 1", balance1);
+ *   database.execute("UPDATE account SET balance = ? WHERE id = 2", balance2);
  * });
  * </pre>
  *
