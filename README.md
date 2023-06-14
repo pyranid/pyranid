@@ -93,7 +93,7 @@ DataSource hikariDataSource = new HikariDataSource(new HikariConfig() {{
 }});
 
 // PgBouncer (using Postgres' JDBC driver-provided DataSource impl)
-PGSimpleDataSource pgBouncerDataSource = new PGSimpleDataSource() {{
+DataSource pgBouncerDataSource = new PGSimpleDataSource() {{
   setServerNames(new String[] {"localhost"});
   setPortNumber(5432);
   setDatabaseName("my-database");
