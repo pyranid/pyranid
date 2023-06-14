@@ -191,7 +191,7 @@ long[] updateCounts = database.executeBatch("INSERT INTO car VALUES (?,?)", para
 #### Design goals
 
 * Minimal closure-based API: rollback if exception bubbles out, commit at end of closure otherwise
-* Standard data access APIs (`queryForObject()` and friends) automatically participate in transactions
+* Data access APIs (e.g. [`Database::queryForObject`](https://pyranid.com/javadoc/com/pyranid/Database.html#queryForObject(java.lang.String,java.lang.Class,java.lang.Object...)) and friends) automatically participate in transactions
 * No [`Connection`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/java/sql/Connection.html) is fetched from the [`DataSource`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/javax/sql/DataSource.html) until the first data access operation occurs
 * Must be able to share a transaction across multiple threads
 
@@ -249,7 +249,7 @@ database.transaction(() -> {
 
 #### Multi-threaded Transactions
 
-Internally, Database` manages a threadlocal stack of `Transaction` instances to simplify single-threaded usage.  Should you need to share the same transaction across multiple threads, use the `participate()` API.
+Internally, Database manages a threadlocal stack of [`Transaction`](https://pyranid.com/javadoc/com/pyranid/Transaction.html) instances to simplify single-threaded usage.  Should you need to share the same transaction across multiple threads, use the [`Database::participate`](https://pyranid.com/javadoc/com/pyranid/Database.html#participate(com.pyranid.Transaction,com.pyranid.TransactionalOperation)) API.
 
 ```java
 database.transaction(() -> {
