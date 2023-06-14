@@ -92,7 +92,7 @@ DataSource hikariDataSource = new HikariDataSource(new HikariConfig() {{
   setConnectionInitSql("SET TIME ZONE 'UTC'");
 }});
 
-// PgBouncer (using Postgres' bundled JDBC driver DataSource)
+// PgBouncer (using Postgres' JDBC driver-provided DataSource impl)
 PGSimpleDataSource pgBouncerDataSource = new PGSimpleDataSource() {{
   setServerNames(new String[] {"localhost"});
   setPortNumber(5432);
@@ -152,6 +152,8 @@ Optional<Employee> employee = database.queryForObject("""
   WHERE email=?
   """, Employee.class, "mark@revetware.com");
 ```
+
+Pyranid will always invoke the canonical constructor for `Record` types. 
 
 ## Statements
 
