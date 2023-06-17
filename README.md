@@ -1,4 +1,4 @@
-<img src="https://pyranid.s3.amazonaws.com/pyranid-gh-logo-v2.png" width="300"/>
+<a href="https://www.pyranid.com"><img src="https://pyranid.s3.amazonaws.com/pyranid-gh-logo-v2.png" width="300"/></a>
 
 #### What Is It?
 
