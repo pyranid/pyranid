@@ -270,6 +270,7 @@ database.transaction(() -> {
   }).run();
 
   // Wait a bit for the other thread to finish
+  // (Don't do this in real systems)
   sleep(1000);
 });
 ```
@@ -341,9 +342,9 @@ It is useful to be able to schedule code to run after a transaction has been ful
 Without this, you might run into subtle bugs like
 
 * Write to database
-* Inform listeners of system state change
-* (later) Current transaction is rolled back
-* Listeners are in an inconsistent state because they were notified of a change that was reversed by the rollback
+* Send out notifications of system state change
+* (later) Transaction is rolled back
+* Notification consumers are in an inconsistent state because they were notified of a change that was reversed by the rollback
 
 ```java
 // Business logic
@@ -353,36 +354,27 @@ class EmployeeService {
     database.execute("UPDATE employee SET salary=salary + 10000");
     payrollSystem.startLengthyWarmupProcess();
 
-    // Schedule listener-firing for after the current transaction successfully commits
+    // Schedule listener-firing for after the current transaction ends
     database.currentTransaction().get().addPostTransactionOperation((transactionResult) ->
-      if(transactionResult == TransactionResult.COMMITTED) {  
-        // Simplified implementation; real systems might need
-        // listener list synchronization, would schedule execution
-        // on an ExecutorService, etc.
-        for(EmployeeServiceListener listener : listeners)
-          listener.onSalaryChanged();
-      }
-    );
-
-    // You can also schedule code to execute in event of a rollback
-    database.currentTransaction().get().addPostTransactionOperation((transactionResult) ->
-      if(transactionResult == TransactionResult.ROLLED_BACK) {
-        payrollSystem.cancelLengthyWarmupProcess();
+      if(transactionResult == TransactionResult.COMMITTED) {
+        // Successful commit? email everyone with the good news
+        for(Employee employee : findAllEmployees())
+          sendCongratulationsEmail(employee);
+      } else if(transactionResult == TransactionResult.ROLLED_BACK) {
+        // Rolled back? We can clean up
+        payrollSystem.cancelLengthyWarmupProcess();	
       }
     );
   }
-
-  interface EmployeeServiceListener {
-    void onSalaryChanged();
-  }
-
+	
   // Rest of implementation elided
 }
 
 // Servlet filter which wraps requests in transactions
 class DatabaseTransactionFilter implements Filter {
   @Override
-  public void doFilter(ServletRequest servletRequest, ServletResponse servletResponse,
+  public void doFilter(ServletRequest servletRequest,
+                       ServletResponse servletResponse,
                        FilterChain filterChain) throws IOException, ServletException {
     database.transaction(() -> {
       // Above business logic would happen somewhere down the filter chain
