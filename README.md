@@ -1,12 +1,12 @@
 <a href="https://www.pyranid.com"><img src="https://pyranid.s3.amazonaws.com/pyranid-gh-logo-v2.png" width="300"/></a>
 
-#### What Is It?
+### What Is It?
 
 A minimalist JDBC interface for modern Java applications, powering production systems since 2015.
 
 Pyranid takes care of boilerplate and lets you focus on writing and thinking in SQL.
 
-#### Design Goals
+### Design Goals
 
 * Small codebase
 * Customizable
@@ -14,11 +14,18 @@ Pyranid takes care of boilerplate and lets you focus on writing and thinking in 
 * No dependencies
 * DI-friendly
 
-#### License
+### License
 
 [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)
 
-#### Maven Installation
+### Do Zero-Dependency Libraries Interest You?
+
+Similarly-flavored commercially-friendly OSS libraries are available.
+
+* [Soklet](https://www.soklet.com) - DI-friendly HTTP 1.1 server that supports [JEP 425 Virtual Threads](https://openjdk.org/jeps/425)
+* [Lokalized](https://www.lokalized.com) - natural-sounding translations (i18n) via expression language
+
+### Maven Installation
 
 Java 16+
 
@@ -40,7 +47,7 @@ Java 8+ (Legacy; only critical fixes will be applied)
 </dependency>
 ```
 
-#### Direct Download
+### Direct Download
 
 If you don't use Maven, you can drop [pyranid-2.0.0-SNAPSHOT.jar](https://repo1.maven.org/maven2/com/pyranid/pyranid/2.0.0-SNAPSHOT/pyranid-2.0.0-SNAPSHOT.jar) directly into your project.  No other dependencies are required.
 
