@@ -343,19 +343,18 @@ Without this, you might run into subtle bugs like
 
 * Write to database
 * Send out notifications of system state change
-* (later) Transaction is rolled back
+* (Sometime later) transaction is rolled back
 * Notification consumers are in an inconsistent state because they were notified of a change that was reversed by the rollback
 
 ```java
 // Business logic
 class EmployeeService {
-  // Once we know raises are applied successfully, inform our listeners
   public void giveEveryoneRaises() {
-    database.execute("UPDATE employee SET salary=salary + 10000");
+    database.execute("UPDATE employee SET salary=salary * 2");
     payrollSystem.startLengthyWarmupProcess();
 
-    // Schedule listener-firing for after the current transaction ends
-    database.currentTransaction().get().addPostTransactionOperation((transactionResult) ->
+    // Only send emails after the current transaction ends
+    database.currentTransaction().get().addPostTransactionOperation((transactionResult) -> {
       if(transactionResult == TransactionResult.COMMITTED) {
         // Successful commit? email everyone with the good news
         for(Employee employee : findAllEmployees())
@@ -364,7 +363,7 @@ class EmployeeService {
         // Rolled back? We can clean up
         payrollSystem.cancelLengthyWarmupProcess();	
       }
-    );
+    });
   }
 	
   // Rest of implementation elided
