@@ -708,7 +708,7 @@ Note: `SLF4JBridgeHandler` can impact performance.  You can mitigate that with L
 
 ## About
 
-Pyranid was created by [Mark Allen](https://www.revetware.com) and sponsored by [Transmogrify LLC](https://www.xmog.com) and [Revetware LLC](https://www.revetware.com).
+Pyranid was created by [Mark Allen](https://www.revetkn.com) and sponsored by [Transmogrify LLC](https://www.xmog.com) and [Revetware LLC](https://www.revetware.com).
 
 Development was aided by
 
