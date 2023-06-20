@@ -65,23 +65,23 @@ public class DefaultStatementLogger implements StatementLogger {
 
 		if (statementLog.connectionAcquisitionTime().isPresent())
 			timingEntries.add(format("%.2fms acquiring connection",
-					statementLog.connectionAcquisitionTime().get() / 1_000_000f));
+					(float) statementLog.connectionAcquisitionTime().get() / 1_000_000f));
 
 		if (statementLog.preparationTime().isPresent())
-			timingEntries.add(format("%.2fms preparing statement", statementLog.preparationTime().get() / 1_000_000f));
+			timingEntries.add(format("%.2fms preparing statement", (float) statementLog.preparationTime().get() / 1_000_000f));
 
 		if (statementLog.executionTime().isPresent())
-			timingEntries.add(format("%.2fms executing statement", statementLog.executionTime().get() / 1_000_000f));
+			timingEntries.add(format("%.2fms executing statement", (float) statementLog.executionTime().get() / 1_000_000f));
 
 		if (statementLog.resultSetMappingTime().isPresent())
-			timingEntries.add(format("%.2fms processing resultset", statementLog.resultSetMappingTime().get() / 1_000_000f));
+			timingEntries.add(format("%.2fms processing resultset", (float) statementLog.resultSetMappingTime().get() / 1_000_000f));
 
 		String parameterLine = null;
 
-		if (statementLog.parameters().size() > 0) {
+		if (statementLog.statementContext().getParameters().size() > 0) {
 			StringBuilder parameterLineBuilder = new StringBuilder();
 			parameterLineBuilder.append("Parameters: ");
-			parameterLineBuilder.append(statementLog.parameters().stream().map(parameter -> {
+			parameterLineBuilder.append(statementLog.statementContext().getParameters().stream().map(parameter -> {
 				if (parameter == null)
 					return "null";
 
@@ -103,7 +103,7 @@ public class DefaultStatementLogger implements StatementLogger {
 
 		List<String> lines = new ArrayList<>(4);
 
-		lines.add(statementLog.sql());
+		lines.add(statementLog.statementContext().getSql());
 
 		if (parameterLine != null)
 			lines.add(parameterLine);
@@ -112,7 +112,7 @@ public class DefaultStatementLogger implements StatementLogger {
 			lines.add(timingEntries.stream().collect(joining(", ")));
 
 		if (statementLog.exception().isPresent()) {
-			Throwable throwable = statementLog.exception().get();
+			Throwable throwable = (Throwable) statementLog.exception().get();
 
 			if (throwable instanceof DatabaseException && throwable.getCause() != null)
 				throwable = throwable.getCause();

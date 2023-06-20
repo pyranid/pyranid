@@ -16,6 +16,8 @@
 
 package com.pyranid;
 
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -24,16 +26,15 @@ import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Deque;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.logging.Logger;
 
 import static java.lang.String.format;
 import static java.lang.System.nanoTime;
-import static java.util.Collections.emptyList;
 import static java.util.Objects.requireNonNull;
 import static java.util.logging.Level.WARNING;
 
@@ -51,6 +52,8 @@ public class Database {
 	private final PreparedStatementBinder preparedStatementBinder;
 	private final ResultSetMapper resultSetMapper;
 	private final StatementLogger statementLogger;
+	@Nonnull
+	private final AtomicInteger defaultIdGenerator;
 	private final Logger logger = Logger.getLogger(Database.class.getName());
 
 	protected Database(Builder builder) {
@@ -61,6 +64,7 @@ public class Database {
 		this.preparedStatementBinder = requireNonNull(builder.preparedStatementBinder);
 		this.resultSetMapper = requireNonNull(builder.resultSetMapper);
 		this.statementLogger = requireNonNull(builder.statementLogger);
+		this.defaultIdGenerator = new AtomicInteger();
 	}
 
 	public static Builder forDataSource(DataSource dataSource) {
@@ -189,14 +193,17 @@ public class Database {
 		requireNonNull(sql);
 		requireNonNull(objectType);
 
-		return queryForObject(sql, null, objectType, parameters);
+		return queryForObject(null, sql, objectType, parameters);
 	}
 
-	public <T> Optional<T> queryForObject(String sql, StatementMetadata statementMetadata, Class<T> objectType, Object... parameters) {
+	public <T> Optional<T> queryForObject(Object statementIdentifier, String sql, Class<T> objectType, Object... parameters) {
 		requireNonNull(sql);
 		requireNonNull(objectType);
 
-		List<T> list = queryForList(sql, statementMetadata, objectType, parameters);
+		if (statementIdentifier == null)
+			statementIdentifier = generateId();
+
+		List<T> list = queryForList(statementIdentifier, sql, objectType, parameters);
 
 		if (list.size() > 1)
 			throw new DatabaseException(format("Expected 1 row in resultset but got %s instead", list.size()));
@@ -204,19 +211,21 @@ public class Database {
 		return Optional.ofNullable(list.size() == 0 ? null : list.get(0));
 	}
 
-	protected void performDatabaseOperation(String sql, StatementMetadata statementMetadata, Object[] parameters, DatabaseOperation databaseOperation) {
-		requireNonNull(sql);
+	protected <T> void performDatabaseOperation(@Nonnull StatementContext<T> statementContext,
+																							@Nonnull DatabaseOperation databaseOperation) {
+		requireNonNull(statementContext);
 		requireNonNull(databaseOperation);
 
-		performDatabaseOperation(sql, statementMetadata, parameters, (preparedStatement) -> {
-			if (parameters != null && parameters.length > 0)
-				preparedStatementBinder().bind(preparedStatement, Arrays.asList(parameters));
+		performDatabaseOperation(statementContext, (preparedStatement) -> {
+			if (statementContext.getParameters().size() > 0)
+				preparedStatementBinder().bind(preparedStatement, statementContext);
 		}, databaseOperation);
 	}
 
-	protected void performDatabaseOperation(String sql, StatementMetadata statementMetadata, Object[] parameters,
-																					PreparedStatementBindingOperation preparedStatementBindingOperation, DatabaseOperation databaseOperation) {
-		requireNonNull(sql);
+	protected <T> void performDatabaseOperation(@Nonnull StatementContext<T> statementContext,
+																							@Nonnull PreparedStatementBindingOperation preparedStatementBindingOperation,
+																							@Nonnull DatabaseOperation databaseOperation) {
+		requireNonNull(statementContext);
 		requireNonNull(preparedStatementBindingOperation);
 		requireNonNull(databaseOperation);
 
@@ -235,7 +244,7 @@ public class Database {
 			connectionAcquisitionTime = alreadyHasConnection ? Optional.empty() : Optional.of(nanoTime() - startTime);
 			startTime = nanoTime();
 
-			try (PreparedStatement preparedStatement = connection.prepareStatement(sql)) {
+			try (PreparedStatement preparedStatement = connection.prepareStatement(statementContext.getSql())) {
 				preparedStatementBindingOperation.perform(preparedStatement);
 				preparationTime = Optional.of(nanoTime() - startTime);
 
@@ -256,14 +265,12 @@ public class Database {
 					closeConnection(connection);
 			} finally {
 				StatementLog statementLog =
-						StatementLog.forSql(sql)
-								.parameters(parameters == null ? emptyList() : Arrays.asList(parameters))
+						StatementLog.forStatementContext(statementContext)
 								.connectionAcquisitionTime(connectionAcquisitionTime)
 								.preparationTime(preparationTime)
 								.executionTime(executionTime)
 								.resultSetMappingTime(resultSetMappingTime)
 								.exception(exception)
-								.statementMetadata(Optional.ofNullable(statementMetadata))
 								.build();
 
 				statementLogger().log(statementLog);
@@ -275,16 +282,27 @@ public class Database {
 		requireNonNull(sql);
 		requireNonNull(elementType);
 
-		return queryForList(sql, null, elementType, parameters);
+		return queryForList(null, sql, elementType, parameters);
 	}
 
-	public <T> List<T> queryForList(String sql, StatementMetadata statementMetadata, Class<T> elementType, Object... parameters) {
+	@Nonnull
+	public <T> List<T> queryForList(@Nullable Object statementIdentifier,
+																	@Nonnull String sql,
+																	@Nonnull Class<T> elementType,
+																	@Nullable Object... parameters) {
 		requireNonNull(sql);
 		requireNonNull(elementType);
 
-		List<T> list = new ArrayList<>();
+		if (statementIdentifier == null)
+			statementIdentifier = generateId();
 
-		performDatabaseOperation(sql, statementMetadata, parameters, (PreparedStatement preparedStatement) -> {
+		List<T> list = new ArrayList<>();
+		StatementContext<T> statementContext = new StatementContext.Builder<T>(statementIdentifier, sql)
+				.resultType(elementType)
+				.parameters(parameters)
+				.build();
+
+		performDatabaseOperation(statementContext, (PreparedStatement preparedStatement) -> {
 			long startTime = nanoTime();
 
 			try (ResultSet resultSet = preparedStatement.executeQuery()) {
@@ -292,7 +310,7 @@ public class Database {
 				startTime = nanoTime();
 
 				while (resultSet.next()) {
-					T listElement = resultSetMapper().map(resultSet, elementType);
+					T listElement = resultSetMapper().map(resultSet, statementContext);
 					list.add(listElement);
 				}
 
@@ -306,15 +324,21 @@ public class Database {
 
 	public long execute(String sql, Object... parameters) {
 		requireNonNull(sql);
-		return execute(sql, null, parameters);
+		return execute(null, sql, parameters);
 	}
 
-	public long execute(String sql, StatementMetadata statementMetadata, Object... parameters) {
+	public long execute(Object statementIdentifier, String sql, Object... parameters) {
 		requireNonNull(sql);
 
-		ResultHolder<Long> resultHolder = new ResultHolder<>();
+		if (statementIdentifier == null)
+			statementIdentifier = generateId();
 
-		performDatabaseOperation(sql, statementMetadata, parameters, (PreparedStatement preparedStatement) -> {
+		ResultHolder<Long> resultHolder = new ResultHolder<>();
+		StatementContext<Void> statementContext = new StatementContext.Builder<>(statementIdentifier, sql)
+				.parameters(parameters)
+				.build();
+
+		performDatabaseOperation(statementContext, (PreparedStatement preparedStatement) -> {
 			long startTime = nanoTime();
 			// TODO: allow users to specify that they want support for executeLargeUpdate()
 			// Not everyone implements it currently
@@ -329,16 +353,26 @@ public class Database {
 		requireNonNull(sql);
 		requireNonNull(returnType);
 
-		return executeReturning(sql, null, returnType, parameters);
+		return executeReturning(null, sql, returnType, parameters);
 	}
 
-	public <T> Optional<T> executeReturning(String sql, StatementMetadata statementMetadata, Class<T> returnType, Object... parameters) {
+	public <T> Optional<T> executeReturning(Object statementIdentifier,
+																					String sql,
+																					Class<T> returnType,
+																					Object... parameters) {
 		requireNonNull(sql);
 		requireNonNull(returnType);
 
-		ResultHolder<T> resultHolder = new ResultHolder<>();
+		if (statementIdentifier == null)
+			statementIdentifier = generateId();
 
-		performDatabaseOperation(sql, statementMetadata, parameters, (PreparedStatement preparedStatement) -> {
+		ResultHolder<T> resultHolder = new ResultHolder<>();
+		StatementContext<T> statementContext = new StatementContext.Builder<>(statementIdentifier, sql)
+				.parameters(parameters)
+				.resultType(returnType)
+				.build();
+
+		performDatabaseOperation(statementContext, (PreparedStatement preparedStatement) -> {
 			long startTime = nanoTime();
 
 			try (ResultSet resultSet = preparedStatement.executeQuery()) {
@@ -346,7 +380,7 @@ public class Database {
 				startTime = nanoTime();
 
 				if (resultSet.next())
-					resultHolder.value = resultSetMapper().map(resultSet, returnType);
+					resultHolder.value = resultSetMapper().map(resultSet, statementContext);
 
 				Long resultSetMappingTime = nanoTime() - startTime;
 				return new DatabaseOperationResult(Optional.of(executionTime), Optional.of(resultSetMappingTime));
@@ -360,19 +394,26 @@ public class Database {
 		requireNonNull(sql);
 		requireNonNull(parameterGroups);
 
-		return executeBatch(sql, null, parameterGroups);
+		return executeBatch(null, sql, parameterGroups);
 	}
 
-	public long[] executeBatch(String sql, StatementMetadata statementMetadata, List<List<Object>> parameterGroups) {
+	public long[] executeBatch(Object statementIdentifier, String sql, List<List<Object>> parameterGroups) {
 		requireNonNull(sql);
 		requireNonNull(parameterGroups);
 
-		ResultHolder<long[]> resultHolder = new ResultHolder<>();
+		if (statementIdentifier == null)
+			statementIdentifier = generateId();
 
-		performDatabaseOperation(sql, statementMetadata, parameterGroups.toArray(), (preparedStatement) -> {
+		ResultHolder<long[]> resultHolder = new ResultHolder<>();
+		StatementContext<long[]> statementContext = new StatementContext.Builder<>(statementIdentifier, sql)
+				.parameters(parameterGroups)
+				.resultType(long[].class)
+				.build();
+
+		performDatabaseOperation(statementContext, (preparedStatement) -> {
 			for (List<Object> parameterGroup : parameterGroups) {
 				if (parameterGroup != null && parameterGroup.size() > 0)
-					preparedStatementBinder().bind(preparedStatement, parameterGroup);
+					preparedStatementBinder().bind(preparedStatement, statementContext);
 
 				preparedStatement.addBatch();
 			}
@@ -426,8 +467,13 @@ public class Database {
 		return statementLogger;
 	}
 
+	@Nonnull
+	protected Integer generateId() {
+		return this.defaultIdGenerator.incrementAndGet();
+	}
+
 	@FunctionalInterface
-	protected static interface DatabaseOperation {
+	protected interface DatabaseOperation {
 		DatabaseOperationResult perform(PreparedStatement preparedStatement) throws Exception;
 	}
 

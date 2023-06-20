@@ -19,7 +19,7 @@ package com.pyranid;
 import static java.lang.String.format;
 
 /**
- * Basic implementation of {@link InstanceProvider} which uses {@link Class#newInstance()}.
+ * Basic implementation of {@link InstanceProvider}.
  *
  * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
@@ -28,7 +28,7 @@ public class DefaultInstanceProvider implements InstanceProvider {
 	@Override
 	public <T> T provide(Class<T> instanceClass) {
 		try {
-			return instanceClass.newInstance();
+			return instanceClass.getDeclaredConstructor().newInstance();
 		} catch (Exception e) {
 			throw new RuntimeException(format(
 					"Unable to create an instance of %s. Please verify that %s has a public no-argument constructor",

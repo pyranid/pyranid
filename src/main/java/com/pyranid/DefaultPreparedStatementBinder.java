@@ -16,6 +16,7 @@
 
 package com.pyranid;
 
+import javax.annotation.Nonnull;
 import java.nio.ByteBuffer;
 import java.sql.PreparedStatement;
 import java.sql.Timestamp;
@@ -64,9 +65,12 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	}
 
 	@Override
-	public void bind(PreparedStatement preparedStatement, List<Object> parameters) {
+	public <T> void bind(@Nonnull PreparedStatement preparedStatement,
+											 @Nonnull StatementContext<T> statementContext) {
 		requireNonNull(preparedStatement);
-		requireNonNull(parameters);
+		requireNonNull(statementContext);
+
+		List<Object> parameters = statementContext.getParameters();
 
 		try {
 			for (int i = 0; i < parameters.size(); ++i) {

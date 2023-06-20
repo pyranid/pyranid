@@ -16,15 +16,12 @@
 
 package com.pyranid;
 
+import javax.annotation.Nonnull;
 import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
 import static java.lang.String.format;
-import static java.util.Collections.emptyList;
-import static java.util.Collections.unmodifiableList;
 import static java.util.Objects.requireNonNull;
 
 /**
@@ -39,18 +36,16 @@ import static java.util.Objects.requireNonNull;
  * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
-public class StatementLog implements Serializable {
+public class StatementLog<T> implements Serializable {
 	private static final long serialVersionUID = 1L;
 
 	private final Optional<Long> connectionAcquisitionTime;
 	private final Optional<Long> preparationTime;
 	private final Optional<Long> executionTime;
 	private final Optional<Long> resultSetMappingTime;
-	private final String sql;
-	private final List<Object> parameters;
+	private final StatementContext<T> statementContext;
 	private final Optional<Integer> batchSize;
 	private final Optional<Exception> exception;
-	private final Optional<StatementMetadata> statementMetadata;
 
 	/**
 	 * Creates a {@code StatementLog} for the given {@code builder}.
@@ -63,11 +58,9 @@ public class StatementLog implements Serializable {
 		this.preparationTime = builder.preparationTime;
 		this.executionTime = builder.executionTime;
 		this.resultSetMappingTime = builder.resultSetMappingTime;
-		this.sql = requireNonNull(builder.sql);
-		this.parameters = requireNonNull(builder.parameters);
+		this.statementContext = requireNonNull(builder.statementContext);
 		this.batchSize = requireNonNull(builder.batchSize);
 		this.exception = requireNonNull(builder.exception);
-		this.statementMetadata = builder.statementMetadata;
 	}
 
 	/**
@@ -76,16 +69,18 @@ public class StatementLog implements Serializable {
 	 * @param sql the SQL statement
 	 * @return a {@link StatementLog} builder
 	 */
-	public static Builder forSql(String sql) {
-		return new Builder(requireNonNull(sql));
+	@Nonnull
+	public static <T> Builder forStatementContext(@Nonnull StatementContext<T> statementContext) {
+		requireNonNull(statementContext);
+		return new Builder(statementContext);
 	}
 
 	@Override
 	public String toString() {
 		return format(
-				"%s{connectionAcquisitionTime=%s, preparationTime=%s, executionTime=%s, resultSetMappingTime=%s, totalTime=%s, sql=%s, "
-						+ "parameters=%s, batchSize=%s, exception=%s, statementMetadata=%s}", getClass().getSimpleName(), connectionAcquisitionTime(),
-				preparationTime(), executionTime(), resultSetMappingTime(), totalTime(), sql(), parameters(), batchSize(), exception(), statementMetadata());
+				"%s{connectionAcquisitionTime=%s, preparationTime=%s, executionTime=%s, resultSetMappingTime=%s, totalTime=%s, "
+						+ "statementContext=%s, batchSize=%s, exception=%s}", getClass().getSimpleName(), connectionAcquisitionTime(),
+				preparationTime(), executionTime(), resultSetMappingTime(), totalTime(), statementContext, batchSize(), exception());
 	}
 
 	@Override
@@ -102,16 +97,15 @@ public class StatementLog implements Serializable {
 				&& Objects.equals(preparationTime(), statementLog.preparationTime())
 				&& Objects.equals(executionTime(), statementLog.executionTime())
 				&& Objects.equals(resultSetMappingTime(), statementLog.resultSetMappingTime())
-				&& Objects.equals(sql(), statementLog.sql()) && Objects.equals(parameters(), statementLog.parameters())
+				&& Objects.equals(statementContext(), statementLog.statementContext())
 				&& Objects.equals(batchSize(), statementLog.batchSize())
-				&& Objects.equals(exception(), statementLog.exception())
-				&& Objects.equals(statementMetadata(), statementLog.statementMetadata());
+				&& Objects.equals(exception(), statementLog.exception());
 	}
 
 	@Override
 	public int hashCode() {
-		return Objects.hash(connectionAcquisitionTime(), preparationTime(), executionTime(), resultSetMappingTime(), sql(),
-				parameters(), batchSize(), exception(), statementMetadata());
+		return Objects.hash(connectionAcquisitionTime(), preparationTime(), executionTime(), resultSetMappingTime(),
+				statementContext(), batchSize(), exception());
 	}
 
 	/**
@@ -171,17 +165,9 @@ public class StatementLog implements Serializable {
 	 *
 	 * @return the SQL statement that was executed.
 	 */
-	public String sql() {
-		return sql;
-	}
-
-	/**
-	 * The parameters bound to the SQL statement that was executed.
-	 *
-	 * @return the parameters bound to the SQL statement that was executed, or an empty {@code List} if none
-	 */
-	public List<Object> parameters() {
-		return parameters;
+	@Nonnull
+	public StatementContext<T> statementContext() {
+		return statementContext;
 	}
 
 	/**
@@ -203,45 +189,28 @@ public class StatementLog implements Serializable {
 	}
 
 	/**
-	 * The metadata associated with this SQL statement.
-	 *
-	 * @return he metadata associated with this SQL statement, if available
-	 */
-	public Optional<StatementMetadata> statementMetadata() {
-		return statementMetadata;
-	}
-
-	/**
 	 * Builder for {@link StatementLog} instances.
-	 * <p>
-	 * Created via {@link StatementLog#forSql(String)}, for example
-	 *
-	 * <pre>
-	 * StatementLog.Builder builder = StatementLog.forSql(&quot;SELECT * FROM car WHERE id=?&quot;).parameters(singletonList(123));
-	 * StatementLog statementLog = builder.build();
-	 * </pre>
 	 *
 	 * @author <a href="https://www.revetware.com">Mark Allen</a>
 	 * @since 1.0.0
 	 */
-	public static class Builder {
-		private final String sql;
+	public static class Builder<T> {
+		private StatementContext<T> statementContext;
 		private Optional<Long> connectionAcquisitionTime = Optional.empty();
 		private Optional<Long> preparationTime = Optional.empty();
 		private Optional<Long> executionTime = Optional.empty();
 		private Optional<Long> resultSetMappingTime = Optional.empty();
-		private List<Object> parameters = emptyList();
 		private Optional<Integer> batchSize = Optional.empty();
 		private Optional<Exception> exception = Optional.empty();
-		private Optional<StatementMetadata> statementMetadata;
 
 		/**
-		 * Creates a {@code Builder} for the given {@code sql}.
+		 * Creates a {@code Builder} for the given {@code statementContext}.
 		 *
-		 * @param sql the SQL statement
+		 * @param statementContext the SQL statement context
 		 */
-		private Builder(String sql) {
-			this.sql = requireNonNull(sql);
+		private Builder(StatementContext<T> statementContext) {
+			requireNonNull(statementContext);
+			this.statementContext = statementContext;
 		}
 
 		/**
@@ -290,17 +259,6 @@ public class StatementLog implements Serializable {
 		}
 
 		/**
-		 * The parameters bound to the SQL statement that was executed.
-		 *
-		 * @param parameters the parameters bound to the SQL statement that was executed, or an empty {@code List} if none
-		 * @return this {@code Builder}, for chaining
-		 */
-		public Builder parameters(List<Object> parameters) {
-			this.parameters = unmodifiableList(new ArrayList<>(requireNonNull(parameters)));
-			return this;
-		}
-
-		/**
 		 * Specifies the size of the batch operation.
 		 *
 		 * @param batchSize how many records were processed as part of the batch operation, if available
@@ -319,17 +277,6 @@ public class StatementLog implements Serializable {
 		 */
 		public Builder exception(Optional<Exception> exception) {
 			this.exception = requireNonNull(exception);
-			return this;
-		}
-
-		/**
-		 * Specifies metadata associated with this SQL statement.
-		 *
-		 * @param statementMetadata the metadata associated with this SQL statement, if available
-		 * @return this {@code Builder}, for chaining
-		 */
-		public Builder statementMetadata(Optional<StatementMetadata> statementMetadata) {
-			this.statementMetadata = requireNonNull(statementMetadata);
 			return this;
 		}
 

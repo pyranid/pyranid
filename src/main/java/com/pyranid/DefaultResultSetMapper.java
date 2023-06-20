@@ -99,9 +99,13 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@Override
-	public <T> T map(ResultSet resultSet, Class<T> resultClass) {
+	@Nonnull
+	public <T> T map(@Nonnull ResultSet resultSet,
+									 @Nonnull StatementContext<T> statementContext) {
 		requireNonNull(resultSet);
-		requireNonNull(resultClass);
+		requireNonNull(statementContext);
+
+		Class<T> resultClass = statementContext.getResultType().get();
 
 		try {
 			StandardTypeResult<T> standardTypeResult = mapResultSetToStandardType(resultSet, resultClass);
@@ -307,7 +311,9 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 * @return the result of the mapping
 	 * @throws Exception if an error occurs during mapping
 	 */
-	protected <T> T mapResultSetToBean(ResultSet resultSet, Class<T> resultClass) throws Exception {
+	@Nonnull
+	protected <T> T mapResultSetToBean(@Nonnull ResultSet resultSet,
+																		 @Nonnull Class<T> resultClass) throws Exception {
 		T object = instanceProvider().provide(resultClass);
 		BeanInfo beanInfo = Introspector.getBeanInfo(resultClass);
 		Map<String, Object> columnLabelsToValues = extractColumnLabelsToValues(resultSet);

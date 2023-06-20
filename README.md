@@ -709,9 +709,3 @@ Note: `SLF4JBridgeHandler` can impact performance.  You can mitigate that with L
 ## About
 
 Pyranid was created by [Mark Allen](https://www.revetkn.com) and sponsored by [Transmogrify LLC](https://www.xmog.com) and [Revetware LLC](https://www.revetware.com).
-
-Development was aided by
-
-* [SomaFM](http://somafm.com)
-* [No Fun at All](https://www.youtube.com/watch?v=O6V2sin-buE)
-* [Street Dogs](https://www.youtube.com/watch?v=bIx4Tezuklk)

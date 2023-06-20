@@ -17,7 +17,6 @@
 package com.pyranid;
 
 import java.sql.PreparedStatement;
-import java.util.List;
 
 /**
  * Contract for binding parameters to SQL prepared statements.
@@ -33,5 +32,5 @@ public interface PreparedStatementBinder {
 	 * @param parameters        the parameters to bind
 	 * @throws DatabaseException if an error occurs during binding
 	 */
-	void bind(PreparedStatement preparedStatement, List<Object> parameters);
+	<T> void bind(PreparedStatement preparedStatement, StatementContext<T> statementContext);
 }
