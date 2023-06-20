@@ -17,14 +17,20 @@
 package com.pyranid;
 
 import org.hsqldb.jdbc.JDBCDataSource;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
 import javax.annotation.Nonnull;
 import javax.sql.DataSource;
 import java.math.BigDecimal;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+
+import static java.util.Objects.requireNonNull;
 
 /**
  * @author <a href="https://www.revetware.com">Mark Allen</a>
@@ -58,7 +64,8 @@ public class DatabaseTests {
 	public void testBasicQueries() {
 		Database database = Database.forDataSource(createInMemoryDataSource()).build();
 
-		database.execute("CREATE TABLE employee (employee_id BIGINT, name VARCHAR(255) NOT NULL, email_address VARCHAR(255))");
+		createTestSchema(database);
+
 		database.execute("INSERT INTO employee VALUES (1, 'Employee One', 'employee-one@company.com')");
 		database.execute("INSERT INTO employee VALUES (2, 'Employee Two', NULL)");
 
@@ -109,6 +116,70 @@ public class DatabaseTests {
 		});
 
 		Assert.assertTrue("Did not run post-transaction operation", ranPostTransactionOperation.get());
+	}
+
+	@Test
+	public void testCustomDatabase() {
+		DataSource dataSource = createInMemoryDataSource();
+
+		InstanceProvider instanceProvider = new InstanceProvider() {
+			@Override
+			public <T> T provide(Class<T> instanceClass) {
+				try {
+					return instanceClass.getDeclaredConstructor().newInstance();
+				} catch (Exception e) {
+					throw new RuntimeException(e);
+				}
+			}
+		};
+
+		ResultSetMapper resultSetMapper = new DefaultResultSetMapper(DatabaseType.GENERIC, instanceProvider) {
+			@NotNull
+			@Override
+			public <T> T map(@Nonnull ResultSet resultSet,
+											 @Nonnull StatementContext<T> statementContext) {
+				return super.map(resultSet, statementContext);
+			}
+		};
+
+		PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder(DatabaseType.GENERIC) {
+			@Override
+			public <T> void bind(@Nonnull PreparedStatement preparedStatement,
+													 @Nonnull StatementContext<T> statementContext) {
+				super.bind(preparedStatement, statementContext);
+			}
+		};
+
+		Database customDatabase = Database.forDataSource(dataSource)
+				.timeZone(ZoneId.of("UTC")) // Override JVM default timezone
+				.instanceProvider(instanceProvider)
+				.resultSetMapper(resultSetMapper)
+				.preparedStatementBinder(preparedStatementBinder)
+				.statementLogger(new StatementLogger() {
+					@Override
+					public void log(StatementLog statementLog) {
+						// Send log to whatever output sink you'd like
+						System.out.println(statementLog);
+					}
+				}).build();
+
+		createTestSchema(customDatabase);
+
+		customDatabase.execute("INSERT INTO employee VALUES (1, 'Employee One', 'employee-one@company.com')");
+		customDatabase.execute("INSERT INTO employee VALUES (2, 'Employee Two', NULL)");
+
+		List<EmployeeRecord> employeeRecords = customDatabase.queryForList("SELECT * FROM employee ORDER BY name", EmployeeRecord.class);
+		Assert.assertEquals("Wrong number of employees", 2, employeeRecords.size());
+		Assert.assertEquals("Didn't detect DB column name override", "Employee One", employeeRecords.get(0).displayName());
+
+		List<EmployeeClass> employeeClasses = customDatabase.queryForList("SELECT * FROM employee ORDER BY name", EmployeeClass.class);
+		Assert.assertEquals("Wrong number of employees", 2, employeeClasses.size());
+		Assert.assertEquals("Didn't detect DB column name override", "Employee One", employeeClasses.get(0).getDisplayName());
+	}
+
+	protected void createTestSchema(@Nonnull Database database) {
+		requireNonNull(database);
+		database.execute("CREATE TABLE employee (employee_id BIGINT, name VARCHAR(255) NOT NULL, email_address VARCHAR(255))");
 	}
 
 	@Nonnull
