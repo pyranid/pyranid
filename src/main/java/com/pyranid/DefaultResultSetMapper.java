@@ -17,6 +17,8 @@
 package com.pyranid;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
+import javax.annotation.concurrent.ThreadSafe;
 import java.beans.BeanInfo;
 import java.beans.Introspector;
 import java.beans.PropertyDescriptor;
@@ -45,6 +47,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TimeZone;
 import java.util.UUID;
@@ -65,13 +68,28 @@ import static java.util.stream.Collectors.toSet;
  * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
+@ThreadSafe
 public class DefaultResultSetMapper implements ResultSetMapper {
+	@Nonnull
 	private final DatabaseType databaseType;
+	@Nonnull
 	private final InstanceProvider instanceProvider;
+	@Nonnull
 	private final ZoneId timeZone;
+	@Nonnull
 	private final Calendar timeZoneCalendar;
+	@Nonnull
 	private final Map<Class<?>, Map<String, Set<String>>> columnLabelAliasesByPropertyNameCache =
 			new ConcurrentHashMap<>();
+
+	/**
+	 * Creates a {@code ResultSetMapper} for the given {@code instanceProvider}.
+	 *
+	 * @param instanceProvider instance-creation factory, used to instantiate resultset row objects as needed
+	 */
+	public DefaultResultSetMapper(@Nonnull InstanceProvider instanceProvider) {
+		this(null, requireNonNull(instanceProvider), null);
+	}
 
 	/**
 	 * Creates a {@code ResultSetMapper} for the given {@code databaseType} and {@code instanceProvider}.
@@ -79,8 +97,9 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 * @param databaseType     the type of database we're working with
 	 * @param instanceProvider instance-creation factory, used to instantiate resultset row objects as needed
 	 */
-	public DefaultResultSetMapper(DatabaseType databaseType, InstanceProvider instanceProvider) {
-		this(databaseType, instanceProvider, ZoneId.systemDefault());
+	public DefaultResultSetMapper(@Nullable DatabaseType databaseType,
+																@Nonnull InstanceProvider instanceProvider) {
+		this(databaseType, requireNonNull(instanceProvider), null);
 	}
 
 	/**
@@ -91,9 +110,13 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 * @param timeZone         the timezone to use when working with {@link java.sql.Timestamp} and similar values
 	 * @since 1.0.15
 	 */
-	public DefaultResultSetMapper(DatabaseType databaseType, InstanceProvider instanceProvider, ZoneId timeZone) {
-		this.databaseType = requireNonNull(databaseType);
-		this.instanceProvider = requireNonNull(instanceProvider);
+	public DefaultResultSetMapper(@Nullable DatabaseType databaseType,
+																@Nonnull InstanceProvider instanceProvider,
+																@Nullable ZoneId timeZone) {
+		requireNonNull(instanceProvider);
+
+		this.databaseType = databaseType == null ? DatabaseType.GENERIC : databaseType;
+		this.instanceProvider = instanceProvider;
 		this.timeZone = timeZone == null ? ZoneId.systemDefault() : timeZone;
 		this.timeZoneCalendar = Calendar.getInstance(TimeZone.getTimeZone(this.timeZone));
 	}
@@ -111,7 +134,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 			StandardTypeResult<T> standardTypeResult = mapResultSetToStandardType(resultSet, resultClass);
 
 			if (standardTypeResult.isStandardType())
-				return standardTypeResult.value();
+				return standardTypeResult.value().orElse(null);
 
 			if (resultClass.isRecord())
 				return (T) mapResultSetToRecord(resultSet, (Class<? extends Record>) resultClass);
@@ -139,8 +162,9 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 * @throws Exception if an error occurs during mapping
 	 */
 	@SuppressWarnings({"unchecked", "rawtypes"})
-	protected <T> StandardTypeResult<T> mapResultSetToStandardType(ResultSet resultSet, Class<T> resultClass)
-			throws Exception {
+	@Nonnull
+	protected <T> StandardTypeResult<T> mapResultSetToStandardType(@Nonnull ResultSet resultSet,
+																																 @Nonnull Class<T> resultClass) throws Exception {
 		requireNonNull(resultSet);
 		requireNonNull(resultClass);
 
@@ -251,7 +275,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 			}
 		}
 
-		return new StandardTypeResult((T) value, standardType);
+		return new StandardTypeResult(value, standardType);
 	}
 
 	/**
@@ -266,6 +290,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 * @return the result of the mapping
 	 * @throws Exception if an error occurs during mapping
 	 */
+	@Nonnull
 	protected <T extends Record> T mapResultSetToRecord(@Nonnull ResultSet resultSet,
 																											@Nonnull Class<T> resultClass) throws Exception {
 		requireNonNull(resultSet);
@@ -314,6 +339,9 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	@Nonnull
 	protected <T> T mapResultSetToBean(@Nonnull ResultSet resultSet,
 																		 @Nonnull Class<T> resultClass) throws Exception {
+		requireNonNull(resultSet);
+		requireNonNull(resultClass);
+
 		T object = instanceProvider().provide(resultClass);
 		BeanInfo beanInfo = Introspector.getBeanInfo(resultClass);
 		Map<String, Object> columnLabelsToValues = extractColumnLabelsToValues(resultSet);
@@ -348,9 +376,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 
 			for (String propertyName : propertyNames) {
 				if (columnLabelsToValues.containsKey(propertyName)) {
-					Object value =
-							convertResultSetValueToPropertyType(columnLabelsToValues.get(propertyName), parameter.getType());
-
+					Object value = convertResultSetValueToPropertyType(columnLabelsToValues.get(propertyName), parameter.getType()).orElse(null);
 					Class<?> writeMethodParameterType = writeMethod.getParameterTypes()[0];
 
 					if (value != null && !writeMethodParameterType.isAssignableFrom(value.getClass())) {
@@ -438,90 +464,91 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 * @param propertyType   the JavaBean property type we'd like to map {@code resultSetValue} to
 	 * @return a representation of {@code resultSetValue} that is of type {@code propertyType}
 	 */
-	protected Object convertResultSetValueToPropertyType(Object resultSetValue, Class<?> propertyType) {
+	@Nonnull
+	protected Optional<Object> convertResultSetValueToPropertyType(Object resultSetValue, Class<?> propertyType) {
 		requireNonNull(propertyType);
 
 		if (resultSetValue == null)
-			return null;
+			return Optional.empty();
 
 		if (resultSetValue instanceof BigDecimal) {
 			BigDecimal bigDecimal = (BigDecimal) resultSetValue;
 
 			if (BigDecimal.class.isAssignableFrom(propertyType))
-				return bigDecimal;
+				return Optional.ofNullable(bigDecimal);
 			if (BigInteger.class.isAssignableFrom(propertyType))
-				return bigDecimal.toBigInteger();
+				return Optional.of(bigDecimal.toBigInteger());
 		}
 
 		if (resultSetValue instanceof BigInteger) {
 			BigInteger bigInteger = (BigInteger) resultSetValue;
 
 			if (BigDecimal.class.isAssignableFrom(propertyType))
-				return new BigDecimal(bigInteger);
+				return Optional.of(new BigDecimal(bigInteger));
 			if (BigInteger.class.isAssignableFrom(propertyType))
-				return bigInteger;
+				return Optional.ofNullable(bigInteger);
 		}
 
 		if (resultSetValue instanceof Number) {
 			Number number = (Number) resultSetValue;
 
 			if (Byte.class.isAssignableFrom(propertyType))
-				return number.byteValue();
+				return Optional.of(number.byteValue());
 			if (Short.class.isAssignableFrom(propertyType))
-				return number.shortValue();
+				return Optional.of(number.shortValue());
 			if (Integer.class.isAssignableFrom(propertyType))
-				return number.intValue();
+				return Optional.of(number.intValue());
 			if (Long.class.isAssignableFrom(propertyType))
-				return number.longValue();
+				return Optional.of(number.longValue());
 			if (Float.class.isAssignableFrom(propertyType))
-				return number.floatValue();
+				return Optional.of(number.floatValue());
 			if (Double.class.isAssignableFrom(propertyType))
-				return number.doubleValue();
+				return Optional.of(number.doubleValue());
 			if (BigDecimal.class.isAssignableFrom(propertyType))
-				return new BigDecimal(number.doubleValue());
+				return Optional.of(new BigDecimal(number.doubleValue()));
 			if (BigInteger.class.isAssignableFrom(propertyType))
-				return new BigDecimal(number.doubleValue()).toBigInteger();
+				return Optional.of(new BigDecimal(number.doubleValue()).toBigInteger());
 		} else if (resultSetValue instanceof java.sql.Timestamp) {
 			java.sql.Timestamp date = (java.sql.Timestamp) resultSetValue;
 
 			if (Date.class.isAssignableFrom(propertyType))
-				return date;
+				return Optional.ofNullable(date);
 			if (Instant.class.isAssignableFrom(propertyType))
-				return date.toInstant();
+				return Optional.of(date.toInstant());
 			if (LocalDate.class.isAssignableFrom(propertyType))
-				return date.toInstant().atZone(getTimeZone()).toLocalDate();
+				return Optional.of(date.toInstant().atZone(getTimeZone()).toLocalDate());
 			if (LocalDateTime.class.isAssignableFrom(propertyType))
-				return date.toLocalDateTime();
+				return Optional.of(date.toLocalDateTime());
 		} else if (resultSetValue instanceof java.sql.Date) {
 			java.sql.Date date = (java.sql.Date) resultSetValue;
 
 			if (Date.class.isAssignableFrom(propertyType))
-				return date;
+				return Optional.ofNullable(date);
 			if (Instant.class.isAssignableFrom(propertyType))
-				return date.toInstant();
+				return Optional.of(date.toInstant());
 			if (LocalDate.class.isAssignableFrom(propertyType))
-				return date.toLocalDate();
+				return Optional.of(date.toLocalDate());
 			if (LocalDateTime.class.isAssignableFrom(propertyType))
-				return LocalDateTime.ofInstant(date.toInstant(), getTimeZone());
+				return Optional.of(LocalDateTime.ofInstant(date.toInstant(), getTimeZone()));
 		} else if (resultSetValue instanceof java.sql.Time) {
 			java.sql.Time time = (java.sql.Time) resultSetValue;
 
 			if (LocalTime.class.isAssignableFrom(propertyType))
-				return time.toLocalTime();
+				return Optional.ofNullable(time.toLocalTime());
 		} else if (propertyType.isAssignableFrom(ZoneId.class)) {
-			return ZoneId.of(resultSetValue.toString());
+			return Optional.ofNullable(ZoneId.of(resultSetValue.toString()));
 		} else if (propertyType.isAssignableFrom(TimeZone.class)) {
-			return TimeZone.getTimeZone(resultSetValue.toString());
+			return Optional.ofNullable(TimeZone.getTimeZone(resultSetValue.toString()));
 		} else if (propertyType.isAssignableFrom(Locale.class)) {
-			return Locale.forLanguageTag(resultSetValue.toString());
+			return Optional.ofNullable(Locale.forLanguageTag(resultSetValue.toString()));
 		} else if (propertyType.isEnum()) {
-			return extractEnumValue(propertyType, resultSetValue);
+			return Optional.ofNullable(extractEnumValue(propertyType, resultSetValue));
 		} else if ("org.postgresql.util.PGobject".equals(resultSetValue.getClass().getName())) {
 			org.postgresql.util.PGobject pgObject = (org.postgresql.util.PGobject) resultSetValue;
-			return pgObject.getValue();
+			return Optional.ofNullable(pgObject.getValue());
 		}
 
-		return resultSetValue;
+		return Optional.ofNullable(resultSetValue);
 	}
 
 	/**
@@ -533,11 +560,12 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 * @param enumClass the enum to which we'd like to convert {@code object}
 	 * @param object    the object to convert to an enum value
 	 * @return the enum value of {@code object} for {@code enumClass}
-	 * @throws IllegalArgumentException if {@code enumClass} is not an enum
-	 * @throws DatabaseException        if {@code object} does not correspond to a valid enum value
+	 * @throws DatabaseException if {@code object} does not correspond to a valid enum value
 	 */
 	@SuppressWarnings({"unchecked", "rawtypes"})
-	protected Enum<?> extractEnumValue(Class<?> enumClass, Object object) {
+	@Nonnull
+	protected Enum<?> extractEnumValue(@Nonnull Class<?> enumClass,
+																		 @Nonnull Object object) {
 		requireNonNull(enumClass);
 		requireNonNull(object);
 
@@ -548,7 +576,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 
 		try {
 			return Enum.valueOf((Class<? extends Enum>) enumClass, objectAsString);
-		} catch (IllegalArgumentException e) {
+		} catch (IllegalArgumentException | NullPointerException e) {
 			throw new DatabaseException(format("The value '%s' is not present in enum %s", objectAsString, enumClass), e);
 		}
 	}
@@ -561,7 +589,8 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 * @param columnLabel the {@link ResultSet} column label to massage
 	 * @return the massaged label
 	 */
-	protected String normalizeColumnLabel(String columnLabel) {
+	@Nonnull
+	protected String normalizeColumnLabel(@Nonnull String columnLabel) {
 		requireNonNull(columnLabel);
 		return columnLabel.toLowerCase(normalizationLocale());
 	}
@@ -577,8 +606,10 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 * @param propertyName the JavaBean property name to massage
 	 * @return the column names that match the JavaBean property name
 	 */
-	protected Set<String> databaseColumnNamesForPropertyName(String propertyName) {
+	@Nonnull
+	protected Set<String> databaseColumnNamesForPropertyName(@Nonnull String propertyName) {
 		requireNonNull(propertyName);
+
 		Set<String> normalizedPropertyNames = new HashSet<>(2);
 
 		// Converts camelCase to camel_case
@@ -604,6 +635,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 *
 	 * @return the locale to use for massaging, hardcoded to {@link Locale#ENGLISH} by default
 	 */
+	@Nonnull
 	protected Locale normalizationLocale() {
 		return ENGLISH;
 	}
@@ -613,6 +645,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 *
 	 * @return the kind of database we're working with
 	 */
+	@Nonnull
 	protected DatabaseType databaseType() {
 		return this.databaseType;
 	}
@@ -622,14 +655,17 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 *
 	 * @return the instance-creation factory
 	 */
+	@Nonnull
 	protected InstanceProvider instanceProvider() {
 		return this.instanceProvider;
 	}
 
+	@Nonnull
 	protected ZoneId getTimeZone() {
 		return timeZone;
 	}
 
+	@Nonnull
 	protected Calendar getTimeZoneCalendar() {
 		return timeZoneCalendar;
 	}
@@ -640,9 +676,12 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 * @author <a href="https://www.revetware.com">Mark Allen</a>
 	 * @since 1.0.0
 	 */
+	@ThreadSafe
 	protected static class StandardTypeResult<T> {
+		@Nullable
 		private final T value;
-		private final boolean standardType;
+		@Nonnull
+		private final Boolean standardType;
 
 		/**
 		 * Creates a {@code StandardTypeResult} with the given {@code value} and {@code standardType} flag.
@@ -650,7 +689,10 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		 * @param value        the mapping result, may be {@code null}
 		 * @param standardType {@code true} if the mapped type was a standard type, {@code false} otherwise
 		 */
-		public StandardTypeResult(T value, boolean standardType) {
+		public StandardTypeResult(@Nullable T value,
+															@Nonnull Boolean standardType) {
+			requireNonNull(standardType);
+
 			this.value = value;
 			this.standardType = standardType;
 		}
@@ -660,8 +702,9 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		 *
 		 * @return the mapping result value, may be {@code null}
 		 */
-		public T value() {
-			return this.value;
+		@Nonnull
+		public Optional<T> value() {
+			return Optional.ofNullable(this.value);
 		}
 
 		/**
@@ -669,7 +712,8 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		 *
 		 * @return {@code true} if this was a standard type, {@code false} otherwise
 		 */
-		public boolean isStandardType() {
+		@Nonnull
+		public Boolean isStandardType() {
 			return this.standardType;
 		}
 	}

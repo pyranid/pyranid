@@ -17,6 +17,8 @@
 package com.pyranid;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
+import javax.annotation.concurrent.ThreadSafe;
 import java.nio.ByteBuffer;
 import java.sql.PreparedStatement;
 import java.sql.Timestamp;
@@ -26,6 +28,7 @@ import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.TimeZone;
 import java.util.UUID;
 
@@ -37,18 +40,29 @@ import static java.util.Objects.requireNonNull;
  * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
+@ThreadSafe
 public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
+	@Nonnull
 	private final DatabaseType databaseType;
+	@Nonnull
 	private final ZoneId timeZone;
+	@Nonnull
 	private final Calendar timeZoneCalendar;
+
+	/**
+	 * Creates a {@code PreparedStatementBinder}.
+	 */
+	public DefaultPreparedStatementBinder() {
+		this(null, null);
+	}
 
 	/**
 	 * Creates a {@code PreparedStatementBinder} for the given {@code databaseType}.
 	 *
 	 * @param databaseType the type of database we're working with
 	 */
-	public DefaultPreparedStatementBinder(DatabaseType databaseType) {
-		this(databaseType, ZoneId.systemDefault());
+	public DefaultPreparedStatementBinder(@Nullable DatabaseType databaseType) {
+		this(null, null);
 	}
 
 	/**
@@ -58,8 +72,9 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	 * @param timeZone     the timezone to use when working with {@link java.sql.Timestamp} and similar values
 	 * @since 1.0.15
 	 */
-	public DefaultPreparedStatementBinder(DatabaseType databaseType, ZoneId timeZone) {
-		this.databaseType = requireNonNull(databaseType);
+	public DefaultPreparedStatementBinder(@Nullable DatabaseType databaseType,
+																				@Nullable ZoneId timeZone) {
+		this.databaseType = databaseType == null ? DatabaseType.GENERIC : databaseType;
 		this.timeZone = timeZone == null ? ZoneId.systemDefault() : timeZone;
 		this.timeZoneCalendar = Calendar.getInstance(TimeZone.getTimeZone(this.timeZone));
 	}
@@ -77,7 +92,7 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 				Object parameter = parameters.get(i);
 
 				if (parameter != null) {
-					Object normalizedParameter = normalizeParameter(parameter);
+					Object normalizedParameter = normalizeParameter(parameter).orElse(null);
 
 					if (normalizedParameter instanceof java.sql.Timestamp) {
 						java.sql.Timestamp timestamp = (java.sql.Timestamp) normalizedParameter;
@@ -108,22 +123,23 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	 * @param parameter the parameter to (possibly) massage
 	 * @return the result of the massaging process
 	 */
-	protected Object normalizeParameter(Object parameter) {
+	@Nonnull
+	protected Optional<Object> normalizeParameter(@Nullable Object parameter) {
 		if (parameter == null)
-			return null;
+			return Optional.empty();
 
 		if (parameter instanceof Date)
-			return new Timestamp(((Date) parameter).getTime());
+			return Optional.of(new Timestamp(((Date) parameter).getTime()));
 		if (parameter instanceof Instant)
-			return new Timestamp(((Instant) parameter).toEpochMilli());
+			return Optional.of(new Timestamp(((Instant) parameter).toEpochMilli()));
 		if (parameter instanceof Locale)
-			return ((Locale) parameter).toLanguageTag();
+			return Optional.of(((Locale) parameter).toLanguageTag());
 		if (parameter instanceof Enum)
-			return ((Enum<?>) parameter).name();
+			return Optional.of(((Enum<?>) parameter).name());
 		// Java 11 uses internal implementation java.time.ZoneRegion, which Postgres JDBC driver does not support.
 		// Force ZoneId to use its ID here
 		if (parameter instanceof ZoneId)
-			return ((ZoneId) parameter).getId();
+			return Optional.of(((ZoneId) parameter).getId());
 
 		// Special handling for Oracle
 		if (databaseType() == DatabaseType.ORACLE) {
@@ -131,28 +147,26 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 				ByteBuffer byteBuffer = ByteBuffer.wrap(new byte[16]);
 				byteBuffer.putLong(((UUID) parameter).getMostSignificantBits());
 				byteBuffer.putLong(((UUID) parameter).getLeastSignificantBits());
-				return byteBuffer.array();
+				return Optional.of(byteBuffer.array());
 			}
 
 			// Other massaging here if needed...
 		}
 
-		return parameter;
+		return Optional.ofNullable(parameter);
 	}
 
-	/**
-	 * What kind of database are we working with?
-	 *
-	 * @return the kind of database we're working with
-	 */
+	@Nonnull
 	protected DatabaseType databaseType() {
 		return this.databaseType;
 	}
 
+	@Nonnull
 	protected ZoneId getTimeZone() {
 		return timeZone;
 	}
 
+	@Nonnull
 	protected Calendar getTimeZoneCalendar() {
 		return timeZoneCalendar;
 	}

@@ -17,7 +17,6 @@
 package com.pyranid;
 
 import org.hsqldb.jdbc.JDBCDataSource;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -133,8 +132,8 @@ public class DatabaseTests {
 			}
 		};
 
-		ResultSetMapper resultSetMapper = new DefaultResultSetMapper(DatabaseType.GENERIC, instanceProvider) {
-			@NotNull
+		ResultSetMapper resultSetMapper = new DefaultResultSetMapper(instanceProvider) {
+			@Nonnull
 			@Override
 			public <T> T map(@Nonnull ResultSet resultSet,
 											 @Nonnull StatementContext<T> statementContext) {
@@ -142,7 +141,7 @@ public class DatabaseTests {
 			}
 		};
 
-		PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder(DatabaseType.GENERIC) {
+		PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder() {
 			@Override
 			public <T> void bind(@Nonnull PreparedStatement preparedStatement,
 													 @Nonnull StatementContext<T> statementContext) {
@@ -165,14 +164,14 @@ public class DatabaseTests {
 
 		createTestSchema(customDatabase);
 
-		customDatabase.execute("INSERT INTO employee VALUES (1, 'Employee One', 'employee-one@company.com')");
+		customDatabase.execute("INSERT INTO employee VALUES (?, 'Employee One', 'employee-one@company.com')", 1);
 		customDatabase.execute("INSERT INTO employee VALUES (2, 'Employee Two', NULL)");
 
-		List<EmployeeRecord> employeeRecords = customDatabase.queryForList("SELECT * FROM employee ORDER BY name", EmployeeRecord.class);
+		List<EmployeeRecord> employeeRecords = customDatabase.queryForList("x", "SELECT * FROM employee ORDER BY name", EmployeeRecord.class);
 		Assert.assertEquals("Wrong number of employees", 2, employeeRecords.size());
 		Assert.assertEquals("Didn't detect DB column name override", "Employee One", employeeRecords.get(0).displayName());
 
-		List<EmployeeClass> employeeClasses = customDatabase.queryForList("SELECT * FROM employee ORDER BY name", EmployeeClass.class);
+		List<EmployeeClass> employeeClasses = customDatabase.queryForList("y", "SELECT * FROM employee ORDER BY name", EmployeeClass.class);
 		Assert.assertEquals("Wrong number of employees", 2, employeeClasses.size());
 		Assert.assertEquals("Didn't detect DB column name override", "Employee One", employeeClasses.get(0).getDisplayName());
 	}

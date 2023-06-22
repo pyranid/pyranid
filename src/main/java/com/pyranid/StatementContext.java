@@ -22,8 +22,10 @@ import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
+import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
 /**
@@ -50,6 +52,33 @@ public class StatementContext<T> {
 		this.sql = builder.sql;
 		this.parameters = builder.parameters;
 		this.resultType = builder.resultType;
+	}
+
+	@Override
+	public int hashCode() {
+		return Objects.hash(getStatementIdentifier(), getSql(), getParameters(), getResultType());
+	}
+
+	@Override
+	public boolean equals(Object object) {
+		if (this == object)
+			return true;
+
+		if (!(object instanceof StatementContext))
+			return false;
+
+		StatementContext statementContext = (StatementContext) object;
+
+		return Objects.equals(statementContext.getStatementIdentifier(), getStatementIdentifier())
+				&& Objects.equals(statementContext.getSql(), getSql())
+				&& Objects.equals(statementContext.getParameters(), getParameters())
+				&& Objects.equals(statementContext.getResultType(), getResultType());
+	}
+
+	@Override
+	public String toString() {
+		return format("%s{statementIdentifier=%s, sql=%s, parameters=%s, resultType=%s}",
+				getClass().getSimpleName(), getStatementIdentifier(), getSql(), getParameters(), getResultType());
 	}
 
 	@Nonnull
