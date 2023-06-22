@@ -75,7 +75,7 @@ open class KotlinDefaultResultSetMapper(
     data class ParameterMetadata(val name: String, val parameter: KParameter, val parameterType: KClass<*>)
 
 
-    override fun <T : Any> map(resultSet: ResultSet, statementContext: StatementContext<T>): T {
+    override fun <T : Any> map(statementContext: StatementContext<T>, resultSet: ResultSet): T {
         val resultClass = statementContext.resultType.get();
 
         val klass = kotlinClassForJavaClass.computeIfAbsent(resultClass) {
@@ -85,7 +85,7 @@ open class KotlinDefaultResultSetMapper(
         return if (klass.isData) {
             mapKotlinDataClass(resultSet, klass)
         } else {
-            javaDefaultResultSetMapper.map(resultSet, statementContext)
+            javaDefaultResultSetMapper.map(statementContext, resultSet)
         }
     }
 

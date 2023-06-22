@@ -206,7 +206,7 @@ public class StatementLog<T> implements Serializable {
 		/**
 		 * Creates a {@code Builder} for the given {@code statementContext}.
 		 *
-		 * @param statementContext the SQL statement context
+		 * @param statementContext current SQL context
 		 */
 		private Builder(StatementContext<T> statementContext) {
 			requireNonNull(statementContext);

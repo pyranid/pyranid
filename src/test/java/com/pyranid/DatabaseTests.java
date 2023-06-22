@@ -123,7 +123,8 @@ public class DatabaseTests {
 
 		InstanceProvider instanceProvider = new InstanceProvider() {
 			@Override
-			public <T> T provide(Class<T> instanceClass) {
+			public <T> T provide(@Nonnull StatementContext<T> statementContext,
+													 @Nonnull Class<T> instanceClass) {
 				try {
 					return instanceClass.getDeclaredConstructor().newInstance();
 				} catch (Exception e) {
@@ -135,17 +136,17 @@ public class DatabaseTests {
 		ResultSetMapper resultSetMapper = new DefaultResultSetMapper(instanceProvider) {
 			@Nonnull
 			@Override
-			public <T> T map(@Nonnull ResultSet resultSet,
-											 @Nonnull StatementContext<T> statementContext) {
-				return super.map(resultSet, statementContext);
+			public <T> T map(@Nonnull StatementContext<T> statementContext,
+											 @Nonnull ResultSet resultSet) {
+				return super.map(statementContext, resultSet);
 			}
 		};
 
 		PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder() {
 			@Override
-			public <T> void bind(@Nonnull PreparedStatement preparedStatement,
-													 @Nonnull StatementContext<T> statementContext) {
-				super.bind(preparedStatement, statementContext);
+			public <T> void bind(@Nonnull StatementContext<T> statementContext,
+													 @Nonnull PreparedStatement preparedStatement) {
+				super.bind(statementContext, preparedStatement);
 			}
 		};
 

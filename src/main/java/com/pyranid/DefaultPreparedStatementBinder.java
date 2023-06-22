@@ -80,10 +80,10 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	}
 
 	@Override
-	public <T> void bind(@Nonnull PreparedStatement preparedStatement,
-											 @Nonnull StatementContext<T> statementContext) {
-		requireNonNull(preparedStatement);
+	public <T> void bind(@Nonnull StatementContext<T> statementContext,
+											 @Nonnull PreparedStatement preparedStatement) {
 		requireNonNull(statementContext);
+		requireNonNull(preparedStatement);
 
 		List<Object> parameters = statementContext.getParameters();
 

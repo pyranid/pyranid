@@ -16,7 +16,11 @@
 
 package com.pyranid;
 
+import javax.annotation.Nonnull;
+import javax.annotation.concurrent.ThreadSafe;
+
 import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
 
 /**
  * Basic implementation of {@link InstanceProvider}.
@@ -24,9 +28,15 @@ import static java.lang.String.format;
  * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
+@ThreadSafe
 public class DefaultInstanceProvider implements InstanceProvider {
 	@Override
-	public <T> T provide(Class<T> instanceClass) {
+	@Nonnull
+	public <T> T provide(@Nonnull StatementContext<T> statementContext,
+											 @Nonnull Class<T> instanceClass) {
+		requireNonNull(statementContext);
+		requireNonNull(instanceClass);
+
 		try {
 			return instanceClass.getDeclaredConstructor().newInstance();
 		} catch (Exception e) {

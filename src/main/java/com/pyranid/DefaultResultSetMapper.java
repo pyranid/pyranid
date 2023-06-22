@@ -123,10 +123,10 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 
 	@Override
 	@Nonnull
-	public <T> T map(@Nonnull ResultSet resultSet,
-									 @Nonnull StatementContext<T> statementContext) {
-		requireNonNull(resultSet);
+	public <T> T map(@Nonnull StatementContext<T> statementContext,
+									 @Nonnull ResultSet resultSet) {
 		requireNonNull(statementContext);
+		requireNonNull(resultSet);
 
 		Class<T> resultClass = statementContext.getResultType().get();
 
@@ -137,9 +137,9 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 				return standardTypeResult.value().orElse(null);
 
 			if (resultClass.isRecord())
-				return (T) mapResultSetToRecord(resultSet, (Class<? extends Record>) resultClass);
+				return (T) mapResultSetToRecord((StatementContext<? extends Record>) statementContext, resultSet);
 
-			return mapResultSetToBean(resultSet, resultClass);
+			return mapResultSetToBean(statementContext, resultSet);
 		} catch (DatabaseException e) {
 			throw e;
 		} catch (Exception e) {
@@ -284,17 +284,19 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 * <p>
 	 * The {@code resultClass} instance will be created via {@link #instanceProvider()}.
 	 *
-	 * @param <T>         result instance type token
-	 * @param resultSet   provides raw row data to pull from
-	 * @param resultClass the type of instance to map to
+	 * @param <T>              result instance type token
+	 * @param statementContext current SQL context
+	 * @param resultSet        provides raw row data to pull from
 	 * @return the result of the mapping
 	 * @throws Exception if an error occurs during mapping
 	 */
 	@Nonnull
-	protected <T extends Record> T mapResultSetToRecord(@Nonnull ResultSet resultSet,
-																											@Nonnull Class<T> resultClass) throws Exception {
+	protected <T extends Record> T mapResultSetToRecord(@Nonnull StatementContext<T> statementContext,
+																											@Nonnull ResultSet resultSet) throws Exception {
+		requireNonNull(statementContext);
 		requireNonNull(resultSet);
-		requireNonNull(resultClass);
+
+		Class<T> resultClass = statementContext.getResultType().get();
 
 		RecordComponent[] recordComponents = resultClass.getRecordComponents();
 		Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(resultClass);
@@ -319,7 +321,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 					args[i] = columnLabelsToValues.get(potentialPropertyName);
 		}
 
-		T record = instanceProvider().provideRecord(resultClass, args);
+		T record = instanceProvider().provideRecord(statementContext, resultClass, args);
 
 		return record;
 	}
@@ -330,19 +332,21 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 * <p>
 	 * The {@code resultClass} instance will be created via {@link #instanceProvider()}.
 	 *
-	 * @param <T>         result instance type token
-	 * @param resultSet   provides raw row data to pull from
-	 * @param resultClass the type of instance to map to
+	 * @param <T>              result instance type token
+	 * @param statementContext current SQL context
+	 * @param resultSet        provides raw row data to pull from
 	 * @return the result of the mapping
 	 * @throws Exception if an error occurs during mapping
 	 */
 	@Nonnull
-	protected <T> T mapResultSetToBean(@Nonnull ResultSet resultSet,
-																		 @Nonnull Class<T> resultClass) throws Exception {
+	protected <T> T mapResultSetToBean(@Nonnull StatementContext<T> statementContext,
+																		 @Nonnull ResultSet resultSet) throws Exception {
+		requireNonNull(statementContext);
 		requireNonNull(resultSet);
-		requireNonNull(resultClass);
 
-		T object = instanceProvider().provide(resultClass);
+		Class<T> resultClass = statementContext.getResultType().get();
+
+		T object = instanceProvider().provide(statementContext, resultClass);
 		BeanInfo beanInfo = Introspector.getBeanInfo(resultClass);
 		Map<String, Object> columnLabelsToValues = extractColumnLabelsToValues(resultSet);
 		Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(resultClass);

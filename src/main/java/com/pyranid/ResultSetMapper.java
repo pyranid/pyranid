@@ -30,12 +30,12 @@ public interface ResultSetMapper {
 	 * Maps the current row of {@code resultSet} to the result class indicated by {@code statementContext}.
 	 *
 	 * @param <T>              result instance type token
+	 * @param statementContext current SQL context
 	 * @param resultSet        provides raw row data to pull from
-	 * @param statementContext the statements
 	 * @return an instance of the given {@code resultClass}
 	 * @throws DatabaseException if an error occurs during mapping
 	 */
 	@Nonnull
-	<T> T map(@Nonnull ResultSet resultSet,
-						@Nonnull StatementContext<T> statementContext);
+	<T> T map(@Nonnull StatementContext<T> statementContext,
+						@Nonnull ResultSet resultSet);
 }

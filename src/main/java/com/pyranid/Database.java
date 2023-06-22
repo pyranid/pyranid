@@ -218,7 +218,7 @@ public class Database {
 
 		performDatabaseOperation(statementContext, (preparedStatement) -> {
 			if (statementContext.getParameters().size() > 0)
-				preparedStatementBinder().bind(preparedStatement, statementContext);
+				preparedStatementBinder().bind(statementContext, preparedStatement);
 		}, databaseOperation);
 	}
 
@@ -310,7 +310,7 @@ public class Database {
 				startTime = nanoTime();
 
 				while (resultSet.next()) {
-					T listElement = resultSetMapper().map(resultSet, statementContext);
+					T listElement = resultSetMapper().map(statementContext, resultSet);
 					list.add(listElement);
 				}
 
@@ -380,7 +380,7 @@ public class Database {
 				startTime = nanoTime();
 
 				if (resultSet.next())
-					resultHolder.value = resultSetMapper().map(resultSet, statementContext);
+					resultHolder.value = resultSetMapper().map(statementContext, resultSet);
 
 				Long resultSetMappingTime = nanoTime() - startTime;
 				return new DatabaseOperationResult(Optional.of(executionTime), Optional.of(resultSetMappingTime));
@@ -413,7 +413,7 @@ public class Database {
 		performDatabaseOperation(statementContext, (preparedStatement) -> {
 			for (List<Object> parameterGroup : parameterGroups) {
 				if (parameterGroup != null && parameterGroup.size() > 0)
-					preparedStatementBinder().bind(preparedStatement, statementContext);
+					preparedStatementBinder().bind(statementContext, preparedStatement);
 
 				preparedStatement.addBatch();
 			}

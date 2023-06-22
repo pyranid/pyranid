@@ -16,6 +16,8 @@
 
 package com.pyranid;
 
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.util.Arrays;
@@ -43,7 +45,9 @@ public interface InstanceProvider {
 	 * @param instanceClass the type of instance to create
 	 * @return an instance of the given {@code instanceClass}
 	 */
-	<T> T provide(Class<T> instanceClass);
+	@Nonnull
+	<T> T provide(@Nonnull StatementContext<T> statementContext,
+								@Nonnull Class<T> instanceClass);
 
 	/**
 	 * Provides an instance of the given {@code recordClass}.
@@ -56,7 +60,11 @@ public interface InstanceProvider {
 	 * @return an instance of the given {@code recordClass}
 	 * @since 2.0.0
 	 */
-	default <T extends Record> T provideRecord(Class<T> recordClass, Object... initargs) {
+	@Nonnull
+	default <T extends Record> T provideRecord(@Nonnull StatementContext<T> statementContext,
+																						 @Nonnull Class<T> recordClass,
+																						 @Nullable Object... initargs) {
+		requireNonNull(statementContext);
 		requireNonNull(recordClass);
 
 		try {
