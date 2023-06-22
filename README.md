@@ -2,7 +2,7 @@
 
 ### What Is It?
 
-A minimalist JDBC interface for modern Java applications, powering production systems since 2015.
+A zero-dependency JDBC interface for modern Java applications, powering production systems since 2015.
 
 Pyranid takes care of boilerplate and lets you focus on writing and thinking in SQL.
 
@@ -53,39 +53,71 @@ If you don't use Maven, you can drop [pyranid-2.0.0-SNAPSHOT.jar](https://repo1.
 
 ## Configuration
 
-```java
-// Minimal setup, uses defaults
-Database database = Database.forDataSource(dataSource).build();
+### Minimal setup
 
-// Customized setup
+```java
+Database database = Database.forDataSource(dataSource).build();
+```
+
+### Customized setup
+
+```java
+// Controls how Pyranid creates instances of objects that represent ResultSet rows
+InstanceProvider instanceProvider = new InstanceProvider() {
+  @Override
+  @Nonnull
+  public <T> T provide(@Nonnull StatementContext<T> statementContext,
+                       @Nonnull Class<T> instanceClass) {
+    // You might have your DI framework vend regular object instances
+    return guiceInjector.getInstance(instanceClass);
+  }
+  
+  @Override
+  @Nonnull
+  public <T extends Record> T provideRecord(@Nonnull StatementContext<T> statementContext,
+                                            @Nonnull Class<T> recordClass,
+                                            @Nullable Object... initargs) {
+    // If you use Record types, customize their instantiation here.
+    // Default implementation will use the canonical constructor
+    return super.provideRecord(statementContext, recordClass, initargs);
+  }
+}
+
+// Copies data from a ResultSet row to an instance of the specified type
+ResultSetMapper resultSetMapper = new DefaultResultSetMapper(instanceProvider) {
+  @Nonnull
+  @Override
+  public <T> T map(@Nonnull StatementContext<T> statementContext,
+                   @Nonnull ResultSet resultSet) {
+    return super.map(statementContext, resultSet);
+  }
+};
+
+// Binds parameters to a SQL PreparedStatement
+PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder() {
+@Override
+public <T> void bind(@Nonnull StatementContext<T> statementContext,
+                     @Nonnull PreparedStatement preparedStatement) {
+    super.bind(statementContext, preparedStatement);
+  }
+};
+
+// Optionally logs SQL statements
+StatementLogger statementLogger = new StatementLogger() {
+  @Override
+  public void log(@Nonnull StatementLog statementLog) {
+    // Send to whatever output sink you'd like
+    System.out.println(statementLog);
+  }
+};
+
 Database customDatabase = Database.forDataSource(dataSource)
   .timeZone(ZoneId.of("UTC")) // Override JVM default timezone
-  .instanceProvider(new InstanceProvider() {
-    @Override
-    public <T> T provide(Class<T> instanceClass) {
-      // You might have your DI framework vend resultset row instances
-      return guiceInjector.getInstance(instanceClass);
-    }
-  })
-  .resultSetMapper(new ResultSetMapper() {
-    @Override
-    public <T> T map(ResultSet rs, Class<T> resultClass) {
-      // Do some custom mapping here
-    }
-  })
-  .preparedStatementBinder(new PreparedStatementBinder() {
-    @Override
-    public void bind(PreparedStatement ps, List<Object> parameters) {
-      // Do some custom binding here
-    }
-  })
-  .statementLogger(new StatementLogger() {
-    @Override
-    public void log(StatementLog statementLog) {
-      // Send log to whatever output sink you'd like
-      out.println(statementLog);
-    }
-  }).build();
+  .instanceProvider(instanceProvider)
+  .resultSetMapper(resultSetMapper)
+  .preparedStatementBinder(preparedStatementBinder)
+  .statementLogger(statementLogger)
+  .build();
 ```
 
 #### Obtaining a DataSource
@@ -162,7 +194,7 @@ Optional<Employee> employee = database.queryForObject("""
   """, Employee.class, "mark@revetware.com");
 ```
 
-Pyranid will always invoke the canonical constructor for `Record` types. 
+By default, Pyranid will invoke the canonical constructor for `Record` types. 
 
 ## Statements
 
@@ -199,7 +231,7 @@ long[] updateCounts = database.executeBatch("INSERT INTO car VALUES (?,?)", para
 
 #### Design goals
 
-* Minimal closure-based API: rollback if exception bubbles out, commit at end of closure otherwise
+* Closure-based API: rollback if exception bubbles out, commit at end of closure otherwise
 * Data access APIs (e.g. [`Database::queryForObject`](https://pyranid.com/javadoc/com/pyranid/Database.html#queryForObject(java.lang.String,java.lang.Class,java.lang.Object...)) and friends) automatically participate in transactions
 * No [`Connection`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/java/sql/Connection.html) is fetched from the [`DataSource`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/javax/sql/DataSource.html) until the first data access operation occurs
 * Must be able to share a transaction across multiple threads

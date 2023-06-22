@@ -150,18 +150,21 @@ public class DatabaseTests {
 			}
 		};
 
+		StatementLogger statementLogger = new StatementLogger() {
+			@Override
+			public void log(StatementLog statementLog) {
+				// Send log to whatever output sink you'd like
+				System.out.println(statementLog);
+			}
+		};
+
 		Database customDatabase = Database.forDataSource(dataSource)
 				.timeZone(ZoneId.of("UTC")) // Override JVM default timezone
 				.instanceProvider(instanceProvider)
 				.resultSetMapper(resultSetMapper)
 				.preparedStatementBinder(preparedStatementBinder)
-				.statementLogger(new StatementLogger() {
-					@Override
-					public void log(StatementLog statementLog) {
-						// Send log to whatever output sink you'd like
-						System.out.println(statementLog);
-					}
-				}).build();
+				.statementLogger(statementLogger)
+				.build();
 
 		createTestSchema(customDatabase);
 
