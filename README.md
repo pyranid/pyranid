@@ -56,6 +56,8 @@ If you don't use Maven, you can drop [pyranid-2.0.0-SNAPSHOT.jar](https://repo1.
 ### Minimal setup
 
 ```java
+// Create a Database backed by a DataSource
+DataSource dataSource = obtainDataSourceSomehow();
 Database database = Database.forDataSource(dataSource).build();
 ```
 
@@ -63,7 +65,7 @@ Database database = Database.forDataSource(dataSource).build();
 
 ```java
 // Controls how Pyranid creates instances of objects that represent ResultSet rows
-InstanceProvider instanceProvider = new InstanceProvider() {
+InstanceProvider instanceProvider = new DefaultInstanceProvider() {
   @Override
   @Nonnull
   public <T> T provide(@Nonnull StatementContext<T> statementContext,
