@@ -435,9 +435,13 @@ class DatabaseTransactionFilter implements Filter {
 
 The `DefaultResultSetMapper` supports user-defined types that follow the JavaBean getter/setter conventions, primitives, and some additional common JDK types.
 
+[Record](https://openjdk.org/jeps/395) types are also supported.
+
 #### User-defined Types
 
-By default, database column names are assumed to be separated by `_` characters and are mapped to their camel-case equivalent.  For example:
+In the case of user-defined types and Records, `DefaultResultSetMapper` examines the names of columns in the [`ResultSet`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/javax/sql/ResultSet.html) and matches them to corresponding fields via reflection.  The `@DatabaseColumn` annotation allows per-field customization of mapping behavior.
+
+By default, column names are assumed to be separated by `_` characters and are mapped to their camel-case equivalent.  For example:
 
 ```java
 class Car {

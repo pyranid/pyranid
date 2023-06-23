@@ -478,7 +478,7 @@ public class Database {
 	}
 
 	@FunctionalInterface
-	protected static interface PreparedStatementBindingOperation {
+	protected interface PreparedStatementBindingOperation {
 		void perform(PreparedStatement preparedStatement) throws Exception;
 	}
 
