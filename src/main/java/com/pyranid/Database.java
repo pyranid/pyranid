@@ -193,17 +193,14 @@ public class Database {
 		requireNonNull(sql);
 		requireNonNull(objectType);
 
-		return queryForObject(null, sql, objectType, parameters);
+		return queryForObject(new Statement(generateId(), sql), objectType, parameters);
 	}
 
-	public <T> Optional<T> queryForObject(Object statementIdentifier, String sql, Class<T> objectType, Object... parameters) {
-		requireNonNull(sql);
+	public <T> Optional<T> queryForObject(Statement statement, Class<T> objectType, Object... parameters) {
+		requireNonNull(statement);
 		requireNonNull(objectType);
 
-		if (statementIdentifier == null)
-			statementIdentifier = generateId();
-
-		List<T> list = queryForList(statementIdentifier, sql, objectType, parameters);
+		List<T> list = queryForList(statement, objectType, parameters);
 
 		if (list.size() > 1)
 			throw new DatabaseException(format("Expected 1 row in resultset but got %s instead", list.size()));
@@ -244,7 +241,7 @@ public class Database {
 			connectionAcquisitionTime = alreadyHasConnection ? Optional.empty() : Optional.of(nanoTime() - startTime);
 			startTime = nanoTime();
 
-			try (PreparedStatement preparedStatement = connection.prepareStatement(statementContext.getSql())) {
+			try (PreparedStatement preparedStatement = connection.prepareStatement(statementContext.getStatement().getSql())) {
 				preparedStatementBindingOperation.perform(preparedStatement);
 				preparationTime = Optional.of(nanoTime() - startTime);
 
@@ -282,22 +279,18 @@ public class Database {
 		requireNonNull(sql);
 		requireNonNull(elementType);
 
-		return queryForList(null, sql, elementType, parameters);
+		return queryForList(new Statement(generateId(), sql), elementType, parameters);
 	}
 
 	@Nonnull
-	public <T> List<T> queryForList(@Nullable Object statementIdentifier,
-																	@Nonnull String sql,
+	public <T> List<T> queryForList(@Nonnull Statement statement,
 																	@Nonnull Class<T> elementType,
 																	@Nullable Object... parameters) {
-		requireNonNull(sql);
+		requireNonNull(statement);
 		requireNonNull(elementType);
 
-		if (statementIdentifier == null)
-			statementIdentifier = generateId();
-
 		List<T> list = new ArrayList<>();
-		StatementContext<T> statementContext = new StatementContext.Builder<T>(statementIdentifier, sql)
+		StatementContext<T> statementContext = new StatementContext.Builder<T>(statement)
 				.resultType(elementType)
 				.parameters(parameters)
 				.build();
@@ -333,8 +326,9 @@ public class Database {
 		if (statementIdentifier == null)
 			statementIdentifier = generateId();
 
+		Statement statement = new Statement(statementIdentifier, sql);
 		ResultHolder<Long> resultHolder = new ResultHolder<>();
-		StatementContext<Void> statementContext = new StatementContext.Builder<>(statementIdentifier, sql)
+		StatementContext<Void> statementContext = new StatementContext.Builder<>(statement)
 				.parameters(parameters)
 				.build();
 
@@ -366,8 +360,9 @@ public class Database {
 		if (statementIdentifier == null)
 			statementIdentifier = generateId();
 
+		Statement statement = new Statement(statementIdentifier, sql);
 		ResultHolder<T> resultHolder = new ResultHolder<>();
-		StatementContext<T> statementContext = new StatementContext.Builder<>(statementIdentifier, sql)
+		StatementContext<T> statementContext = new StatementContext.Builder<>(statement)
 				.parameters(parameters)
 				.resultType(returnType)
 				.build();
@@ -394,18 +389,15 @@ public class Database {
 		requireNonNull(sql);
 		requireNonNull(parameterGroups);
 
-		return executeBatch(null, sql, parameterGroups);
+		return executeBatch(new Statement(generateId(), sql), parameterGroups);
 	}
 
-	public long[] executeBatch(Object statementIdentifier, String sql, List<List<Object>> parameterGroups) {
-		requireNonNull(sql);
+	public long[] executeBatch(Statement statement, List<List<Object>> parameterGroups) {
+		requireNonNull(statement);
 		requireNonNull(parameterGroups);
 
-		if (statementIdentifier == null)
-			statementIdentifier = generateId();
-
 		ResultHolder<long[]> resultHolder = new ResultHolder<>();
-		StatementContext<long[]> statementContext = new StatementContext.Builder<>(statementIdentifier, sql)
+		StatementContext<long[]> statementContext = new StatementContext.Builder<>(statement)
 				.parameters(parameterGroups)
 				.resultType(long[].class)
 				.build();

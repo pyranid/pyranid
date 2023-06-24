@@ -122,7 +122,7 @@ Database customDatabase = Database.forDataSource(dataSource)
   .build();
 ```
 
-#### Obtaining a DataSource
+### Obtaining a DataSource
 
 Pyranid works with any [`DataSource`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/javax/sql/DataSource.html) implementation. If you have the freedom to choose, [HikariCP](https://github.com/brettwooldridge/HikariCP) (application-level) and [PgBouncer](https://www.pgbouncer.org/) (global; Postgres-only) are great options.
 
@@ -231,14 +231,14 @@ long[] updateCounts = database.executeBatch("INSERT INTO car VALUES (?,?)", para
 
 ## Transactions
 
-#### Design goals
+### Design goals
 
 * Closure-based API: rollback if exception bubbles out, commit at end of closure otherwise
 * Data access APIs (e.g. [`Database::queryForObject`](https://pyranid.com/javadoc/com/pyranid/Database.html#queryForObject(java.lang.String,java.lang.Class,java.lang.Object...)) and friends) automatically participate in transactions
 * No [`Connection`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/java/sql/Connection.html) is fetched from the [`DataSource`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/javax/sql/DataSource.html) until the first data access operation occurs
 * Must be able to share a transaction across multiple threads
 
-#### Basics
+### Basics
 
 ```java
 // Any code that runs inside of the closure operates within the context of a transaction.
@@ -271,7 +271,7 @@ Optional<BigDecimal> newBalance = database.transaction(() -> {
 });
 ```
 
-#### Context
+### Context
 
 ```java
 // Gets a handle to the current transaction, if any.
@@ -290,7 +290,7 @@ database.transaction(() -> {
 });
 ```
 
-#### Multi-threaded Transactions
+### Multi-threaded Transactions
 
 Internally, Database manages a threadlocal stack of [`Transaction`](https://pyranid.com/javadoc/com/pyranid/Transaction.html) instances to simplify single-threaded usage.  Should you need to share the same transaction across multiple threads, use the [`Database::participate`](https://pyranid.com/javadoc/com/pyranid/Database.html#participate(com.pyranid.Transaction,com.pyranid.TransactionalOperation)) API.
 
@@ -316,7 +316,7 @@ database.transaction(() -> {
 });
 ```
 
-#### Rolling Back
+### Rolling Back
 
 ```java
 // Any exception that bubbles out will cause a rollback
@@ -347,7 +347,7 @@ database.transaction(() -> {
 });
 ```
 
-#### Nesting
+### Nesting
 
 ```java
 // Each nested transaction is independent. There is no parent-child relationship
@@ -364,7 +364,7 @@ database.transaction(() -> {
 });
 ```
 
-#### Isolation
+### Isolation
 
 ```java
 // You may specify the normal isolation levels per-transaction as needed:
@@ -376,7 +376,7 @@ database.transaction(TransactionIsolation.SERIALIZABLE, () -> {
 });
 ```
 
-#### Post-Transaction Operations
+### Post-Transaction Operations
 
 It is useful to be able to schedule code to run after a transaction has been fully committed or rolled back.  Often, transaction management happens at a higher layer of code than business logic (e.g. a transaction-per-web-request pattern), so it is helpful to have a mechanism to "warp" local logic out to the higher layer.
 
@@ -437,7 +437,7 @@ The `DefaultResultSetMapper` supports user-defined types that follow the JavaBea
 
 [Record](https://openjdk.org/jeps/395) types are also supported.
 
-#### User-defined Types
+### User-defined Types
 
 In the case of user-defined types and Records, `DefaultResultSetMapper` examines the names of columns in the [`ResultSet`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/javax/sql/ResultSet.html) and matches them to corresponding fields via reflection.  The `@DatabaseColumn` annotation allows per-field customization of mapping behavior.
 
@@ -482,7 +482,7 @@ car = database.queryForObject("SELECT some_id AS car_id, some_color AS color FRO
                               Car.class).get();
 ```
 
-#### Supported Primitives
+### Supported Primitives
 
 * `Byte`
 * `Short`
@@ -495,7 +495,7 @@ car = database.queryForObject("SELECT some_id AS car_id, some_color AS color FRO
 * `String`
 * `byte[]`
 
-#### Supported JDK Types
+### Supported JDK Types
 
 * `Enum<E>`
 * `UUID`
@@ -512,13 +512,13 @@ car = database.queryForObject("SELECT some_id AS car_id, some_color AS color FRO
 * `TimeZone`
 * `Locale` (IETF BCP 47 "language tag" format)
 
-#### Other Types
+### Other Types
 
 * Store Postgres JSONB data using a SQL cast of `String`, e.g. `CAST(? AS JSONB)`. Retrieve JSONB data using `String`
 
-#### Kotlin Types
+### Kotlin Types
 
-##### Data Class
+#### Data Class
 
 Kotlin data class result set mapping is possible through the primary constructor of the data class.
 
@@ -608,7 +608,7 @@ database.transaction(() -> {
 
 ## Logging and Diagnostics
 
-#### StatementLogger
+### StatementLogger
 
 You may customize your `Database` with a `StatementLogger`.
 
@@ -649,60 +649,15 @@ Parameters: 'BLUE'
 0.04ms acquiring connection, 0.03ms preparing statement, 0.82ms executing statement, 0.40ms processing resultset
 ```
 
-#### Statement Metadata
+### Statement Identifiers
 
-You may specify arbitrary metadata with database operations via the `StatementMetadata` type.
 
-This is useful for supporting custom logging scenarios your application might require.
 
 ```java
-// App-specific metadata which means "don't log this statement"
-StatementMetadata IGNORE_LOGGING = new StatementMetadata();
-
-// App-specific metadata which means "this is sensitive, restrict parameter logging".
-// This may alternatively be expressed using shorthand: 
-// 
-// SENSITIVE_DATA = StatementMetadata.with("com.myapp.SENSITIVITY_LEVEL", "HIGH")
-StatementMetadata SENSITIVE_DATA = new StatementMetadata.Builder()
-  .add("com.myapp.SENSITIVITY_LEVEL", "HIGH");
-  .build(); 
-
-// Set up our database with custom logging
-Database database = Database.forDataSource(dataSource)
-  .statementLogger(new StatementLogger() {
-    @Override
-    public void log(StatementLog statementLog) {
-      StatementMetadata statementMetadata = statementLog.statementMetadata().orElse(null);
-                                
-      // Bail if we encounter our custom metadata
-      if(statementMetadata == IGNORE_LOGGING)
-        return;
-                                
-      // Only log SQL, not parameters. For example:
-      // SENSITIVE[HIGH]: UPDATE customer SET social_security_number=? WHERE customer_id=?
-      if(statementMetadata == SENSITIVE_DATA) {
-        String sensitivityLevel = (String) SENSITIVE_DATA.get("com.myapp.SENSITIVITY_LEVEL");
-        out.printf("SENSITIVE[%s]: %s\n", sensitivityLevel, statementLog.sql());
-        return;
-      }
-                               
-      // Log as normal
-      out.println(statementLog);
-    }
-  }).build();
-
-// This "hot" query is run frequently in the background, so we don't want to log it
-Optional<Message> message = database.queryForObject("SELECT * FROM message " + 
-  "WHERE message_status_id='UNSENT' " + 
-  "ORDER BY created_timestamp FOR UPDATE SKIP LOCKED LIMIT 1", 
-  IGNORE_LOGGING, Message.class);
-
-// We want to log this sensitive statement specially
-database.execute("UPDATE customer SET social_security_number=? WHERE customer_id=?", 
-  SENSITIVE_DATA, socialSecurityNumber, customerId);
+// TODO 
 ```
 
-#### java.util.Logging
+### java.util.Logging
 
 Pyranid uses `java.util.Logging` internally.  The usual way to hook into this is with [SLF4J](http://slf4j.org), which can funnel all the different logging mechanisms in your app through a single one, normally [Logback](http://logback.qos.ch).  Your Maven configuration might look like this:
 
@@ -710,12 +665,12 @@ Pyranid uses `java.util.Logging` internally.  The usual way to hook into this is
 <dependency>
   <groupId>ch.qos.logback</groupId>
   <artifactId>logback-classic</artifactId>
-  <version>1.2.3</version>
+  <version>1.4.8</version>
 </dependency>
 <dependency>
   <groupId>org.slf4j</groupId>
   <artifactId>jul-to-slf4j</artifactId>
-  <version>1.7.30</version>
+  <version>2.0.7</version>
 </dependency>
 ```
 

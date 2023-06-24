@@ -103,7 +103,7 @@ public class DefaultStatementLogger implements StatementLogger {
 
 		List<String> lines = new ArrayList<>(4);
 
-		lines.add(statementLog.statementContext().getSql());
+		lines.add(statementLog.statementContext().getStatement().getSql());
 
 		if (parameterLine != null)
 			lines.add(parameterLine);

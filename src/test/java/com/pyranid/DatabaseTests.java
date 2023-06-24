@@ -27,6 +27,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static java.util.Objects.requireNonNull;
@@ -121,15 +122,15 @@ public class DatabaseTests {
 	public void testCustomDatabase() {
 		DataSource dataSource = createInMemoryDataSource();
 
-		InstanceProvider instanceProvider = new InstanceProvider() {
+		InstanceProvider instanceProvider = new DefaultInstanceProvider() {
 			@Override
 			public <T> T provide(@Nonnull StatementContext<T> statementContext,
 													 @Nonnull Class<T> instanceClass) {
-				try {
-					return instanceClass.getDeclaredConstructor().newInstance();
-				} catch (Exception e) {
-					throw new RuntimeException(e);
-				}
+				if (Objects.equals("employee-query", statementContext.getStatement().getStatementIdentifier()))
+					System.out.printf("Creating instance of %s for Employee Query: %s\n",
+							instanceClass.getSimpleName(), statementContext);
+
+				return super.provide(statementContext, instanceClass);
 			}
 		};
 
@@ -138,6 +139,9 @@ public class DatabaseTests {
 			@Override
 			public <T> T map(@Nonnull StatementContext<T> statementContext,
 											 @Nonnull ResultSet resultSet) {
+				if (Objects.equals("employee-query", statementContext.getStatement().getStatementIdentifier()))
+					System.out.printf("Mapping ResultSet for Employee Query: %s\n", statementContext);
+
 				return super.map(statementContext, resultSet);
 			}
 		};
@@ -146,6 +150,9 @@ public class DatabaseTests {
 			@Override
 			public <T> void bind(@Nonnull StatementContext<T> statementContext,
 													 @Nonnull PreparedStatement preparedStatement) {
+				if (Objects.equals("employee-query", statementContext.getStatement().getStatementIdentifier()))
+					System.out.printf("Binding Employee Query: %s\n", statementContext);
+
 				super.bind(statementContext, preparedStatement);
 			}
 		};
@@ -154,7 +161,8 @@ public class DatabaseTests {
 			@Override
 			public void log(StatementLog statementLog) {
 				// Send log to whatever output sink you'd like
-				System.out.println(statementLog);
+				if (Objects.equals("employee-query", statementLog.statementContext().getStatement().getStatementIdentifier()))
+					System.out.printf("Completed Employee Query: %s\n", statementLog);
 			}
 		};
 
@@ -171,13 +179,21 @@ public class DatabaseTests {
 		customDatabase.execute("INSERT INTO employee VALUES (?, 'Employee One', 'employee-one@company.com')", 1);
 		customDatabase.execute("INSERT INTO employee VALUES (2, 'Employee Two', NULL)");
 
-		List<EmployeeRecord> employeeRecords = customDatabase.queryForList("x", "SELECT * FROM employee ORDER BY name", EmployeeRecord.class);
+		List<EmployeeRecord> employeeRecords = customDatabase.queryForList("SELECT * FROM employee ORDER BY name", EmployeeRecord.class);
 		Assert.assertEquals("Wrong number of employees", 2, employeeRecords.size());
 		Assert.assertEquals("Didn't detect DB column name override", "Employee One", employeeRecords.get(0).displayName());
 
-		List<EmployeeClass> employeeClasses = customDatabase.queryForList("y", "SELECT * FROM employee ORDER BY name", EmployeeClass.class);
+		List<EmployeeClass> employeeClasses = customDatabase.queryForList("SELECT * FROM employee ORDER BY name", EmployeeClass.class);
 		Assert.assertEquals("Wrong number of employees", 2, employeeClasses.size());
 		Assert.assertEquals("Didn't detect DB column name override", "Employee One", employeeClasses.get(0).getDisplayName());
+
+		EmployeeClass employee = customDatabase.queryForObject(new Statement("employee-query", """
+				SELECT *
+				FROM employee
+				WHERE email_address=?
+				"""), EmployeeClass.class, "employee-one@company.com").orElse(null);
+
+		Assert.assertNotNull("Could not find employee", employee);
 	}
 
 	protected void createTestSchema(@Nonnull Database database) {

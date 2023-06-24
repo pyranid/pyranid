@@ -37,9 +37,7 @@ import static java.util.Objects.requireNonNull;
 @ThreadSafe
 public class StatementContext<T> {
 	@Nonnull
-	private final Object statementIdentifier;
-	@Nonnull
-	private final String sql;
+	private final Statement statement;
 	@Nonnull
 	private final List<Object> parameters;
 	@Nullable
@@ -48,15 +46,14 @@ public class StatementContext<T> {
 	private StatementContext(@Nonnull Builder builder) {
 		requireNonNull(builder);
 
-		this.statementIdentifier = builder.statementIdentifier;
-		this.sql = builder.sql;
+		this.statement = builder.statement;
 		this.parameters = builder.parameters;
 		this.resultType = builder.resultType;
 	}
 
 	@Override
 	public int hashCode() {
-		return Objects.hash(getStatementIdentifier(), getSql(), getParameters(), getResultType());
+		return Objects.hash(getStatement(), getParameters(), getResultType());
 	}
 
 	@Override
@@ -69,26 +66,20 @@ public class StatementContext<T> {
 
 		StatementContext statementContext = (StatementContext) object;
 
-		return Objects.equals(statementContext.getStatementIdentifier(), getStatementIdentifier())
-				&& Objects.equals(statementContext.getSql(), getSql())
+		return Objects.equals(statementContext.getStatement(), getStatement())
 				&& Objects.equals(statementContext.getParameters(), getParameters())
 				&& Objects.equals(statementContext.getResultType(), getResultType());
 	}
 
 	@Override
 	public String toString() {
-		return format("%s{statementIdentifier=%s, sql=%s, parameters=%s, resultType=%s}",
-				getClass().getSimpleName(), getStatementIdentifier(), getSql(), getParameters(), getResultType());
+		return format("%s{statement=%s, parameters=%s, resultType=%s}",
+				getClass().getSimpleName(), getStatement(), getParameters(), getResultType());
 	}
 
 	@Nonnull
-	public Object getStatementIdentifier() {
-		return this.statementIdentifier;
-	}
-
-	@Nonnull
-	public String getSql() {
-		return this.sql;
+	public Statement getStatement() {
+		return this.statement;
 	}
 
 	@Nonnull
@@ -112,21 +103,15 @@ public class StatementContext<T> {
 	@NotThreadSafe
 	public static class Builder<T> {
 		@Nonnull
-		private final Object statementIdentifier;
-		@Nonnull
-		private final String sql;
+		private final Statement statement;
 		@Nullable
 		private List<Object> parameters;
 		@Nullable
 		private Class<T> resultType;
 
-		public Builder(@Nonnull Object statementIdentifier,
-									 @Nonnull String sql) {
-			requireNonNull(statementIdentifier);
-			requireNonNull(sql);
-
-			this.statementIdentifier = statementIdentifier;
-			this.sql = sql;
+		public Builder(@Nonnull Statement statement) {
+			requireNonNull(statement);
+			this.statement = statement;
 		}
 
 		@Nonnull
