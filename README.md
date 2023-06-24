@@ -1,4 +1,7 @@
-<a href="https://www.pyranid.com"><img src="https://pyranid.s3.amazonaws.com/pyranid-gh-logo-v2.png" width="300"/></a>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://pyranid.s3.amazonaws.com/pyranid-gh-logo-dark.png">
+  <a href="https://www.pyranid.com"><img alt="Pyranid" src="https://pyranid.s3.amazonaws.com/pyranid-gh-logo-v2.png" width="300"></a>
+</picture>
 
 ### What Is It?
 
