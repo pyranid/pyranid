@@ -630,29 +630,13 @@ Database database = Database.forDataSource(dataSource)
 
 `StatementLog` instances give you access to the following for each SQL statement executed.  All time values are in nanoseconds.
 
-* `sql`
-* `parameters`
-* `statementMetadata` (optional)
+* `statementContext`
 * `connectionAcquisitionTime` (optional)
 * `preparationTime` (optional)
 * `executionTime` (optional)
 * `resultSetMappingTime` (optional)
 * `batchSize` (optional)
 * `exception` (optional)
-
-Given this query:
-
-```java
-Optional<Car> car = database.queryForObject("SELECT * FROM car WHERE color = ?", Car.class, Color.BLUE);
-```
-
-The log output for `DefaultStatementLogger` might look like:
-
-```
-SELECT * FROM car WHERE color = ?
-Parameters: 'BLUE'
-0.04ms acquiring connection, 0.03ms preparing statement, 0.82ms executing statement, 0.40ms processing resultset
-```
 
 ### Statement Identifiers
 

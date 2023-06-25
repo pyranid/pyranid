@@ -20,10 +20,12 @@ import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
@@ -73,8 +75,19 @@ public class StatementContext<T> {
 
 	@Override
 	public String toString() {
-		return format("%s{statement=%s, parameters=%s, resultType=%s}",
-				getClass().getSimpleName(), getStatement(), getParameters(), getResultType());
+		List<String> components = new ArrayList<>(3);
+
+		components.add(format("statement=%s", getStatement()));
+
+		if (getParameters().size() > 0)
+			components.add(format("parameters=%s", getParameters()));
+
+		Class<T> resultType = getResultType().orElse(null);
+
+		if (resultType != null)
+			components.add(format("resultType=%s", resultType));
+
+		return format("%s{%s}", getClass().getSimpleName(), components.stream().collect(Collectors.joining(", ")));
 	}
 
 	@Nonnull

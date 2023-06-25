@@ -17,33 +17,27 @@
 package com.pyranid;
 
 import javax.annotation.Nonnull;
-import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
 /**
  * A collection of SQL statement execution diagnostics.
- * <p>
- * Created via builder, for example
- *
- * <pre>
- * StatementLog statementLog = StatementLog.forSql(&quot;SELECT * FROM car WHERE id=?&quot;).parameters(singletonList(123)).build();
- * </pre>
  *
  * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
-public class StatementLog<T> implements Serializable {
-	private static final long serialVersionUID = 1L;
-
+public class StatementLog<T> {
+	private final StatementContext<T> statementContext;
 	private final Optional<Long> connectionAcquisitionTime;
 	private final Optional<Long> preparationTime;
 	private final Optional<Long> executionTime;
 	private final Optional<Long> resultSetMappingTime;
-	private final StatementContext<T> statementContext;
 	private final Optional<Integer> batchSize;
 	private final Optional<Exception> exception;
 
@@ -54,6 +48,7 @@ public class StatementLog<T> implements Serializable {
 	 */
 	private StatementLog(Builder builder) {
 		requireNonNull(builder);
+
 		this.connectionAcquisitionTime = builder.connectionAcquisitionTime;
 		this.preparationTime = builder.preparationTime;
 		this.executionTime = builder.executionTime;
@@ -64,9 +59,9 @@ public class StatementLog<T> implements Serializable {
 	}
 
 	/**
-	 * Creates a {@link StatementLog} builder for the given {@code sql}.
+	 * Creates a {@link StatementLog} builder for the given {@code statementContext}.
 	 *
-	 * @param sql the SQL statement
+	 * @param statementContext current SQL context
 	 * @return a {@link StatementLog} builder
 	 */
 	@Nonnull
@@ -77,10 +72,42 @@ public class StatementLog<T> implements Serializable {
 
 	@Override
 	public String toString() {
-		return format(
-				"%s{connectionAcquisitionTime=%s, preparationTime=%s, executionTime=%s, resultSetMappingTime=%s, totalTime=%s, "
-						+ "statementContext=%s, batchSize=%s, exception=%s}", getClass().getSimpleName(), connectionAcquisitionTime(),
-				preparationTime(), executionTime(), resultSetMappingTime(), totalTime(), statementContext, batchSize(), exception());
+		List<String> components = new ArrayList<>(8);
+
+		components.add(format("statementContext=%s", statementContext()));
+		components.add(format("totalTime=%s", totalTime()));
+
+		Long connectionAcquisitionTime = connectionAcquisitionTime().orElse(null);
+
+		if (connectionAcquisitionTime != null)
+			components.add(format("connectionAcquisitionTime=%s", connectionAcquisitionTime));
+
+		Long preparationTime = preparationTime().orElse(null);
+
+		if (preparationTime != null)
+			components.add(format("preparationTime=%s", preparationTime));
+
+		Long executionTime = executionTime().orElse(null);
+
+		if (executionTime != null)
+			components.add(format("executionTime=%s", executionTime));
+
+		Long resultSetMappingTime = resultSetMappingTime().orElse(null);
+
+		if (resultSetMappingTime != null)
+			components.add(format("resultSetMappingTime=%s", resultSetMappingTime));
+
+		Integer batchSize = batchSize().orElse(null);
+
+		if (batchSize != null)
+			components.add(format("batchSize=%s", batchSize));
+
+		Exception exception = exception().orElse(null);
+
+		if (exception != null)
+			components.add(format("exception=%s", exception));
+		
+		return format("%s{%s}", getClass().getSimpleName(), components.stream().collect(Collectors.joining(", ")));
 	}
 
 	@Override
