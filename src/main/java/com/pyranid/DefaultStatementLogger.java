@@ -63,25 +63,24 @@ public class DefaultStatementLogger implements StatementLogger {
 
 		List<String> timingEntries = new ArrayList<>(4);
 
-		if (statementLog.connectionAcquisitionTime().isPresent())
-			timingEntries.add(format("%.2fms acquiring connection",
-					(float) statementLog.connectionAcquisitionTime().get() / 1_000_000f));
+		if (statementLog.getConnectionAcquisitionDuration().isPresent())
+			timingEntries.add(format("%s acquiring connection", statementLog.getConnectionAcquisitionDuration().get()));
 
-		if (statementLog.preparationTime().isPresent())
-			timingEntries.add(format("%.2fms preparing statement", (float) statementLog.preparationTime().get() / 1_000_000f));
+		if (statementLog.getPreparationDuration().isPresent())
+			timingEntries.add(format("%s preparing statement", statementLog.getPreparationDuration().get()));
 
-		if (statementLog.executionTime().isPresent())
-			timingEntries.add(format("%.2fms executing statement", (float) statementLog.executionTime().get() / 1_000_000f));
+		if (statementLog.getExecutionDuration().isPresent())
+			timingEntries.add(format("%s executing statement", statementLog.getExecutionDuration().get()));
 
-		if (statementLog.resultSetMappingTime().isPresent())
-			timingEntries.add(format("%.2fms processing resultset", (float) statementLog.resultSetMappingTime().get() / 1_000_000f));
+		if (statementLog.getResultSetMappingDuration().isPresent())
+			timingEntries.add(format("%s processing resultset", statementLog.getResultSetMappingDuration().get()));
 
 		String parameterLine = null;
 
-		if (statementLog.statementContext().getParameters().size() > 0) {
+		if (statementLog.getStatementContext().getParameters().size() > 0) {
 			StringBuilder parameterLineBuilder = new StringBuilder();
 			parameterLineBuilder.append("Parameters: ");
-			parameterLineBuilder.append(statementLog.statementContext().getParameters().stream().map(parameter -> {
+			parameterLineBuilder.append(statementLog.getStatementContext().getParameters().stream().map(parameter -> {
 				if (parameter == null)
 					return "null";
 
@@ -103,7 +102,7 @@ public class DefaultStatementLogger implements StatementLogger {
 
 		List<String> lines = new ArrayList<>(4);
 
-		lines.add(statementLog.statementContext().getStatement().getSql());
+		lines.add(statementLog.getStatementContext().getStatement().getSql());
 
 		if (parameterLine != null)
 			lines.add(parameterLine);
@@ -111,8 +110,8 @@ public class DefaultStatementLogger implements StatementLogger {
 		if (timingEntries.size() > 0)
 			lines.add(timingEntries.stream().collect(joining(", ")));
 
-		if (statementLog.exception().isPresent()) {
-			Throwable throwable = (Throwable) statementLog.exception().get();
+		if (statementLog.getException().isPresent()) {
+			Throwable throwable = (Throwable) statementLog.getException().get();
 
 			if (throwable instanceof DatabaseException && throwable.getCause() != null)
 				throwable = throwable.getCause();

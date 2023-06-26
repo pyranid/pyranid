@@ -76,7 +76,7 @@ open class KotlinDefaultResultSetMapper(
 
 
     override fun <T : Any> map(statementContext: StatementContext<T>, resultSet: ResultSet): T {
-        val resultClass = statementContext.resultType.get();
+        val resultClass = statementContext.resultSetRowType.get();
 
         val klass = kotlinClassForJavaClass.computeIfAbsent(resultClass) {
             Class.forName(resultClass.name).kotlin

@@ -22,6 +22,7 @@ import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -43,19 +44,19 @@ public class StatementContext<T> {
 	@Nonnull
 	private final List<Object> parameters;
 	@Nullable
-	private final Class<T> resultType;
+	private final Class<T> resultSetRowType;
 
-	private StatementContext(@Nonnull Builder builder) {
+	protected StatementContext(@Nonnull Builder builder) {
 		requireNonNull(builder);
 
 		this.statement = builder.statement;
-		this.parameters = builder.parameters;
-		this.resultType = builder.resultType;
+		this.parameters = builder.parameters == null ? List.of() : Collections.unmodifiableList(builder.parameters);
+		this.resultSetRowType = builder.resultSetRowType;
 	}
 
 	@Override
 	public int hashCode() {
-		return Objects.hash(getStatement(), getParameters(), getResultType());
+		return Objects.hash(getStatement(), getParameters(), getResultSetRowType());
 	}
 
 	@Override
@@ -70,7 +71,7 @@ public class StatementContext<T> {
 
 		return Objects.equals(statementContext.getStatement(), getStatement())
 				&& Objects.equals(statementContext.getParameters(), getParameters())
-				&& Objects.equals(statementContext.getResultType(), getResultType());
+				&& Objects.equals(statementContext.getResultSetRowType(), getResultSetRowType());
 	}
 
 	@Override
@@ -82,10 +83,10 @@ public class StatementContext<T> {
 		if (getParameters().size() > 0)
 			components.add(format("parameters=%s", getParameters()));
 
-		Class<T> resultType = getResultType().orElse(null);
+		Class<T> resultSetRowType = getResultSetRowType().orElse(null);
 
-		if (resultType != null)
-			components.add(format("resultType=%s", resultType));
+		if (resultSetRowType != null)
+			components.add(format("resultSetRowType=%s", resultSetRowType));
 
 		return format("%s{%s}", getClass().getSimpleName(), components.stream().collect(Collectors.joining(", ")));
 	}
@@ -101,8 +102,8 @@ public class StatementContext<T> {
 	}
 
 	@Nonnull
-	public Optional<Class<T>> getResultType() {
-		return Optional.ofNullable(this.resultType);
+	public Optional<Class<T>> getResultSetRowType() {
+		return Optional.ofNullable(this.resultSetRowType);
 	}
 
 	/**
@@ -120,7 +121,7 @@ public class StatementContext<T> {
 		@Nullable
 		private List<Object> parameters;
 		@Nullable
-		private Class<T> resultType;
+		private Class<T> resultSetRowType;
 
 		public Builder(@Nonnull Statement statement) {
 			requireNonNull(statement);
@@ -140,8 +141,8 @@ public class StatementContext<T> {
 		}
 
 		@Nonnull
-		public Builder resultType(Class<T> resultType) {
-			this.resultType = resultType;
+		public Builder resultSetRowType(Class<T> resultSetRowType) {
+			this.resultSetRowType = resultSetRowType;
 			return this;
 		}
 

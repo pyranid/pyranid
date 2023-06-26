@@ -128,22 +128,22 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 
-		Class<T> resultClass = statementContext.getResultType().get();
+		Class<T> resultSetRowType = statementContext.getResultSetRowType().get();
 
 		try {
-			StandardTypeResult<T> standardTypeResult = mapResultSetToStandardType(resultSet, resultClass);
+			StandardTypeResult<T> standardTypeResult = mapResultSetToStandardType(resultSet, resultSetRowType);
 
 			if (standardTypeResult.isStandardType())
 				return standardTypeResult.value().orElse(null);
 
-			if (resultClass.isRecord())
+			if (resultSetRowType.isRecord())
 				return (T) mapResultSetToRecord((StatementContext<? extends Record>) statementContext, resultSet);
 
 			return mapResultSetToBean(statementContext, resultSet);
 		} catch (DatabaseException e) {
 			throw e;
 		} catch (Exception e) {
-			throw new DatabaseException(format("Unable to map JDBC %s to %s", ResultSet.class.getSimpleName(), resultClass),
+			throw new DatabaseException(format("Unable to map JDBC %s to %s", ResultSet.class.getSimpleName(), resultSetRowType),
 					e);
 		}
 	}
@@ -296,10 +296,10 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 
-		Class<T> resultClass = statementContext.getResultType().get();
+		Class<T> resultSetRowType = statementContext.getResultSetRowType().get();
 
-		RecordComponent[] recordComponents = resultClass.getRecordComponents();
-		Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(resultClass);
+		RecordComponent[] recordComponents = resultSetRowType.getRecordComponents();
+		Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(resultSetRowType);
 		Map<String, Object> columnLabelsToValues = extractColumnLabelsToValues(resultSet);
 		Object[] args = new Object[recordComponents.length];
 
@@ -321,7 +321,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 					args[i] = columnLabelsToValues.get(potentialPropertyName);
 		}
 
-		T record = instanceProvider().provideRecord(statementContext, resultClass, args);
+		T record = instanceProvider().provideRecord(statementContext, resultSetRowType, args);
 
 		return record;
 	}
@@ -344,12 +344,12 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 
-		Class<T> resultClass = statementContext.getResultType().get();
+		Class<T> resultSetRowType = statementContext.getResultSetRowType().get();
 
-		T object = instanceProvider().provide(statementContext, resultClass);
-		BeanInfo beanInfo = Introspector.getBeanInfo(resultClass);
+		T object = instanceProvider().provide(statementContext, resultSetRowType);
+		BeanInfo beanInfo = Introspector.getBeanInfo(resultSetRowType);
 		Map<String, Object> columnLabelsToValues = extractColumnLabelsToValues(resultSet);
-		Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(resultClass);
+		Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(resultSetRowType);
 
 		for (PropertyDescriptor propertyDescriptor : beanInfo.getPropertyDescriptors()) {
 			Method writeMethod = propertyDescriptor.getWriteMethod();
@@ -390,7 +390,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 								format(
 										"Property '%s' of %s has a write method of type %s, but the ResultSet type %s does not match. "
 												+ "Consider creating your own %s and overriding convertResultSetValueToPropertyType() to detect instances of %s and convert them to %s",
-										propertyDescriptor.getName(), resultClass, writeMethodParameterType, resultSetTypeDescription,
+										propertyDescriptor.getName(), resultSetRowType, writeMethodParameterType, resultSetTypeDescription,
 										DefaultResultSetMapper.class.getSimpleName(), resultSetTypeDescription, writeMethodParameterType));
 					}
 

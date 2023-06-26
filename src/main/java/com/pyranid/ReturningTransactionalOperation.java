@@ -16,6 +16,9 @@
 
 package com.pyranid;
 
+import javax.annotation.Nonnull;
+import java.util.Optional;
+
 /**
  * Represents a transactional operation capable of returning a value.
  * <p>
@@ -29,8 +32,9 @@ public interface ReturningTransactionalOperation<T> {
 	/**
 	 * Executes a transactional operation.
 	 *
-	 * @return the result of execution, may be {@code null}
+	 * @return the result of operation execution
 	 * @throws Throwable if an error occurs while executing the transactional operation
 	 */
-	T perform() throws Throwable;
+	@Nonnull
+	Optional<T> perform() throws Throwable;
 }

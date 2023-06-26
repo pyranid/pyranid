@@ -32,22 +32,22 @@ import static java.util.Objects.requireNonNull;
 @ThreadSafe
 public class Statement {
 	@Nonnull
-	private final Object statementIdentifier;
+	private final Object id;
 	@Nonnull
 	private final String sql;
 
-	public Statement(@Nonnull Object statementIdentifier,
+	public Statement(@Nonnull Object id,
 									 @Nonnull String sql) {
-		requireNonNull(statementIdentifier);
+		requireNonNull(id);
 		requireNonNull(sql);
 
-		this.statementIdentifier = statementIdentifier;
+		this.id = id;
 		this.sql = sql;
 	}
 
 	@Override
 	public int hashCode() {
-		return Objects.hash(getStatementIdentifier(), getSql());
+		return Objects.hash(getId(), getSql());
 	}
 
 	@Override
@@ -60,7 +60,7 @@ public class Statement {
 
 		Statement statement = (Statement) object;
 
-		return Objects.equals(statement.getStatementIdentifier(), getStatementIdentifier())
+		return Objects.equals(statement.getId(), getId())
 				&& Objects.equals(statement.getSql(), getSql());
 	}
 
@@ -68,13 +68,13 @@ public class Statement {
 	@Nonnull
 	public String toString() {
 		// Strip out newlines for more compact SQL representation
-		return format("%s{statementIdentifier=%s, sql=%s}", getClass().getSimpleName(),
-				getStatementIdentifier(), getSql().replaceAll("\n+", " ").trim());
+		return format("%s{id=%s, sql=%s}", getClass().getSimpleName(),
+				getId(), getSql().replaceAll("\n+", " ").trim());
 	}
 
 	@Nonnull
-	public Object getStatementIdentifier() {
-		return this.statementIdentifier;
+	public Object getId() {
+		return this.id;
 	}
 
 	@Nonnull

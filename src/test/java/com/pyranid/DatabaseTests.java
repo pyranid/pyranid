@@ -126,7 +126,7 @@ public class DatabaseTests {
 			@Override
 			public <T> T provide(@Nonnull StatementContext<T> statementContext,
 													 @Nonnull Class<T> instanceClass) {
-				if (Objects.equals("employee-query", statementContext.getStatement().getStatementIdentifier()))
+				if (Objects.equals("employee-query", statementContext.getStatement().getId()))
 					System.out.printf("Creating instance of %s for Employee Query: %s\n",
 							instanceClass.getSimpleName(), statementContext);
 
@@ -139,7 +139,7 @@ public class DatabaseTests {
 			@Override
 			public <T> T map(@Nonnull StatementContext<T> statementContext,
 											 @Nonnull ResultSet resultSet) {
-				if (Objects.equals("employee-query", statementContext.getStatement().getStatementIdentifier()))
+				if (Objects.equals("employee-query", statementContext.getStatement().getId()))
 					System.out.printf("Mapping ResultSet for Employee Query: %s\n", statementContext);
 
 				return super.map(statementContext, resultSet);
@@ -150,7 +150,7 @@ public class DatabaseTests {
 			@Override
 			public <T> void bind(@Nonnull StatementContext<T> statementContext,
 													 @Nonnull PreparedStatement preparedStatement) {
-				if (Objects.equals("employee-query", statementContext.getStatement().getStatementIdentifier()))
+				if (Objects.equals("employee-query", statementContext.getStatement().getId()))
 					System.out.printf("Binding Employee Query: %s\n", statementContext);
 
 				super.bind(statementContext, preparedStatement);
@@ -161,7 +161,7 @@ public class DatabaseTests {
 			@Override
 			public void log(StatementLog statementLog) {
 				// Send log to whatever output sink you'd like
-				if (Objects.equals("employee-query", statementLog.statementContext().getStatement().getStatementIdentifier()))
+				if (Objects.equals("employee-query", statementLog.getStatementContext().getStatement().getId()))
 					System.out.printf("Completed Employee Query: %s\n", statementLog);
 			}
 		};

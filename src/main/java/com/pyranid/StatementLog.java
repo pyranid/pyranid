@@ -17,6 +17,10 @@
 package com.pyranid;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
+import javax.annotation.concurrent.NotThreadSafe;
+import javax.annotation.concurrent.ThreadSafe;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -32,30 +36,56 @@ import static java.util.Objects.requireNonNull;
  * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
+@ThreadSafe
 public class StatementLog<T> {
+	@Nonnull
 	private final StatementContext<T> statementContext;
-	private final Optional<Long> connectionAcquisitionTime;
-	private final Optional<Long> preparationTime;
-	private final Optional<Long> executionTime;
-	private final Optional<Long> resultSetMappingTime;
-	private final Optional<Integer> batchSize;
-	private final Optional<Exception> exception;
+	@Nonnull
+	private final Duration totalDuration;
+	@Nullable
+	private final Duration connectionAcquisitionDuration;
+	@Nullable
+	private final Duration preparationDuration;
+	@Nullable
+	private final Duration executionDuration;
+	@Nullable
+	private final Duration resultSetMappingDuration;
+	@Nullable
+	private final Integer batchSize;
+	@Nullable
+	private final Exception exception;
 
 	/**
 	 * Creates a {@code StatementLog} for the given {@code builder}.
 	 *
 	 * @param builder the builder used to construct this {@code StatementLog}
 	 */
-	private StatementLog(Builder builder) {
+	private StatementLog(@Nonnull Builder builder) {
 		requireNonNull(builder);
 
-		this.connectionAcquisitionTime = builder.connectionAcquisitionTime;
-		this.preparationTime = builder.preparationTime;
-		this.executionTime = builder.executionTime;
-		this.resultSetMappingTime = builder.resultSetMappingTime;
 		this.statementContext = requireNonNull(builder.statementContext);
-		this.batchSize = requireNonNull(builder.batchSize);
-		this.exception = requireNonNull(builder.exception);
+		this.connectionAcquisitionDuration = builder.connectionAcquisitionDuration;
+		this.preparationDuration = builder.preparationDuration;
+		this.executionDuration = builder.executionDuration;
+		this.resultSetMappingDuration = builder.resultSetMappingDuration;
+		this.batchSize = builder.batchSize;
+		this.exception = builder.exception;
+
+		Duration totalDuration = Duration.ZERO;
+
+		if (this.connectionAcquisitionDuration != null)
+			totalDuration = totalDuration.plus(this.connectionAcquisitionDuration);
+
+		if (this.preparationDuration != null)
+			totalDuration = totalDuration.plus(this.preparationDuration);
+
+		if (this.executionDuration != null)
+			totalDuration = totalDuration.plus(this.executionDuration);
+
+		if (this.resultSetMappingDuration != null)
+			totalDuration = totalDuration.plus(this.resultSetMappingDuration);
+
+		this.totalDuration = totalDuration;
 	}
 
 	/**
@@ -74,39 +104,39 @@ public class StatementLog<T> {
 	public String toString() {
 		List<String> components = new ArrayList<>(8);
 
-		components.add(format("statementContext=%s", statementContext()));
-		components.add(format("totalTime=%s", totalTime()));
+		components.add(format("statementContext=%s", getStatementContext()));
+		components.add(format("totalDuration=%s", getTotalDuration()));
 
-		Long connectionAcquisitionTime = connectionAcquisitionTime().orElse(null);
+		Duration connectionAcquisitionDuration = getConnectionAcquisitionDuration().orElse(null);
 
-		if (connectionAcquisitionTime != null)
-			components.add(format("connectionAcquisitionTime=%s", connectionAcquisitionTime));
+		if (connectionAcquisitionDuration != null)
+			components.add(format("connectionAcquisitionDuration=%s", connectionAcquisitionDuration));
 
-		Long preparationTime = preparationTime().orElse(null);
+		Duration preparationDuration = getPreparationDuration().orElse(null);
 
-		if (preparationTime != null)
-			components.add(format("preparationTime=%s", preparationTime));
+		if (preparationDuration != null)
+			components.add(format("preparationDuration=%s", preparationDuration));
 
-		Long executionTime = executionTime().orElse(null);
+		Duration executionDuration = getExecutionDuration().orElse(null);
 
-		if (executionTime != null)
-			components.add(format("executionTime=%s", executionTime));
+		if (executionDuration != null)
+			components.add(format("executionDuration=%s", executionDuration));
 
-		Long resultSetMappingTime = resultSetMappingTime().orElse(null);
+		Duration resultSetMappingDuration = getResultSetMappingDuration().orElse(null);
 
-		if (resultSetMappingTime != null)
-			components.add(format("resultSetMappingTime=%s", resultSetMappingTime));
+		if (resultSetMappingDuration != null)
+			components.add(format("resultSetMappingDuration=%s", resultSetMappingDuration));
 
-		Integer batchSize = batchSize().orElse(null);
+		Integer batchSize = getBatchSize().orElse(null);
 
 		if (batchSize != null)
 			components.add(format("batchSize=%s", batchSize));
 
-		Exception exception = exception().orElse(null);
+		Exception exception = getException().orElse(null);
 
 		if (exception != null)
 			components.add(format("exception=%s", exception));
-		
+
 		return format("%s{%s}", getClass().getSimpleName(), components.stream().collect(Collectors.joining(", ")));
 	}
 
@@ -120,71 +150,70 @@ public class StatementLog<T> {
 
 		StatementLog statementLog = (StatementLog) object;
 
-		return Objects.equals(connectionAcquisitionTime(), statementLog.connectionAcquisitionTime())
-				&& Objects.equals(preparationTime(), statementLog.preparationTime())
-				&& Objects.equals(executionTime(), statementLog.executionTime())
-				&& Objects.equals(resultSetMappingTime(), statementLog.resultSetMappingTime())
-				&& Objects.equals(statementContext(), statementLog.statementContext())
-				&& Objects.equals(batchSize(), statementLog.batchSize())
-				&& Objects.equals(exception(), statementLog.exception());
+		return Objects.equals(getStatementContext(), statementLog.getStatementContext())
+				&& Objects.equals(getConnectionAcquisitionDuration(), statementLog.getConnectionAcquisitionDuration())
+				&& Objects.equals(getPreparationDuration(), statementLog.getPreparationDuration())
+				&& Objects.equals(getExecutionDuration(), statementLog.getExecutionDuration())
+				&& Objects.equals(getResultSetMappingDuration(), statementLog.getResultSetMappingDuration())
+				&& Objects.equals(getBatchSize(), statementLog.getBatchSize())
+				&& Objects.equals(getException(), statementLog.getException());
 	}
 
 	@Override
 	public int hashCode() {
-		return Objects.hash(connectionAcquisitionTime(), preparationTime(), executionTime(), resultSetMappingTime(),
-				statementContext(), batchSize(), exception());
+		return Objects.hash(getStatementContext(), getConnectionAcquisitionDuration(), getPreparationDuration(),
+				getExecutionDuration(), getResultSetMappingDuration(), getBatchSize(), getException());
 	}
 
 	/**
-	 * How long did it take to acquire a {@link java.sql.Connection} from the {@link javax.sql.DataSource}, in
-	 * nanoseconds?
+	 * How long did it take to acquire a {@link java.sql.Connection} from the {@link javax.sql.DataSource}?
 	 *
 	 * @return how long it took to acquire a {@link java.sql.Connection}, if available
 	 */
-	public Optional<Long> connectionAcquisitionTime() {
-		return connectionAcquisitionTime;
+	@Nonnull
+	public Optional<Duration> getConnectionAcquisitionDuration() {
+		return Optional.ofNullable(this.connectionAcquisitionDuration);
 	}
 
 	/**
-	 * How long did it take to bind data to the {@link java.sql.PreparedStatement}, in nanoseconds?
+	 * How long did it take to bind data to the {@link java.sql.PreparedStatement}?
 	 *
 	 * @return how long it took to bind data to the {@link java.sql.PreparedStatement}, if available
 	 */
-	public Optional<Long> preparationTime() {
-		return preparationTime;
+	@Nonnull
+	public Optional<Duration> getPreparationDuration() {
+		return Optional.ofNullable(this.preparationDuration);
 	}
 
 	/**
-	 * How long did it take to execute the SQL statement, in nanoseconds?
+	 * How long did it take to execute the SQL statement?
 	 *
 	 * @return how long it took to execute the SQL statement, if available
 	 */
-	public Optional<Long> executionTime() {
-		return executionTime;
+	public Optional<Duration> getExecutionDuration() {
+		return Optional.ofNullable(this.executionDuration);
 	}
 
 	/**
-	 * How long did it take to extract data from the {@link java.sql.ResultSet}, in nanoseconds?
+	 * How long did it take to extract data from the {@link java.sql.ResultSet}?
 	 *
 	 * @return how long it took to extract data from the {@link java.sql.ResultSet}, if available
 	 */
-	public Optional<Long> resultSetMappingTime() {
-		return resultSetMappingTime;
+	public Optional<Duration> getResultSetMappingDuration() {
+		return Optional.ofNullable(this.resultSetMappingDuration);
 	}
 
 	/**
 	 * How long did it take to perform the database operation in total?
 	 * <p>
-	 * This is the sum of {@link #connectionAcquisitionTime()} + {@link #preparationTime()} +
-	 * {@link #executionTime()} + {@link #resultSetMappingTime()}.
+	 * This is the sum of {@link #getConnectionAcquisitionDuration()} + {@link #getPreparationDuration()} +
+	 * {@link #getExecutionDuration()} + {@link #getResultSetMappingDuration()}.
 	 *
 	 * @return how long the database operation took in total
 	 */
-	public Long totalTime() {
-		return connectionAcquisitionTime().orElse(0L)
-				+ preparationTime().orElse(0L)
-				+ executionTime().orElse(0L)
-				+ resultSetMappingTime().orElse(0L);
+	@Nonnull
+	public Duration getTotalDuration() {
+		return this.totalDuration;
 	}
 
 	/**
@@ -193,8 +222,8 @@ public class StatementLog<T> {
 	 * @return the SQL statement that was executed.
 	 */
 	@Nonnull
-	public StatementContext<T> statementContext() {
-		return statementContext;
+	public StatementContext<T> getStatementContext() {
+		return this.statementContext;
 	}
 
 	/**
@@ -202,8 +231,9 @@ public class StatementLog<T> {
 	 *
 	 * @return how many records were processed as part of the batch operation, if available
 	 */
-	public Optional<Integer> batchSize() {
-		return batchSize;
+	@Nonnull
+	public Optional<Integer> getBatchSize() {
+		return Optional.ofNullable(this.batchSize);
 	}
 
 	/**
@@ -211,8 +241,9 @@ public class StatementLog<T> {
 	 *
 	 * @return the exception that occurred during SQL statement execution, if available
 	 */
-	public Optional<Exception> exception() {
-		return exception;
+	@Nonnull
+	public Optional<Exception> getException() {
+		return Optional.ofNullable(this.exception);
 	}
 
 	/**
@@ -221,67 +252,75 @@ public class StatementLog<T> {
 	 * @author <a href="https://www.revetware.com">Mark Allen</a>
 	 * @since 1.0.0
 	 */
+	@NotThreadSafe
 	public static class Builder<T> {
-		private StatementContext<T> statementContext;
-		private Optional<Long> connectionAcquisitionTime = Optional.empty();
-		private Optional<Long> preparationTime = Optional.empty();
-		private Optional<Long> executionTime = Optional.empty();
-		private Optional<Long> resultSetMappingTime = Optional.empty();
-		private Optional<Integer> batchSize = Optional.empty();
-		private Optional<Exception> exception = Optional.empty();
+		@Nonnull
+		private final StatementContext<T> statementContext;
+		@Nullable
+		private Duration connectionAcquisitionDuration;
+		@Nullable
+		private Duration preparationDuration;
+		@Nullable
+		private Duration executionDuration;
+		@Nullable
+		private Duration resultSetMappingDuration;
+		@Nullable
+		private Integer batchSize;
+		@Nullable
+		private Exception exception;
 
 		/**
 		 * Creates a {@code Builder} for the given {@code statementContext}.
 		 *
 		 * @param statementContext current SQL context
 		 */
-		private Builder(StatementContext<T> statementContext) {
+		private Builder(@Nonnull StatementContext<T> statementContext) {
 			requireNonNull(statementContext);
 			this.statementContext = statementContext;
 		}
 
 		/**
-		 * Specifies how long it took to acquire a {@link java.sql.Connection} from the {@link javax.sql.DataSource}, in
-		 * nanoseconds.
+		 * Specifies how long it took to acquire a {@link java.sql.Connection} from the {@link javax.sql.DataSource}.
 		 *
-		 * @param connectionAcquisitionTime how long it took to acquire a {@link java.sql.Connection}, if available
+		 * @param connectionAcquisitionDuration how long it took to acquire a {@link java.sql.Connection}, if available
 		 * @return this {@code Builder}, for chaining
 		 */
-		public Builder connectionAcquisitionTime(Optional<Long> connectionAcquisitionTime) {
-			this.connectionAcquisitionTime = requireNonNull(connectionAcquisitionTime);
+		@Nonnull
+		public Builder connectionAcquisitionDuration(@Nullable Duration connectionAcquisitionDuration) {
+			this.connectionAcquisitionDuration = connectionAcquisitionDuration;
 			return this;
 		}
 
 		/**
-		 * Specifies how long it took to bind data to a {@link java.sql.PreparedStatement}, in nanoseconds.
+		 * Specifies how long it took to bind data to a {@link java.sql.PreparedStatement}.
 		 *
-		 * @param preparationTime how long it took to bind data to a {@link java.sql.PreparedStatement}, if available
+		 * @param preparationDuration how long it took to bind data to a {@link java.sql.PreparedStatement}, if available
 		 * @return this {@code Builder}, for chaining
 		 */
-		public Builder preparationTime(Optional<Long> preparationTime) {
-			this.preparationTime = requireNonNull(preparationTime);
+		public Builder preparationDuration(@Nullable Duration preparationDuration) {
+			this.preparationDuration = preparationDuration;
 			return this;
 		}
 
 		/**
-		 * Specifies how long it took to execute a SQL statement, in nanoseconds.
+		 * Specifies how long it took to execute a SQL statement.
 		 *
 		 * @param executionTime how long it took to execute a SQL statement, if available
 		 * @return this {@code Builder}, for chaining
 		 */
-		public Builder executionTime(Optional<Long> executionTime) {
-			this.executionTime = requireNonNull(executionTime);
+		public Builder executionDuration(@Nullable Duration executionDuration) {
+			this.executionDuration = executionDuration;
 			return this;
 		}
 
 		/**
-		 * Specifies how long it took to extract data from a {@link java.sql.ResultSet}, in nanoseconds.
+		 * Specifies how long it took to extract data from a {@link java.sql.ResultSet}.
 		 *
-		 * @param resultSetMappingTime how long it took to extract data from a {@link java.sql.ResultSet}, if available
+		 * @param resultSetMappingDuration how long it took to extract data from a {@link java.sql.ResultSet}, if available
 		 * @return this {@code Builder}, for chaining
 		 */
-		public Builder resultSetMappingTime(Optional<Long> resultSetMappingTime) {
-			this.resultSetMappingTime = requireNonNull(resultSetMappingTime);
+		public Builder resultSetMappingDuration(@Nullable Duration resultSetMappingDuration) {
+			this.resultSetMappingDuration = resultSetMappingDuration;
 			return this;
 		}
 
@@ -291,8 +330,8 @@ public class StatementLog<T> {
 		 * @param batchSize how many records were processed as part of the batch operation, if available
 		 * @return this {@code Builder}, for chaining
 		 */
-		public Builder batchSize(Optional<Integer> batchSize) {
-			this.batchSize = requireNonNull(batchSize);
+		public Builder batchSize(@Nullable Integer batchSize) {
+			this.batchSize = batchSize;
 			return this;
 		}
 
@@ -302,8 +341,8 @@ public class StatementLog<T> {
 		 * @param exception the exception that occurred during SQL statement execution, if available
 		 * @return this {@code Builder}, for chaining
 		 */
-		public Builder exception(Optional<Exception> exception) {
-			this.exception = requireNonNull(exception);
+		public Builder exception(@Nullable Exception exception) {
+			this.exception = exception;
 			return this;
 		}
 
@@ -312,6 +351,7 @@ public class StatementLog<T> {
 		 *
 		 * @return a {@code StatementLog} instance
 		 */
+		@Nonnull
 		public StatementLog build() {
 			return new StatementLog(this);
 		}

@@ -18,11 +18,14 @@ package com.pyranid;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import javax.annotation.concurrent.NotThreadSafe;
+import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.time.ZoneId;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -39,25 +42,40 @@ import static java.util.Objects.requireNonNull;
 import static java.util.logging.Level.WARNING;
 
 /**
+ * Main class for performing database access operations.
+ *
  * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
+@ThreadSafe
 public class Database {
-	private static final ThreadLocal<Deque<Transaction>> TRANSACTION_STACK_HOLDER = ThreadLocal
-			.withInitial(() -> new ArrayDeque<>());
+	@Nonnull
+	private static final ThreadLocal<Deque<Transaction>> TRANSACTION_STACK_HOLDER;
 
+	static {
+		TRANSACTION_STACK_HOLDER = ThreadLocal.withInitial(() -> new ArrayDeque<>());
+	}
+
+	@Nonnull
 	private final DataSource dataSource;
+	@Nonnull
 	private final ZoneId timeZone;
+	@Nonnull
 	private final InstanceProvider instanceProvider;
+	@Nonnull
 	private final PreparedStatementBinder preparedStatementBinder;
+	@Nonnull
 	private final ResultSetMapper resultSetMapper;
+	@Nonnull
 	private final StatementLogger statementLogger;
 	@Nonnull
 	private final AtomicInteger defaultIdGenerator;
-	private final Logger logger = Logger.getLogger(Database.class.getName());
+	@Nonnull
+	private final Logger logger;
 
-	protected Database(Builder builder) {
+	protected Database(@Nonnull Builder builder) {
 		requireNonNull(builder);
+
 		this.dataSource = requireNonNull(builder.dataSource);
 		this.timeZone = builder.timeZone == null ? ZoneId.systemDefault() : builder.timeZone;
 		this.instanceProvider = requireNonNull(builder.instanceProvider);
@@ -65,47 +83,111 @@ public class Database {
 		this.resultSetMapper = requireNonNull(builder.resultSetMapper);
 		this.statementLogger = requireNonNull(builder.statementLogger);
 		this.defaultIdGenerator = new AtomicInteger();
+		this.logger = Logger.getLogger(getClass().getName());
 	}
 
-	public static Builder forDataSource(DataSource dataSource) {
-		return new Builder(requireNonNull(dataSource));
+	/**
+	 * Provides a {@link Database} builder for the given {@code dataSource}.
+	 *
+	 * @param dataSource data source used to create the {@link Database} builder
+	 * @return a {@link Database} builder
+	 */
+	@Nonnull
+	public static Builder forDataSource(@Nonnull DataSource dataSource) {
+		requireNonNull(dataSource);
+		return new Builder(dataSource);
 	}
 
+	/**
+	 * Gets a reference to the current transaction, if any.
+	 *
+	 * @return the current transaction
+	 */
+	@Nonnull
 	public Optional<Transaction> currentTransaction() {
 		Deque<Transaction> transactionStack = TRANSACTION_STACK_HOLDER.get();
 		return Optional.ofNullable(transactionStack.size() == 0 ? null : transactionStack.peek());
 	}
 
-	public void transaction(TransactionalOperation transactionalOperation) {
+	/**
+	 * Performs an operation transactionally.
+	 * <p>
+	 * The transaction will be automatically rolled back if an exception bubbles out of {@code transactionalOperation}.
+	 *
+	 * @param transactionalOperation the operation to perform transactionally
+	 */
+	public void transaction(@Nonnull TransactionalOperation transactionalOperation) {
 		requireNonNull(transactionalOperation);
 
 		transaction(() -> {
 			transactionalOperation.perform();
-			return null;
+			return Optional.empty();
 		});
 	}
 
-	public <T> T transaction(ReturningTransactionalOperation<T> transactionalOperation) {
+	/**
+	 * Performs an operation transactionally with the given isolation level.
+	 * <p>
+	 * The transaction will be automatically rolled back if an exception bubbles out of {@code transactionalOperation}.
+	 *
+	 * @param transactionIsolation   the desired database transaction isolation level
+	 * @param transactionalOperation the operation to perform transactionally
+	 */
+	public void transaction(@Nonnull TransactionIsolation transactionIsolation,
+													@Nonnull TransactionalOperation transactionalOperation) {
+		requireNonNull(transactionIsolation);
+		requireNonNull(transactionalOperation);
+
+		transaction(transactionIsolation, () -> {
+			transactionalOperation.perform();
+			return Optional.empty();
+		});
+	}
+
+	/**
+	 * Performs an operation transactionally and optionally returns a value.
+	 * <p>
+	 * The transaction will be automatically rolled back if an exception bubbles out of {@code transactionalOperation}.
+	 *
+	 * @param transactionalOperation the operation to perform transactionally
+	 * @param <T>                    the type to be returned
+	 * @return the result of the transactional operation
+	 */
+	@Nonnull
+	public <T> Optional<T> transaction(@Nonnull ReturningTransactionalOperation<T> transactionalOperation) {
 		requireNonNull(transactionalOperation);
 		return transaction(TransactionIsolation.DEFAULT, transactionalOperation);
 	}
 
-	public <T> T transaction(TransactionIsolation transactionIsolation,
-													 ReturningTransactionalOperation<T> transactionalOperation) {
+	/**
+	 * Performs an operation transactionally with the given isolation level, optionally returning a value.
+	 * <p>
+	 * The transaction will be automatically rolled back if an exception bubbles out of {@code transactionalOperation}.
+	 *
+	 * @param transactionIsolation   the desired database transaction isolation level
+	 * @param transactionalOperation the operation to perform transactionally
+	 * @param <T>                    the type to be returned
+	 * @return the result of the transactional operation
+	 */
+	@Nonnull
+	public <T> Optional<T> transaction(@Nonnull TransactionIsolation transactionIsolation,
+																		 @Nonnull ReturningTransactionalOperation<T> transactionalOperation) {
 		requireNonNull(transactionIsolation);
 		requireNonNull(transactionalOperation);
 
 		Transaction transaction = new Transaction(dataSource, transactionIsolation);
 		TRANSACTION_STACK_HOLDER.get().push(transaction);
 		boolean committed = false;
-		boolean rolledBack = false;
 
 		try {
-			T returnValue = transactionalOperation.perform();
+			Optional<T> returnValue = transactionalOperation.perform();
+
+			// Safeguard in case user code accidentally returns null instead of Optional.empty()
+			if (returnValue == null)
+				returnValue = Optional.empty();
 
 			if (transaction.isRollbackOnly()) {
 				transaction.rollback();
-				rolledBack = true;
 			} else {
 				transaction.commit();
 				committed = true;
@@ -115,7 +197,6 @@ public class Database {
 		} catch (RuntimeException e) {
 			try {
 				transaction.rollback();
-				rolledBack = true;
 			} catch (Exception rollbackException) {
 				logger.log(WARNING, "Unable to roll back transaction", rollbackException);
 			}
@@ -124,7 +205,6 @@ public class Database {
 		} catch (Throwable t) {
 			try {
 				transaction.rollback();
-				rolledBack = true;
 			} catch (Exception rollbackException) {
 				logger.log(WARNING, "Unable to roll back transaction", rollbackException);
 			}
@@ -150,7 +230,7 @@ public class Database {
 		}
 	}
 
-	protected void closeConnection(Connection connection) {
+	protected void closeConnection(@Nonnull Connection connection) {
 		requireNonNull(connection);
 
 		try {
@@ -160,24 +240,50 @@ public class Database {
 		}
 	}
 
-	public void participate(Transaction transaction, TransactionalOperation transactionalOperation) {
+	/**
+	 * Performs an operation in the context of a pre-existing transaction.
+	 * <p>
+	 * No commit or rollback on the transaction will occur when {@code transactionalOperation} completes.
+	 * <p>
+	 * However, if an exception bubbles out of {@code transactionalOperation}, the transaction will be marked as rollback-only.
+	 *
+	 * @param transaction            the transaction in which to participate
+	 * @param transactionalOperation the operation that should participate in the transaction
+	 */
+	public void participate(@Nonnull Transaction transaction,
+													@Nonnull TransactionalOperation transactionalOperation) {
 		requireNonNull(transaction);
 		requireNonNull(transactionalOperation);
 
 		participate(transaction, () -> {
 			transactionalOperation.perform();
-			return null;
+			return Optional.empty();
 		});
 	}
 
-	public <T> T participate(Transaction transaction, ReturningTransactionalOperation<T> transactionalOperation) {
+	/**
+	 * Performs an operation in the context of a pre-existing transaction, optionall returning a value.
+	 * <p>
+	 * No commit or rollback on the transaction will occur when {@code transactionalOperation} completes.
+	 * <p>
+	 * However, if an exception bubbles out of {@code transactionalOperation}, the transaction will be marked as rollback-only.
+	 *
+	 * @param transaction            the transaction in which to participate
+	 * @param transactionalOperation the operation that should participate in the transaction
+	 * @param <T>                    the type to be returned
+	 * @return the result of the transactional operation
+	 */
+	@Nonnull
+	public <T> Optional<T> participate(@Nonnull Transaction transaction,
+																		 @Nonnull ReturningTransactionalOperation<T> transactionalOperation) {
 		requireNonNull(transaction);
 		requireNonNull(transactionalOperation);
 
 		TRANSACTION_STACK_HOLDER.get().push(transaction);
 
 		try {
-			return transactionalOperation.perform();
+			Optional<T> returnValue = transactionalOperation.perform();
+			return returnValue == null ? Optional.empty() : returnValue;
 		} catch (RuntimeException e) {
 			transaction.setRollbackOnly(true);
 			throw e;
@@ -189,18 +295,41 @@ public class Database {
 		}
 	}
 
-	public <T> Optional<T> queryForObject(String sql, Class<T> objectType, Object... parameters) {
+	/**
+	 * Performs a SQL query that is expected to return 0 or 1 result rows.
+	 *
+	 * @param sql              the SQL query to execute
+	 * @param resultSetRowType the type to which {@link ResultSet} rows should be marshaled
+	 * @param parameters       {@link PreparedStatement} parameters, if any
+	 * @param <T>              the type to be returned
+	 * @return a single result (or no result)
+	 * @throws DatabaseException if > 1 row is returned
+	 */
+	@Nonnull
+	public <T> Optional<T> queryForObject(@Nonnull String sql,
+																				@Nonnull Class<T> resultSetRowType,
+																				@Nullable Object... parameters) {
 		requireNonNull(sql);
-		requireNonNull(objectType);
+		requireNonNull(resultSetRowType);
 
-		return queryForObject(new Statement(generateId(), sql), objectType, parameters);
+		return queryForObject(new Statement(generateId(), sql), resultSetRowType, parameters);
 	}
 
-	public <T> Optional<T> queryForObject(Statement statement, Class<T> objectType, Object... parameters) {
+	/**
+	 * Performs a SQL query that is expected to return 0 or 1 result rows.
+	 *
+	 * @param statement        the SQL statement to execute
+	 * @param resultSetRowType the type to which {@link ResultSet} rows should be marshaled
+	 * @param parameters       {@link PreparedStatement} parameters, if any
+	 * @param <T>              the type to be returned
+	 * @return a single result (or no result)
+	 * @throws DatabaseException if > 1 row is returned
+	 */
+	public <T> Optional<T> queryForObject(Statement statement, Class<T> resultSetRowType, Object... parameters) {
 		requireNonNull(statement);
-		requireNonNull(objectType);
+		requireNonNull(resultSetRowType);
 
-		List<T> list = queryForList(statement, objectType, parameters);
+		List<T> list = queryForList(statement, resultSetRowType, parameters);
 
 		if (list.size() > 1)
 			throw new DatabaseException(format("Expected 1 row in resultset but got %s instead", list.size()));
@@ -208,6 +337,7 @@ public class Database {
 		return Optional.ofNullable(list.size() == 0 ? null : list.get(0));
 	}
 
+	@Nonnull
 	protected <T> void performDatabaseOperation(@Nonnull StatementContext<T> statementContext,
 																							@Nonnull DatabaseOperation databaseOperation) {
 		requireNonNull(statementContext);
@@ -219,6 +349,7 @@ public class Database {
 		}, databaseOperation);
 	}
 
+	@Nonnull
 	protected <T> void performDatabaseOperation(@Nonnull StatementContext<T> statementContext,
 																							@Nonnull PreparedStatementBindingOperation preparedStatementBindingOperation,
 																							@Nonnull DatabaseOperation databaseOperation) {
@@ -227,33 +358,32 @@ public class Database {
 		requireNonNull(databaseOperation);
 
 		long startTime = nanoTime();
-		Optional<Long> connectionAcquisitionTime = Optional.empty();
-		Optional<Long> preparationTime = Optional.empty();
-		Optional<Long> executionTime = Optional.empty();
-		Optional<Long> resultSetMappingTime = Optional.empty();
-		Optional<Exception> exception = Optional.empty();
-
+		Duration connectionAcquisitionDuration = null;
+		Duration preparationDuration = null;
+		Duration executionDuration = null;
+		Duration resultSetMappingDuration = null;
+		Exception exception = null;
 		Connection connection = null;
 
 		try {
 			boolean alreadyHasConnection = currentTransaction().isPresent() && currentTransaction().get().hasConnection();
 			connection = acquireConnection();
-			connectionAcquisitionTime = alreadyHasConnection ? Optional.empty() : Optional.of(nanoTime() - startTime);
+			connectionAcquisitionDuration = alreadyHasConnection ? null : Duration.ofNanos(nanoTime() - startTime);
 			startTime = nanoTime();
 
 			try (PreparedStatement preparedStatement = connection.prepareStatement(statementContext.getStatement().getSql())) {
 				preparedStatementBindingOperation.perform(preparedStatement);
-				preparationTime = Optional.of(nanoTime() - startTime);
+				preparationDuration = Duration.ofNanos(nanoTime() - startTime);
 
 				DatabaseOperationResult databaseOperationResult = databaseOperation.perform(preparedStatement);
-				executionTime = databaseOperationResult.executionTime();
-				resultSetMappingTime = databaseOperationResult.resultSetMappingTime();
+				executionDuration = databaseOperationResult.getExecutionDuration().orElse(null);
+				resultSetMappingDuration = databaseOperationResult.getResultSetMappingDuration().orElse(null);
 			}
 		} catch (DatabaseException e) {
-			exception = Optional.of(e);
+			exception = e;
 			throw e;
 		} catch (Exception e) {
-			exception = Optional.of(e);
+			exception = e;
 			throw new DatabaseException(e);
 		} finally {
 			try {
@@ -263,10 +393,10 @@ public class Database {
 			} finally {
 				StatementLog statementLog =
 						StatementLog.forStatementContext(statementContext)
-								.connectionAcquisitionTime(connectionAcquisitionTime)
-								.preparationTime(preparationTime)
-								.executionTime(executionTime)
-								.resultSetMappingTime(resultSetMappingTime)
+								.connectionAcquisitionDuration(connectionAcquisitionDuration)
+								.preparationDuration(preparationDuration)
+								.executionDuration(executionDuration)
+								.resultSetMappingDuration(resultSetMappingDuration)
 								.exception(exception)
 								.build();
 
@@ -284,14 +414,14 @@ public class Database {
 
 	@Nonnull
 	public <T> List<T> queryForList(@Nonnull Statement statement,
-																	@Nonnull Class<T> elementType,
+																	@Nonnull Class<T> resultSetRowType,
 																	@Nullable Object... parameters) {
 		requireNonNull(statement);
-		requireNonNull(elementType);
+		requireNonNull(resultSetRowType);
 
 		List<T> list = new ArrayList<>();
 		StatementContext<T> statementContext = new StatementContext.Builder<T>(statement)
-				.resultType(elementType)
+				.resultSetRowType(resultSetRowType)
 				.parameters(parameters)
 				.build();
 
@@ -299,7 +429,7 @@ public class Database {
 			long startTime = nanoTime();
 
 			try (ResultSet resultSet = preparedStatement.executeQuery()) {
-				Long executionTime = nanoTime() - startTime;
+				Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);
 				startTime = nanoTime();
 
 				while (resultSet.next()) {
@@ -307,8 +437,8 @@ public class Database {
 					list.add(listElement);
 				}
 
-				Long resultSetMappingTime = nanoTime() - startTime;
-				return new DatabaseOperationResult(Optional.of(executionTime), Optional.of(resultSetMappingTime));
+				Duration resultSetMappingDuration = Duration.ofNanos(nanoTime() - startTime);
+				return new DatabaseOperationResult(executionDuration, resultSetMappingDuration);
 			}
 		});
 
@@ -320,13 +450,13 @@ public class Database {
 		return execute(null, sql, parameters);
 	}
 
-	public long execute(Object statementIdentifier, String sql, Object... parameters) {
+	public long execute(Object id, String sql, Object... parameters) {
 		requireNonNull(sql);
 
-		if (statementIdentifier == null)
-			statementIdentifier = generateId();
+		if (id == null)
+			id = generateId();
 
-		Statement statement = new Statement(statementIdentifier, sql);
+		Statement statement = new Statement(id, sql);
 		ResultHolder<Long> resultHolder = new ResultHolder<>();
 		StatementContext<Void> statementContext = new StatementContext.Builder<>(statement)
 				.parameters(parameters)
@@ -337,7 +467,9 @@ public class Database {
 			// TODO: allow users to specify that they want support for executeLargeUpdate()
 			// Not everyone implements it currently
 			resultHolder.value = (long) preparedStatement.executeUpdate();
-			return new DatabaseOperationResult(Optional.of(nanoTime() - startTime), Optional.empty());
+
+			Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);
+			return new DatabaseOperationResult(executionDuration, null);
 		});
 
 		return resultHolder.value;
@@ -347,38 +479,33 @@ public class Database {
 		requireNonNull(sql);
 		requireNonNull(returnType);
 
-		return executeReturning(null, sql, returnType, parameters);
+		return executeReturning(new Statement(generateId(), sql), returnType, parameters);
 	}
 
-	public <T> Optional<T> executeReturning(Object statementIdentifier,
-																					String sql,
-																					Class<T> returnType,
+	public <T> Optional<T> executeReturning(Statement statement,
+																					Class<T> resultSetRowType,
 																					Object... parameters) {
-		requireNonNull(sql);
-		requireNonNull(returnType);
+		requireNonNull(statement);
+		requireNonNull(resultSetRowType);
 
-		if (statementIdentifier == null)
-			statementIdentifier = generateId();
-
-		Statement statement = new Statement(statementIdentifier, sql);
 		ResultHolder<T> resultHolder = new ResultHolder<>();
 		StatementContext<T> statementContext = new StatementContext.Builder<>(statement)
 				.parameters(parameters)
-				.resultType(returnType)
+				.resultSetRowType(resultSetRowType)
 				.build();
 
 		performDatabaseOperation(statementContext, (PreparedStatement preparedStatement) -> {
 			long startTime = nanoTime();
 
 			try (ResultSet resultSet = preparedStatement.executeQuery()) {
-				Long executionTime = nanoTime() - startTime;
+				Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);
 				startTime = nanoTime();
 
 				if (resultSet.next())
 					resultHolder.value = resultSetMapper().map(statementContext, resultSet);
 
-				Long resultSetMappingTime = nanoTime() - startTime;
-				return new DatabaseOperationResult(Optional.of(executionTime), Optional.of(resultSetMappingTime));
+				Duration resultSetMappingDuration = Duration.ofNanos(nanoTime() - startTime);
+				return new DatabaseOperationResult(executionDuration, resultSetMappingDuration);
 			}
 		});
 
@@ -399,7 +526,7 @@ public class Database {
 		ResultHolder<long[]> resultHolder = new ResultHolder<>();
 		StatementContext<long[]> statementContext = new StatementContext.Builder<>(statement)
 				.parameters(parameterGroups)
-				.resultType(long[].class)
+				.resultSetRowType(long[].class)
 				.build();
 
 		performDatabaseOperation(statementContext, (preparedStatement) -> {
@@ -420,7 +547,8 @@ public class Database {
 				longResult[i] = result[i];
 
 			resultHolder.value = longResult;
-			return new DatabaseOperationResult(Optional.of(nanoTime() - startTime), Optional.empty());
+			Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);
+			return new DatabaseOperationResult(executionDuration, null);
 		});
 
 		return resultHolder.value;
@@ -548,24 +676,31 @@ public class Database {
 		}
 	}
 
+	@ThreadSafe
 	protected static class DatabaseOperationResult {
-		private final Optional<Long> executionTime;
-		private final Optional<Long> resultSetMappingTime;
+		@Nullable
+		private final Duration executionDuration;
+		@Nullable
+		private final Duration resultSetMappingDuration;
 
-		public DatabaseOperationResult(Optional<Long> executionTime, Optional<Long> resultSetMappingTime) {
-			this.executionTime = requireNonNull(executionTime);
-			this.resultSetMappingTime = requireNonNull(resultSetMappingTime);
+		public DatabaseOperationResult(@Nullable Duration executionDuration,
+																	 @Nullable Duration resultSetMappingDuration) {
+			this.executionDuration = executionDuration;
+			this.resultSetMappingDuration = resultSetMappingDuration;
 		}
 
-		public Optional<Long> executionTime() {
-			return executionTime;
+		@Nonnull
+		public Optional<Duration> getExecutionDuration() {
+			return Optional.ofNullable(this.executionDuration);
 		}
 
-		public Optional<Long> resultSetMappingTime() {
-			return resultSetMappingTime;
+		@Nonnull
+		public Optional<Duration> getResultSetMappingDuration() {
+			return Optional.ofNullable(this.resultSetMappingDuration);
 		}
 	}
 
+	@NotThreadSafe
 	private static class ResultHolder<T> {
 		T value;
 	}
