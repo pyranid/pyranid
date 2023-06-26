@@ -16,6 +16,7 @@
 
 package com.pyranid;
 
+import javax.annotation.Nonnull;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Level;
@@ -26,39 +27,60 @@ import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.joining;
 
 /**
- * Basic implementation of {@link StatementLogger} which logs to <code>{@value #LOGGER_NAME}</code> at
- * {@link Level#FINE}.
+ * Basic implementation of {@link StatementLogger} which logs via <a href="https://docs.oracle.com/en/java/javase/20/docs/api/java.logging/java/util/logging/package-summary.html">java.util.logging</a>.
  *
  * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
 public class DefaultStatementLogger implements StatementLogger {
-	/**
-	 * The name of our logger.
-	 */
-	public static final String LOGGER_NAME = "com.pyranid.SQL";
-
-	/**
-	 * The level of our logger.
-	 */
-	public static final Level LOGGER_LEVEL = Level.FINE;
+	@Nonnull
+	public static final String DEFAULT_LOGGER_NAME = "com.pyranid.SQL";
+	@Nonnull
+	public static final Level DEFAULT_LOGGER_LEVEL = Level.FINE;
 
 	/**
 	 * The point at which we ellipsize output for parameters.
 	 */
+	@Nonnull
 	private static final int MAXIMUM_PARAMETER_LOGGING_LENGTH = 100;
 
-	private final Logger logger = Logger.getLogger(LOGGER_NAME);
+	@Nonnull
+	private final Logger logger;
+	@Nonnull
+	private final Level loggerLevel;
 
-	@Override
-	public void log(StatementLog statementLog) {
-		requireNonNull(statementLog);
-
-		if (logger.isLoggable(LOGGER_LEVEL))
-			logger.log(LOGGER_LEVEL, formatStatementLog(statementLog));
+	/**
+	 * Creates a new statement logger with the default logger name <code>{@value #DEFAULT_LOGGER_NAME}</code> and level.
+	 */
+	public DefaultStatementLogger() {
+		this(DEFAULT_LOGGER_NAME, DEFAULT_LOGGER_LEVEL);
 	}
 
-	protected String formatStatementLog(StatementLog statementLog) {
+	/**
+	 * Creates a new statement logger with the given logger name and level.
+	 *
+	 * @param loggerName  the logger name to use
+	 * @param loggerLevel the logger level to use
+	 */
+	public DefaultStatementLogger(@Nonnull String loggerName,
+																@Nonnull Level loggerLevel) {
+		requireNonNull(loggerName);
+		requireNonNull(loggerLevel);
+
+		this.logger = Logger.getLogger(loggerName);
+		this.loggerLevel = loggerLevel;
+	}
+
+	@Override
+	public void log(@Nonnull StatementLog statementLog) {
+		requireNonNull(statementLog);
+
+		if (getLogger().isLoggable(getLoggerLevel()))
+			getLogger().log(getLoggerLevel(), formatStatementLog(statementLog));
+	}
+
+	@Nonnull
+	protected String formatStatementLog(@Nonnull StatementLog statementLog) {
 		requireNonNull(statementLog);
 
 		List<String> timingEntries = new ArrayList<>(4);
@@ -129,7 +151,9 @@ public class DefaultStatementLogger implements StatementLogger {
 	 * @param maximumLength the maximum length of the ellipsized string, not including ellipsis
 	 * @return an ellipsized version of {@code string}
 	 */
-	protected String ellipsize(String string, int maximumLength) {
+	@Nonnull
+	protected String ellipsize(@Nonnull String string,
+														 int maximumLength) {
 		requireNonNull(string);
 
 		string = string.trim();
@@ -138,5 +162,15 @@ public class DefaultStatementLogger implements StatementLogger {
 			return string;
 
 		return format("%s...", string.substring(0, maximumLength));
+	}
+
+	@Nonnull
+	protected Logger getLogger() {
+		return this.logger;
+	}
+
+	@Nonnull
+	protected Level getLoggerLevel() {
+		return this.loggerLevel;
 	}
 }
