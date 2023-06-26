@@ -305,7 +305,7 @@ public class StatementLog<T> {
 		/**
 		 * Specifies how long it took to execute a SQL statement.
 		 *
-		 * @param executionTime how long it took to execute a SQL statement, if available
+		 * @param executionDuration how long it took to execute a SQL statement, if available
 		 * @return this {@code Builder}, for chaining
 		 */
 		public Builder executionDuration(@Nullable Duration executionDuration) {
