@@ -23,6 +23,12 @@ package com.pyranid;
  * @since 2.0.0
  */
 public enum TransactionResult {
+	/**
+	 * The transaction was successfully committed.
+	 */
 	COMMITTED,
+	/**
+	 * The transaction was rolled back.
+	 */
 	ROLLED_BACK
 }

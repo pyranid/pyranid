@@ -73,6 +73,11 @@ public class Database {
 	@Nonnull
 	private final Logger logger;
 
+	@Nonnull
+	private volatile DatabaseOperationSupportStatus executeLargeBatchSupported;
+	@Nonnull
+	private volatile DatabaseOperationSupportStatus executeLargeUpdateSupported;
+
 	protected Database(@Nonnull Builder builder) {
 		requireNonNull(builder);
 
@@ -84,10 +89,12 @@ public class Database {
 		this.statementLogger = requireNonNull(builder.statementLogger);
 		this.defaultIdGenerator = new AtomicInteger();
 		this.logger = Logger.getLogger(getClass().getName());
+		this.executeLargeBatchSupported = DatabaseOperationSupportStatus.UNKNOWN;
+		this.executeLargeUpdateSupported = DatabaseOperationSupportStatus.UNKNOWN;
 	}
 
 	/**
-	 * Provides a {@link Database} builder for the given {@code dataSource}.
+	 * Provides a {@link Database} builder for the given {@link DataSource}.
 	 *
 	 * @param dataSource data source used to create the {@link Database} builder
 	 * @return a {@link Database} builder
@@ -405,13 +412,34 @@ public class Database {
 		}
 	}
 
-	public <T> List<T> queryForList(String sql, Class<T> elementType, Object... parameters) {
+	/**
+	 * Performs a SQL query that is expected to return any number of result rows.
+	 *
+	 * @param sql              the SQL query to execute
+	 * @param resultSetRowType the type to which {@link ResultSet} rows should be marshaled
+	 * @param parameters       {@link PreparedStatement} parameters, if any
+	 * @param <T>              the type to be returned
+	 * @return a list of results
+	 */
+	@Nonnull
+	public <T> List<T> queryForList(@Nonnull String sql,
+																	@Nonnull Class<T> resultSetRowType,
+																	@Nullable Object... parameters) {
 		requireNonNull(sql);
-		requireNonNull(elementType);
+		requireNonNull(resultSetRowType);
 
-		return queryForList(new Statement(generateId(), sql), elementType, parameters);
+		return queryForList(new Statement(generateId(), sql), resultSetRowType, parameters);
 	}
 
+	/**
+	 * Performs a SQL query that is expected to return any number of result rows.
+	 *
+	 * @param statement        the SQL statement to execute
+	 * @param resultSetRowType the type to which {@link ResultSet} rows should be marshaled
+	 * @param parameters       {@link PreparedStatement} parameters, if any
+	 * @param <T>              the type to be returned
+	 * @return a list of results
+	 */
 	@Nonnull
 	public <T> List<T> queryForList(@Nonnull Statement statement,
 																	@Nonnull Class<T> resultSetRowType,
@@ -445,18 +473,34 @@ public class Database {
 		return list;
 	}
 
-	public long execute(String sql, Object... parameters) {
+	/**
+	 * Executes a SQL Data Manipulation Language (DML) statement, such as {@code INSERT}, {@code UPDATE}, or {@code DELETE};
+	 * or a SQL statement that returns nothing, such as a DDL statement.
+	 *
+	 * @param sql        the SQL to execute
+	 * @param parameters {@link PreparedStatement} parameters, if any
+	 * @return the number of rows affected by the SQL statement
+	 */
+	@Nonnull
+	public Long execute(@Nonnull String sql,
+											@Nullable Object... parameters) {
 		requireNonNull(sql);
-		return execute(null, sql, parameters);
+		return execute(new Statement(generateId(), sql), parameters);
 	}
 
-	public long execute(Object id, String sql, Object... parameters) {
-		requireNonNull(sql);
+	/**
+	 * Executes a SQL Data Manipulation Language (DML) statement, such as {@code INSERT}, {@code UPDATE}, or {@code DELETE};
+	 * or a SQL statement that returns nothing, such as a DDL statement.
+	 *
+	 * @param statement  the SQL statement to execute
+	 * @param parameters {@link PreparedStatement} parameters, if any
+	 * @return the number of rows affected by the SQL statement
+	 */
+	@Nonnull
+	public Long execute(@Nonnull Statement statement,
+											@Nullable Object... parameters) {
+		requireNonNull(statement);
 
-		if (id == null)
-			id = generateId();
-
-		Statement statement = new Statement(id, sql);
 		ResultHolder<Long> resultHolder = new ResultHolder<>();
 		StatementContext<Void> statementContext = new StatementContext.Builder<>(statement)
 				.parameters(parameters)
@@ -464,9 +508,25 @@ public class Database {
 
 		performDatabaseOperation(statementContext, (PreparedStatement preparedStatement) -> {
 			long startTime = nanoTime();
-			// TODO: allow users to specify that they want support for executeLargeUpdate()
-			// Not everyone implements it currently
-			resultHolder.value = (long) preparedStatement.executeUpdate();
+
+			DatabaseOperationSupportStatus executeLargeUpdateSupported = getExecuteLargeUpdateSupported();
+
+			// Use the appropriate "large" value if we know it.
+			// If we don't know it, detect it and store it.
+			if (executeLargeUpdateSupported == DatabaseOperationSupportStatus.YES) {
+				resultHolder.value = preparedStatement.executeLargeUpdate();
+			} else if (executeLargeUpdateSupported == DatabaseOperationSupportStatus.NO) {
+				resultHolder.value = (long) preparedStatement.executeUpdate();
+			} else {
+				// If the driver doesn't support executeLargeUpdate, then UnsupportedOperationException is thrown.
+				try {
+					resultHolder.value = preparedStatement.executeLargeUpdate();
+					setExecuteLargeUpdateSupported(DatabaseOperationSupportStatus.YES);
+				} catch (UnsupportedOperationException e) {
+					setExecuteLargeUpdateSupported(DatabaseOperationSupportStatus.NO);
+					resultHolder.value = (long) preparedStatement.executeUpdate();
+				}
+			}
 
 			Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);
 			return new DatabaseOperationResult(executionDuration, null);
@@ -538,15 +598,37 @@ public class Database {
 			}
 		}, (PreparedStatement preparedStatement) -> {
 			long startTime = nanoTime();
-			// TODO: allow users to specify that they want support for executeLargeBatch()
-			// Not everyone implements it currently
-			int[] result = preparedStatement.executeBatch();
-			long[] longResult = new long[result.length];
+			long[] result = null;
 
-			for (int i = 0; i < result.length; ++i)
-				longResult[i] = result[i];
+			DatabaseOperationSupportStatus executeLargeBatchSupported = getExecuteLargeBatchSupported();
 
-			resultHolder.value = longResult;
+			// Use the appropriate "large" value if we know it.
+			// If we don't know it, detect it and store it.
+			if (executeLargeBatchSupported == DatabaseOperationSupportStatus.YES) {
+				result = preparedStatement.executeLargeBatch();
+			} else if (executeLargeBatchSupported == DatabaseOperationSupportStatus.NO) {
+				int[] intResult = preparedStatement.executeBatch();
+				result = new long[intResult.length];
+
+				for (int i = 0; i < intResult.length; ++i)
+					result[i] = intResult[i];
+			} else {
+				// If the driver doesn't support executeLargeBatch, then UnsupportedOperationException is thrown.
+				try {
+					result = preparedStatement.executeLargeBatch();
+					setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.YES);
+				} catch (UnsupportedOperationException e) {
+					setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.NO);
+
+					int[] intResult = preparedStatement.executeBatch();
+					result = new long[intResult.length];
+
+					for (int i = 0; i < intResult.length; ++i)
+						result[i] = intResult[i];
+				}
+			}
+
+			resultHolder.value = result;
 			Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);
 			return new DatabaseOperationResult(executionDuration, null);
 		});
@@ -588,6 +670,26 @@ public class Database {
 	}
 
 	@Nonnull
+	protected DatabaseOperationSupportStatus getExecuteLargeBatchSupported() {
+		return this.executeLargeBatchSupported;
+	}
+
+	protected void setExecuteLargeBatchSupported(@Nonnull DatabaseOperationSupportStatus executeLargeBatchSupported) {
+		requireNonNull(executeLargeBatchSupported);
+		this.executeLargeBatchSupported = executeLargeBatchSupported;
+	}
+
+	@Nonnull
+	protected DatabaseOperationSupportStatus getExecuteLargeUpdateSupported() {
+		return this.executeLargeUpdateSupported;
+	}
+
+	protected void setExecuteLargeUpdateSupported(@Nonnull DatabaseOperationSupportStatus executeLargeUpdateSupported) {
+		requireNonNull(executeLargeUpdateSupported);
+		this.executeLargeUpdateSupported = executeLargeUpdateSupported;
+	}
+
+	@Nonnull
 	protected Integer generateId() {
 		return this.defaultIdGenerator.incrementAndGet();
 	}
@@ -602,6 +704,15 @@ public class Database {
 		void perform(PreparedStatement preparedStatement) throws Exception;
 	}
 
+	/**
+	 * Builder used to construct instances of {@link Database}.
+	 * <p>
+	 * This class is intended for use by a single thread.
+	 *
+	 * @author <a href="https://www.revetware.com">Mark Allen</a>
+	 * @since 1.0.0
+	 */
+	@NotThreadSafe
 	public static class Builder {
 		private final DataSource dataSource;
 		private final DatabaseType databaseType;
@@ -703,5 +814,11 @@ public class Database {
 	@NotThreadSafe
 	private static class ResultHolder<T> {
 		T value;
+	}
+
+	enum DatabaseOperationSupportStatus {
+		UNKNOWN,
+		YES,
+		NO
 	}
 }

@@ -247,7 +247,9 @@ public class StatementLog<T> {
 	}
 
 	/**
-	 * Builder for {@link StatementLog} instances.
+	 * Builder used to construct instances of {@link StatementLog}.
+	 * <p>
+	 * This class is intended for use by a single thread.
 	 *
 	 * @author <a href="https://www.revetware.com">Mark Allen</a>
 	 * @since 1.0.0
