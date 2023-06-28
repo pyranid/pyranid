@@ -61,6 +61,8 @@ public class Database {
 	@Nonnull
 	private final DataSource dataSource;
 	@Nonnull
+	private final DatabaseType databaseType;
+	@Nonnull
 	private final ZoneId timeZone;
 	@Nonnull
 	private final InstanceProvider instanceProvider;
@@ -84,11 +86,12 @@ public class Database {
 		requireNonNull(builder);
 
 		this.dataSource = requireNonNull(builder.dataSource);
+		this.databaseType = requireNonNull(builder.databaseType);
 		this.timeZone = builder.timeZone == null ? ZoneId.systemDefault() : builder.timeZone;
-		this.instanceProvider = requireNonNull(builder.instanceProvider);
-		this.preparedStatementBinder = requireNonNull(builder.preparedStatementBinder);
-		this.resultSetMapper = requireNonNull(builder.resultSetMapper);
-		this.statementLogger = requireNonNull(builder.statementLogger);
+		this.instanceProvider = builder.instanceProvider == null ? new DefaultInstanceProvider() : builder.instanceProvider;
+		this.preparedStatementBinder = builder.preparedStatementBinder == null ? new DefaultPreparedStatementBinder(this.databaseType, this.timeZone) : builder.preparedStatementBinder;
+		this.resultSetMapper = builder.resultSetMapper == null ? new DefaultResultSetMapper(this.databaseType, this.instanceProvider, this.timeZone) : builder.resultSetMapper;
+		this.statementLogger = builder.statementLogger == null ? new DefaultStatementLogger() : builder.statementLogger;
 		this.defaultIdGenerator = new AtomicInteger();
 		this.logger = Logger.getLogger(getClass().getName());
 		this.executeLargeBatchSupported = DatabaseOperationSupportStatus.UNKNOWN;
@@ -706,75 +709,58 @@ public class Database {
 	 */
 	@NotThreadSafe
 	public static class Builder {
+		@Nonnull
 		private final DataSource dataSource;
+		@Nonnull
 		private final DatabaseType databaseType;
-		// See build() method for explanation of why we keep track of whether these fields have changed
-		private final InstanceProvider initialInstanceProvider;
-		private final ResultSetMapper initialResultSetMapper;
-		private final PreparedStatementBinder initialPreparedStatementBinder;
-		private final ZoneId initialTimeZone;
+		@Nullable
 		private ZoneId timeZone;
+		@Nullable
 		private InstanceProvider instanceProvider;
+		@Nullable
 		private PreparedStatementBinder preparedStatementBinder;
+		@Nullable
 		private ResultSetMapper resultSetMapper;
+		@Nullable
 		private StatementLogger statementLogger;
 
-		private Builder(DataSource dataSource) {
+		private Builder(@Nonnull DataSource dataSource) {
 			this.dataSource = requireNonNull(dataSource);
 			this.databaseType = DatabaseType.fromDataSource(dataSource);
-			this.statementLogger = new DefaultStatementLogger();
-
-			this.timeZone = ZoneId.systemDefault();
-			this.initialTimeZone = this.timeZone;
-
-			this.preparedStatementBinder = new DefaultPreparedStatementBinder(this.databaseType, this.timeZone);
-			this.initialPreparedStatementBinder = this.preparedStatementBinder;
-
-			this.instanceProvider = new DefaultInstanceProvider();
-			this.initialInstanceProvider = this.instanceProvider;
-
-			this.resultSetMapper = new DefaultResultSetMapper(this.databaseType, this.instanceProvider, this.timeZone);
-			this.initialResultSetMapper = resultSetMapper;
 		}
 
-		public Builder timeZone(ZoneId timeZone) {
-			this.timeZone = requireNonNull(timeZone);
+		@Nonnull
+		public Builder timeZone(@Nullable ZoneId timeZone) {
+			this.timeZone = timeZone;
 			return this;
 		}
 
-		public Builder instanceProvider(InstanceProvider instanceProvider) {
-			this.instanceProvider = requireNonNull(instanceProvider);
+		@Nonnull
+		public Builder instanceProvider(@Nullable InstanceProvider instanceProvider) {
+			this.instanceProvider = instanceProvider;
 			return this;
 		}
 
-		public Builder preparedStatementBinder(PreparedStatementBinder preparedStatementBinder) {
-			this.preparedStatementBinder = requireNonNull(preparedStatementBinder);
+		@Nonnull
+		public Builder preparedStatementBinder(@Nullable PreparedStatementBinder preparedStatementBinder) {
+			this.preparedStatementBinder = preparedStatementBinder;
 			return this;
 		}
 
-		public Builder resultSetMapper(ResultSetMapper resultSetMapper) {
-			this.resultSetMapper = requireNonNull(resultSetMapper);
+		@Nonnull
+		public Builder resultSetMapper(@Nullable ResultSetMapper resultSetMapper) {
+			this.resultSetMapper = resultSetMapper;
 			return this;
 		}
 
-		public Builder statementLogger(StatementLogger statementLogger) {
-			this.statementLogger = requireNonNull(statementLogger);
+		@Nonnull
+		public Builder statementLogger(@Nullable StatementLogger statementLogger) {
+			this.statementLogger = statementLogger;
 			return this;
 		}
 
+		@Nonnull
 		public Database build() {
-			// A little sleight-of-hand to make the 99% case easier for users...
-			// If at build time the InstanceProvider or time zone has been changed but the ResultSetMapper is unchanged,
-			// wire the custom InstanceProvider into the DefaultResultSetMapper
-			if (((this.instanceProvider != this.initialInstanceProvider) || (this.timeZone != this.initialTimeZone))
-					&& this.resultSetMapper == this.initialResultSetMapper)
-				this.resultSetMapper = new DefaultResultSetMapper(this.databaseType, this.instanceProvider, this.timeZone);
-
-			// If at build time the time zone has been changed but the PreparedStatementBinder is unchanged,
-			// wire the custom time zone into the PreparedStatementBinder
-			if (this.timeZone != this.initialTimeZone && this.preparedStatementBinder == this.initialPreparedStatementBinder)
-				this.preparedStatementBinder = new DefaultPreparedStatementBinder(this.databaseType, this.timeZone);
-
 			return new Database(this);
 		}
 	}
