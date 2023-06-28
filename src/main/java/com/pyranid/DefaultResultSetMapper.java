@@ -134,7 +134,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 			StandardTypeResult<T> standardTypeResult = mapResultSetToStandardType(resultSet, resultSetRowType);
 
 			if (standardTypeResult.isStandardType())
-				return standardTypeResult.value().orElse(null);
+				return standardTypeResult.getValue().orElse(null);
 
 			if (resultSetRowType.isRecord())
 				return (T) mapResultSetToRecord((StatementContext<? extends Record>) statementContext, resultSet);
@@ -282,7 +282,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 * Attempts to map the current {@code resultSet} row to an instance of {@code resultClass}, which must be a
 	 * Record.
 	 * <p>
-	 * The {@code resultClass} instance will be created via {@link #instanceProvider()}.
+	 * The {@code resultClass} instance will be created via {@link #getInstanceProvider()}.
 	 *
 	 * @param <T>              result instance type token
 	 * @param statementContext current SQL context
@@ -321,7 +321,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 					args[i] = columnLabelsToValues.get(potentialPropertyName);
 		}
 
-		T record = instanceProvider().provideRecord(statementContext, resultSetRowType, args);
+		T record = getInstanceProvider().provideRecord(statementContext, resultSetRowType, args);
 
 		return record;
 	}
@@ -330,7 +330,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 * Attempts to map the current {@code resultSet} row to an instance of {@code resultClass}, which should be a
 	 * JavaBean.
 	 * <p>
-	 * The {@code resultClass} instance will be created via {@link #instanceProvider()}.
+	 * The {@code resultClass} instance will be created via {@link #getInstanceProvider()}.
 	 *
 	 * @param <T>              result instance type token
 	 * @param statementContext current SQL context
@@ -346,7 +346,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 
 		Class<T> resultSetRowType = statementContext.getResultSetRowType().get();
 
-		T object = instanceProvider().provide(statementContext, resultSetRowType);
+		T object = getInstanceProvider().provide(statementContext, resultSetRowType);
 		BeanInfo beanInfo = Introspector.getBeanInfo(resultSetRowType);
 		Map<String, Object> columnLabelsToValues = extractColumnLabelsToValues(resultSet);
 		Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(resultSetRowType);
@@ -588,7 +588,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	/**
 	 * Massages a {@link ResultSet} column label so it's easier to match against a JavaBean property name.
 	 * <p>
-	 * This implementation lowercases the label using the locale provided by {@link #normalizationLocale()}.
+	 * This implementation lowercases the label using the locale provided by {@link #getNormalizationLocale()}.
 	 *
 	 * @param columnLabel the {@link ResultSet} column label to massage
 	 * @return the massaged label
@@ -596,13 +596,13 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	@Nonnull
 	protected String normalizeColumnLabel(@Nonnull String columnLabel) {
 		requireNonNull(columnLabel);
-		return columnLabel.toLowerCase(normalizationLocale());
+		return columnLabel.toLowerCase(getNormalizationLocale());
 	}
 
 	/**
 	 * Massages a JavaBean property name to match standard database column name (camelCase -> camel_case).
 	 * <p>
-	 * Uses {@link #normalizationLocale()} to perform case-changing.
+	 * Uses {@link #getNormalizationLocale()} to perform case-changing.
 	 * <p>
 	 * There may be multiple database column name mappings, for example property {@code address1} might map to both
 	 * {@code address1} and {@code address_1} column names.
@@ -621,7 +621,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		String replacement = "$1_$2";
 
 		String normalizedPropertyName =
-				propertyName.replaceAll(camelCaseRegex, replacement).toLowerCase(normalizationLocale());
+				propertyName.replaceAll(camelCaseRegex, replacement).toLowerCase(getNormalizationLocale());
 		normalizedPropertyNames.add(normalizedPropertyName);
 
 		// Converts address1 to address_1
@@ -640,7 +640,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 * @return the locale to use for massaging, hardcoded to {@link Locale#ENGLISH} by default
 	 */
 	@Nonnull
-	protected Locale normalizationLocale() {
+	protected Locale getNormalizationLocale() {
 		return ENGLISH;
 	}
 
@@ -650,7 +650,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 * @return the kind of database we're working with
 	 */
 	@Nonnull
-	protected DatabaseType databaseType() {
+	protected DatabaseType getDatabaseType() {
 		return this.databaseType;
 	}
 
@@ -660,18 +660,18 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 * @return the instance-creation factory
 	 */
 	@Nonnull
-	protected InstanceProvider instanceProvider() {
+	protected InstanceProvider getInstanceProvider() {
 		return this.instanceProvider;
 	}
 
 	@Nonnull
 	protected ZoneId getTimeZone() {
-		return timeZone;
+		return this.timeZone;
 	}
 
 	@Nonnull
 	protected Calendar getTimeZoneCalendar() {
-		return timeZoneCalendar;
+		return this.timeZoneCalendar;
 	}
 
 	/**
@@ -707,7 +707,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		 * @return the mapping result value, may be {@code null}
 		 */
 		@Nonnull
-		public Optional<T> value() {
+		public Optional<T> getValue() {
 			return Optional.ofNullable(this.value);
 		}
 

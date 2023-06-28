@@ -88,7 +88,7 @@ InstanceProvider instanceProvider = new DefaultInstanceProvider() {
     // Default implementation will use the canonical constructor
     return super.provideRecord(statementContext, recordClass, initargs);
   }
-}
+};
 
 // Copies data from a ResultSet row to an instance of the specified type
 ResultSetMapper resultSetMapper = new DefaultResultSetMapper(instanceProvider) {

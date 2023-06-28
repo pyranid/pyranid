@@ -15,7 +15,7 @@
  */
 
 /**
- * <a target="_blank" href="https://www.pyranid.com">Pyranid</a> is a minimalist JDBC interface for modern Java applications.
+ * <a target="_blank" href="https://www.pyranid.com">Pyranid</a> is a zero-dependency JDBC interface for modern Java applications.
  * <p>
  * See <a target="_blank" href="https://www.pyranid.com">https://www.pyranid.com</a> for more detailed documentation and code samples.
  *
@@ -24,29 +24,62 @@
  * Database database = Database.forDataSource(dataSource).build();
  *
  * // Customized setup
- * Database customDatabase = Database.forDataSource(dataSource).instanceProvider(new InstanceProvider() {
+ * // Controls how Pyranid creates instances of objects that represent ResultSet rows
+ * InstanceProvider instanceProvider = new DefaultInstanceProvider() {
  *   &#064;Override
- *   public &lt;T&gt; T provide(Class&lt;T&gt; instanceClass) {
- *     // You might have your DI framework vend resultset row instances
+ *   &#064;Nonnull
+ *   public &lt;T&gt; T provide(&#064;Nonnull StatementContext&lt;T&gt; statementContext,
+ *                        &#064;Nonnull Class&lt;T&gt; instanceClass) {
+ *     // You might have your DI framework vend regular object instances
  *     return guiceInjector.getInstance(instanceClass);
  *   }
- * }).resultSetMapper(new ResultSetMapper() {
+ *
  *   &#064;Override
- *   public &lt;T&gt; T map(ResultSet rs, Class&lt;T&gt; resultClass) {
- *   // Do some custom mapping here
+ *   &#064;Nonnull
+ *   public &lt;T extends Record&gt; T provideRecord(&#064;Nonnull StatementContext&lt;T&gt; statementContext,
+ *                                             &#064;Nonnull Class&lt;T&gt; recordClass,
+ *                                             &#064;Nullable Object... initargs) {
+ *     // If you use Record types, customize their instantiation here.
+ *     // Default implementation will use the canonical constructor
+ *     return super.provideRecord(statementContext, recordClass, initargs);
  *   }
- * }).preparedStatementBinder(new PreparedStatementBinder() {
+ * };
+ *
+ * // Copies data from a ResultSet row to an instance of the specified type
+ * ResultSetMapper resultSetMapper = new DefaultResultSetMapper(instanceProvider) {
+ *   &#064;Nonnull
  *   &#064;Override
- *   public void bind(PreparedStatement ps, List&lt;Object&gt; parameters) {
- *     // Do some custom binding here
+ *   public &lt;T&gt; T map(&#064;Nonnull StatementContext&lt;T&gt; statementContext,
+ *                    &#064;Nonnull ResultSet resultSet) {
+ *     return super.map(statementContext, resultSet);
  *   }
- * }).statementLogger(new StatementLogger() {
+ * };
+ *
+ * // Binds parameters to a SQL PreparedStatement
+ * PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder() {
  *   &#064;Override
- *   public void log(StatementLog statementLog) {
- *     // Send log to whatever output sink you'd like
- *     out.println(statementLog);
+ *   public &lt;T&gt; void bind(&#064;Nonnull StatementContext&lt;T&gt; statementContext,
+ *                        &#064;Nonnull PreparedStatement preparedStatement) {
+ *     super.bind(statementContext, preparedStatement);
  *   }
- * }).build();
+ * };
+ *
+ * // Optionally logs SQL statements
+ * StatementLogger statementLogger = new StatementLogger() {
+ *   &#064;Override
+ *   public void log(&#064;Nonnull StatementLog statementLog) {
+ *     // Send to whatever output sink you'd like
+ *     System.out.println(statementLog);
+ *   }
+ * };
+ *
+ * Database customDatabase = Database.forDataSource(dataSource)
+ *   .timeZone(ZoneId.of("UTC")) // Override JVM default timezone
+ *   .instanceProvider(instanceProvider)
+ *   .resultSetMapper(resultSetMapper)
+ *   .preparedStatementBinder(preparedStatementBinder)
+ *   .statementLogger(statementLogger)
+ *   .build();
  *
  * // Queries
  * Optional&lt;Car&gt; specificCar = database.queryForObject("SELECT * FROM car WHERE id = ?", Car.class, 123);
@@ -55,8 +88,8 @@
  * List&lt;BigDecimal&gt; balances = database.queryForList("SELECT balance FROM account", BigDecimal.class);
  *
  * // Statements
- * int updateCount = database.execute("UPDATE car SET color = ?", Color.RED);
- * Optional&lt;UUID&gt; id = database.executeReturning("INSERT INTO book VALUES (?) RETURNING id", UUID.class, "The Stranger");
+ * long updateCount = database.execute("UPDATE car SET color = ?", Color.RED);
+ * Optional&lt;UUID&gt; id = database.queryForObject("INSERT INTO book VALUES (?) RETURNING id", UUID.class, "The Stranger");
  *
  * // Transactions
  * database.transaction(() -&gt; {

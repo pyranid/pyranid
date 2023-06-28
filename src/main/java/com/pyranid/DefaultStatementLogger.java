@@ -17,6 +17,7 @@
 package com.pyranid;
 
 import javax.annotation.Nonnull;
+import javax.annotation.concurrent.ThreadSafe;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Level;
@@ -32,6 +33,7 @@ import static java.util.stream.Collectors.joining;
  * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
+@ThreadSafe
 public class DefaultStatementLogger implements StatementLogger {
 	@Nonnull
 	public static final String DEFAULT_LOGGER_NAME = "com.pyranid.SQL";
