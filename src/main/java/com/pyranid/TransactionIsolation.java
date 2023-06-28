@@ -16,6 +16,8 @@
 
 package com.pyranid;
 
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import java.sql.Connection;
 import java.util.Optional;
 
@@ -29,35 +31,37 @@ public enum TransactionIsolation {
 	/**
 	 * Default isolation (DBMS-specific).
 	 */
-	DEFAULT(Optional.empty()),
+	DEFAULT(null),
 
 	/**
 	 * Maps to JDBC value {@link Connection#TRANSACTION_READ_COMMITTED}.
 	 */
-	READ_COMMITTED(Optional.of(Connection.TRANSACTION_READ_COMMITTED)),
+	READ_COMMITTED(Connection.TRANSACTION_READ_COMMITTED),
 
 	/**
 	 * Maps to JDBC value {@link Connection#TRANSACTION_READ_UNCOMMITTED}.
 	 */
-	READ_UNCOMMITTED(Optional.of(Connection.TRANSACTION_READ_UNCOMMITTED)),
+	READ_UNCOMMITTED(Connection.TRANSACTION_READ_UNCOMMITTED),
 
 	/**
 	 * Maps to JDBC value {@link Connection#TRANSACTION_REPEATABLE_READ}.
 	 */
-	REPEATABLE_READ(Optional.of(Connection.TRANSACTION_REPEATABLE_READ)),
+	REPEATABLE_READ(Connection.TRANSACTION_REPEATABLE_READ),
 
 	/**
 	 * Maps to JDBC value {@link Connection#TRANSACTION_SERIALIZABLE}.
 	 */
-	SERIALIZABLE(Optional.of(Connection.TRANSACTION_SERIALIZABLE));
+	SERIALIZABLE(Connection.TRANSACTION_SERIALIZABLE);
 
-	private final Optional<Integer> jdbcLevel;
+	@Nullable
+	private final Integer jdbcLevel;
 
-	private TransactionIsolation(Optional<Integer> jdbcLevel) {
+	TransactionIsolation(@Nullable Integer jdbcLevel) {
 		this.jdbcLevel = jdbcLevel;
 	}
 
-	Optional<Integer> jdbcLevel() {
-		return jdbcLevel;
+	@Nonnull
+	Optional<Integer> getJdbcLevel() {
+		return Optional.ofNullable(this.jdbcLevel);
 	}
 }
