@@ -74,19 +74,19 @@ InstanceProvider instanceProvider = new DefaultInstanceProvider() {
   @Override
   @Nonnull
   public <T> T provide(@Nonnull StatementContext<T> statementContext,
-                       @Nonnull Class<T> instanceClass) {
+                       @Nonnull Class<T> instanceType) {
     // You might have your DI framework vend regular object instances
-    return guiceInjector.getInstance(instanceClass);
+    return guiceInjector.getInstance(instanceType);
   }
   
   @Override
   @Nonnull
   public <T extends Record> T provideRecord(@Nonnull StatementContext<T> statementContext,
-                                            @Nonnull Class<T> recordClass,
+                                            @Nonnull Class<T> recordType,
                                             @Nullable Object... initargs) {
     // If you use Record types, customize their instantiation here.
     // Default implementation will use the canonical constructor
-    return super.provideRecord(statementContext, recordClass, initargs);
+    return super.provideRecord(statementContext, recordType, initargs);
   }
 };
 

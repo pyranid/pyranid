@@ -127,12 +127,12 @@ public class DatabaseTests {
 			@Override
 			@Nonnull
 			public <T> T provide(@Nonnull StatementContext<T> statementContext,
-													 @Nonnull Class<T> instanceClass) {
+													 @Nonnull Class<T> instanceType) {
 				if (Objects.equals("employee-query", statementContext.getStatement().getId()))
 					System.out.printf("Creating instance of %s for Employee Query: %s\n",
-							instanceClass.getSimpleName(), statementContext);
+							instanceType.getSimpleName(), statementContext);
 
-				return super.provide(statementContext, instanceClass);
+				return super.provide(statementContext, instanceType);
 			}
 		};
 

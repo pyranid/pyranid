@@ -33,16 +33,16 @@ public class DefaultInstanceProvider implements InstanceProvider {
 	@Override
 	@Nonnull
 	public <T> T provide(@Nonnull StatementContext<T> statementContext,
-											 @Nonnull Class<T> instanceClass) {
+											 @Nonnull Class<T> instanceType) {
 		requireNonNull(statementContext);
-		requireNonNull(instanceClass);
+		requireNonNull(instanceType);
 
 		try {
-			return instanceClass.getDeclaredConstructor().newInstance();
+			return instanceType.getDeclaredConstructor().newInstance();
 		} catch (Exception e) {
 			throw new RuntimeException(format(
 					"Unable to create an instance of %s. Please verify that %s has a public no-argument constructor",
-					instanceClass, instanceClass.getSimpleName()), e);
+					instanceType, instanceType.getSimpleName()), e);
 		}
 	}
 }

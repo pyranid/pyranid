@@ -29,19 +29,19 @@
  *   &#064;Override
  *   &#064;Nonnull
  *   public &lt;T&gt; T provide(&#064;Nonnull StatementContext&lt;T&gt; statementContext,
- *                        &#064;Nonnull Class&lt;T&gt; instanceClass) {
+ *                        &#064;Nonnull Class&lt;T&gt; instanceType) {
  *     // You might have your DI framework vend regular object instances
- *     return guiceInjector.getInstance(instanceClass);
+ *     return guiceInjector.getInstance(instanceType);
  *   }
  *
  *   &#064;Override
  *   &#064;Nonnull
  *   public &lt;T extends Record&gt; T provideRecord(&#064;Nonnull StatementContext&lt;T&gt; statementContext,
- *                                             &#064;Nonnull Class&lt;T&gt; recordClass,
+ *                                             &#064;Nonnull Class&lt;T&gt; recordType,
  *                                             &#064;Nullable Object... initargs) {
  *     // If you use Record types, customize their instantiation here.
  *     // Default implementation will use the canonical constructor
- *     return super.provideRecord(statementContext, recordClass, initargs);
+ *     return super.provideRecord(statementContext, recordType, initargs);
  *   }
  * };
  *

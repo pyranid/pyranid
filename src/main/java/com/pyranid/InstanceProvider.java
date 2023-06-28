@@ -37,48 +37,48 @@ import static java.util.Objects.requireNonNull;
  */
 public interface InstanceProvider {
 	/**
-	 * Provides an instance of the given {@code instanceClass}.
+	 * Provides an instance of the given {@code instanceType}.
 	 * <p>
 	 * Whether the instance is new every time or shared/reused is implementation-dependent.
 	 *
 	 * @param <T>           instance type token
-	 * @param instanceClass the type of instance to create
-	 * @return an instance of the given {@code instanceClass}
+	 * @param instanceType the type of instance to create
+	 * @return an instance of the given {@code instanceType}
 	 */
 	@Nonnull
 	<T> T provide(@Nonnull StatementContext<T> statementContext,
-								@Nonnull Class<T> instanceClass);
+								@Nonnull Class<T> instanceType);
 
 	/**
-	 * Provides an instance of the given {@code recordClass}.
+	 * Provides an instance of the given {@code recordType}.
 	 * <p>
 	 * Whether the instance is new every time or shared/reused is implementation-dependent.
 	 *
 	 * @param <T>         instance type token
-	 * @param recordClass the type of instance to create (must be a record)
+	 * @param recordType the type of instance to create (must be a record)
 	 * @param initargs    values used to construct the record instance
-	 * @return an instance of the given {@code recordClass}
+	 * @return an instance of the given {@code recordType}
 	 * @since 2.0.0
 	 */
 	@Nonnull
 	default <T extends Record> T provideRecord(@Nonnull StatementContext<T> statementContext,
-																						 @Nonnull Class<T> recordClass,
+																						 @Nonnull Class<T> recordType,
 																						 @Nullable Object... initargs) {
 		requireNonNull(statementContext);
-		requireNonNull(recordClass);
+		requireNonNull(recordType);
 
 		try {
 			// Find the canonical constructor for the record.
 			// Hat tip to https://stackoverflow.com/a/67127067
-			Class<?>[] componentTypes = Arrays.stream(recordClass.getRecordComponents())
+			Class<?>[] componentTypes = Arrays.stream(recordType.getRecordComponents())
 					.map(rc -> rc.getType())
 					.toArray(Class<?>[]::new);
 
-			Constructor<T> constructor = recordClass.getDeclaredConstructor(componentTypes);
+			Constructor<T> constructor = recordType.getDeclaredConstructor(componentTypes);
 			return constructor.newInstance(initargs);
 		} catch (NoSuchMethodException | InstantiationException | IllegalAccessException |
 						 IllegalArgumentException | InvocationTargetException e) {
-			throw new DatabaseException(String.format("Unable to instantiate Record type %s with args %s", recordClass,
+			throw new DatabaseException(String.format("Unable to instantiate Record type %s with args %s", recordType,
 					initargs == null ? "[none]" : Arrays.asList(initargs)), e);
 		}
 	}
