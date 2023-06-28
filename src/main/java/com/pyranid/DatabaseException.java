@@ -16,6 +16,9 @@
 
 package com.pyranid;
 
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
+import javax.annotation.concurrent.NotThreadSafe;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,40 +30,57 @@ import static java.lang.String.format;
 /**
  * Thrown when an error occurs when interacting with a {@link Database}.
  * <p>
- * If the {@code cause} of this exception is a {@link SQLException}, the {@link #errorCode()} and {@link #sqlState()}
+ * If the {@code cause} of this exception is a {@link SQLException}, the {@link #getErrorCode()} and {@link #getSqlState()}
  * accessors are shorthand for retrieving the corresponding {@link SQLException} values.
  *
  * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
+@NotThreadSafe
 public class DatabaseException extends RuntimeException {
-	private final Optional<Integer> errorCode;
-	private final Optional<String> sqlState;
-
-	// Additional metadata
-	private final Optional<String> column;
-	private final Optional<String> constraint;
-	private final Optional<String> datatype;
-	private final Optional<String> detail;
-	private final Optional<String> file;
-	private final Optional<String> hint;
-	private final Optional<Integer> internalPosition;
-	private final Optional<String> internalQuery;
-	private final Optional<Integer> line;
-	private final Optional<String> dbmsMessage;
-	private final Optional<Integer> position;
-	private final Optional<String> routine;
-	private final Optional<String> schema;
-	private final Optional<String> severity;
-	private final Optional<String> table;
-	private final Optional<String> where;
+	@Nullable
+	private final Integer errorCode;
+	@Nullable
+	private final String sqlState;
+	@Nullable
+	private final String column;
+	@Nullable
+	private final String constraint;
+	@Nullable
+	private final String datatype;
+	@Nullable
+	private final String detail;
+	@Nullable
+	private final String file;
+	@Nullable
+	private final String hint;
+	@Nullable
+	private final Integer internalPosition;
+	@Nullable
+	private final String internalQuery;
+	@Nullable
+	private final Integer line;
+	@Nullable
+	private final String dbmsMessage;
+	@Nullable
+	private final Integer position;
+	@Nullable
+	private final String routine;
+	@Nullable
+	private final String schema;
+	@Nullable
+	private final String severity;
+	@Nullable
+	private final String table;
+	@Nullable
+	private final String where;
 
 	/**
 	 * Creates a {@code DatabaseException} with the given {@code message}.
 	 *
 	 * @param message a message describing this exception
 	 */
-	public DatabaseException(String message) {
+	public DatabaseException(@Nullable String message) {
 		this(message, null);
 	}
 
@@ -69,7 +89,7 @@ public class DatabaseException extends RuntimeException {
 	 *
 	 * @param cause the cause of this exception
 	 */
-	public DatabaseException(Throwable cause) {
+	public DatabaseException(@Nullable Throwable cause) {
 		this(cause == null ? null : cause.getMessage(), cause);
 	}
 
@@ -79,27 +99,28 @@ public class DatabaseException extends RuntimeException {
 	 * @param message a message describing this exception
 	 * @param cause   the cause of this exception
 	 */
-	public DatabaseException(String message, Throwable cause) {
+	public DatabaseException(@Nullable String message,
+													 @Nullable Throwable cause) {
 		super(message, cause);
 
-		Optional<Integer> errorCode = Optional.empty();
-		Optional<String> sqlState = Optional.empty();
-		Optional<String> column = Optional.empty();
-		Optional<String> constraint = Optional.empty();
-		Optional<String> datatype = Optional.empty();
-		Optional<String> detail = Optional.empty();
-		Optional<String> file = Optional.empty();
-		Optional<String> hint = Optional.empty();
-		Optional<Integer> internalPosition = Optional.empty();
-		Optional<String> internalQuery = Optional.empty();
-		Optional<Integer> line = Optional.empty();
-		Optional<String> dbmsMessage = Optional.empty();
-		Optional<Integer> position = Optional.empty();
-		Optional<String> routine = Optional.empty();
-		Optional<String> schema = Optional.empty();
-		Optional<String> severity = Optional.empty();
-		Optional<String> table = Optional.empty();
-		Optional<String> where = Optional.empty();
+		Integer errorCode = null;
+		String sqlState = null;
+		String column = null;
+		String constraint = null;
+		String datatype = null;
+		String detail = null;
+		String file = null;
+		String hint = null;
+		Integer internalPosition = null;
+		String internalQuery = null;
+		Integer line = null;
+		String dbmsMessage = null;
+		Integer position = null;
+		String routine = null;
+		String schema = null;
+		String severity = null;
+		String table = null;
+		String where = null;
 
 		if (cause != null) {
 			// Special handling for Postgres
@@ -108,29 +129,29 @@ public class DatabaseException extends RuntimeException {
 				org.postgresql.util.ServerErrorMessage serverErrorMessage = psqlException.getServerErrorMessage();
 
 				if (serverErrorMessage != null) {
-					errorCode = Optional.ofNullable(psqlException.getErrorCode());
-					column = Optional.ofNullable(serverErrorMessage.getColumn());
-					constraint = Optional.ofNullable(serverErrorMessage.getConstraint());
-					datatype = Optional.ofNullable(serverErrorMessage.getDatatype());
-					detail = Optional.ofNullable(serverErrorMessage.getDetail());
-					file = Optional.ofNullable(serverErrorMessage.getFile());
-					hint = Optional.ofNullable(serverErrorMessage.getHint());
-					internalQuery = Optional.ofNullable(serverErrorMessage.getInternalQuery());
-					dbmsMessage = Optional.ofNullable(serverErrorMessage.getMessage());
-					routine = Optional.ofNullable(serverErrorMessage.getRoutine());
-					schema = Optional.ofNullable(serverErrorMessage.getSchema());
-					severity = Optional.ofNullable(serverErrorMessage.getSeverity());
-					sqlState = Optional.ofNullable(serverErrorMessage.getSQLState());
-					table = Optional.ofNullable(serverErrorMessage.getTable());
-					where = Optional.ofNullable(serverErrorMessage.getWhere());
-					internalPosition = Optional.ofNullable(serverErrorMessage.getInternalPosition());
-					line = Optional.ofNullable(serverErrorMessage.getLine());
-					position = Optional.ofNullable(serverErrorMessage.getPosition());
+					errorCode = psqlException.getErrorCode();
+					column = serverErrorMessage.getColumn();
+					constraint = serverErrorMessage.getConstraint();
+					datatype = serverErrorMessage.getDatatype();
+					detail = serverErrorMessage.getDetail();
+					file = serverErrorMessage.getFile();
+					hint = serverErrorMessage.getHint();
+					internalQuery = serverErrorMessage.getInternalQuery();
+					dbmsMessage = serverErrorMessage.getMessage();
+					routine = serverErrorMessage.getRoutine();
+					schema = serverErrorMessage.getSchema();
+					severity = serverErrorMessage.getSeverity();
+					sqlState = serverErrorMessage.getSQLState();
+					table = serverErrorMessage.getTable();
+					where = serverErrorMessage.getWhere();
+					internalPosition = serverErrorMessage.getInternalPosition();
+					line = serverErrorMessage.getLine();
+					position = serverErrorMessage.getPosition();
 				}
 			} else if (cause instanceof SQLException) {
 				SQLException sqlException = (SQLException) cause;
-				errorCode = Optional.ofNullable(sqlException.getErrorCode());
-				sqlState = Optional.ofNullable(sqlException.getSQLState());
+				errorCode = sqlException.getErrorCode();
+				sqlState = sqlException.getSQLState();
 			}
 		}
 
@@ -161,42 +182,42 @@ public class DatabaseException extends RuntimeException {
 		if (getMessage() != null && getMessage().trim().length() > 0)
 			components.add(format("message=%s", getMessage()));
 
-		if (errorCode().isPresent())
-			components.add(format("errorCode=%s", errorCode().get()));
-		if (sqlState().isPresent())
-			components.add(format("sqlState=%s", sqlState().get()));
-		if (column().isPresent())
-			components.add(format("column=%s", column().get()));
-		if (constraint().isPresent())
-			components.add(format("constraint=%s", constraint().get()));
-		if (datatype().isPresent())
-			components.add(format("datatype=%s", datatype().get()));
-		if (detail().isPresent())
-			components.add(format("detail=%s", detail().get()));
-		if (file().isPresent())
-			components.add(format("file=%s", file().get()));
-		if (hint().isPresent())
-			components.add(format("hint=%s", hint().get()));
-		if (internalPosition().isPresent())
-			components.add(format("internalPosition=%s", internalPosition().get()));
-		if (internalQuery().isPresent())
-			components.add(format("internalQuery=%s", internalQuery().get()));
-		if (line().isPresent())
-			components.add(format("line=%s", line().get()));
-		if (dbmsMessage().isPresent())
-			components.add(format("dbmsMessage=%s", dbmsMessage().get()));
-		if (position().isPresent())
-			components.add(format("position=%s", position().get()));
-		if (routine().isPresent())
-			components.add(format("routine=%s", routine().get()));
-		if (schema().isPresent())
-			components.add(format("schema=%s", schema().get()));
-		if (severity().isPresent())
-			components.add(format("severity=%s", severity().get()));
-		if (table().isPresent())
-			components.add(format("table=%s", table().get()));
-		if (where().isPresent())
-			components.add(format("where=%s", where().get()));
+		if (getErrorCode().isPresent())
+			components.add(format("errorCode=%s", getErrorCode().get()));
+		if (getSqlState().isPresent())
+			components.add(format("sqlState=%s", getSqlState().get()));
+		if (getColumn().isPresent())
+			components.add(format("column=%s", getColumn().get()));
+		if (getConstraint().isPresent())
+			components.add(format("constraint=%s", getConstraint().get()));
+		if (getDatatype().isPresent())
+			components.add(format("datatype=%s", getDatatype().get()));
+		if (getDetail().isPresent())
+			components.add(format("detail=%s", getDetail().get()));
+		if (getFile().isPresent())
+			components.add(format("file=%s", getFile().get()));
+		if (getHint().isPresent())
+			components.add(format("hint=%s", getHint().get()));
+		if (getInternalPosition().isPresent())
+			components.add(format("internalPosition=%s", getInternalPosition().get()));
+		if (getInternalQuery().isPresent())
+			components.add(format("internalQuery=%s", getInternalQuery().get()));
+		if (getLine().isPresent())
+			components.add(format("line=%s", getLine().get()));
+		if (getDbmsMessage().isPresent())
+			components.add(format("dbmsMessage=%s", getDbmsMessage().get()));
+		if (getPosition().isPresent())
+			components.add(format("position=%s", getPosition().get()));
+		if (getRoutine().isPresent())
+			components.add(format("routine=%s", getRoutine().get()));
+		if (getSchema().isPresent())
+			components.add(format("schema=%s", getSchema().get()));
+		if (getSeverity().isPresent())
+			components.add(format("severity=%s", getSeverity().get()));
+		if (getTable().isPresent())
+			components.add(format("table=%s", getTable().get()));
+		if (getWhere().isPresent())
+			components.add(format("where=%s", getWhere().get()));
 
 		return format("%s{%s}", getClass().getSimpleName(), components.stream().collect(Collectors.joining(", ")));
 	}
@@ -206,8 +227,9 @@ public class DatabaseException extends RuntimeException {
 	 *
 	 * @return the value of {@link SQLException#getErrorCode()}, or empty if not available
 	 */
-	public Optional<Integer> errorCode() {
-		return errorCode;
+	@Nonnull
+	public Optional<Integer> getErrorCode() {
+		return Optional.ofNullable(this.errorCode);
 	}
 
 	/**
@@ -215,135 +237,152 @@ public class DatabaseException extends RuntimeException {
 	 *
 	 * @return the value of {@link SQLException#getSQLState()}, or empty if not available
 	 */
-	public Optional<String> sqlState() {
-		return sqlState;
+	@Nonnull
+	public Optional<String> getSqlState() {
+		return Optional.ofNullable(this.sqlState);
 	}
 
 	/**
 	 * @return the value of the offending {@code column}, or empty if not available
 	 * @since 1.0.12
 	 */
-	public Optional<String> column() {
-		return column;
+	@Nonnull
+	public Optional<String> getColumn() {
+		return Optional.ofNullable(this.column);
 	}
 
 	/**
 	 * @return the value of the offending {@code constraint}, or empty if not available
 	 * @since 1.0.12
 	 */
-	public Optional<String> constraint() {
-		return constraint;
+	@Nonnull
+	public Optional<String> getConstraint() {
+		return Optional.ofNullable(this.constraint);
 	}
 
 	/**
 	 * @return the value of the offending {@code datatype}, or empty if not available
 	 * @since 1.0.12
 	 */
-	public Optional<String> datatype() {
-		return datatype;
+	@Nonnull
+	public Optional<String> getDatatype() {
+		return Optional.ofNullable(this.datatype);
 	}
 
 	/**
 	 * @return the value of the offending {@code detail}, or empty if not available
 	 * @since 1.0.12
 	 */
-	public Optional<String> detail() {
-		return detail;
+	@Nonnull
+	public Optional<String> getDetail() {
+		return Optional.ofNullable(this.detail);
 	}
 
 	/**
 	 * @return the value of the offending {@code file}, or empty if not available
 	 * @since 1.0.12
 	 */
-	public Optional<String> file() {
-		return file;
+	@Nonnull
+	public Optional<String> getFile() {
+		return Optional.ofNullable(this.file);
 	}
 
 	/**
 	 * @return the value of the error {@code hint}, or empty if not available
 	 * @since 1.0.12
 	 */
-	public Optional<String> hint() {
-		return hint;
+	@Nonnull
+	public Optional<String> getHint() {
+		return Optional.ofNullable(this.hint);
 	}
 
 	/**
 	 * @return the value of the offending {@code internalPosition}, or empty if not available
 	 * @since 1.0.12
 	 */
-	public Optional<Integer> internalPosition() {
-		return internalPosition;
+	@Nonnull
+	public Optional<Integer> getInternalPosition() {
+		return Optional.ofNullable(this.internalPosition);
 	}
 
 	/**
 	 * @return the value of the offending {@code internalQuery}, or empty if not available
 	 * @since 1.0.12
 	 */
-	public Optional<String> internalQuery() {
-		return internalQuery;
+	@Nonnull
+	public Optional<String> getInternalQuery() {
+		return Optional.ofNullable(this.internalQuery);
 	}
 
 	/**
 	 * @return the value of the offending {@code line}, or empty if not available
 	 * @since 1.0.12
 	 */
-	public Optional<Integer> line() {
-		return line;
+	@Nonnull
+	public Optional<Integer> getLine() {
+		return Optional.ofNullable(this.line);
 	}
 
 	/**
 	 * @return the value of the error {@code dbmsMessage}, or empty if not available
 	 * @since 1.0.12
 	 */
-	public Optional<String> dbmsMessage() {
-		return dbmsMessage;
+	@Nonnull
+	public Optional<String> getDbmsMessage() {
+		return Optional.ofNullable(this.dbmsMessage);
 	}
 
 	/**
 	 * @return the value of the offending {@code position}, or empty if not available
 	 * @since 1.0.12
 	 */
-	public Optional<Integer> position() {
-		return position;
+	@Nonnull
+	public Optional<Integer> getPosition() {
+		return Optional.ofNullable(this.position);
 	}
 
 	/**
 	 * @return the value of the offending {@code routine}, or empty if not available
 	 * @since 1.0.12
 	 */
-	public Optional<String> routine() {
-		return routine;
+	@Nonnull
+	public Optional<String> getRoutine() {
+		return Optional.ofNullable(this.routine);
 	}
 
 	/**
 	 * @return the value of the offending {@code schema}, or empty if not available
 	 * @since 1.0.12
 	 */
-	public Optional<String> schema() {
-		return schema;
+	@Nonnull
+	public Optional<String> getSchema() {
+		return Optional.ofNullable(this.schema);
 	}
 
 	/**
 	 * @return the error {@code severity}, or empty if not available
 	 * @since 1.0.12
 	 */
-	public Optional<String> severity() {
-		return severity;
+	@Nonnull
+	public Optional<String> getSeverity() {
+		return Optional.ofNullable(this.severity);
 	}
 
 	/**
 	 * @return the value of the offending {@code table}, or empty if not available
 	 * @since 1.0.12
 	 */
-	public Optional<String> table() {
-		return table;
+	@Nonnull
+	public Optional<String> getTable() {
+		return Optional.ofNullable(this.table);
 	}
 
 	/**
 	 * @return the value of the offending {@code where}, or empty if not available
 	 * @since 1.0.12
 	 */
-	public Optional<String> where() {
-		return where;
+	@Nonnull
+	public Optional<String> getWhere() {
+		return Optional.ofNullable(this.where);
 	}
 }
