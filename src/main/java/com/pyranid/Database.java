@@ -398,7 +398,7 @@ public class Database {
 				startTime = nanoTime();
 
 				while (resultSet.next()) {
-					T listElement = getResultSetMapper().map(statementContext, resultSet);
+					T listElement = getResultSetMapper().map(statementContext, resultSet, statementContext.getResultSetRowType().get()).orElse(null);
 					list.add(listElement);
 				}
 
@@ -555,8 +555,6 @@ public class Database {
 		return resultHolder.value;
 	}
 
-
-	@Nonnull
 	protected <T> void performDatabaseOperation(@Nonnull StatementContext<T> statementContext,
 																							@Nonnull DatabaseOperation databaseOperation) {
 		requireNonNull(statementContext);
@@ -568,7 +566,6 @@ public class Database {
 		}, databaseOperation);
 	}
 
-	@Nonnull
 	protected <T> void performDatabaseOperation(@Nonnull StatementContext<T> statementContext,
 																							@Nonnull PreparedStatementBindingOperation preparedStatementBindingOperation,
 																							@Nonnull DatabaseOperation databaseOperation) {

@@ -94,9 +94,10 @@ InstanceProvider instanceProvider = new DefaultInstanceProvider() {
 ResultSetMapper resultSetMapper = new DefaultResultSetMapper(instanceProvider) {
   @Nonnull
   @Override
-  public <T> T map(@Nonnull StatementContext<T> statementContext,
-                   @Nonnull ResultSet resultSet) {
-    return super.map(statementContext, resultSet);
+  public <T> Optional<T> map(@Nonnull StatementContext<T> statementContext,
+                             @Nonnull ResultSet resultSet,
+                             @Nonnull Class<T> resultSetRowType) {
+    return super.map(statementContext, resultSet, resultSetRowType);
   }
 };
 

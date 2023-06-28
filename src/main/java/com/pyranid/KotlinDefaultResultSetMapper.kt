@@ -74,8 +74,11 @@ open class KotlinDefaultResultSetMapper(
     data class CtorParameters(val ctor: KFunction<Any>, val ctorParameters: List<ParameterMetadata>)
     data class ParameterMetadata(val name: String, val parameter: KParameter, val parameterType: KClass<*>)
 
-
-    override fun <T : Any> map(statementContext: StatementContext<T>, resultSet: ResultSet): T {
+    override fun <T : Any> map(
+        statementContext: StatementContext<T>,
+        resultSet: ResultSet,
+        resultSetRowType: Class<T>
+    ): Optional<T> {
         val resultClass = statementContext.resultSetRowType.get();
 
         val klass = kotlinClassForJavaClass.computeIfAbsent(resultClass) {
@@ -85,7 +88,7 @@ open class KotlinDefaultResultSetMapper(
         return if (klass.isData) {
             mapKotlinDataClass(resultSet, klass)
         } else {
-            javaDefaultResultSetMapper.map(statementContext, resultSet)
+            javaDefaultResultSetMapper.map(statementContext, resultSet, resultSetRowType)
         }
     }
 

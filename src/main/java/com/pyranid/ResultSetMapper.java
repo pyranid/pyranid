@@ -18,6 +18,7 @@ package com.pyranid;
 
 import javax.annotation.Nonnull;
 import java.sql.ResultSet;
+import java.util.Optional;
 
 /**
  * Contract for mapping a {@link ResultSet} row to a different type.
@@ -32,10 +33,12 @@ public interface ResultSetMapper {
 	 * @param <T>              result instance type token
 	 * @param statementContext current SQL context
 	 * @param resultSet        provides raw row data to pull from
+	 * @param resultSetRowType the type to which the {@link ResultSet} row should be marshaled
 	 * @return an instance of the given {@code resultClass}
 	 * @throws DatabaseException if an error occurs during mapping
 	 */
 	@Nonnull
-	<T> T map(@Nonnull StatementContext<T> statementContext,
-						@Nonnull ResultSet resultSet);
+	<T> Optional<T> map(@Nonnull StatementContext<T> statementContext,
+											@Nonnull ResultSet resultSet,
+											@Nonnull Class<T> resultSetRowType);
 }

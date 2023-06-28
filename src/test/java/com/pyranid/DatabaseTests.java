@@ -28,6 +28,7 @@ import java.sql.ResultSet;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static java.util.Objects.requireNonNull;
@@ -124,6 +125,7 @@ public class DatabaseTests {
 
 		InstanceProvider instanceProvider = new DefaultInstanceProvider() {
 			@Override
+			@Nonnull
 			public <T> T provide(@Nonnull StatementContext<T> statementContext,
 													 @Nonnull Class<T> instanceClass) {
 				if (Objects.equals("employee-query", statementContext.getStatement().getId()))
@@ -137,12 +139,13 @@ public class DatabaseTests {
 		ResultSetMapper resultSetMapper = new DefaultResultSetMapper(instanceProvider) {
 			@Nonnull
 			@Override
-			public <T> T map(@Nonnull StatementContext<T> statementContext,
-											 @Nonnull ResultSet resultSet) {
+			public <T> Optional<T> map(@Nonnull StatementContext<T> statementContext,
+																 @Nonnull ResultSet resultSet,
+																 @Nonnull Class<T> resultSetRowType) {
 				if (Objects.equals("employee-query", statementContext.getStatement().getId()))
 					System.out.printf("Mapping ResultSet for Employee Query: %s\n", statementContext);
 
-				return super.map(statementContext, resultSet);
+				return super.map(statementContext, resultSet, resultSetRowType);
 			}
 		};
 

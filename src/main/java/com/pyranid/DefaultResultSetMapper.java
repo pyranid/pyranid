@@ -123,23 +123,23 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 
 	@Override
 	@Nonnull
-	public <T> T map(@Nonnull StatementContext<T> statementContext,
-									 @Nonnull ResultSet resultSet) {
+	public <T> Optional<T> map(@Nonnull StatementContext<T> statementContext,
+														 @Nonnull ResultSet resultSet,
+														 @Nonnull Class<T> resultSetRowType) {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
-
-		Class<T> resultSetRowType = statementContext.getResultSetRowType().get();
+		requireNonNull(resultSetRowType);
 
 		try {
 			StandardTypeResult<T> standardTypeResult = mapResultSetToStandardType(resultSet, resultSetRowType);
 
 			if (standardTypeResult.isStandardType())
-				return standardTypeResult.getValue().orElse(null);
+				return standardTypeResult.getValue();
 
 			if (resultSetRowType.isRecord())
-				return (T) mapResultSetToRecord((StatementContext<? extends Record>) statementContext, resultSet);
+				return Optional.ofNullable((T) mapResultSetToRecord((StatementContext<? extends Record>) statementContext, resultSet));
 
-			return mapResultSetToBean(statementContext, resultSet);
+			return Optional.ofNullable(mapResultSetToBean(statementContext, resultSet));
 		} catch (DatabaseException e) {
 			throw e;
 		} catch (Exception e) {
@@ -152,7 +152,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 * Attempts to map the current {@code resultSet} row to an instance of {@code resultClass} using one of the
 	 * "out-of-the-box" types (primitives, common types like {@link UUID}, etc.
 	 * <p>
-	 * This does not attempt to map to a user-defined JavaBean - see {@link #mapResultSetToBean(ResultSet, Class)} for
+	 * This does not attempt to map to a user-defined JavaBean - see {@link #mapResultSetToBean(StatementContext, ResultSet)} for
 	 * that functionality.
 	 *
 	 * @param <T>         result instance type token
@@ -509,9 +509,9 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 			if (Double.class.isAssignableFrom(propertyType))
 				return Optional.of(number.doubleValue());
 			if (BigDecimal.class.isAssignableFrom(propertyType))
-				return Optional.of(new BigDecimal(number.doubleValue()));
+				return Optional.of(BigDecimal.valueOf((number.doubleValue())));
 			if (BigInteger.class.isAssignableFrom(propertyType))
-				return Optional.of(new BigDecimal(number.doubleValue()).toBigInteger());
+				return Optional.of(BigDecimal.valueOf(number.doubleValue()).toBigInteger());
 		} else if (resultSetValue instanceof java.sql.Timestamp) {
 			java.sql.Timestamp date = (java.sql.Timestamp) resultSetValue;
 

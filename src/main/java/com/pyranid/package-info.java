@@ -50,8 +50,9 @@
  *   &#064;Nonnull
  *   &#064;Override
  *   public &lt;T&gt; T map(&#064;Nonnull StatementContext&lt;T&gt; statementContext,
- *                    &#064;Nonnull ResultSet resultSet) {
- *     return super.map(statementContext, resultSet);
+ *                    &#064;Nonnull ResultSet resultSet,
+ *                    &#064;Nonnull Class&lt;T&gt; resultSetRowType) {
+ *     return super.map(statementContext, resultSet, resultSetRowType);
  *   }
  * };
  *
