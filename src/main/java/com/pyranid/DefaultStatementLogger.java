@@ -132,13 +132,13 @@ public class DefaultStatementLogger implements StatementLogger {
 		if (timingEntries.size() > 0)
 			lines.add(timingEntries.stream().collect(joining(", ")));
 
-		if (statementLog.getException().isPresent()) {
-			Throwable throwable = (Throwable) statementLog.getException().get();
+		Throwable exception = (Exception) statementLog.getException().orElse(null);
 
-			if (throwable instanceof DatabaseException && throwable.getCause() != null)
-				throwable = throwable.getCause();
+		if (exception != null) {
+			if (exception instanceof DatabaseException && exception.getCause() != null)
+				exception = exception.getCause();
 
-			lines.add(format("Failed due to %s", throwable.toString()));
+			lines.add(format("Failed due to %s", exception.toString()));
 		}
 
 		return lines.stream().collect(joining("\n"));

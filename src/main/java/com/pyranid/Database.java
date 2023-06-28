@@ -29,12 +29,14 @@ import java.time.Duration;
 import java.time.ZoneId;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Deque;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
 
 import static java.lang.String.format;
 import static java.lang.System.nanoTime;
@@ -344,74 +346,6 @@ public class Database {
 		return Optional.ofNullable(list.size() == 0 ? null : list.get(0));
 	}
 
-	@Nonnull
-	protected <T> void performDatabaseOperation(@Nonnull StatementContext<T> statementContext,
-																							@Nonnull DatabaseOperation databaseOperation) {
-		requireNonNull(statementContext);
-		requireNonNull(databaseOperation);
-
-		performDatabaseOperation(statementContext, (preparedStatement) -> {
-			if (statementContext.getParameters().size() > 0)
-				preparedStatementBinder().bind(statementContext, preparedStatement);
-		}, databaseOperation);
-	}
-
-	@Nonnull
-	protected <T> void performDatabaseOperation(@Nonnull StatementContext<T> statementContext,
-																							@Nonnull PreparedStatementBindingOperation preparedStatementBindingOperation,
-																							@Nonnull DatabaseOperation databaseOperation) {
-		requireNonNull(statementContext);
-		requireNonNull(preparedStatementBindingOperation);
-		requireNonNull(databaseOperation);
-
-		long startTime = nanoTime();
-		Duration connectionAcquisitionDuration = null;
-		Duration preparationDuration = null;
-		Duration executionDuration = null;
-		Duration resultSetMappingDuration = null;
-		Exception exception = null;
-		Connection connection = null;
-
-		try {
-			boolean alreadyHasConnection = currentTransaction().isPresent() && currentTransaction().get().hasConnection();
-			connection = acquireConnection();
-			connectionAcquisitionDuration = alreadyHasConnection ? null : Duration.ofNanos(nanoTime() - startTime);
-			startTime = nanoTime();
-
-			try (PreparedStatement preparedStatement = connection.prepareStatement(statementContext.getStatement().getSql())) {
-				preparedStatementBindingOperation.perform(preparedStatement);
-				preparationDuration = Duration.ofNanos(nanoTime() - startTime);
-
-				DatabaseOperationResult databaseOperationResult = databaseOperation.perform(preparedStatement);
-				executionDuration = databaseOperationResult.getExecutionDuration().orElse(null);
-				resultSetMappingDuration = databaseOperationResult.getResultSetMappingDuration().orElse(null);
-			}
-		} catch (DatabaseException e) {
-			exception = e;
-			throw e;
-		} catch (Exception e) {
-			exception = e;
-			throw new DatabaseException(e);
-		} finally {
-			try {
-				// If this was a single-shot operation (not in a transaction), close the connection
-				if (connection != null && !currentTransaction().isPresent())
-					closeConnection(connection);
-			} finally {
-				StatementLog statementLog =
-						StatementLog.forStatementContext(statementContext)
-								.connectionAcquisitionDuration(connectionAcquisitionDuration)
-								.preparationDuration(preparationDuration)
-								.executionDuration(executionDuration)
-								.resultSetMappingDuration(resultSetMappingDuration)
-								.exception(exception)
-								.build();
-
-				statementLogger().log(statementLog);
-			}
-		}
-	}
-
 	/**
 	 * Performs a SQL query that is expected to return any number of result rows.
 	 *
@@ -461,7 +395,7 @@ public class Database {
 				startTime = nanoTime();
 
 				while (resultSet.next()) {
-					T listElement = resultSetMapper().map(statementContext, resultSet);
+					T listElement = getResultSetMapper().map(statementContext, resultSet);
 					list.add(listElement);
 				}
 
@@ -535,96 +469,78 @@ public class Database {
 		return resultHolder.value;
 	}
 
-	public <T> Optional<T> executeReturning(String sql, Class<T> returnType, Object... parameters) {
-		requireNonNull(sql);
-		requireNonNull(returnType);
-
-		return executeReturning(new Statement(generateId(), sql), returnType, parameters);
-	}
-
-	public <T> Optional<T> executeReturning(Statement statement,
-																					Class<T> resultSetRowType,
-																					Object... parameters) {
-		requireNonNull(statement);
-		requireNonNull(resultSetRowType);
-
-		ResultHolder<T> resultHolder = new ResultHolder<>();
-		StatementContext<T> statementContext = new StatementContext.Builder<>(statement)
-				.parameters(parameters)
-				.resultSetRowType(resultSetRowType)
-				.build();
-
-		performDatabaseOperation(statementContext, (PreparedStatement preparedStatement) -> {
-			long startTime = nanoTime();
-
-			try (ResultSet resultSet = preparedStatement.executeQuery()) {
-				Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);
-				startTime = nanoTime();
-
-				if (resultSet.next())
-					resultHolder.value = resultSetMapper().map(statementContext, resultSet);
-
-				Duration resultSetMappingDuration = Duration.ofNanos(nanoTime() - startTime);
-				return new DatabaseOperationResult(executionDuration, resultSetMappingDuration);
-			}
-		});
-
-		return Optional.ofNullable(resultHolder.value);
-	}
-
-	public long[] executeBatch(String sql, List<List<Object>> parameterGroups) {
+	/**
+	 * Executes a SQL Data Manipulation Language (DML) statement, such as {@code INSERT}, {@code UPDATE}, or {@code DELETE}
+	 * in "batch" over a set of parameter groups.
+	 * <p>
+	 * Useful for bulk-inserting or updating large amounts of data.
+	 *
+	 * @param sql             the SQL to execute
+	 * @param parameterGroups Groups of {@link PreparedStatement} parameters
+	 * @return the number of rows affected by the SQL statement per-group
+	 */
+	@Nonnull
+	public List<Long> executeBatch(@Nonnull String sql,
+																 @Nonnull List<List<Object>> parameterGroups) {
 		requireNonNull(sql);
 		requireNonNull(parameterGroups);
 
 		return executeBatch(new Statement(generateId(), sql), parameterGroups);
 	}
 
-	public long[] executeBatch(Statement statement, List<List<Object>> parameterGroups) {
+	/**
+	 * Executes a SQL Data Manipulation Language (DML) statement, such as {@code INSERT}, {@code UPDATE}, or {@code DELETE}
+	 * in "batch" over a set of parameter groups.
+	 * <p>
+	 * Useful for bulk-inserting or updating large amounts of data.
+	 *
+	 * @param statement       the SQL statement to execute
+	 * @param parameterGroups Groups of {@link PreparedStatement} parameters
+	 * @return the number of rows affected by the SQL statement per-group
+	 */
+	@Nonnull
+	public List<Long> executeBatch(@Nonnull Statement statement,
+																 @Nonnull List<List<Object>> parameterGroups) {
 		requireNonNull(statement);
 		requireNonNull(parameterGroups);
 
-		ResultHolder<long[]> resultHolder = new ResultHolder<>();
-		StatementContext<long[]> statementContext = new StatementContext.Builder<>(statement)
+		ResultHolder<List<Long>> resultHolder = new ResultHolder<>();
+		StatementContext<List<Long>> statementContext = new StatementContext.Builder<>(statement)
 				.parameters(parameterGroups)
-				.resultSetRowType(long[].class)
+				.resultSetRowType(List.class)
 				.build();
 
 		performDatabaseOperation(statementContext, (preparedStatement) -> {
 			for (List<Object> parameterGroup : parameterGroups) {
 				if (parameterGroup != null && parameterGroup.size() > 0)
-					preparedStatementBinder().bind(statementContext, preparedStatement);
+					getPreparedStatementBinder().bind(statementContext, preparedStatement);
 
 				preparedStatement.addBatch();
 			}
 		}, (PreparedStatement preparedStatement) -> {
 			long startTime = nanoTime();
-			long[] result = null;
+			List<Long> result;
 
 			DatabaseOperationSupportStatus executeLargeBatchSupported = getExecuteLargeBatchSupported();
 
 			// Use the appropriate "large" value if we know it.
 			// If we don't know it, detect it and store it.
 			if (executeLargeBatchSupported == DatabaseOperationSupportStatus.YES) {
-				result = preparedStatement.executeLargeBatch();
+				long[] resultArray = preparedStatement.executeLargeBatch();
+				result = Arrays.stream(resultArray).boxed().collect(Collectors.toList());
 			} else if (executeLargeBatchSupported == DatabaseOperationSupportStatus.NO) {
-				int[] intResult = preparedStatement.executeBatch();
-				result = new long[intResult.length];
-
-				for (int i = 0; i < intResult.length; ++i)
-					result[i] = intResult[i];
+				int[] resultArray = preparedStatement.executeBatch();
+				result = Arrays.stream(resultArray).asLongStream().boxed().collect(Collectors.toList());
 			} else {
 				// If the driver doesn't support executeLargeBatch, then UnsupportedOperationException is thrown.
 				try {
-					result = preparedStatement.executeLargeBatch();
+					long[] resultArray = preparedStatement.executeLargeBatch();
+					result = Arrays.stream(resultArray).boxed().collect(Collectors.toList());
 					setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.YES);
 				} catch (UnsupportedOperationException e) {
 					setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.NO);
-
-					int[] intResult = preparedStatement.executeBatch();
-					result = new long[intResult.length];
-
-					for (int i = 0; i < intResult.length; ++i)
-						result[i] = intResult[i];
+					int[] resultArray = preparedStatement.executeBatch();
+					result = Arrays.stream(resultArray).asLongStream().boxed().collect(Collectors.toList());
 				}
 			}
 
@@ -636,6 +552,76 @@ public class Database {
 		return resultHolder.value;
 	}
 
+
+	@Nonnull
+	protected <T> void performDatabaseOperation(@Nonnull StatementContext<T> statementContext,
+																							@Nonnull DatabaseOperation databaseOperation) {
+		requireNonNull(statementContext);
+		requireNonNull(databaseOperation);
+
+		performDatabaseOperation(statementContext, (preparedStatement) -> {
+			if (statementContext.getParameters().size() > 0)
+				getPreparedStatementBinder().bind(statementContext, preparedStatement);
+		}, databaseOperation);
+	}
+
+	@Nonnull
+	protected <T> void performDatabaseOperation(@Nonnull StatementContext<T> statementContext,
+																							@Nonnull PreparedStatementBindingOperation preparedStatementBindingOperation,
+																							@Nonnull DatabaseOperation databaseOperation) {
+		requireNonNull(statementContext);
+		requireNonNull(preparedStatementBindingOperation);
+		requireNonNull(databaseOperation);
+
+		long startTime = nanoTime();
+		Duration connectionAcquisitionDuration = null;
+		Duration preparationDuration = null;
+		Duration executionDuration = null;
+		Duration resultSetMappingDuration = null;
+		Exception exception = null;
+		Connection connection = null;
+
+		try {
+			boolean alreadyHasConnection = currentTransaction().isPresent() && currentTransaction().get().hasConnection();
+			connection = acquireConnection();
+			connectionAcquisitionDuration = alreadyHasConnection ? null : Duration.ofNanos(nanoTime() - startTime);
+			startTime = nanoTime();
+
+			try (PreparedStatement preparedStatement = connection.prepareStatement(statementContext.getStatement().getSql())) {
+				preparedStatementBindingOperation.perform(preparedStatement);
+				preparationDuration = Duration.ofNanos(nanoTime() - startTime);
+
+				DatabaseOperationResult databaseOperationResult = databaseOperation.perform(preparedStatement);
+				executionDuration = databaseOperationResult.getExecutionDuration().orElse(null);
+				resultSetMappingDuration = databaseOperationResult.getResultSetMappingDuration().orElse(null);
+			}
+		} catch (DatabaseException e) {
+			exception = e;
+			throw e;
+		} catch (Exception e) {
+			exception = e;
+			throw new DatabaseException(e);
+		} finally {
+			try {
+				// If this was a single-shot operation (not in a transaction), close the connection
+				if (connection != null && !currentTransaction().isPresent())
+					closeConnection(connection);
+			} finally {
+				StatementLog statementLog =
+						StatementLog.forStatementContext(statementContext)
+								.connectionAcquisitionDuration(connectionAcquisitionDuration)
+								.preparationDuration(preparationDuration)
+								.executionDuration(executionDuration)
+								.resultSetMappingDuration(resultSetMappingDuration)
+								.exception(exception)
+								.build();
+
+				getStatementLogger().log(statementLog);
+			}
+		}
+	}
+
+	@Nonnull
 	protected Connection acquireConnection() {
 		Optional<Transaction> transaction = currentTransaction();
 
@@ -643,30 +629,35 @@ public class Database {
 			return transaction.get().connection();
 
 		try {
-			return dataSource.getConnection();
+			return getDataSource().getConnection();
 		} catch (SQLException e) {
 			throw new DatabaseException("Unable to acquire database connection", e);
 		}
 	}
 
-	protected DataSource dataSource() {
-		return dataSource;
+	@Nonnull
+	protected DataSource getDataSource() {
+		return this.dataSource;
 	}
 
-	protected InstanceProvider instanceProvider() {
-		return instanceProvider;
+	@Nonnull
+	protected InstanceProvider getInstanceProvider() {
+		return this.instanceProvider;
 	}
 
-	protected PreparedStatementBinder preparedStatementBinder() {
-		return preparedStatementBinder;
+	@Nonnull
+	protected PreparedStatementBinder getPreparedStatementBinder() {
+		return this.preparedStatementBinder;
 	}
 
-	protected ResultSetMapper resultSetMapper() {
-		return resultSetMapper;
+	@Nonnull
+	protected ResultSetMapper getResultSetMapper() {
+		return this.resultSetMapper;
 	}
 
-	protected StatementLogger statementLogger() {
-		return statementLogger;
+	@Nonnull
+	protected StatementLogger getStatementLogger() {
+		return this.statementLogger;
 	}
 
 	@Nonnull
@@ -696,12 +687,13 @@ public class Database {
 
 	@FunctionalInterface
 	protected interface DatabaseOperation {
-		DatabaseOperationResult perform(PreparedStatement preparedStatement) throws Exception;
+		@Nonnull
+		DatabaseOperationResult perform(@Nonnull PreparedStatement preparedStatement) throws Exception;
 	}
 
 	@FunctionalInterface
 	protected interface PreparedStatementBindingOperation {
-		void perform(PreparedStatement preparedStatement) throws Exception;
+		void perform(@Nonnull PreparedStatement preparedStatement) throws Exception;
 	}
 
 	/**
@@ -788,7 +780,7 @@ public class Database {
 	}
 
 	@ThreadSafe
-	protected static class DatabaseOperationResult {
+	static class DatabaseOperationResult {
 		@Nullable
 		private final Duration executionDuration;
 		@Nullable
@@ -812,7 +804,7 @@ public class Database {
 	}
 
 	@NotThreadSafe
-	private static class ResultHolder<T> {
+	static class ResultHolder<T> {
 		T value;
 	}
 

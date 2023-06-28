@@ -33,8 +33,8 @@ public interface ReturningTransactionalOperation<T> {
 	 * Executes a transactional operation.
 	 *
 	 * @return the result of operation execution
-	 * @throws Throwable if an error occurs while executing the transactional operation
+	 * @throws Exception if an error occurs while executing the transactional operation
 	 */
 	@Nonnull
-	Optional<T> perform() throws Throwable;
+	Optional<T> perform() throws Exception;
 }
