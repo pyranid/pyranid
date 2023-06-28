@@ -103,9 +103,9 @@ ResultSetMapper resultSetMapper = new DefaultResultSetMapper(instanceProvider) {
 
 // Binds parameters to a SQL PreparedStatement
 PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder() {
-@Override
-public <T> void bind(@Nonnull StatementContext<T> statementContext,
-                     @Nonnull PreparedStatement preparedStatement) {
+  @Override
+  public <T> void bind(@Nonnull StatementContext<T> statementContext,
+                       @Nonnull PreparedStatement preparedStatement) {
     super.bind(statementContext, preparedStatement);
   }
 };
