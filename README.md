@@ -9,7 +9,7 @@
 
 A zero-dependency JDBC interface for modern Java applications, powering production systems since 2015.
 
-Pyranid takes care of boilerplate and lets you focus on writing and thinking in SQL.
+Pyranid takes care of boilerplate and lets you focus on writing and thinking in SQL.  It is not an ORM.
 
 ### Design Goals
 
@@ -182,9 +182,9 @@ Optional<Car> car = database.queryForObject("SELECT * FROM car LIMIT 1", Car.cla
 Optional<Car> specificCar = database.queryForObject("SELECT * FROM car WHERE id = ?", Car.class, 123);
 
 // Multiple cars
-List<Car> blueCars = database.queryForList("SELECT * FROM car WHERE color = ?", Car.class, Color.BLUE);
+List<Car> blueCars = database.queryForList("SELECT * FROM car WHERE color=?", Car.class, Color.BLUE);
 
-// In addition to custom types, you can map to primitives and some JDK builtins out of the box.
+// In addition to custom types, you can map to primitives and many JDK builtins out of the box.
 // See 'ResultSet Mapping' section for details
 Optional<UUID> id = database.queryForObject("SELECT id FROM widget LIMIT 1", UUID.class);
 List<BigDecimal> balances = database.queryForList("SELECT balance FROM account", BigDecimal.class);
@@ -263,9 +263,9 @@ and uses them if available.
 // Pyranid will set autocommit=false for the duration of the transaction if necessary
 database.transaction(() -> {
   // Pull initial account balances
-  BigDecimal balance1 = database.queryForObject("SELECT balance FROM account WHERE id = 1", 
+  BigDecimal balance1 = database.queryForObject("SELECT balance FROM account WHERE id=1", 
                                                 BigDecimal.class).get();
-  BigDecimal balance2 = database.queryForObject("SELECT balance FROM account WHERE id = 2", 
+  BigDecimal balance2 = database.queryForObject("SELECT balance FROM account WHERE id=2", 
                                                 BigDecimal.class).get();
   
   // Debit one and credit the other 
@@ -274,18 +274,18 @@ database.transaction(() -> {
 
   // Persist changes.
   // Extra credit: this is a good candidate for database.executeBatch()
-  database.execute("UPDATE account SET balance = ? WHERE id = 1", balance1);
-  database.execute("UPDATE account SET balance = ? WHERE id = 2", balance2);
+  database.execute("UPDATE account SET balance=? WHERE id=1", balance1);
+  database.execute("UPDATE account SET balance=? WHERE id=2", balance2);
 });
 
 // For convenience, transactional operations may return values
 Optional<BigDecimal> newBalance = database.transaction(() -> {
   // Make some changes
-  database.execute("UPDATE account SET balance = balance - 10 WHERE id = 1");
-  database.execute("UPDATE account SET balance = balance + 10 WHERE id = 2");
+  database.execute("UPDATE account SET balance=balance - 10 WHERE id=1");
+  database.execute("UPDATE account SET balance=balance + 10 WHERE id=2");
 
   // Return the new value
-  return database.queryForObject("SELECT balance FROM account WHERE id = 2", BigDecimal.class);
+  return database.queryForObject("SELECT balance FROM account WHERE id=2", BigDecimal.class);
 });
 ```
 
@@ -314,7 +314,7 @@ Internally, Database manages a threadlocal stack of [`Transaction`](https://pyra
 
 ```java
 database.transaction(() -> {
-  database.execute("UPDATE account SET balance = balance - 10 WHERE id = 1");
+  database.execute("UPDATE account SET balance=balance - 10 WHERE id=1");
 
   // Get a handle to the current transaction
   Transaction transaction = database.currentTransaction().get();
@@ -324,7 +324,7 @@ database.transaction(() -> {
     // No commit or rollback will occur when the closure completes, but if an 
     // exception bubbles out the transaction will be marked as rollback-only
     database.participate(transaction, () -> {
-      database.execute("UPDATE account SET balance = balance + 10 WHERE id = 2");
+      database.execute("UPDATE account SET balance=balance + 10 WHERE id=2");
     });
   }).run();
 
@@ -339,14 +339,14 @@ database.transaction(() -> {
 ```java
 // Any exception that bubbles out will cause a rollback
 database.transaction(() -> {
-  database.execute("UPDATE account SET balance = balance - 10 WHERE id = 1");
+  database.execute("UPDATE account SET balance=balance - 10 WHERE id=1");
   throw new IllegalStateException("Something's wrong!");
 });
 
 // You may mark a transaction as rollback-only, and it will roll back after the 
 // closure execution has completed
 database.transaction(() -> {
-  database.execute("UPDATE account SET balance = balance - 10 WHERE id = 1");
+  database.execute("UPDATE account SET balance=balance - 10 WHERE id=1");
 
   // Hmm...I changed my mind
   Transaction transaction = database.currentTransaction().get();
@@ -358,7 +358,7 @@ database.transaction(() -> {
   Transaction transaction = database.currentTransaction().get();
   Savepoint savepoint = transaction.createSavepoint();
 
-  database.execute("UPDATE account SET balance = balance - 10 WHERE id = 1");
+  database.execute("UPDATE account SET balance=balance - 10 WHERE id=1");
 
   // Hmm...I changed my mind
   transaction.rollback(savepoint);
@@ -370,11 +370,11 @@ database.transaction(() -> {
 ```java
 // Each nested transaction is independent. There is no parent-child relationship
 database.transaction(() -> {
-  database.execute("UPDATE account SET balance = balance - 10 WHERE id = 1");
+  database.execute("UPDATE account SET balance=balance - 10 WHERE id=1");
 
   // This transaction will commit
   database.transaction(() -> {
-    database.execute("UPDATE account SET balance = balance + 10 WHERE id = 2");
+    database.execute("UPDATE account SET balance=balance + 10 WHERE id=2");
   });
 
   // This transaction will not!
@@ -389,8 +389,8 @@ database.transaction(() -> {
 // READ_COMMITTED, READ_UNCOMMITTED, REPEATABLE_READ, and SERIALIZABLE.
 // If not specified, DEFAULT is assumed (whatever your DBMS prefers)
 database.transaction(TransactionIsolation.SERIALIZABLE, () -> {
-  database.execute("UPDATE account SET balance = balance - 10 WHERE id = 1");
-  database.execute("UPDATE account SET balance = balance + 10 WHERE id = 2");
+  database.execute("UPDATE account SET balance=balance - 10 WHERE id=1");
+  database.execute("UPDATE account SET balance=balance + 10 WHERE id=2");
 });
 ```
 
