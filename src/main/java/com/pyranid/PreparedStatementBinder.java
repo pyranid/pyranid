@@ -18,6 +18,7 @@ package com.pyranid;
 
 import javax.annotation.Nonnull;
 import java.sql.PreparedStatement;
+import java.util.List;
 
 /**
  * Contract for binding parameters to SQL prepared statements.
@@ -31,8 +32,10 @@ public interface PreparedStatementBinder {
 	 *
 	 * @param preparedStatement the prepared statement to bind to
 	 * @param statementContext  current SQL context
+	 * @param parameters        the parameters to bind to the {@link PreparedStatement}, if any
 	 * @throws DatabaseException if an error occurs during binding
 	 */
 	<T> void bind(@Nonnull StatementContext<T> statementContext,
-								@Nonnull PreparedStatement preparedStatement);
+								@Nonnull PreparedStatement preparedStatement,
+								@Nonnull List<Object> parameters);
 }

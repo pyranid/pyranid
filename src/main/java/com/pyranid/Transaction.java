@@ -16,15 +16,19 @@
 
 package com.pyranid;
 
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
+import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Savepoint;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.logging.Logger;
 
@@ -37,46 +41,82 @@ import static java.util.Objects.requireNonNull;
  * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
+@ThreadSafe
 public class Transaction {
-	private static final AtomicLong ID_GENERATOR = new AtomicLong(0);
+	@Nonnull
+	private static final AtomicLong ID_GENERATOR;
 
-	private final long id = ID_GENERATOR.incrementAndGet();
-	private final Optional<DataSource> dataSource;
+	static {
+		ID_GENERATOR = new AtomicLong(0);
+	}
+
+	@Nonnull
+	private final long id;
+	@Nonnull
+	private final DataSource dataSource;
+	@Nonnull
 	private final TransactionIsolation transactionIsolation;
+	@Nonnull
 	private final List<Consumer<TransactionResult>> postTransactionOperations;
-	private final Logger logger = Logger.getLogger(Transaction.class.getName());
-	private Optional<Connection> connection;
-	private boolean rollbackOnly;
-	private Optional<Boolean> initialAutoCommit;
+	@Nonnull
+	private final ReentrantLock connectionLock;
+	@Nonnull
+	private final Logger logger;
 
-	Transaction(DataSource dataSource, TransactionIsolation transactionIsolation) {
-		this.dataSource = Optional.of(requireNonNull(dataSource));
+	@Nullable
+	private Connection connection;
+	@Nonnull
+	private Boolean rollbackOnly;
+	@Nullable
+	private Boolean initialAutoCommit;
+
+	Transaction(@Nonnull DataSource dataSource,
+							@Nonnull TransactionIsolation transactionIsolation) {
+		requireNonNull(dataSource);
+		requireNonNull(transactionIsolation);
+
+		this.id = generateId();
+		this.dataSource = dataSource;
 		this.transactionIsolation = transactionIsolation;
-		this.connection = Optional.empty();
+		this.connection = null;
 		this.rollbackOnly = false;
-		this.initialAutoCommit = Optional.empty();
-		this.postTransactionOperations = new ArrayList<>();
+		this.initialAutoCommit = null;
+		this.postTransactionOperations = new CopyOnWriteArrayList();
+		this.connectionLock = new ReentrantLock();
+		this.logger = Logger.getLogger(Transaction.class.getName());
 	}
 
 	@Override
+	@Nonnull
 	public String toString() {
 		return format("%s{id=%s, transactionIsolation=%s, hasConnection=%s, isRollbackOnly=%s}",
-				getClass().getSimpleName(), id(), transactionIsolation(), hasConnection(), isRollbackOnly());
+				getClass().getSimpleName(), id(), getTransactionIsolation(), hasConnection(), isRollbackOnly());
 	}
 
+	/**
+	 * Creates a transaction savepoint that can be rolled back to via {@link #rollback(Savepoint)}.
+	 *
+	 * @return a transaction savepoint
+	 */
+	@Nonnull
 	public Savepoint createSavepoint() {
 		try {
-			return connection().setSavepoint();
+			return getConnection().setSavepoint();
 		} catch (SQLException e) {
 			throw new DatabaseException("Unable to create savepoint", e);
 		}
 	}
 
-	public void rollback(Savepoint savepoint) {
+	/**
+	 * Rolls back to the provided transaction savepoint.
+	 *
+	 * @param savepoint the savepoint to roll back to
+	 */
+	public void rollback(@Nonnull Savepoint savepoint) {
 		requireNonNull(savepoint);
 
 		try {
-			connection().rollback(savepoint);
+			getConnection().rollback(savepoint);
 		} catch (SQLException e) {
 			throw new DatabaseException("Unable to roll back to savepoint", e);
 		}
@@ -87,32 +127,76 @@ public class Transaction {
 	 * <p>
 	 * Default value is {@code false}.
 	 *
-	 * @return {@code true} if this transaction should be rolled back, {@code false} otherwise.
+	 * @return {@code true} if this transaction should be rolled back, {@code false} otherwise
 	 */
-	public boolean isRollbackOnly() {
+	@Nonnull
+	public Boolean isRollbackOnly() {
 		return this.rollbackOnly;
 	}
 
-	public void setRollbackOnly(boolean rollbackOnly) {
+	/**
+	 * Sets whether this transaction should be rolled back upon completion.
+	 *
+	 * @param rollbackOnly whether to set this transaction to be rollback-only
+	 */
+	public void setRollbackOnly(@Nonnull Boolean rollbackOnly) {
+		requireNonNull(rollbackOnly);
 		this.rollbackOnly = rollbackOnly;
 	}
 
-	public void addPostTransactionOperation(Consumer<TransactionResult> postTransactionOperation) {
+	/**
+	 * Adds an operation to the list of operations to be executed when the transaction completes.
+	 *
+	 * @param postTransactionOperation the post-transaction operation to add
+	 */
+	public void addPostTransactionOperation(@Nonnull Consumer<TransactionResult> postTransactionOperation) {
 		requireNonNull(postTransactionOperation);
-		postTransactionOperations.add(postTransactionOperation);
+		this.postTransactionOperations.add(postTransactionOperation);
 	}
 
-	public boolean removePostTransactionOperation(Consumer<TransactionResult> postTransactionOperation) {
+	/**
+	 * Removes an operation from the list of operations to be executed when the transaction completes.
+	 *
+	 * @param postTransactionOperation the post-transaction operation to remove
+	 * @return {@code true} if the post-transaction operation was removed, {@code false} otherwise
+	 */
+	@Nonnull
+	public Boolean removePostTransactionOperation(@Nonnull Consumer<TransactionResult> postTransactionOperation) {
 		requireNonNull(postTransactionOperation);
-		return postTransactionOperations.remove(postTransactionOperation);
+		return this.postTransactionOperations.remove(postTransactionOperation);
 	}
 
-	long id() {
+	/**
+	 * Gets the list of post-transaction operations.
+	 * <p>
+	 * This list is not modifiable.  Use {@link #addPostTransactionOperation(Consumer)} and
+	 * {@link #removePostTransactionOperation(Consumer)} to manipulate the list.
+	 *
+	 * @return the list of post-transaction operations.
+	 */
+	@Nonnull
+	public List<Consumer<TransactionResult>> getPostTransactionOperations() {
+		return Collections.unmodifiableList(this.postTransactionOperations);
+	}
+
+	/**
+	 * Get the isolation level for this transaction.
+	 *
+	 * @return the isolation level
+	 */
+	@Nonnull
+	public TransactionIsolation getTransactionIsolation() {
+		return this.transactionIsolation;
+	}
+
+	@Nonnull
+	Long id() {
 		return this.id;
 	}
 
-	boolean hasConnection() {
-		return this.connection.isPresent();
+	@Nonnull
+	Boolean hasConnection() {
+		return this.connection != null;
 	}
 
 	void commit() {
@@ -124,7 +208,7 @@ public class Transaction {
 		logger.finer("Committing transaction...");
 
 		try {
-			connection().commit();
+			getConnection().commit();
 			logger.finer("Transaction committed.");
 		} catch (SQLException e) {
 			throw new DatabaseException("Unable to commit transaction", e);
@@ -140,7 +224,7 @@ public class Transaction {
 		logger.finer("Rolling back transaction...");
 
 		try {
-			connection().rollback();
+			getConnection().rollback();
 			logger.finer("Transaction rolled back.");
 		} catch (SQLException e) {
 			throw new DatabaseException("Unable to roll back transaction", e);
@@ -155,12 +239,13 @@ public class Transaction {
 	 * @return The connection associated with this transaction.
 	 * @throws DatabaseException if unable to acquire a connection.
 	 */
-	Connection connection() {
+	@Nonnull
+	Connection getConnection() {
 		if (hasConnection())
-			return this.connection.get();
+			return this.connection;
 
 		try {
-			this.connection = Optional.of(dataSource.get().getConnection());
+			this.connection = getDataSource().getConnection();
 		} catch (SQLException e) {
 			throw new DatabaseException("Unable to acquire database connection", e);
 		}
@@ -168,36 +253,46 @@ public class Transaction {
 		// Keep track of the initial setting for autocommit since it might need to get changed from "true" to "false" for
 		// the duration of the transaction and then back to "true" post-transaction.
 		try {
-			this.initialAutoCommit = Optional.of(this.connection.get().getAutoCommit());
+			this.initialAutoCommit = this.connection.getAutoCommit();
 		} catch (SQLException e) {
 			throw new DatabaseException("Unable to determine database connection autocommit setting", e);
 		}
 
 		// Immediately flip autocommit to false if needed...if initially true, it will get set back to true by Database at
 		// the end of the transaction
-		if (this.initialAutoCommit.get())
+		if (this.initialAutoCommit)
 			setAutoCommit(false);
 
-		return this.connection.get();
+		return this.connection;
 	}
 
-	void setAutoCommit(boolean autoCommit) {
+	void setAutoCommit(@Nonnull Boolean autoCommit) {
+		requireNonNull(autoCommit);
+
 		try {
-			connection().setAutoCommit(autoCommit);
+			getConnection().setAutoCommit(autoCommit);
 		} catch (SQLException e) {
 			throw new DatabaseException(format("Unable to set database connection autocommit value to '%s'", autoCommit), e);
 		}
 	}
 
-	Optional<Boolean> initialAutoCommit() {
-		return initialAutoCommit;
+	@Nonnull
+	Long generateId() {
+		return ID_GENERATOR.incrementAndGet();
 	}
 
-	public TransactionIsolation transactionIsolation() {
-		return transactionIsolation;
+	@Nonnull
+	Optional<Boolean> getInitialAutoCommit() {
+		return Optional.ofNullable(this.initialAutoCommit);
 	}
 
-	public List<Consumer<TransactionResult>> postTransactionOperations() {
-		return Collections.unmodifiableList(postTransactionOperations);
+	@Nonnull
+	DataSource getDataSource() {
+		return this.dataSource;
+	}
+
+	@Nonnull
+	protected ReentrantLock getConnectionLock() {
+		return this.connectionLock;
 	}
 }

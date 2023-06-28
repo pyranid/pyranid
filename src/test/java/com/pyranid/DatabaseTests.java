@@ -152,11 +152,12 @@ public class DatabaseTests {
 		PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder() {
 			@Override
 			public <T> void bind(@Nonnull StatementContext<T> statementContext,
-													 @Nonnull PreparedStatement preparedStatement) {
+													 @Nonnull PreparedStatement preparedStatement,
+													 @Nonnull List<Object> parameters) {
 				if (Objects.equals("employee-query", statementContext.getStatement().getId()))
 					System.out.printf("Binding Employee Query: %s\n", statementContext);
 
-				super.bind(statementContext, preparedStatement);
+				super.bind(statementContext, preparedStatement, parameters);
 			}
 		};
 
@@ -197,6 +198,17 @@ public class DatabaseTests {
 				"""), EmployeeClass.class, "employee-one@company.com").orElse(null);
 
 		Assert.assertNotNull("Could not find employee", employee);
+
+		List<List<Object>> parameterGroups = List.of(
+				List.of(3, "Employee Three", "employee-three@company.com"),
+				List.of(4, "Employee Four", "employee-four@company.com")
+		);
+
+		List<Long> updateCounts = customDatabase.executeBatch("INSERT INTO employee VALUES (?,?,?)", parameterGroups);
+
+		Assert.assertEquals("Wrong number of update counts", 2, updateCounts.size());
+		Assert.assertEquals("Wrong update count 1", 1, (long) updateCounts.get(0));
+		Assert.assertEquals("Wrong update count 2", 1, (long) updateCounts.get(1));
 	}
 
 	protected void createTestSchema(@Nonnull Database database) {

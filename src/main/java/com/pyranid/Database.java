@@ -227,16 +227,16 @@ public class Database {
 
 			try {
 				try {
-					if (transaction.initialAutoCommit().isPresent() && transaction.initialAutoCommit().get())
+					if (transaction.getInitialAutoCommit().isPresent() && transaction.getInitialAutoCommit().get())
 						// Autocommit was true initially, so restoring to true now that transaction has completed
 						transaction.setAutoCommit(true);
 				} finally {
 					if (transaction.hasConnection())
-						closeConnection(transaction.connection());
+						closeConnection(transaction.getConnection());
 				}
 			} finally {
 				// Execute any user-supplied post-execution hooks
-				for (Consumer<TransactionResult> postTransactionOperation : transaction.postTransactionOperations())
+				for (Consumer<TransactionResult> postTransactionOperation : transaction.getPostTransactionOperations())
 					postTransactionOperation.accept(committed ? TransactionResult.COMMITTED : TransactionResult.ROLLED_BACK);
 			}
 		}
@@ -392,7 +392,9 @@ public class Database {
 				.parameters(parameters)
 				.build();
 
-		performDatabaseOperation(statementContext, (PreparedStatement preparedStatement) -> {
+		List<Object> parametersAsList = parameters == null ? List.of() : Arrays.asList(parameters);
+
+		performDatabaseOperation(statementContext, parametersAsList, (PreparedStatement preparedStatement) -> {
 			long startTime = nanoTime();
 
 			try (ResultSet resultSet = preparedStatement.executeQuery()) {
@@ -445,7 +447,9 @@ public class Database {
 				.parameters(parameters)
 				.build();
 
-		performDatabaseOperation(statementContext, (PreparedStatement preparedStatement) -> {
+		List<Object> parametersAsList = parameters == null ? List.of() : Arrays.asList(parameters);
+
+		performDatabaseOperation(statementContext, parametersAsList, (PreparedStatement preparedStatement) -> {
 			long startTime = nanoTime();
 
 			DatabaseOperationSupportStatus executeLargeUpdateSupported = getExecuteLargeUpdateSupported();
@@ -607,7 +611,7 @@ public class Database {
 		performDatabaseOperation(statementContext, (preparedStatement) -> {
 			for (List<Object> parameterGroup : parameterGroups) {
 				if (parameterGroup != null && parameterGroup.size() > 0)
-					getPreparedStatementBinder().bind(statementContext, preparedStatement);
+					getPreparedStatementBinder().bind(statementContext, preparedStatement, parameterGroup);
 
 				preparedStatement.addBatch();
 			}
@@ -647,13 +651,15 @@ public class Database {
 	}
 
 	protected <T> void performDatabaseOperation(@Nonnull StatementContext<T> statementContext,
+																							@Nonnull List<Object> parameters,
 																							@Nonnull DatabaseOperation databaseOperation) {
 		requireNonNull(statementContext);
+		requireNonNull(parameters);
 		requireNonNull(databaseOperation);
 
 		performDatabaseOperation(statementContext, (preparedStatement) -> {
-			if (statementContext.getParameters().size() > 0)
-				getPreparedStatementBinder().bind(statementContext, preparedStatement);
+			if (parameters.size() > 0)
+				getPreparedStatementBinder().bind(statementContext, preparedStatement, parameters);
 		}, databaseOperation);
 	}
 
@@ -717,7 +723,7 @@ public class Database {
 		Optional<Transaction> transaction = currentTransaction();
 
 		if (transaction.isPresent())
-			return transaction.get().connection();
+			return transaction.get().getConnection();
 
 		try {
 			return getDataSource().getConnection();

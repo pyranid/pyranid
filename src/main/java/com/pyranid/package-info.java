@@ -60,8 +60,9 @@
  * PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder() {
  *   &#064;Override
  *   public &lt;T&gt; void bind(&#064;Nonnull StatementContext&lt;T&gt; statementContext,
- *                        &#064;Nonnull PreparedStatement preparedStatement) {
- *     super.bind(statementContext, preparedStatement);
+ *                        &#064;Nonnull PreparedStatement preparedStatement,
+ *                        &#064;Nonnull List&lt;Object&gt; parameters) {
+ *     super.bind(statementContext, preparedStatement, parameters);
  *   }
  * };
  *

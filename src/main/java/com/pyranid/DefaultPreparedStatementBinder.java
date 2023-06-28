@@ -81,11 +81,11 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 	@Override
 	public <T> void bind(@Nonnull StatementContext<T> statementContext,
-											 @Nonnull PreparedStatement preparedStatement) {
+											 @Nonnull PreparedStatement preparedStatement,
+											 @Nonnull List<Object> parameters) {
 		requireNonNull(statementContext);
 		requireNonNull(preparedStatement);
-
-		List<Object> parameters = statementContext.getParameters();
+		requireNonNull(parameters);
 
 		try {
 			for (int i = 0; i < parameters.size(); ++i) {

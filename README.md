@@ -105,8 +105,9 @@ ResultSetMapper resultSetMapper = new DefaultResultSetMapper(instanceProvider) {
 PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder() {
   @Override
   public <T> void bind(@Nonnull StatementContext<T> statementContext,
-                       @Nonnull PreparedStatement preparedStatement) {
-    super.bind(statementContext, preparedStatement);
+                       @Nonnull PreparedStatement preparedStatement,
+                       @Nonnull List<Object> parameters) {
+    super.bind(statementContext, preparedStatement, parameters);
   }
 };
 
@@ -227,19 +228,10 @@ List<Car> repaintedCars = database.executeForList("""
 
 // Batch operations can be more efficient than execution of discrete statements.
 // Useful for inserting a lot of data at once
-List<List<Object>> parameterGroups = new ArrayList<>();
-
-// Blue car
-parameterGroups.add(new ArrayList<Object>() {{
-  add(123);
-  add(Color.BLUE);
-}});
-
-// Red car
-parameterGroups.add(new ArrayList<Object>() {{
-  add(456);
-  add(Color.RED);
-}});
+List<List<Object>> parameterGroups = List.of(
+  List.of(123, Color.BLUE), // Blue car
+  List.of(456, Color.RED) // Red car
+);
 
 // Insert both cars
 List<Long> updateCounts = database.executeBatch("INSERT INTO car VALUES (?,?)", parameterGroups);
@@ -653,8 +645,6 @@ Database database = Database.forDataSource(dataSource)
 * `exception` (optional)
 
 ### Statement Identifiers
-
-
 
 ```java
 // TODO 
