@@ -337,7 +337,9 @@ public class Database {
 	 * @return a single result (or no result)
 	 * @throws DatabaseException if > 1 row is returned
 	 */
-	public <T> Optional<T> queryForObject(Statement statement, Class<T> resultSetRowType, Object... parameters) {
+	public <T> Optional<T> queryForObject(@Nonnull Statement statement,
+																				@Nonnull Class<T> resultSetRowType,
+																				@Nullable Object... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
@@ -470,6 +472,95 @@ public class Database {
 		});
 
 		return resultHolder.value;
+	}
+
+	/**
+	 * Executes a SQL Data Manipulation Language (DML) statement, such as {@code INSERT}, {@code UPDATE}, or {@code DELETE},
+	 * which returns 0 or 1 rows, e.g. with Postgres/Oracle's {@code RETURNING} clause.
+	 *
+	 * @param sql              the SQL query to execute
+	 * @param resultSetRowType the type to which the {@link ResultSet} row should be marshaled
+	 * @param parameters       {@link PreparedStatement} parameters, if any
+	 * @param <T>              the type to be returned
+	 * @return a single result (or no result)
+	 * @throws DatabaseException if > 1 row is returned
+	 */
+	@Nonnull
+	public <T> Optional<T> executeForObject(@Nonnull String sql,
+																					@Nonnull Class<T> resultSetRowType,
+																					@Nullable Object... parameters) {
+		requireNonNull(sql);
+		requireNonNull(resultSetRowType);
+
+		return executeForObject(new Statement(generateId(), sql), resultSetRowType, parameters);
+	}
+
+	/**
+	 * Executes a SQL Data Manipulation Language (DML) statement, such as {@code INSERT}, {@code UPDATE}, or {@code DELETE},
+	 * which returns 0 or 1 rows, e.g. with Postgres/Oracle's {@code RETURNING} clause.
+	 *
+	 * @param statement        the SQL statement to execute
+	 * @param resultSetRowType the type to which {@link ResultSet} rows should be marshaled
+	 * @param parameters       {@link PreparedStatement} parameters, if any
+	 * @param <T>              the type to be returned
+	 * @return a single result (or no result)
+	 * @throws DatabaseException if > 1 row is returned
+	 */
+	public <T> Optional<T> executeForObject(@Nonnull Statement statement,
+																					@Nonnull Class<T> resultSetRowType,
+																					@Nullable Object... parameters) {
+		requireNonNull(statement);
+		requireNonNull(resultSetRowType);
+
+		// Ultimately we just delegate to queryForObject.
+		// Having `executeForList` is to allow for users to explicitly express intent
+		// and make static analysis of code easier (e.g. maybe you'd like to hook all of your "execute" statements for
+		// logging, or delegation to a writable master as opposed to a read replica)
+		return queryForObject(statement, resultSetRowType, parameters);
+	}
+
+	/**
+	 * Executes a SQL Data Manipulation Language (DML) statement, such as {@code INSERT}, {@code UPDATE}, or {@code DELETE},
+	 * which returns any number of rows, e.g. with Postgres/Oracle's {@code RETURNING} clause.
+	 *
+	 * @param sql              the SQL to execute
+	 * @param resultSetRowType the type to which {@link ResultSet} rows should be marshaled
+	 * @param parameters       {@link PreparedStatement} parameters, if any
+	 * @param <T>              the type to be returned
+	 * @return a list of results
+	 */
+	@Nonnull
+	public <T> List<T> executeForList(@Nonnull String sql,
+																		@Nonnull Class<T> resultSetRowType,
+																		@Nullable Object... parameters) {
+		requireNonNull(sql);
+		requireNonNull(resultSetRowType);
+
+		return executeForList(new Statement(generateId(), sql), resultSetRowType, parameters);
+	}
+
+	/**
+	 * Executes a SQL Data Manipulation Language (DML) statement, such as {@code INSERT}, {@code UPDATE}, or {@code DELETE},
+	 * which returns any number of rows, e.g. with Postgres/Oracle's {@code RETURNING} clause.
+	 *
+	 * @param statement        the SQL statement to execute
+	 * @param resultSetRowType the type to which {@link ResultSet} rows should be marshaled
+	 * @param parameters       {@link PreparedStatement} parameters, if any
+	 * @param <T>              the type to be returned
+	 * @return a list of results
+	 */
+	@Nonnull
+	public <T> List<T> executeForList(@Nonnull Statement statement,
+																		@Nonnull Class<T> resultSetRowType,
+																		@Nullable Object... parameters) {
+		requireNonNull(statement);
+		requireNonNull(resultSetRowType);
+
+		// Ultimately we just delegate to queryForList.
+		// Having `executeForList` is to allow for users to explicitly express intent
+		// and make static analysis of code easier (e.g. maybe you'd like to hook all of your "execute" statements for
+		// logging, or delegation to a writable master as opposed to a read replica)
+		return queryForList(statement, resultSetRowType, parameters);
 	}
 
 	/**

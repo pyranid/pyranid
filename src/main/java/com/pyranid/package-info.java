@@ -90,7 +90,7 @@
  *
  * // Statements
  * long updateCount = database.execute("UPDATE car SET color = ?", Color.RED);
- * Optional&lt;UUID&gt; id = database.queryForObject("INSERT INTO book VALUES (?) RETURNING id", UUID.class, "The Stranger");
+ * Optional&lt;UUID&gt; id = database.executeForObject("INSERT INTO book VALUES (?) RETURNING id", UUID.class, "The Stranger");
  *
  * // Transactions
  * database.transaction(() -&gt; {

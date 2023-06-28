@@ -188,20 +188,6 @@ List<Car> blueCars = database.queryForList("SELECT * FROM car WHERE color=?", Ca
 // See 'ResultSet Mapping' section for details
 Optional<UUID> id = database.queryForObject("SELECT id FROM widget LIMIT 1", UUID.class);
 List<BigDecimal> balances = database.queryForList("SELECT balance FROM account", BigDecimal.class);
-
-// Map to single or multiple objects via the SQL RETURNING clause for DML statements
-Optional<Long> insertedCarId = database.queryForObject("""
-  INSERT INTO car (id, color)
-  VALUES (nextval('car_seq'), ?)
-  RETURNING id
-  """, Long.class, Color.GREEN);
-
-List<Car> repaintedCars = database.queryForList("""
-  UPDATE car
-  SET color=?
-  WHERE color=?
-  RETURNING *
-  """, Car.class, Color.GREEN, Color.BLUE);
 ```
 
 [Record](https://openjdk.org/jeps/395) types are also supported:
@@ -223,6 +209,21 @@ By default, Pyranid will invoke the canonical constructor for `Record` types.
 ```java
 // General-purpose DML statement execution (INSERTs, UPDATEs, DELETEs, functions...)
 long updateCount = database.execute("UPDATE car SET color=?", Color.RED);
+
+// Return single or multiple objects via the SQL RETURNING clause for DML statements.
+// Applicable for Postgres and Oracle.  SQL Sever uses an OUTPUT clause
+Optional<BigInteger> insertedCarId = database.executeForObject("""
+  INSERT INTO car (id, color)
+  VALUES (nextval('car_seq'), ?)
+  RETURNING id
+  """, BigInteger.class, Color.GREEN);
+
+List<Car> repaintedCars = database.executeForList("""
+  UPDATE car
+  SET color=?
+  WHERE color=?
+  RETURNING *
+  """, Car.class, Color.GREEN, Color.BLUE);
 
 // Batch operations can be more efficient than execution of discrete statements.
 // Useful for inserting a lot of data at once
