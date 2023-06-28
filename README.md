@@ -444,13 +444,13 @@ class DatabaseTransactionFilter implements Filter {
 
 ## ResultSet Mapping
 
-The `DefaultResultSetMapper` supports user-defined types that follow the JavaBean getter/setter conventions, primitives, and some additional common JDK types.
+The [`DefaultResultSetMapper`](https://pyranid.com/javadoc/com/pyranid/DefaultResultSetMapper.html) supports user-defined types that follow the JavaBean getter/setter conventions, primitives, and some additional common JDK types.
 
 [Record](https://openjdk.org/jeps/395) types are also supported.
 
 ### User-defined Types
 
-In the case of user-defined types and Records, `DefaultResultSetMapper` examines the names of columns in the [`ResultSet`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/javax/sql/ResultSet.html) and matches them to corresponding fields via reflection.  The `@DatabaseColumn` annotation allows per-field customization of mapping behavior.
+In the case of user-defined types and Records, [`DefaultResultSetMapper`](https://pyranid.com/javadoc/com/pyranid/DefaultResultSetMapper.html) examines the names of columns in the [`ResultSet`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/javax/sql/ResultSet.html) and matches them to corresponding fields via reflection.  The [`@DatabaseColumn`](https://pyranid.com/javadoc/com/pyranid/DatabaseColumn.html) annotation allows per-field customization of mapping behavior.
 
 By default, column names are assumed to be separated by `_` characters and are mapped to their camel-case equivalent.  For example:
 
@@ -562,9 +562,9 @@ val cars = database.queryForList("SELECT * FROM cars WHERE car_id IN (?, ?) LIMI
 
 ## Error Handling
 
-In general, a runtime `DatabaseException` will be thrown when errors occur.  Often this will wrap the checked `java.sql.SQLException`.
+In general, a runtime [`DatabaseException`](https://pyranid.com/javadoc/com/pyranid/DatabaseException.html) will be thrown when errors occur.  Often this will wrap the checked [`java.sql.SQLException`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/java/sql/SQLException.html).
 
-For convenience, `DatabaseException` exposes additional properties, which are only populated if provided by the underlying `java.sql.SQLException`:
+For convenience, [`DatabaseException`](https://pyranid.com/javadoc/com/pyranid/DatabaseException.html) exposes additional properties, which are populated if provided by the underlying [`java.sql.SQLException`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/java/sql/SQLException.html):
 
 * `errorCode` (optional)
 * `sqlState` (optional)
@@ -590,7 +590,10 @@ For PostgreSQL, the following properties are also available:
 
 Extended property support for Oracle and MySQL is planned.
 
-#### Practical Application
+### Practical Application
+
+Here we detect if a specific constraint failed by examining [`DatabaseException`](https://pyranid.com/javadoc/com/pyranid/DatabaseException.html).
+We then handle that case specially by rolling back to a known-good savepoint.
 
 ```java
 // Gives someone at most one big award
@@ -605,12 +608,12 @@ database.transaction(() -> {
                      accountId, AwardType.BIG);
   } catch(DatabaseException e) {
     // Detect a unique constraint violation and gracefully continue on.
-    if("account_award_unique_idx".equals(e.constraint().orElse(null)) {
+    if("account_award_unique_idx".equals(e.getConstraint().orElse(null)) {
       out.println(format("The %s award was already given to account ID %s", AwardType.BIG, accountId)); 
       // Puts transaction back in good state (prior to constraint violation)
       transaction.rollback(savepoint);
     } else {      
-      // There must have been some other problem
+      // There must have been some other problem, bubble out
       throw e;
     }
   }
@@ -621,26 +624,32 @@ database.transaction(() -> {
 
 ### StatementLogger
 
-You may customize your `Database` with a `StatementLogger`.
+You may customize your [`Database`](https://pyranid.com/javadoc/com/pyranid/Database.html) with a [`StatementLogger`](https://pyranid.com/javadoc/com/pyranid/StatementLogger.html).
+
+Examples of usage include:
+
+* Writing queries and timing information to your logging system
+* Picking out slow queries for special logging/reporting
+* Collecting a set of queries executed across a unit of work for bulk analysis (e.g. a [`ThreadLocal`](https://docs.oracle.com/en/java/javase/20/docs/api/java.base/java/lang/ThreadLocal.html) scoped to a single web request)
 
 ```java
 Database database = Database.forDataSource(dataSource)
   .statementLogger(new StatementLogger() {
     @Override
-    public void log(StatementLog statementLog) {
+    public void log(@Nonnull StatementLog statementLog) {
       // Do anything you'd like here
       out.println(statementLog);
     }
   }).build();
 ```
 
-`StatementLog` instances give you access to the following for each SQL statement executed.  All time values are in nanoseconds.
+`StatementLog` instances give you access to the following for each SQL statement executed.
 
 * `statementContext`
-* `connectionAcquisitionTime` (optional)
-* `preparationTime` (optional)
-* `executionTime` (optional)
-* `resultSetMappingTime` (optional)
+* `connectionAcquisitionDuration` (optional)
+* `preparationDuration` (optional)
+* `executionDuration` (optional)
+* `resultSetMappingDuration` (optional)
 * `batchSize` (optional)
 * `exception` (optional)
 
@@ -660,6 +669,7 @@ Pyranid uses `java.util.Logging` internally.  The usual way to hook into this is
   <artifactId>logback-classic</artifactId>
   <version>1.4.8</version>
 </dependency>
+
 <dependency>
   <groupId>org.slf4j</groupId>
   <artifactId>jul-to-slf4j</artifactId>

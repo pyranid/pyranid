@@ -51,7 +51,7 @@ public class Transaction {
 	}
 
 	@Nonnull
-	private final long id;
+	private final Long id;
 	@Nonnull
 	private final DataSource dataSource;
 	@Nonnull
@@ -172,7 +172,7 @@ public class Transaction {
 	 * This list is not modifiable.  Use {@link #addPostTransactionOperation(Consumer)} and
 	 * {@link #removePostTransactionOperation(Consumer)} to manipulate the list.
 	 *
-	 * @return the list of post-transaction operations.
+	 * @return the list of post-transaction operations
 	 */
 	@Nonnull
 	public List<Consumer<TransactionResult>> getPostTransactionOperations() {
@@ -196,38 +196,56 @@ public class Transaction {
 
 	@Nonnull
 	Boolean hasConnection() {
-		return this.connection != null;
+		getConnectionLock().lock();
+
+		try {
+			return this.connection != null;
+		} finally {
+			getConnectionLock().unlock();
+		}
 	}
 
 	void commit() {
-		if (!hasConnection()) {
-			logger.finer("Transaction has no connection, so nothing to commit");
-			return;
-		}
-
-		logger.finer("Committing transaction...");
+		getConnectionLock().lock();
 
 		try {
-			getConnection().commit();
-			logger.finer("Transaction committed.");
-		} catch (SQLException e) {
-			throw new DatabaseException("Unable to commit transaction", e);
+			if (!hasConnection()) {
+				logger.finer("Transaction has no connection, so nothing to commit");
+				return;
+			}
+
+			logger.finer("Committing transaction...");
+
+			try {
+				getConnection().commit();
+				logger.finer("Transaction committed.");
+			} catch (SQLException e) {
+				throw new DatabaseException("Unable to commit transaction", e);
+			}
+		} finally {
+			getConnectionLock().unlock();
 		}
 	}
 
 	void rollback() {
-		if (!hasConnection()) {
-			logger.finer("Transaction has no connection, so nothing to roll back");
-			return;
-		}
-
-		logger.finer("Rolling back transaction...");
+		getConnectionLock().lock();
 
 		try {
-			getConnection().rollback();
-			logger.finer("Transaction rolled back.");
-		} catch (SQLException e) {
-			throw new DatabaseException("Unable to roll back transaction", e);
+			if (!hasConnection()) {
+				logger.finer("Transaction has no connection, so nothing to roll back");
+				return;
+			}
+
+			logger.finer("Rolling back transaction...");
+
+			try {
+				getConnection().rollback();
+				logger.finer("Transaction rolled back.");
+			} catch (SQLException e) {
+				throw new DatabaseException("Unable to roll back transaction", e);
+			}
+		} finally {
+			getConnectionLock().unlock();
 		}
 	}
 
@@ -241,29 +259,35 @@ public class Transaction {
 	 */
 	@Nonnull
 	Connection getConnection() {
-		if (hasConnection())
+		getConnectionLock().lock();
+
+		try {
+			if (hasConnection())
+				return this.connection;
+
+			try {
+				this.connection = getDataSource().getConnection();
+			} catch (SQLException e) {
+				throw new DatabaseException("Unable to acquire database connection", e);
+			}
+
+			// Keep track of the initial setting for autocommit since it might need to get changed from "true" to "false" for
+			// the duration of the transaction and then back to "true" post-transaction.
+			try {
+				this.initialAutoCommit = this.connection.getAutoCommit();
+			} catch (SQLException e) {
+				throw new DatabaseException("Unable to determine database connection autocommit setting", e);
+			}
+
+			// Immediately flip autocommit to false if needed...if initially true, it will get set back to true by Database at
+			// the end of the transaction
+			if (this.initialAutoCommit)
+				setAutoCommit(false);
+
 			return this.connection;
-
-		try {
-			this.connection = getDataSource().getConnection();
-		} catch (SQLException e) {
-			throw new DatabaseException("Unable to acquire database connection", e);
+		} finally {
+			getConnectionLock().unlock();
 		}
-
-		// Keep track of the initial setting for autocommit since it might need to get changed from "true" to "false" for
-		// the duration of the transaction and then back to "true" post-transaction.
-		try {
-			this.initialAutoCommit = this.connection.getAutoCommit();
-		} catch (SQLException e) {
-			throw new DatabaseException("Unable to determine database connection autocommit setting", e);
-		}
-
-		// Immediately flip autocommit to false if needed...if initially true, it will get set back to true by Database at
-		// the end of the transaction
-		if (this.initialAutoCommit)
-			setAutoCommit(false);
-
-		return this.connection;
 	}
 
 	void setAutoCommit(@Nonnull Boolean autoCommit) {
