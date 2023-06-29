@@ -46,13 +46,14 @@
  * };
  *
  * // Copies data from a ResultSet row to an instance of the specified type
- * ResultSetMapper resultSetMapper = new DefaultResultSetMapper(instanceProvider) {
+ * ResultSetMapper resultSetMapper = new DefaultResultSetMapper() {
  *   &#064;Nonnull
  *   &#064;Override
  *   public &lt;T&gt; Optional&lt;T&gt; map(&#064;Nonnull StatementContext&lt;T&gt; statementContext,
  *                              &#064;Nonnull ResultSet resultSet,
- *                              &#064;Nonnull Class&lt;T&gt; resultSetRowType) {
- *     return super.map(statementContext, resultSet, resultSetRowType);
+ *                              &#064;Nonnull Class&lt;T&gt; resultSetRowType,
+ *                              &#064;Nonnull InstanceProvider instanceProvider) {
+ *     return super.map(statementContext, resultSet, resultSetRowType, instanceProvider);
  *   }
  * };
  *
