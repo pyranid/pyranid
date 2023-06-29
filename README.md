@@ -661,7 +661,7 @@ Database database = Database.forDataSource(dataSource)
 
 For any data access method that accepts a `sql` parameter, you may alternatively provide a [`Statement`](https://pyranid.com/javadoc/com/pyranid/Statement.html), which permits you to specify an arbitrary identifier for the SQL.
 
-If you do not provide a [`Statement`](https://pyranid.com/javadoc/com/pyranid/Statement.html) explicitly, Pyranid will create one for you and generate its own identifier.
+If you do not explicitly provide a [`Statement`](https://pyranid.com/javadoc/com/pyranid/Statement.html), Pyranid will create one for you and generate its own identifier.
 
 ```java
 // Regular SQL
