@@ -659,7 +659,9 @@ Database database = Database.forDataSource(dataSource)
 
 ### Statement Identifiers
 
-For any data access method that accepts a `sql` parameter, you may alternatively provide a [`Statement`](https://pyranid.com/javadoc/com/pyranid/Statement.html), which permits you to specify an arbitrary identifying object for the SQL.
+For any data access method that accepts a `sql` parameter, you may alternatively provide a [`Statement`](https://pyranid.com/javadoc/com/pyranid/Statement.html), which permits you to specify an arbitrary identifier for the SQL.
+
+If you do not provide a [`Statement`](https://pyranid.com/javadoc/com/pyranid/Statement.html) explicitly, Pyranid will create one for you and generate its own identifier.
 
 ```java
 // Regular SQL
@@ -682,7 +684,7 @@ enum QueryTag {
   SLOW_QUERY
 };
 
-// This query fires every few seconds - let's mark it HOT_QUERY so we know not to log it.
+// This query fires every 3 seconds - let's mark it HOT_QUERY so we know not to log it.
 Executors.newScheduledThreadPool(1).scheduleAtFixedRate(() -> {
   database.transaction(() -> {
     List<Message> messages = database.queryForList(Statement.of(QueryTag.HOT_QUERY, """
