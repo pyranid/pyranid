@@ -97,6 +97,7 @@ ResultSetMapper resultSetMapper = new DefaultResultSetMapper(instanceProvider) {
   public <T> Optional<T> map(@Nonnull StatementContext<T> statementContext,
                              @Nonnull ResultSet resultSet,
                              @Nonnull Class<T> resultSetRowType) {
+    // Customize mapping here if needed
     return super.map(statementContext, resultSet, resultSetRowType);
   }
 };
@@ -107,6 +108,7 @@ PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBi
   public <T> void bind(@Nonnull StatementContext<T> statementContext,
                        @Nonnull PreparedStatement preparedStatement,
                        @Nonnull List<Object> parameters) {
+    // Customize parameter binding here if needed
     super.bind(statementContext, preparedStatement, parameters);
   }
 };
@@ -592,7 +594,7 @@ Extended property support for Oracle and MySQL is planned.
 
 ### Practical Application
 
-Here we detect if a specific constraint failed by examining [`DatabaseException`](https://pyranid.com/javadoc/com/pyranid/DatabaseException.html).
+Here we detect if a specific constraint was violated by examining [`DatabaseException`](https://pyranid.com/javadoc/com/pyranid/DatabaseException.html).
 We then handle that case specially by rolling back to a known-good savepoint.
 
 ```java
