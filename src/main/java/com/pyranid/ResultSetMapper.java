@@ -26,6 +26,7 @@ import java.util.Optional;
  * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
+@FunctionalInterface
 public interface ResultSetMapper {
 	/**
 	 * Maps the current row of {@code resultSet} to the result class indicated by {@code statementContext}.

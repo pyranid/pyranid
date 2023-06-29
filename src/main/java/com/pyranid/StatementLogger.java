@@ -24,6 +24,7 @@ import javax.annotation.Nonnull;
  * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
+@FunctionalInterface
 public interface StatementLogger {
 	/**
 	 * Performs a logging operation on the given {@code statementLog}.

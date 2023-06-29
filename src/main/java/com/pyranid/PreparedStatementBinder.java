@@ -26,6 +26,7 @@ import java.util.List;
  * @author <a href="https://www.revetware.com">Mark Allen</a>
  * @since 1.0.0
  */
+@FunctionalInterface
 public interface PreparedStatementBinder {
 	/**
 	 * Binds parameters to a SQL prepared statement.

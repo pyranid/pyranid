@@ -97,6 +97,15 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	/**
+	 * Creates a {@code ResultSetMapper} for the given {@code timeZone}.
+	 *
+	 * @param timeZone the timezone to use when working with {@link java.sql.Timestamp} and similar values
+	 */
+	public DefaultResultSetMapper(@Nullable ZoneId timeZone) {
+		this(null, timeZone);
+	}
+
+	/**
 	 * Creates a {@code ResultSetMapper} for the given {@code databaseType} and {@code timeZone}.
 	 *
 	 * @param databaseType the type of database we're working with

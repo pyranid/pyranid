@@ -123,6 +123,9 @@ public class DatabaseTests {
 	public void testCustomDatabase() {
 		DataSource dataSource = createInMemoryDataSource();
 
+		// Override JVM default timezone
+		ZoneId timeZone = ZoneId.of("UTC");
+
 		InstanceProvider instanceProvider = new DefaultInstanceProvider() {
 			@Override
 			@Nonnull
@@ -136,7 +139,7 @@ public class DatabaseTests {
 			}
 		};
 
-		ResultSetMapper resultSetMapper = new DefaultResultSetMapper() {
+		ResultSetMapper resultSetMapper = new DefaultResultSetMapper(timeZone) {
 			@Nonnull
 			@Override
 			public <T> Optional<T> map(@Nonnull StatementContext<T> statementContext,
@@ -150,7 +153,7 @@ public class DatabaseTests {
 			}
 		};
 
-		PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder() {
+		PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder(timeZone) {
 			@Override
 			public <T> void bind(@Nonnull StatementContext<T> statementContext,
 													 @Nonnull PreparedStatement preparedStatement,
@@ -172,7 +175,7 @@ public class DatabaseTests {
 		};
 
 		Database customDatabase = Database.forDataSource(dataSource)
-				.timeZone(ZoneId.of("UTC")) // Override JVM default timezone
+				.timeZone(timeZone)
 				.instanceProvider(instanceProvider)
 				.resultSetMapper(resultSetMapper)
 				.preparedStatementBinder(preparedStatementBinder)

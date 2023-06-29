@@ -69,6 +69,9 @@ Database database = Database.forDataSource(dataSource).build();
 ### Customized setup
 
 ```java
+// Useful if your JVM's default timezone doesn't match your Database's default timezone
+ZoneId timeZone = ZoneId.of("UTC");
+
 // Controls how Pyranid creates instances of objects that represent ResultSet rows
 InstanceProvider instanceProvider = new DefaultInstanceProvider() {
   @Override
@@ -91,7 +94,7 @@ InstanceProvider instanceProvider = new DefaultInstanceProvider() {
 };
 
 // Copies data from a ResultSet row to an instance of the specified type
-ResultSetMapper resultSetMapper = new DefaultResultSetMapper() {
+ResultSetMapper resultSetMapper = new DefaultResultSetMapper(timeZone) {
   @Nonnull
   @Override
   public <T> Optional<T> map(@Nonnull StatementContext<T> statementContext,
@@ -104,7 +107,7 @@ ResultSetMapper resultSetMapper = new DefaultResultSetMapper() {
 };
 
 // Binds parameters to a SQL PreparedStatement
-PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder() {
+PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder(timeZone) {
   @Override
   public <T> void bind(@Nonnull StatementContext<T> statementContext,
                        @Nonnull PreparedStatement preparedStatement,
@@ -124,7 +127,7 @@ StatementLogger statementLogger = new StatementLogger() {
 };
 
 Database customDatabase = Database.forDataSource(dataSource)
-  .timeZone(ZoneId.of("UTC")) // Override JVM default timezone
+  .timeZone(timeZone)
   .instanceProvider(instanceProvider)
   .resultSetMapper(resultSetMapper)
   .preparedStatementBinder(preparedStatementBinder)

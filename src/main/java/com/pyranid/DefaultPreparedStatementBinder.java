@@ -66,6 +66,15 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	}
 
 	/**
+	 * Creates a {@code PreparedStatementBinder} for the given {@code timeZone}.
+	 *
+	 * @param timeZone the timezone to use when working with {@link java.sql.Timestamp} and similar values
+	 */
+	public DefaultPreparedStatementBinder(@Nullable ZoneId timeZone) {
+		this(null, timeZone);
+	}
+
+	/**
 	 * Creates a {@code PreparedStatementBinder} for the given {@code databaseType}.
 	 *
 	 * @param databaseType the type of database we're working with
