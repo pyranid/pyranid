@@ -91,14 +91,15 @@ InstanceProvider instanceProvider = new DefaultInstanceProvider() {
 };
 
 // Copies data from a ResultSet row to an instance of the specified type
-ResultSetMapper resultSetMapper = new DefaultResultSetMapper(instanceProvider) {
+ResultSetMapper resultSetMapper = new DefaultResultSetMapper() {
   @Nonnull
   @Override
   public <T> Optional<T> map(@Nonnull StatementContext<T> statementContext,
                              @Nonnull ResultSet resultSet,
-                             @Nonnull Class<T> resultSetRowType) {
+                             @Nonnull Class<T> resultSetRowType,
+                             @Nonnull InstanceProvider instanceProvider) {
     // Customize mapping here if needed
-    return super.map(statementContext, resultSet, resultSetRowType);
+    return super.map(statementContext, resultSet, resultSetRowType, instanceProvider);
   }
 };
 

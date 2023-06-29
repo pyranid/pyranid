@@ -73,8 +73,6 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	@Nonnull
 	private final DatabaseType databaseType;
 	@Nonnull
-	private final InstanceProvider instanceProvider;
-	@Nonnull
 	private final ZoneId timeZone;
 	@Nonnull
 	private final Calendar timeZoneCalendar;
@@ -83,40 +81,31 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 			new ConcurrentHashMap<>();
 
 	/**
-	 * Creates a {@code ResultSetMapper} for the given {@code instanceProvider}.
-	 *
-	 * @param instanceProvider instance-creation factory, used to instantiate resultset row objects as needed
+	 * Creates a {@code ResultSetMapper} with default configuration.
 	 */
-	public DefaultResultSetMapper(@Nonnull InstanceProvider instanceProvider) {
-		this(null, requireNonNull(instanceProvider), null);
+	public DefaultResultSetMapper() {
+		this(null, null);
 	}
 
 	/**
-	 * Creates a {@code ResultSetMapper} for the given {@code databaseType} and {@code instanceProvider}.
+	 * Creates a {@code ResultSetMapper} for the given {@code databaseType}.
 	 *
-	 * @param databaseType     the type of database we're working with
-	 * @param instanceProvider instance-creation factory, used to instantiate resultset row objects as needed
+	 * @param databaseType the type of database we're working with
 	 */
-	public DefaultResultSetMapper(@Nullable DatabaseType databaseType,
-																@Nonnull InstanceProvider instanceProvider) {
-		this(databaseType, requireNonNull(instanceProvider), null);
+	public DefaultResultSetMapper(@Nullable DatabaseType databaseType) {
+		this(databaseType, null);
 	}
 
 	/**
-	 * Creates a {@code ResultSetMapper} for the given {@code databaseType} and {@code instanceProvider}.
+	 * Creates a {@code ResultSetMapper} for the given {@code databaseType} and {@code timeZone}.
 	 *
-	 * @param databaseType     the type of database we're working with
-	 * @param instanceProvider instance-creation factory, used to instantiate resultset row objects as needed
-	 * @param timeZone         the timezone to use when working with {@link java.sql.Timestamp} and similar values
+	 * @param databaseType the type of database we're working with
+	 * @param timeZone     the timezone to use when working with {@link java.sql.Timestamp} and similar values
 	 * @since 1.0.15
 	 */
 	public DefaultResultSetMapper(@Nullable DatabaseType databaseType,
-																@Nonnull InstanceProvider instanceProvider,
 																@Nullable ZoneId timeZone) {
-		requireNonNull(instanceProvider);
-
 		this.databaseType = databaseType == null ? DatabaseType.GENERIC : databaseType;
-		this.instanceProvider = instanceProvider;
 		this.timeZone = timeZone == null ? ZoneId.systemDefault() : timeZone;
 		this.timeZoneCalendar = Calendar.getInstance(TimeZone.getTimeZone(this.timeZone));
 	}
@@ -125,10 +114,12 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	@Nonnull
 	public <T> Optional<T> map(@Nonnull StatementContext<T> statementContext,
 														 @Nonnull ResultSet resultSet,
-														 @Nonnull Class<T> resultSetRowType) {
+														 @Nonnull Class<T> resultSetRowType,
+														 @Nonnull InstanceProvider instanceProvider) {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(resultSetRowType);
+		requireNonNull(instanceProvider);
 
 		try {
 			StandardTypeResult<T> standardTypeResult = mapResultSetToStandardType(resultSet, resultSetRowType);
@@ -137,9 +128,9 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 				return standardTypeResult.getValue();
 
 			if (resultSetRowType.isRecord())
-				return Optional.ofNullable((T) mapResultSetToRecord((StatementContext<? extends Record>) statementContext, resultSet));
+				return Optional.ofNullable((T) mapResultSetToRecord((StatementContext<? extends Record>) statementContext, resultSet, instanceProvider));
 
-			return Optional.ofNullable(mapResultSetToBean(statementContext, resultSet));
+			return Optional.ofNullable(mapResultSetToBean(statementContext, resultSet, instanceProvider));
 		} catch (DatabaseException e) {
 			throw e;
 		} catch (Exception e) {
@@ -152,7 +143,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 * Attempts to map the current {@code resultSet} row to an instance of {@code resultClass} using one of the
 	 * "out-of-the-box" types (primitives, common types like {@link UUID}, etc.
 	 * <p>
-	 * This does not attempt to map to a user-defined JavaBean - see {@link #mapResultSetToBean(StatementContext, ResultSet)} for
+	 * This does not attempt to map to a user-defined JavaBean - see {@link #mapResultSetToBean(StatementContext, ResultSet, InstanceProvider)} for
 	 * that functionality.
 	 *
 	 * @param <T>         result instance type token
@@ -281,20 +272,21 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	/**
 	 * Attempts to map the current {@code resultSet} row to an instance of {@code resultClass}, which must be a
 	 * Record.
-	 * <p>
-	 * The {@code resultClass} instance will be created via {@link #getInstanceProvider()}.
 	 *
 	 * @param <T>              result instance type token
 	 * @param statementContext current SQL context
 	 * @param resultSet        provides raw row data to pull from
+	 * @param instanceProvider an instance-creation factory, used to instantiate resultset row objects as needed.
 	 * @return the result of the mapping
 	 * @throws Exception if an error occurs during mapping
 	 */
 	@Nonnull
 	protected <T extends Record> T mapResultSetToRecord(@Nonnull StatementContext<T> statementContext,
-																											@Nonnull ResultSet resultSet) throws Exception {
+																											@Nonnull ResultSet resultSet,
+																											@Nonnull InstanceProvider instanceProvider) throws Exception {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
+		requireNonNull(instanceProvider);
 
 		Class<T> resultSetRowType = statementContext.getResultSetRowType().get();
 
@@ -321,32 +313,31 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 					args[i] = columnLabelsToValues.get(potentialPropertyName);
 		}
 
-		T record = getInstanceProvider().provideRecord(statementContext, resultSetRowType, args);
-
-		return record;
+		return instanceProvider.provideRecord(statementContext, resultSetRowType, args);
 	}
 
 	/**
 	 * Attempts to map the current {@code resultSet} row to an instance of {@code resultClass}, which should be a
 	 * JavaBean.
-	 * <p>
-	 * The {@code resultClass} instance will be created via {@link #getInstanceProvider()}.
 	 *
 	 * @param <T>              result instance type token
 	 * @param statementContext current SQL context
 	 * @param resultSet        provides raw row data to pull from
+	 * @param instanceProvider an instance-creation factory, used to instantiate resultset row objects as needed.
 	 * @return the result of the mapping
 	 * @throws Exception if an error occurs during mapping
 	 */
 	@Nonnull
 	protected <T> T mapResultSetToBean(@Nonnull StatementContext<T> statementContext,
-																		 @Nonnull ResultSet resultSet) throws Exception {
+																		 @Nonnull ResultSet resultSet,
+																		 @Nonnull InstanceProvider instanceProvider) throws Exception {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
+		requireNonNull(instanceProvider);
 
 		Class<T> resultSetRowType = statementContext.getResultSetRowType().get();
 
-		T object = getInstanceProvider().provide(statementContext, resultSetRowType);
+		T object = instanceProvider.provide(statementContext, resultSetRowType);
 		BeanInfo beanInfo = Introspector.getBeanInfo(resultSetRowType);
 		Map<String, Object> columnLabelsToValues = extractColumnLabelsToValues(resultSet);
 		Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(resultSetRowType);
@@ -652,16 +643,6 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	@Nonnull
 	protected DatabaseType getDatabaseType() {
 		return this.databaseType;
-	}
-
-	/**
-	 * Returns an instance-creation factory, used to instantiate resultset row objects as needed.
-	 *
-	 * @return the instance-creation factory
-	 */
-	@Nonnull
-	protected InstanceProvider getInstanceProvider() {
-		return this.instanceProvider;
 	}
 
 	@Nonnull

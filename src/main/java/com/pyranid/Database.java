@@ -90,7 +90,7 @@ public class Database {
 		this.timeZone = builder.timeZone == null ? ZoneId.systemDefault() : builder.timeZone;
 		this.instanceProvider = builder.instanceProvider == null ? new DefaultInstanceProvider() : builder.instanceProvider;
 		this.preparedStatementBinder = builder.preparedStatementBinder == null ? new DefaultPreparedStatementBinder(this.databaseType, this.timeZone) : builder.preparedStatementBinder;
-		this.resultSetMapper = builder.resultSetMapper == null ? new DefaultResultSetMapper(this.databaseType, this.instanceProvider, this.timeZone) : builder.resultSetMapper;
+		this.resultSetMapper = builder.resultSetMapper == null ? new DefaultResultSetMapper(this.databaseType, this.timeZone) : builder.resultSetMapper;
 		this.statementLogger = builder.statementLogger == null ? new DefaultStatementLogger() : builder.statementLogger;
 		this.defaultIdGenerator = new AtomicInteger();
 		this.logger = Logger.getLogger(getClass().getName());
@@ -402,7 +402,7 @@ public class Database {
 				startTime = nanoTime();
 
 				while (resultSet.next()) {
-					T listElement = getResultSetMapper().map(statementContext, resultSet, statementContext.getResultSetRowType().get()).orElse(null);
+					T listElement = getResultSetMapper().map(statementContext, resultSet, statementContext.getResultSetRowType().get(), getInstanceProvider()).orElse(null);
 					list.add(listElement);
 				}
 

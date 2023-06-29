@@ -32,13 +32,15 @@ public interface ResultSetMapper {
 	 *
 	 * @param <T>              result instance type token
 	 * @param statementContext current SQL context
-	 * @param resultSet        provides raw row data to pull from
+	 * @param resultSet        provides raw row data to pull from*
 	 * @param resultSetRowType the type to which the {@link ResultSet} row should be marshaled
+	 * @param instanceProvider instance-creation factory, used to instantiate {@code resultSetRowType} row objects
 	 * @return an instance of the given {@code resultClass}
 	 * @throws DatabaseException if an error occurs during mapping
 	 */
 	@Nonnull
 	<T> Optional<T> map(@Nonnull StatementContext<T> statementContext,
 											@Nonnull ResultSet resultSet,
-											@Nonnull Class<T> resultSetRowType);
+											@Nonnull Class<T> resultSetRowType,
+											@Nonnull InstanceProvider instanceProvider);
 }

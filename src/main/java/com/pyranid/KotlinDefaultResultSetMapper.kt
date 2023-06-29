@@ -45,7 +45,6 @@ import kotlin.reflect.full.primaryConstructor
 open class KotlinDefaultResultSetMapper(
     private val javaDefaultResultSetMapper: ResultSetMapper,
     private val databaseType: DatabaseType,
-    private val instanceProvider: InstanceProvider,
     private val timeZone: ZoneId
 ) : ResultSetMapper {
 
@@ -55,16 +54,13 @@ open class KotlinDefaultResultSetMapper(
      *          ResultSetMapper to use in the case the requested class is a non-data class, such as a JavaBean
      * @param databaseType
      *          the type of database we're working with
-     * @param instanceProvider
-     *          instance-creation factory, used to instantiate resultset row objects as needed
      * @since 1.0.16
      */
     constructor(
         javaDefaultResultSetMapper: ResultSetMapper,
         databaseType: DatabaseType,
-        instanceProvider: InstanceProvider
     )
-            : this(javaDefaultResultSetMapper, databaseType, instanceProvider, ZoneId.systemDefault())
+            : this(javaDefaultResultSetMapper, databaseType, ZoneId.systemDefault())
 
     private val timeZoneCalendar = Calendar.getInstance(TimeZone.getTimeZone(timeZone))
     private val columnNamesForParameterCache = ConcurrentHashMap<KClass<out Any>, Map<String, Set<String>>>()
@@ -77,7 +73,8 @@ open class KotlinDefaultResultSetMapper(
     override fun <T : Any> map(
         statementContext: StatementContext<T>,
         resultSet: ResultSet,
-        resultSetRowType: Class<T>
+        resultSetRowType: Class<T>,
+        instanceProvider: InstanceProvider
     ): Optional<T> {
         val resultClass = statementContext.resultSetRowType.get();
 
@@ -88,7 +85,7 @@ open class KotlinDefaultResultSetMapper(
         return if (klass.isData) {
             mapKotlinDataClass(resultSet, klass)
         } else {
-            javaDefaultResultSetMapper.map(statementContext, resultSet, resultSetRowType)
+            javaDefaultResultSetMapper.map(statementContext, resultSet, resultSetRowType, instanceProvider)
         }
     }
 

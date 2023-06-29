@@ -136,16 +136,17 @@ public class DatabaseTests {
 			}
 		};
 
-		ResultSetMapper resultSetMapper = new DefaultResultSetMapper(instanceProvider) {
+		ResultSetMapper resultSetMapper = new DefaultResultSetMapper() {
 			@Nonnull
 			@Override
 			public <T> Optional<T> map(@Nonnull StatementContext<T> statementContext,
 																 @Nonnull ResultSet resultSet,
-																 @Nonnull Class<T> resultSetRowType) {
+																 @Nonnull Class<T> resultSetRowType,
+																 @Nonnull InstanceProvider instanceProvider) {
 				if (Objects.equals("employee-query", statementContext.getStatement().getId()))
 					System.out.printf("Mapping ResultSet for Employee Query: %s\n", statementContext);
 
-				return super.map(statementContext, resultSet, resultSetRowType);
+				return super.map(statementContext, resultSet, resultSetRowType, instanceProvider);
 			}
 		};
 
