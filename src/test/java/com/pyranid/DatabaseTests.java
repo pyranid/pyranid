@@ -191,7 +191,7 @@ public class DatabaseTests {
 		Assert.assertEquals("Wrong number of employees", 2, employeeClasses.size());
 		Assert.assertEquals("Didn't detect DB column name override", "Employee One", employeeClasses.get(0).getDisplayName());
 
-		EmployeeClass employee = customDatabase.queryForObject(new Statement("employee-query", """
+		EmployeeClass employee = customDatabase.queryForObject(Statement.of("employee-query", """
 				SELECT *
 				FROM employee
 				WHERE email_address=?

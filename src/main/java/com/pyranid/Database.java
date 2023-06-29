@@ -324,7 +324,7 @@ public class Database {
 		requireNonNull(sql);
 		requireNonNull(resultSetRowType);
 
-		return queryForObject(new Statement(generateId(), sql), resultSetRowType, parameters);
+		return queryForObject(Statement.of(generateId(), sql), resultSetRowType, parameters);
 	}
 
 	/**
@@ -367,7 +367,7 @@ public class Database {
 		requireNonNull(sql);
 		requireNonNull(resultSetRowType);
 
-		return queryForList(new Statement(generateId(), sql), resultSetRowType, parameters);
+		return queryForList(Statement.of(generateId(), sql), resultSetRowType, parameters);
 	}
 
 	/**
@@ -426,7 +426,7 @@ public class Database {
 	public Long execute(@Nonnull String sql,
 											@Nullable Object... parameters) {
 		requireNonNull(sql);
-		return execute(new Statement(generateId(), sql), parameters);
+		return execute(Statement.of(generateId(), sql), parameters);
 	}
 
 	/**
@@ -496,7 +496,7 @@ public class Database {
 		requireNonNull(sql);
 		requireNonNull(resultSetRowType);
 
-		return executeForObject(new Statement(generateId(), sql), resultSetRowType, parameters);
+		return executeForObject(Statement.of(generateId(), sql), resultSetRowType, parameters);
 	}
 
 	/**
@@ -540,7 +540,7 @@ public class Database {
 		requireNonNull(sql);
 		requireNonNull(resultSetRowType);
 
-		return executeForList(new Statement(generateId(), sql), resultSetRowType, parameters);
+		return executeForList(Statement.of(generateId(), sql), resultSetRowType, parameters);
 	}
 
 	/**
@@ -583,7 +583,7 @@ public class Database {
 		requireNonNull(sql);
 		requireNonNull(parameterGroups);
 
-		return executeBatch(new Statement(generateId(), sql), parameterGroups);
+		return executeBatch(Statement.of(generateId(), sql), parameterGroups);
 	}
 
 	/**
@@ -778,8 +778,9 @@ public class Database {
 	}
 
 	@Nonnull
-	protected Integer generateId() {
-		return this.defaultIdGenerator.incrementAndGet();
+	protected Object generateId() {
+		// "Unique" keys
+		return format("com.pyranid.%s", this.defaultIdGenerator.incrementAndGet());
 	}
 
 	@FunctionalInterface

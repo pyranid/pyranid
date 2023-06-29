@@ -639,13 +639,15 @@ Database database = Database.forDataSource(dataSource)
   .statementLogger(new StatementLogger() {
     @Override
     public void log(@Nonnull StatementLog statementLog) {
-      // Do anything you'd like here
-      out.println(statementLog);
+      Duration SLOW_QUERY_THRESHOLD = Duration.ofMillis(500);
+
+      if(statementLog.getTotalDuration().compareTo(SLOW_QUERY_THRESHOLD) > 0)
+		out.printf("Slow query: %s\n", statementLog);
     }
   }).build();
 ```
 
-`StatementLog` instances give you access to the following for each SQL statement executed.
+[`StatementLog`](https://pyranid.com/javadoc/com/pyranid/StatementLog.html) instances give you access to the following for each SQL statement executed:
 
 * `statementContext`
 * `connectionAcquisitionDuration` (optional)
@@ -657,8 +659,60 @@ Database database = Database.forDataSource(dataSource)
 
 ### Statement Identifiers
 
+For any data access method that accepts a `sql` parameter, you may alternatively provide a [`Statement`](https://pyranid.com/javadoc/com/pyranid/Statement.html), which permits you to specify an arbitrary identifying object for the SQL.
+
 ```java
-// TODO 
+// Regular SQL
+database.queryForObject("SELECT * FROM car LIMIT 1", Car.class);
+
+// SQL in a Statement
+database.queryForObject(Statement.of("random-car", "SELECT * FROM car LIMIT 1"), Car.class);
+```
+
+This is useful for tagging queries that should be handled specially. Some examples are:
+
+* Marking a query as "hot" so we don't pollute logs with it
+* Marking a query as "known to be slow" so we don't flag slow query alerts for it
+* Your [`InstanceProvider`](https://pyranid.com/javadoc/com/pyranid/InstanceProvider.html) might provide custom instances based on resultset data
+
+```java
+// Custom tagging system
+enum QueryTag {
+  HOT_QUERY,
+  SLOW_QUERY
+};
+
+// This query fires every few seconds - let's mark it HOT_QUERY so we know not to log it.
+Executors.newScheduledThreadPool(1).scheduleAtFixedRate(() -> {
+  database.transaction(() -> {
+    List<Message> messages = database.queryForList(Statement.of(QueryTag.HOT_QUERY, """
+      SELECT *
+      FROM message_queue
+      WHERE message_status_id=?
+      LIMIT ?
+      FOR UPDATE
+      SKIP LOCKED
+    """), Message.class, MessageStatusId.UNPROCESSED, BATCH_SIZE);
+
+    // Implementation not shown
+    processMessages(messages);
+  });
+}, 0, 3, TimeUnit.SECONDS);
+```
+
+A corresponding [`Database`](https://pyranid.com/javadoc/com/pyranid/Database.html) setup:
+
+```java
+// Ensure our StatementLogger implementation takes HOT_QUERY into account 
+Database database = Database.forDataSource(dataSource)
+  .statementLogger(new StatementLogger() {
+    @Override
+    public void log(@Nonnull StatementLog statementLog) {
+      // Log everything except HOT_QUERY
+      if(statementLog.getStatementContext().getStatement().getId() != HOT_QUERY)
+        System.out.println(statementLog);
+    }
+  }).build();
 ```
 
 ### java.util.Logging

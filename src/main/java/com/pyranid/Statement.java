@@ -36,13 +36,29 @@ public class Statement {
 	@Nonnull
 	private final String sql;
 
-	public Statement(@Nonnull Object id,
-									 @Nonnull String sql) {
+	private Statement(@Nonnull Object id,
+										@Nonnull String sql) {
 		requireNonNull(id);
 		requireNonNull(sql);
 
 		this.id = id;
 		this.sql = sql;
+	}
+
+	/**
+	 * Factory method for providing {@link Statement} instances.
+	 *
+	 * @param id  the statment's identifier
+	 * @param sql the SQL being identified
+	 * @return a statement instance
+	 */
+	@Nonnull
+	public static Statement of(@Nonnull Object id,
+														 @Nonnull String sql) {
+		requireNonNull(id);
+		requireNonNull(sql);
+
+		return new Statement(id, sql);
 	}
 
 	@Override
