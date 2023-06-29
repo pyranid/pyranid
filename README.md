@@ -719,7 +719,7 @@ Database database = Database.forDataSource(dataSource)
 
 ### java.util.Logging
 
-Pyranid uses `java.util.Logging` internally.  The usual way to hook into this is with [SLF4J](http://slf4j.org), which can funnel all the different logging mechanisms in your app through a single one, normally [Logback](http://logback.qos.ch).  Your Maven configuration might look like this:
+Pyranid uses [`java.util.Logging`](https://docs.oracle.com/javase/8/docs/api/java/util/logging/package-summary.html) internally.  The usual way to hook into this is with [SLF4J](http://slf4j.org), which can funnel all the different logging mechanisms in your app through a single one, normally [Logback](http://logback.qos.ch).  Your Maven configuration might look like this:
 
 ```xml
 <dependency>
@@ -753,7 +753,7 @@ Don't forget to uninstall the bridge at shutdown time:
 SLF4JBridgeHandler.uninstall();
 ```
 
-Note: `SLF4JBridgeHandler` can impact performance.  You can mitigate that with Logback's `LevelChangePropagator` configuration option [as described here](http://logback.qos.ch/manual/configuration.html#LevelChangePropagator).
+Note: [`SLF4JBridgeHandler`](https://www.slf4j.org/api/org/slf4j/bridge/SLF4JBridgeHandler.html) can impact performance.  You can mitigate that with Logback's [`LevelChangePropagator`](https://logback.qos.ch/apidocs/ch/qos/logback/classic/jul/LevelChangePropagator.html) configuration option [as described here](http://logback.qos.ch/manual/configuration.html#LevelChangePropagator).
 
 ## TODOs
 
