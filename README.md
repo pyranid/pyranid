@@ -642,7 +642,7 @@ Database database = Database.forDataSource(dataSource)
       Duration SLOW_QUERY_THRESHOLD = Duration.ofMillis(500);
 
       if(statementLog.getTotalDuration().compareTo(SLOW_QUERY_THRESHOLD) > 0)
-		out.printf("Slow query: %s\n", statementLog);
+        out.printf("Slow query: %s\n", statementLog);
     }
   }).build();
 ```
