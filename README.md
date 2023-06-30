@@ -38,7 +38,7 @@ Java 16+
 <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid</artifactId>
-  <version>2.0.0-SNAPSHOT</version>
+  <version>2.0.0</version>
 </dependency>
 ```
 
@@ -54,7 +54,7 @@ Java 8+ (Legacy; only critical fixes will be applied)
 
 ### Direct Download
 
-If you don't use Maven, you can drop [pyranid-2.0.0-SNAPSHOT.jar](https://repo1.maven.org/maven2/com/pyranid/pyranid/2.0.0-SNAPSHOT/pyranid-2.0.0-SNAPSHOT.jar) directly into your project.  No other dependencies are required.
+If you don't use Maven, you can drop [pyranid-2.0.0.jar](https://repo1.maven.org/maven2/com/pyranid/pyranid/2.0.0/pyranid-2.0.0.jar) directly into your project.  No other dependencies are required.
 
 ## Configuration
 
@@ -122,7 +122,7 @@ StatementLogger statementLogger = new StatementLogger() {
   @Override
   public void log(@Nonnull StatementLog statementLog) {
     // Send to whatever output sink you'd like
-    System.out.println(statementLog);
+    out.println(statementLog);
   }
 };
 
@@ -206,7 +206,7 @@ Optional<Employee> employee = database.queryForObject("""
   SELECT *
   FROM employee
   WHERE email=?
-  """, Employee.class, "mark@revetware.com");
+  """, Employee.class, "name@example.com");
 ```
 
 By default, Pyranid will invoke the canonical constructor for `Record` types. 
@@ -235,8 +235,8 @@ List<Car> repaintedCars = database.executeForList("""
 // Batch operations can be more efficient than execution of discrete statements.
 // Useful for inserting a lot of data at once
 List<List<Object>> parameterGroups = List.of(
-  List.of(123, Color.BLUE), // Blue car
-  List.of(456, Color.RED) // Red car
+  List.of(123, Color.BLUE),
+  List.of(456, Color.RED)
 );
 
 // Insert both cars
@@ -488,8 +488,8 @@ class Car {
 Car car = database.queryForObject("SELECT car_id, color, systok FROM car LIMIT 1", Car.class).get();
 
 // Output might be "Car ID is 123 and color is BLUE. Token is d73c523a-8344-44ef-819c-40467662d619"
-out.println(format("Car ID is %s and color is %s. Token is %s",
-                   car.getCarId(), car.getColor(), car.getSystemToken()));
+out.printf("Car ID is %s and color is %s. Token is %s\n",
+                   car.getCarId(), car.getColor(), car.getSystemToken());
 
 // Column names will work with wildcard queries as well
 car = database.queryForObject("SELECT * FROM car LIMIT 1", Car.class).get();
@@ -615,7 +615,7 @@ database.transaction(() -> {
   } catch(DatabaseException e) {
     // Detect a unique constraint violation and gracefully continue on.
     if("account_award_unique_idx".equals(e.getConstraint().orElse(null)) {
-      out.println(format("The %s award was already given to account ID %s", AwardType.BIG, accountId)); 
+      out.printf("The %s award was already given to account ID %s\n", AwardType.BIG, accountId); 
       // Puts transaction back in good state (prior to constraint violation)
       transaction.rollback(savepoint);
     } else {      
@@ -716,7 +716,7 @@ Database database = Database.forDataSource(dataSource)
     public void log(@Nonnull StatementLog statementLog) {
       // Log everything except HOT_QUERY
       if(statementLog.getStatementContext().getStatement().getId() != HOT_QUERY)
-        System.out.println(statementLog);
+        out.println(statementLog);
     }
   }).build();
 ```
