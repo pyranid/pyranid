@@ -1,7 +1,7 @@
 <a href="https://www.pyranid.com">
     <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="https://pyranid.s3.amazonaws.com/pyranid-gh-logo-dark-v2.png">
-        <img alt="Pyranid" src="https://pyranid.s3.amazonaws.com/pyranid-gh-logo-v2.png" width="300">
+        <source media="(prefers-color-scheme: dark)" srcset="https://pyranid.s3.amazonaws.com/pyranid-gh-logo-dark-v3.png">
+        <img alt="Pyranid" src="https://pyranid.s3.amazonaws.com/pyranid-gh-logo-light-v3.png" width="300">
     </picture>
 </a>
 
@@ -42,7 +42,7 @@ Java 16+
 </dependency>
 ```
 
-Java 8+ (Legacy; only critical fixes will be applied)
+Java 8+ (legacy; only critical fixes will be applied)
 
 ```xml
 <dependency>
