@@ -1,7 +1,7 @@
 <a href="https://www.pyranid.com">
     <picture>
         <source media="(prefers-color-scheme: dark)" srcset="https://cdn.pyranid.com/pyranid-gh-logo-dark-v3.png">
-        <img alt="Pyranid" src="https://cdn.pyranid.com/pyranid-gh-logo-light-v3.png" width="300">
+        <img alt="Pyranid" src="https://cdn.pyranid.com/pyranid-gh-logo-light-v3.png" width="300" height="94">
     </picture>
 </a>
 
