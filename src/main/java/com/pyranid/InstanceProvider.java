@@ -32,7 +32,7 @@ import static java.util.Objects.requireNonNull;
  * Implementors are suggested to employ application-specific strategies, such as having a DI container handle instance
  * creation.
  *
- * @author <a href="https://www.revetware.com">Mark Allen</a>
+ * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 1.0.0
  */
 public interface InstanceProvider {

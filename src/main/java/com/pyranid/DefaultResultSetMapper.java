@@ -65,7 +65,7 @@ import static java.util.stream.Collectors.toSet;
 /**
  * Basic implementation of {@link ResultSetMapper}.
  *
- * @author <a href="https://www.revetware.com">Mark Allen</a>
+ * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 1.0.0
  */
 @ThreadSafe
@@ -667,7 +667,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	/**
 	 * The result of attempting to map a {@link ResultSet} to a "standard" type like primitive or {@link UUID}.
 	 *
-	 * @author <a href="https://www.revetware.com">Mark Allen</a>
+	 * @author <a href="https://www.revetkn.com">Mark Allen</a>
 	 * @since 1.0.0
 	 */
 	@ThreadSafe

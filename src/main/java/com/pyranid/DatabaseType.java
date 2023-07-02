@@ -27,7 +27,7 @@ import static java.util.Objects.requireNonNull;
 /**
  * Identifies different types of databases, which allows for special platform-specific handling.
  *
- * @author <a href="https://www.revetware.com">Mark Allen</a>
+ * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 1.0.0
  */
 public enum DatabaseType {

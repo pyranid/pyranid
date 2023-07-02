@@ -33,7 +33,7 @@ import static java.util.Objects.requireNonNull;
 /**
  * A collection of SQL statement execution diagnostics.
  *
- * @author <a href="https://www.revetware.com">Mark Allen</a>
+ * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 1.0.0
  */
 @ThreadSafe
@@ -251,7 +251,7 @@ public class StatementLog<T> {
 	 * <p>
 	 * This class is intended for use by a single thread.
 	 *
-	 * @author <a href="https://www.revetware.com">Mark Allen</a>
+	 * @author <a href="https://www.revetkn.com">Mark Allen</a>
 	 * @since 1.0.0
 	 */
 	@NotThreadSafe

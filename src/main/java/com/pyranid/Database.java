@@ -46,7 +46,7 @@ import static java.util.logging.Level.WARNING;
 /**
  * Main class for performing database access operations.
  *
- * @author <a href="https://www.revetware.com">Mark Allen</a>
+ * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 1.0.0
  */
 @ThreadSafe
@@ -799,7 +799,7 @@ public class Database {
 	 * <p>
 	 * This class is intended for use by a single thread.
 	 *
-	 * @author <a href="https://www.revetware.com">Mark Allen</a>
+	 * @author <a href="https://www.revetkn.com">Mark Allen</a>
 	 * @since 1.0.0
 	 */
 	@NotThreadSafe

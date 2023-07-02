@@ -33,7 +33,7 @@ import static java.lang.String.format;
  * If the {@code cause} of this exception is a {@link SQLException}, the {@link #getErrorCode()} and {@link #getSqlState()}
  * accessors are shorthand for retrieving the corresponding {@link SQLException} values.
  *
- * @author <a href="https://www.revetware.com">Mark Allen</a>
+ * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 1.0.0
  */
 @NotThreadSafe

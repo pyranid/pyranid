@@ -19,7 +19,7 @@ package com.pyranid;
 /**
  * Indicates whether a transaction was committed or rolled back.
  *
- * @author <a href="https://www.revetware.com">Mark Allen</a>
+ * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 2.0.0
  */
 public enum TransactionResult {

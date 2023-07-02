@@ -30,7 +30,7 @@ import static java.util.stream.Collectors.joining;
 /**
  * Basic implementation of {@link StatementLogger} which logs via <a href="https://docs.oracle.com/en/java/javase/20/docs/api/java.logging/java/util/logging/package-summary.html">java.util.logging</a>.
  *
- * @author <a href="https://www.revetware.com">Mark Allen</a>
+ * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 1.0.0
  */
 @ThreadSafe

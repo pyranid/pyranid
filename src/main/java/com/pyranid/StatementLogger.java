@@ -21,7 +21,7 @@ import javax.annotation.Nonnull;
 /**
  * Contract for handling database statement log events.
  *
- * @author <a href="https://www.revetware.com">Mark Allen</a>
+ * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 1.0.0
  */
 @FunctionalInterface

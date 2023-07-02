@@ -21,7 +21,7 @@ package com.pyranid;
  * <p>
  * See {@link ReturningTransactionalOperation} for a variant which supports returning a value.
  *
- * @author <a href="https://www.revetware.com">Mark Allen</a>
+ * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 1.0.0
  */
 @FunctionalInterface

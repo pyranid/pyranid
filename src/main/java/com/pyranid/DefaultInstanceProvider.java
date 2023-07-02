@@ -25,7 +25,7 @@ import static java.util.Objects.requireNonNull;
 /**
  * Basic implementation of {@link InstanceProvider}.
  *
- * @author <a href="https://www.revetware.com">Mark Allen</a>
+ * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 1.0.0
  */
 @ThreadSafe
