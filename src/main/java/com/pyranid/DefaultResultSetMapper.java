@@ -316,10 +316,27 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 			if (potentialPropertyNames == null || potentialPropertyNames.size() == 0)
 				potentialPropertyNames = databaseColumnNamesForPropertyName(propertyName);
 
+			Class<?> recordComponentType = recordComponent.getType();
+
 			// Set the value for the Record ctor
-			for (String potentialPropertyName : potentialPropertyNames)
-				if (columnLabelsToValues.containsKey(potentialPropertyName))
-					args[i] = columnLabelsToValues.get(potentialPropertyName);
+			for (String potentialPropertyName : potentialPropertyNames) {
+				if (columnLabelsToValues.containsKey(potentialPropertyName)) {
+					Object value = convertResultSetValueToPropertyType(columnLabelsToValues.get(potentialPropertyName), recordComponentType).orElse(null);
+					
+					if (value != null && !recordComponentType.isAssignableFrom(value.getClass())) {
+						String resultSetTypeDescription = value.getClass().toString();
+
+						throw new DatabaseException(
+								format(
+										"Property '%s' of %s has a write method of type %s, but the ResultSet type %s does not match. "
+												+ "Consider creating your own %s and overriding convertResultSetValueToPropertyType() to detect instances of %s and convert them to %s",
+										recordComponent.getName(), resultSetRowType, recordComponentType, resultSetTypeDescription,
+										DefaultResultSetMapper.class.getSimpleName(), resultSetTypeDescription, recordComponentType));
+					}
+
+					args[i] = value;
+				}
+			}
 		}
 
 		return instanceProvider.provideRecord(statementContext, resultSetRowType, args);
