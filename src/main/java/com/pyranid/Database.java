@@ -604,7 +604,7 @@ public class Database {
 
 		ResultHolder<List<Long>> resultHolder = new ResultHolder<>();
 		StatementContext<List<Long>> statementContext = new StatementContext.Builder<>(statement)
-				.parameters(parameterGroups)
+				.parameters((List) parameterGroups)
 				.resultSetRowType(List.class)
 				.build();
 
