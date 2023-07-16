@@ -62,7 +62,7 @@ If you don't use Maven, you can drop [pyranid-2.0.0.jar](https://repo1.maven.org
 
 ```java
 // Create a Database backed by a DataSource
-DataSource dataSource = obtainDataSourceSomehow();
+DataSource dataSource = obtainDataSource();
 Database database = Database.forDataSource(dataSource).build();
 ```
 
@@ -186,7 +186,7 @@ We might query for it like this:
 Optional<Car> car = database.queryForObject("SELECT * FROM car LIMIT 1", Car.class);
 
 // A single car, passing prepared statement parameters via varargs
-Optional<Car> specificCar = database.queryForObject("SELECT * FROM car WHERE id = ?", Car.class, 123);
+Optional<Car> specificCar = database.queryForObject("SELECT * FROM car WHERE id=?", Car.class, 123);
 
 // Multiple cars
 List<Car> blueCars = database.queryForList("SELECT * FROM car WHERE color=?", Car.class, Color.BLUE);
