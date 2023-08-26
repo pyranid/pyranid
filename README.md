@@ -11,6 +11,8 @@ A zero-dependency JDBC interface for modern Java applications, powering producti
 
 Pyranid takes care of boilerplate and lets you focus on writing and thinking in SQL.  It is not an ORM.
 
+Full documentation is available at [https://www.pyranid.com](https://www.pyranid.com).
+
 ### Design Goals
 
 * Small codebase
