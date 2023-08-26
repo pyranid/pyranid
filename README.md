@@ -27,7 +27,7 @@ Pyranid takes care of boilerplate and lets you focus on writing and thinking in 
 
 Similarly-flavored commercially-friendly OSS libraries are available.
 
-* [Soklet](https://www.soklet.com) - DI-friendly HTTP 1.1 server that supports [JEP 425 Virtual Threads](https://openjdk.org/jeps/425)
+* [Soklet](https://www.soklet.com) - DI-friendly HTTP 1.1 server that supports [JEP 444 Virtual Threads](https://openjdk.org/jeps/444)
 * [Lokalized](https://www.lokalized.com) - natural-sounding translations (i18n) via expression language
 
 ### Maven Installation
@@ -137,7 +137,7 @@ Database customDatabase = Database.forDataSource(dataSource)
 
 ### Obtaining a DataSource
 
-Pyranid works with any [`DataSource`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/javax/sql/DataSource.html) implementation. If you have the freedom to choose, [HikariCP](https://github.com/brettwooldridge/HikariCP) (application-level) and [PgBouncer](https://www.pgbouncer.org/) (global; Postgres-only) are great options.
+Pyranid works with any [`DataSource`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/javax/sql/DataSource.html) implementation. If you have the freedom to choose, [HikariCP](https://github.com/brettwooldridge/HikariCP) (application-level) and [PgBouncer](https://www.pgbouncer.org/) (external; Postgres-only) are good options.
 
 ```java
 // HikariCP
@@ -197,7 +197,7 @@ Optional<UUID> id = database.queryForObject("SELECT id FROM widget LIMIT 1", UUI
 List<BigDecimal> balances = database.queryForList("SELECT balance FROM account", BigDecimal.class);
 ```
 
-[Record](https://openjdk.org/jeps/395) types are also supported:
+[`Record`](https://openjdk.org/jeps/395) types are also supported:
 
 ```java
 record Employee(String name, @DatabaseColumn("email") String emailAddress) {}
@@ -452,7 +452,7 @@ class DatabaseTransactionFilter implements Filter {
 
 The [`DefaultResultSetMapper`](https://pyranid.com/javadoc/com/pyranid/DefaultResultSetMapper.html) supports user-defined types that follow the JavaBean getter/setter conventions, primitives, and some additional common JDK types.
 
-[Record](https://openjdk.org/jeps/395) types are also supported.
+[`Record`](https://openjdk.org/jeps/395) types are also supported.
 
 ### User-defined Types
 

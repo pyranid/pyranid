@@ -37,6 +37,8 @@ import static java.util.Objects.requireNonNull;
 
 /**
  * Represents a database transaction.
+ * <p>
+ * Note that commit and rollback operations are controlled internally by {@link Database}.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 1.0.0
@@ -167,10 +169,10 @@ public class Transaction {
 	}
 
 	/**
-	 * Gets the list of post-transaction operations.
+	 * Gets an unmodifiable list of post-transaction operations.
 	 * <p>
-	 * This list is not modifiable.  Use {@link #addPostTransactionOperation(Consumer)} and
-	 * {@link #removePostTransactionOperation(Consumer)} to manipulate the list.
+	 * To manipulate the list, use {@link #addPostTransactionOperation(Consumer)} and
+	 * {@link #removePostTransactionOperation(Consumer)}.
 	 *
 	 * @return the list of post-transaction operations
 	 */
