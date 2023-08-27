@@ -643,10 +643,10 @@ Examples of usage include:
 ```java
 Database database = Database.forDataSource(dataSource)
   .statementLogger(new StatementLogger() {
+    Duration SLOW_QUERY_THRESHOLD = Duration.ofMillis(500);
+
     @Override
     public void log(@Nonnull StatementLog statementLog) {
-      Duration SLOW_QUERY_THRESHOLD = Duration.ofMillis(500);
-
       if(statementLog.getTotalDuration().compareTo(SLOW_QUERY_THRESHOLD) > 0)
         out.printf("Slow query: %s\n", statementLog);
     }
