@@ -630,7 +630,7 @@ database.transaction(() -> {
 
 ## Logging and Diagnostics
 
-### StatementLogger
+### Statement Logging
 
 You may customize your [`Database`](https://pyranid.com/javadoc/com/pyranid/Database.html) with a [`StatementLogger`](https://pyranid.com/javadoc/com/pyranid/StatementLogger.html).
 
@@ -723,15 +723,15 @@ Database database = Database.forDataSource(dataSource)
   }).build();
 ```
 
-### java.util.Logging
+### Internal Logging
 
-Pyranid uses [`java.util.Logging`](https://docs.oracle.com/javase/8/docs/api/java/util/logging/package-summary.html) internally.  The usual way to hook into this is with [SLF4J](http://slf4j.org), which can funnel all the different logging mechanisms in your app through a single one, normally [Logback](http://logback.qos.ch).  Your Maven configuration might look like this:
+Pyranid uses [`java.util.Logging`](https://docs.oracle.com/en/java/javase/20/docs/api/java.logging/java/util/logging/package-summary.html) internally for diagnostics.  This is not normally useful for Pyranid users, but the usual way to hook into this is with [SLF4J](http://slf4j.org), which can funnel all the different logging mechanisms in your app through a single one, normally [Logback](http://logback.qos.ch).  Your Maven configuration might look like this:
 
 ```xml
 <dependency>
   <groupId>ch.qos.logback</groupId>
   <artifactId>logback-classic</artifactId>
-  <version>1.4.8</version>
+  <version>1.4.11</version>
 </dependency>
 
 <dependency>
