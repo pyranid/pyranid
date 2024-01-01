@@ -139,7 +139,7 @@ Database customDatabase = Database.forDataSource(dataSource)
 
 ### Obtaining a DataSource
 
-Pyranid works with any [`DataSource`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/javax/sql/DataSource.html) implementation. If you have the freedom to choose, [HikariCP](https://github.com/brettwooldridge/HikariCP) (application-level) and [PgBouncer](https://www.pgbouncer.org/) (external; Postgres-only) are good options.
+Pyranid works with any [`DataSource`](https://docs.oracle.com/en/java/javase/21/docs/api/java.sql/javax/sql/DataSource.html) implementation. If you have the freedom to choose, [HikariCP](https://github.com/brettwooldridge/HikariCP) (application-level) and [PgBouncer](https://www.pgbouncer.org/) (external; Postgres-only) are good options.
 
 ```java
 // HikariCP
@@ -253,8 +253,8 @@ and uses them if available.
 ### Design goals
 
 * Closure-based API: rollback if exception bubbles out, commit at end of closure otherwise
-* Data access APIs (e.g. [`Database::queryForObject`](https://pyranid.com/javadoc/com/pyranid/Database.html#queryForObject(java.lang.String,java.lang.Class,java.lang.Object...)) and friends) automatically participate in transactions
-* No [`Connection`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/java/sql/Connection.html) is fetched from the [`DataSource`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/javax/sql/DataSource.html) until the first data access operation occurs
+* Data access APIs (e.g. [`Database::queryForObject`](https://javadoc.pyranid.com/com/pyranid/Database.html#queryForObject(java.lang.String,java.lang.Class,java.lang.Object...)) and friends) automatically participate in transactions
+* No [`Connection`](https://docs.oracle.com/en/java/javase/21/docs/api/java.sql/java/sql/Connection.html) is fetched from the [`DataSource`](https://docs.oracle.com/en/java/javase/21/docs/api/java.sql/javax/sql/DataSource.html) until the first data access operation occurs
 * Must be able to share a transaction across multiple threads
 
 ### Basics
@@ -311,7 +311,7 @@ database.transaction(() -> {
 
 ### Multi-threaded Transactions
 
-Internally, Database manages a threadlocal stack of [`Transaction`](https://pyranid.com/javadoc/com/pyranid/Transaction.html) instances to simplify single-threaded usage.  Should you need to share the same transaction across multiple threads, use the [`Database::participate`](https://pyranid.com/javadoc/com/pyranid/Database.html#participate(com.pyranid.Transaction,com.pyranid.TransactionalOperation)) API.
+Internally, Database manages a threadlocal stack of [`Transaction`](https://javadoc.pyranid.com/com/pyranid/Transaction.html) instances to simplify single-threaded usage.  Should you need to share the same transaction across multiple threads, use the [`Database::participate`](https://javadoc.pyranid.com/com/pyranid/Database.html#participate(com.pyranid.Transaction,com.pyranid.TransactionalOperation)) API.
 
 ```java
 database.transaction(() -> {
@@ -452,13 +452,13 @@ class DatabaseTransactionFilter implements Filter {
 
 ## ResultSet Mapping
 
-The [`DefaultResultSetMapper`](https://pyranid.com/javadoc/com/pyranid/DefaultResultSetMapper.html) supports user-defined types that follow the JavaBean getter/setter conventions, primitives, and some additional common JDK types.
+The [`DefaultResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/DefaultResultSetMapper.html) supports user-defined types that follow the JavaBean getter/setter conventions, primitives, and some additional common JDK types.
 
 [`Record`](https://openjdk.org/jeps/395) types are also supported.
 
 ### User-defined Types
 
-In the case of user-defined types and Records, [`DefaultResultSetMapper`](https://pyranid.com/javadoc/com/pyranid/DefaultResultSetMapper.html) examines the names of columns in the [`ResultSet`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/javax/sql/ResultSet.html) and matches them to corresponding fields via reflection.  The [`@DatabaseColumn`](https://pyranid.com/javadoc/com/pyranid/DatabaseColumn.html) annotation allows per-field customization of mapping behavior.
+In the case of user-defined types and Records, [`DefaultResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/DefaultResultSetMapper.html) examines the names of columns in the [`ResultSet`](https://docs.oracle.com/en/java/javase/21/docs/api/java.sql/javax/sql/ResultSet.html) and matches them to corresponding fields via reflection.  The [`@DatabaseColumn`](https://javadoc.pyranid.com/com/pyranid/DatabaseColumn.html) annotation allows per-field customization of mapping behavior.
 
 By default, column names are assumed to be separated by `_` characters and are mapped to their camel-case equivalent.  For example:
 
@@ -570,9 +570,9 @@ val cars = database.queryForList("SELECT * FROM cars WHERE car_id IN (?, ?) LIMI
 
 ## Error Handling
 
-In general, a runtime [`DatabaseException`](https://pyranid.com/javadoc/com/pyranid/DatabaseException.html) will be thrown when errors occur.  Often this will wrap the checked [`java.sql.SQLException`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/java/sql/SQLException.html).
+In general, a runtime [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) will be thrown when errors occur.  Often this will wrap the checked [`java.sql.SQLException`](https://docs.oracle.com/en/java/javase/21/docs/api/java.sql/java/sql/SQLException.html).
 
-For convenience, [`DatabaseException`](https://pyranid.com/javadoc/com/pyranid/DatabaseException.html) exposes additional properties, which are populated if provided by the underlying [`java.sql.SQLException`](https://docs.oracle.com/en/java/javase/20/docs/api/java.sql/java/sql/SQLException.html):
+For convenience, [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) exposes additional properties, which are populated if provided by the underlying [`java.sql.SQLException`](https://docs.oracle.com/en/java/javase/21/docs/api/java.sql/java/sql/SQLException.html):
 
 * `errorCode` (optional)
 * `sqlState` (optional)
@@ -600,7 +600,7 @@ Extended property support for Oracle and MySQL is planned.
 
 ### Practical Application
 
-Here we detect if a specific constraint was violated by examining [`DatabaseException`](https://pyranid.com/javadoc/com/pyranid/DatabaseException.html).
+Here we detect if a specific constraint was violated by examining [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html).
 We then handle that case specially by rolling back to a known-good savepoint.
 
 ```java
@@ -632,13 +632,13 @@ database.transaction(() -> {
 
 ### Statement Logging
 
-You may customize your [`Database`](https://pyranid.com/javadoc/com/pyranid/Database.html) with a [`StatementLogger`](https://pyranid.com/javadoc/com/pyranid/StatementLogger.html).
+You may customize your [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) with a [`StatementLogger`](https://javadoc.pyranid.com/com/pyranid/StatementLogger.html).
 
 Examples of usage include:
 
 * Writing queries and timing information to your logging system
 * Picking out slow queries for special logging/reporting
-* Collecting a set of queries executed across a unit of work for bulk analysis (e.g. a [`ThreadLocal`](https://docs.oracle.com/en/java/javase/20/docs/api/java.base/java/lang/ThreadLocal.html) scoped to a single web request)
+* Collecting a set of queries executed across a unit of work for bulk analysis (e.g. a [`ThreadLocal`](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/ThreadLocal.html) scoped to a single web request)
 
 ```java
 Database database = Database.forDataSource(dataSource)
@@ -653,7 +653,7 @@ Database database = Database.forDataSource(dataSource)
   }).build();
 ```
 
-[`StatementLog`](https://pyranid.com/javadoc/com/pyranid/StatementLog.html) instances give you access to the following for each SQL statement executed:
+[`StatementLog`](https://javadoc.pyranid.com/com/pyranid/StatementLog.html) instances give you access to the following for each SQL statement executed:
 
 * `statementContext`
 * `connectionAcquisitionDuration` (optional)
@@ -665,9 +665,9 @@ Database database = Database.forDataSource(dataSource)
 
 ### Statement Identifiers
 
-For any data access method that accepts a `sql` parameter, you may alternatively provide a [`Statement`](https://pyranid.com/javadoc/com/pyranid/Statement.html), which permits you to specify an arbitrary identifier for the SQL.
+For any data access method that accepts a `sql` parameter, you may alternatively provide a [`Statement`](https://javadoc.pyranid.com/com/pyranid/Statement.html), which permits you to specify an arbitrary identifier for the SQL.
 
-If you do not explicitly provide a [`Statement`](https://pyranid.com/javadoc/com/pyranid/Statement.html), Pyranid will create one for you and generate its own identifier.
+If you do not explicitly provide a [`Statement`](https://javadoc.pyranid.com/com/pyranid/Statement.html), Pyranid will create one for you and generate its own identifier.
 
 ```java
 // Regular SQL
@@ -681,7 +681,7 @@ This is useful for tagging queries that should be handled specially. Some exampl
 
 * Marking a query as "hot" so we don't pollute logs with it
 * Marking a query as "known to be slow" so we don't flag slow query alerts for it
-* Your [`InstanceProvider`](https://pyranid.com/javadoc/com/pyranid/InstanceProvider.html) might provide custom instances based on resultset data
+* Your [`InstanceProvider`](https://javadoc.pyranid.com/com/pyranid/InstanceProvider.html) might provide custom instances based on resultset data
 
 ```java
 // Custom tagging system
@@ -708,7 +708,7 @@ Executors.newScheduledThreadPool(1).scheduleAtFixedRate(() -> {
 }, 0, 3, TimeUnit.SECONDS);
 ```
 
-A corresponding [`Database`](https://pyranid.com/javadoc/com/pyranid/Database.html) setup:
+A corresponding [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) setup:
 
 ```java
 // Ensure our StatementLogger implementation takes HOT_QUERY into account 
@@ -725,7 +725,7 @@ Database database = Database.forDataSource(dataSource)
 
 ### Internal Logging
 
-Pyranid uses [`java.util.Logging`](https://docs.oracle.com/en/java/javase/20/docs/api/java.logging/java/util/logging/package-summary.html) internally for diagnostics.  This is not normally useful for Pyranid users, but the usual way to hook into this is with [SLF4J](http://slf4j.org), which can funnel all the different logging mechanisms in your app through a single one, normally [Logback](http://logback.qos.ch).  Your Maven configuration might look like this:
+Pyranid uses [`java.util.Logging`](https://docs.oracle.com/en/java/javase/21/docs/api/java.logging/java/util/logging/package-summary.html) internally for diagnostics.  This is not normally useful for Pyranid users, but the usual way to hook into this is with [SLF4J](http://slf4j.org), which can funnel all the different logging mechanisms in your app through a single one, normally [Logback](http://logback.qos.ch).  Your Maven configuration might look like this:
 
 ```xml
 <dependency>
