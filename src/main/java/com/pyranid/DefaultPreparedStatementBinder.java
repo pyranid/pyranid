@@ -25,6 +25,7 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.Calendar;
+import java.util.Currency;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
@@ -143,6 +144,8 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			return Optional.of(new Timestamp(((Instant) parameter).toEpochMilli()));
 		if (parameter instanceof Locale)
 			return Optional.of(((Locale) parameter).toLanguageTag());
+		if (parameter instanceof Currency)
+			return Optional.of(((Currency) parameter).getCurrencyCode());
 		if (parameter instanceof Enum)
 			return Optional.of(((Enum<?>) parameter).name());
 		// Java 11 uses internal implementation java.time.ZoneRegion, which Postgres JDBC driver does not support.

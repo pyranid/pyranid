@@ -41,6 +41,7 @@ import java.time.OffsetTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Currency;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -245,6 +246,11 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 
 			if (locale != null)
 				value = Locale.forLanguageTag(locale);
+		} else if (resultClass.isAssignableFrom(Currency.class)) {
+			String currency = resultSet.getString(1);
+
+			if (currency != null)
+				value = Currency.getInstance(currency);
 		} else if (resultClass.isEnum()) {
 			value = extractEnumValue(resultClass, resultSet.getObject(1));
 
@@ -322,7 +328,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 			for (String potentialPropertyName : potentialPropertyNames) {
 				if (columnLabelsToValues.containsKey(potentialPropertyName)) {
 					Object value = convertResultSetValueToPropertyType(columnLabelsToValues.get(potentialPropertyName), recordComponentType).orElse(null);
-					
+
 					if (value != null && !recordComponentType.isAssignableFrom(value.getClass())) {
 						String resultSetTypeDescription = value.getClass().toString();
 
@@ -486,7 +492,8 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 * @return a representation of {@code resultSetValue} that is of type {@code propertyType}
 	 */
 	@Nonnull
-	protected Optional<Object> convertResultSetValueToPropertyType(Object resultSetValue, Class<?> propertyType) {
+	protected Optional<Object> convertResultSetValueToPropertyType(@Nullable Object resultSetValue,
+																																 @Nonnull Class<?> propertyType) {
 		requireNonNull(propertyType);
 
 		if (resultSetValue == null)
@@ -562,6 +569,8 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 			return Optional.ofNullable(TimeZone.getTimeZone(resultSetValue.toString()));
 		} else if (propertyType.isAssignableFrom(Locale.class)) {
 			return Optional.ofNullable(Locale.forLanguageTag(resultSetValue.toString()));
+		} else if (propertyType.isAssignableFrom(Currency.class)) {
+			return Optional.ofNullable(Currency.getInstance(resultSetValue.toString()));
 		} else if (propertyType.isEnum()) {
 			return Optional.ofNullable(extractEnumValue(propertyType, resultSetValue));
 		} else if ("org.postgresql.util.PGobject".equals(resultSetValue.getClass().getName())) {
