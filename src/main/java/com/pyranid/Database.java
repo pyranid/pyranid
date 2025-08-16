@@ -22,6 +22,7 @@ import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -35,6 +36,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
@@ -650,6 +652,28 @@ public class Database {
 		return resultHolder.value;
 	}
 
+	/**
+	 * Exposes a temporary handle to JDBC {@link DatabaseMetaData}, which provides comprehensive vendor-specific information about this database as a whole.
+	 * <p>
+	 * This method acquires {@link DatabaseMetaData} on its own newly-borrowed connection, which it manages internally.
+	 * <p>
+	 * It does <strong>not</strong> participate in the active transaction, if one exists.
+	 * <p>
+	 * The connection is closed as soon as {@link DatabaseMetaDataExaminer#examine(DatabaseMetaData)} completes.
+	 * <p>
+	 * See <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/DatabaseMetaData.html">{@code DatabaseMetaData} Javadoc</a> for details.
+	 *
+	 * @return comprehensive JBDC metadata for this database
+	 */
+	public void examineDatabaseMetaData(@Nonnull DatabaseMetaDataExaminer databaseMetaDataExaminer) {
+		requireNonNull(databaseMetaDataExaminer);
+
+		 performRawConnectionOperation((connection -> {
+			 databaseMetaDataExaminer.examine(connection.getMetaData());
+			return Optional.empty();
+		}), false);
+	}
+
 	protected <T> void performDatabaseOperation(@Nonnull StatementContext<T> statementContext,
 																							@Nonnull List<Object> parameters,
 																							@Nonnull DatabaseOperation databaseOperation) {
@@ -661,6 +685,55 @@ public class Database {
 			if (parameters.size() > 0)
 				getPreparedStatementBinder().bind(statementContext, preparedStatement, parameters);
 		}, databaseOperation);
+	}
+
+	@FunctionalInterface
+	protected interface RawConnectionOperation<R> {
+		@Nonnull
+		Optional<R> perform(@Nonnull Connection connection) throws Exception;
+	}
+
+	/**
+	 * Useful for single-shot "utility" calls that operate outside of normal query operations, e.g. pulling DB metadata.
+	 * <p>
+	 * Example: {@link #examineDatabaseMetaData(DatabaseMetaDataExaminer)}.
+	 */
+	@Nonnull
+	protected <R> Optional<R> performRawConnectionOperation(@Nonnull RawConnectionOperation<R> rawConnectionOperation,
+																													@Nonnull Boolean shouldParticipateInExistingTransactionIfPossible) {
+		requireNonNull(rawConnectionOperation);
+		requireNonNull(shouldParticipateInExistingTransactionIfPossible);
+
+		if(shouldParticipateInExistingTransactionIfPossible) {
+			// Try to participate in txn if it's available
+			Connection connection = null;
+
+			try {
+				connection = acquireConnection();
+				return rawConnectionOperation.perform(connection);
+			} catch (DatabaseException e) {
+				throw e;
+			} catch (Exception e) {
+				throw new DatabaseException(e);
+			} finally {
+				// If this was a single-shot operation (not in a transaction), close the connection
+				if (connection != null && !currentTransaction().isPresent())
+					closeConnection(connection);
+			}
+		} else {
+			boolean acquiredConnection = false;
+
+			// Always get a fresh connection no matter what and close it afterwards
+			try (Connection connection = getDataSource().getConnection()) {
+				acquiredConnection = true;
+				return rawConnectionOperation.perform(connection);
+			} catch(Exception e) {
+				if(acquiredConnection)
+					throw new DatabaseException(e);
+				else
+					throw new DatabaseException("Unable to acquire database connection", e);
+			}
+		}
 	}
 
 	protected <T> void performDatabaseOperation(@Nonnull StatementContext<T> statementContext,
