@@ -31,7 +31,7 @@ import static java.util.Objects.requireNonNull;
  * You may determine available {@code baseTypeName} values for your database by examining metadata exposed via {@link Database#examineDatabaseMetaData(DatabaseMetaDataExaminer)}.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
- * @since 2.0.2
+ * @since 2.1.0
  */
 @ThreadSafe
 public final class ArrayParameter {

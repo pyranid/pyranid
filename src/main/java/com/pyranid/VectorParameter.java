@@ -27,7 +27,7 @@ import static java.util.Objects.requireNonNull;
  * Encapsulates prepared-statement parameter data meant to be bound to a vector type (e.g. PostgreSQL's <a href="https://github.com/pgvector/pgvector" target="_blank">{@code pgvector}</a>) by {@link PreparedStatementBinder}.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
- * @since 2.0.2
+ * @since 2.1.0
  */
 @ThreadSafe
 public final class VectorParameter {
