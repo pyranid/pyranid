@@ -22,6 +22,7 @@ import javax.annotation.concurrent.ThreadSafe;
 import java.nio.ByteBuffer;
 import java.sql.Array;
 import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -45,6 +46,8 @@ import static java.util.Objects.requireNonNull;
  */
 @ThreadSafe
 public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
+	@Nonnull
+	private final PreparedStatementParameterBinder preparedStatementParameterBinder;
 	@Nonnull
 	private final DatabaseType databaseType;
 	@Nonnull
@@ -86,6 +89,17 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	 */
 	public DefaultPreparedStatementBinder(@Nullable DatabaseType databaseType,
 																				@Nullable ZoneId timeZone) {
+		this.preparedStatementParameterBinder = new PreparedStatementParameterBinder() {
+			@Nonnull
+			@Override
+			public <T> Boolean bind(@Nonnull StatementContext<T> statementContext,
+															@Nonnull PreparedStatement preparedStatement,
+															@Nonnull Object parameter,
+															@Nonnull Integer parameterIndex) throws SQLException {
+				return false;
+			}
+		};
+
 		this.databaseType = databaseType == null ? DatabaseType.GENERIC : databaseType;
 		this.timeZone = timeZone == null ? ZoneId.systemDefault() : timeZone;
 		this.timeZoneCalendar = Calendar.getInstance(TimeZone.getTimeZone(this.timeZone));
@@ -213,6 +227,11 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		return Optional.ofNullable(parameter);
+	}
+
+	@Nonnull
+	protected PreparedStatementParameterBinder getPreparedStatementParameterBinder() {
+		return this.preparedStatementParameterBinder;
 	}
 
 	@Nonnull
