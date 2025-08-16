@@ -46,7 +46,7 @@ public final class ArrayParameter {
 		requireNonNull(elements);
 
 		this.baseTypeName = baseTypeName;
-		this.elements = elements;
+		this.elements = elements.clone(); // Always perform a defensive copy
 	}
 
 	/**
@@ -101,6 +101,7 @@ public final class ArrayParameter {
 	 */
 	@Nonnull
 	public Object[] getElements() {
-		return this.elements;
+		// Defensive copy
+		return this.elements.clone();
 	}
 }
