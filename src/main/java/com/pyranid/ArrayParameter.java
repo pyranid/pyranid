@@ -58,6 +58,7 @@ public final class ArrayParameter {
 	 * @param list         the list whose elements will be used to populate the SQL ARRAY
 	 * @return a SQL ARRAY parameter for the given list
 	 */
+	@Nonnull
 	public static ArrayParameter of(@Nonnull String baseTypeName,
 																	@Nonnull List<?> list) {
 		requireNonNull(baseTypeName);
@@ -75,6 +76,7 @@ public final class ArrayParameter {
 	 * @param array        the native Java array whose elements will be used to populate the SQL ARRAY
 	 * @return a SQL ARRAY parameter for the given Java array
 	 */
+	@Nonnull
 	public static ArrayParameter of(@Nonnull String baseTypeName,
 																	@Nonnull Object[] array) {
 		requireNonNull(baseTypeName);
