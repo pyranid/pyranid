@@ -662,8 +662,6 @@ public class Database {
 	 * The connection is closed as soon as {@link DatabaseMetaDataExaminer#examine(DatabaseMetaData)} completes.
 	 * <p>
 	 * See <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/DatabaseMetaData.html">{@code DatabaseMetaData} Javadoc</a> for details.
-	 *
-	 * @return comprehensive JBDC metadata for this database
 	 */
 	public void examineDatabaseMetaData(@Nonnull DatabaseMetaDataExaminer databaseMetaDataExaminer) {
 		requireNonNull(databaseMetaDataExaminer);
