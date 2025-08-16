@@ -65,7 +65,7 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	 * @param databaseType the type of database we're working with
 	 */
 	public DefaultPreparedStatementBinder(@Nullable DatabaseType databaseType) {
-		this(null, null);
+		this(databaseType, null);
 	}
 
 	/**
@@ -227,6 +227,8 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 	@Nonnull
 	protected Calendar getTimeZoneCalendar() {
-		return timeZoneCalendar;
+		// Always make a defensive copy to prevent race conditions -
+		// Calendar is not threadsafe and we don't have guarantees on how JDBC driver will use it
+		return (Calendar) timeZoneCalendar.clone();
 	}
 }
