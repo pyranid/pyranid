@@ -20,6 +20,7 @@ import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import java.nio.ByteBuffer;
+import java.sql.Array;
 import java.sql.PreparedStatement;
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -33,6 +34,7 @@ import java.util.Optional;
 import java.util.TimeZone;
 import java.util.UUID;
 
+import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
 /**
@@ -113,6 +115,21 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 					} else if (normalizedParameter instanceof java.sql.Time) {
 						java.sql.Time time = (java.sql.Time) normalizedParameter;
 						preparedStatement.setTime(i + 1, time, getTimeZoneCalendar());
+					} else if (normalizedParameter instanceof ArrayParameter arrayParameter) {
+						// Normalize each element in the array
+						Object[] normalizedArrayElements = normalizedArrayElements(arrayParameter.getElements());
+						Array array = preparedStatement.getConnection().createArrayOf(arrayParameter.getBaseTypeName(), normalizedArrayElements);
+						preparedStatement.setArray(i + 1, array);
+					} else if (normalizedParameter instanceof VectorParameter vectorParameter) {
+						if (getDatabaseType() != DatabaseType.POSTGRESQL)
+							throw new IllegalArgumentException(format("%s types are only supported for %s.%s",
+									VectorParameter.class.getSimpleName(), DatabaseType.class.getSimpleName(), DatabaseType.POSTGRESQL.name()));
+
+						org.postgresql.util.PGobject pgObject = new org.postgresql.util.PGobject();
+						pgObject.setType("vector");
+						pgObject.setValue(toPostgresLiteralValue(vectorParameter));
+
+						preparedStatement.setObject(i + 1, pgObject);
 					} else {
 						preparedStatement.setObject(i + 1, normalizedParameter);
 					}
@@ -123,6 +140,36 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		} catch (Exception e) {
 			throw new DatabaseException(e);
 		}
+	}
+
+	@Nonnull
+	protected Object[] normalizedArrayElements(@Nonnull Object[] elements) {
+		Object[] normalizedElements = new Object[elements.length];
+
+		for (int j = 0; j < elements.length; j++)
+			normalizedElements[j] = normalizeParameter(elements[j]).orElse(null);
+
+		return normalizedElements;
+	}
+
+	@Nonnull
+	protected String toPostgresLiteralValue(@Nonnull VectorParameter vectorParameter) {
+		requireNonNull(vectorParameter);
+
+		double[] elements = vectorParameter.getElements();
+		StringBuilder sb = new StringBuilder(2 + elements.length * 8);
+
+		sb.append('[');
+
+		for (int i = 0; i < elements.length; i++) {
+			if (i > 0) sb.append(", ");
+			// Use Java default formatting (locale-independent) which is fine for pgvector
+			sb.append(Double.toString(elements[i]));
+		}
+
+		sb.append(']');
+
+		return sb.toString();
 	}
 
 	/**
@@ -154,7 +201,7 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			return Optional.of(((ZoneId) parameter).getId());
 
 		// Special handling for Oracle
-		if (databaseType() == DatabaseType.ORACLE) {
+		if (getDatabaseType() == DatabaseType.ORACLE) {
 			if (parameter instanceof java.util.UUID) {
 				ByteBuffer byteBuffer = ByteBuffer.wrap(new byte[16]);
 				byteBuffer.putLong(((UUID) parameter).getMostSignificantBits());
@@ -169,7 +216,7 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	}
 
 	@Nonnull
-	protected DatabaseType databaseType() {
+	protected DatabaseType getDatabaseType() {
 		return this.databaseType;
 	}
 

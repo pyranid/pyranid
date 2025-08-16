@@ -21,6 +21,7 @@ import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
+import java.util.Locale;
 
 import static java.util.Objects.requireNonNull;
 
@@ -35,6 +36,10 @@ public enum DatabaseType {
 	 * A database which requires no special handling.
 	 */
 	GENERIC,
+	/**
+	 * A PostgreSQL database
+	 */
+	POSTGRESQL,
 	/**
 	 * An Oracle database.
 	 */
@@ -53,19 +58,33 @@ public enum DatabaseType {
 	public static DatabaseType fromDataSource(@Nonnull DataSource dataSource) {
 		requireNonNull(dataSource);
 
-		DatabaseType databaseType = DatabaseType.GENERIC;
 
-		try {
-			try (Connection connection = dataSource.getConnection()) {
-				DatabaseMetaData databaseMetaData = connection.getMetaData();
-				String databaseProductName = databaseMetaData.getDatabaseProductName();
-				if (databaseProductName != null && databaseProductName.startsWith("Oracle"))
-					databaseType = DatabaseType.ORACLE;
-			}
+		try (Connection connection = dataSource.getConnection()) {
+			DatabaseMetaData databaseMetaData = connection.getMetaData();
+			String databaseProductName = databaseMetaData.getDatabaseProductName();
+			String url = databaseMetaData.getURL();
+			String driverName = databaseMetaData.getDriverName();
+
+			// All of our checks are against databases with English names
+			String databaseProductNameLowercase = databaseProductName == null ? "" : databaseProductName.toLowerCase(Locale.ENGLISH);
+			String urlLowercase = url == null ? "" : url.toLowerCase(Locale.ENGLISH);
+			String driverNameLowercase = driverName == null ? "" : driverName.toLowerCase(Locale.ENGLISH);
+
+			// Prefer product name
+			if (databaseProductNameLowercase.startsWith("oracle"))
+				return DatabaseType.ORACLE;
+
+			// Strict match for PostgreSQL
+			if (databaseProductNameLowercase.contains("postgresql") || databaseProductNameLowercase.equals("postgres"))  // some proxies shorten it
+				return DatabaseType.POSTGRESQL;
+
+			// Fallbacks if product name is absent/weird but we're clearly using the PG driver/URL
+			if (urlLowercase.startsWith("jdbc:postgresql:") || driverNameLowercase.contains("postgresql"))
+				return DatabaseType.POSTGRESQL;
+
+			return DatabaseType.GENERIC;
 		} catch (SQLException e) {
 			throw new DatabaseException("Unable to connect to database to determine its type", e);
 		}
-
-		return databaseType;
 	}
 }
