@@ -22,8 +22,6 @@ import java.sql.SQLException;
 
 /**
  * Contract for binding a single parameter to a SQL prepared statement.
- * <p>
- * This type is used in conjunction with {@link PreparedStatementBinder}.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 2.1.0
@@ -39,9 +37,8 @@ public interface PreparedStatementParameterBinder {
 	 * @param parameterIndex    the index of the parameter we are binding
 	 * @throws SQLException if an error occurs during binding
 	 */
-	@Nonnull
-	<T> Boolean bind(@Nonnull StatementContext<T> statementContext,
-									 @Nonnull PreparedStatement preparedStatement,
-									 @Nonnull Object parameter,
-									 @Nonnull Integer parameterIndex) throws SQLException;
+	<T> void bind(@Nonnull StatementContext<T> statementContext,
+								@Nonnull PreparedStatement preparedStatement,
+								@Nonnull Object parameter,
+								@Nonnull Integer parameterIndex) throws SQLException;
 }

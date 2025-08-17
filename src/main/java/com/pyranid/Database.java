@@ -36,7 +36,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
-import java.util.function.Function;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
@@ -613,7 +612,7 @@ public class Database {
 		performDatabaseOperation(statementContext, (preparedStatement) -> {
 			for (List<Object> parameterGroup : parameterGroups) {
 				if (parameterGroup != null && parameterGroup.size() > 0)
-					getPreparedStatementBinder().bind(statementContext, preparedStatement, parameterGroup);
+					performPreparedStatementBinding(statementContext, preparedStatement, parameterGroup);
 
 				preparedStatement.addBatch();
 			}
@@ -666,8 +665,8 @@ public class Database {
 	public void examineDatabaseMetaData(@Nonnull DatabaseMetaDataExaminer databaseMetaDataExaminer) {
 		requireNonNull(databaseMetaDataExaminer);
 
-		 performRawConnectionOperation((connection -> {
-			 databaseMetaDataExaminer.examine(connection.getMetaData());
+		performRawConnectionOperation((connection -> {
+			databaseMetaDataExaminer.examine(connection.getMetaData());
 			return Optional.empty();
 		}), false);
 	}
@@ -681,8 +680,29 @@ public class Database {
 
 		performDatabaseOperation(statementContext, (preparedStatement) -> {
 			if (parameters.size() > 0)
-				getPreparedStatementBinder().bind(statementContext, preparedStatement, parameters);
+				performPreparedStatementBinding(statementContext, preparedStatement, parameters);
 		}, databaseOperation);
+	}
+
+	protected <T> void performPreparedStatementBinding(@Nonnull StatementContext<T> statementContext,
+																										 @Nonnull PreparedStatement preparedStatement,
+																										 @Nonnull List<Object> parameters) {
+		requireNonNull(statementContext);
+		requireNonNull(preparedStatement);
+		requireNonNull(parameters);
+
+		try {
+			for (int i = 0; i < parameters.size(); ++i) {
+				Object parameter = parameters.get(i);
+
+				if (parameter != null)
+					getPreparedStatementParameterBinder().bind(statementContext, preparedStatement, parameter, i + 1);
+				else
+					preparedStatement.setObject(i + 1, parameter);
+			}
+		} catch (Exception e) {
+			throw new DatabaseException(e);
+		}
 	}
 
 	@FunctionalInterface
@@ -702,7 +722,7 @@ public class Database {
 		requireNonNull(rawConnectionOperation);
 		requireNonNull(shouldParticipateInExistingTransactionIfPossible);
 
-		if(shouldParticipateInExistingTransactionIfPossible) {
+		if (shouldParticipateInExistingTransactionIfPossible) {
 			// Try to participate in txn if it's available
 			Connection connection = null;
 
@@ -725,8 +745,8 @@ public class Database {
 			try (Connection connection = getDataSource().getConnection()) {
 				acquiredConnection = true;
 				return rawConnectionOperation.perform(connection);
-			} catch(Exception e) {
-				if(acquiredConnection)
+			} catch (Exception e) {
+				if (acquiredConnection)
 					throw new DatabaseException(e);
 				else
 					throw new DatabaseException("Unable to acquire database connection", e);

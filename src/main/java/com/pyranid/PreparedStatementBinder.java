@@ -27,7 +27,7 @@ import java.util.List;
  * @since 1.0.0
  */
 @FunctionalInterface
-public interface PreparedStatementBinder {
+interface PreparedStatementBinder {
 	/**
 	 * Binds parameters to a SQL prepared statement.
 	 *
