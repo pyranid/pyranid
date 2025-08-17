@@ -25,12 +25,15 @@ import javax.sql.DataSource;
 import java.math.BigDecimal;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
 /**
@@ -38,11 +41,13 @@ import static java.util.Objects.requireNonNull;
  * @since 2.0.0
  */
 public class DatabaseTests {
-	public record EmployeeRecord(@DatabaseColumn("name") String displayName, String emailAddress) {}
+	public record EmployeeRecord(@DatabaseColumn("name") String displayName, String emailAddress, Locale locale) {}
 
 	public static class EmployeeClass {
 		private @DatabaseColumn("name") String displayName;
 		private String emailAddress;
+		private Locale locale;
+		private @DatabaseColumn("locale") String rawLocale;
 
 		public String getDisplayName() {
 			return this.displayName;
@@ -59,16 +64,32 @@ public class DatabaseTests {
 		public void setEmailAddress(String emailAddress) {
 			this.emailAddress = emailAddress;
 		}
+
+		public Locale getLocale() {
+			return this.locale;
+		}
+
+		public void setLocale(Locale locale) {
+			this.locale = locale;
+		}
+
+		public String getRawLocale() {
+			return this.rawLocale;
+		}
+
+		public void setRawLocale(String rawLocale) {
+			this.rawLocale = rawLocale;
+		}
 	}
 
 	@Test
 	public void testBasicQueries() {
-		Database database = Database.forDataSource(createInMemoryDataSource()).build();
+		Database database = Database.forDataSource(createInMemoryDataSource("testBasicQueries")).build();
 
 		createTestSchema(database);
 
-		database.execute("INSERT INTO employee VALUES (1, 'Employee One', 'employee-one@company.com')");
-		database.execute("INSERT INTO employee VALUES (2, 'Employee Two', NULL)");
+		database.execute("INSERT INTO employee VALUES (1, 'Employee One', 'employee-one@company.com', NULL)");
+		database.execute("INSERT INTO employee VALUES (2, 'Employee Two', NULL, NULL)");
 
 		List<EmployeeRecord> employeeRecords = database.queryForList("SELECT * FROM employee ORDER BY name", EmployeeRecord.class);
 		Assert.assertEquals("Wrong number of employees", 2, employeeRecords.size());
@@ -83,7 +104,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testTransactions() {
-		Database database = Database.forDataSource(createInMemoryDataSource()).build();
+		Database database = Database.forDataSource(createInMemoryDataSource("testTransactions")).build();
 
 		database.execute("CREATE TABLE product (product_id BIGINT, name VARCHAR(255) NOT NULL, price DECIMAL)");
 
@@ -121,7 +142,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testCustomDatabase() {
-		DataSource dataSource = createInMemoryDataSource();
+		DataSource dataSource = createInMemoryDataSource("testCustomDatabase");
 
 		// Override JVM default timezone
 		ZoneId timeZone = ZoneId.of("UTC");
@@ -153,15 +174,17 @@ public class DatabaseTests {
 			}
 		};
 
-		PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder(timeZone) {
+		PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder(DatabaseType.GENERIC, timeZone) {
 			@Override
-			public <T> void bind(@Nonnull StatementContext<T> statementContext,
-													 @Nonnull PreparedStatement preparedStatement,
-													 @Nonnull List<Object> parameters) {
+			public <T> void bindParameter(@Nonnull StatementContext<T> statementContext,
+																		@Nonnull PreparedStatement preparedStatement,
+																		@Nonnull Object parameter,
+																		@Nonnull Integer parameterIndex) throws SQLException {
 				if (Objects.equals("employee-query", statementContext.getStatement().getId()))
-					System.out.printf("Binding Employee Query: %s\n", statementContext);
+					System.out.printf("Binding Employee Query parameter %d (%s): Statement context was %s\n",
+							parameterIndex, parameter, statementContext);
 
-				super.bind(statementContext, preparedStatement, parameters);
+				super.bindParameter(statementContext, preparedStatement, parameter, parameterIndex);
 			}
 		};
 
@@ -184,8 +207,8 @@ public class DatabaseTests {
 
 		createTestSchema(customDatabase);
 
-		customDatabase.execute("INSERT INTO employee VALUES (?, 'Employee One', 'employee-one@company.com')", 1);
-		customDatabase.execute("INSERT INTO employee VALUES (2, 'Employee Two', NULL)");
+		customDatabase.execute("INSERT INTO employee VALUES (?, 'Employee One', 'employee-one@company.com', NULL)", 1);
+		customDatabase.execute("INSERT INTO employee VALUES (2, 'Employee Two', NULL, NULL)");
 
 		List<EmployeeRecord> employeeRecords = customDatabase.queryForList("SELECT * FROM employee ORDER BY name", EmployeeRecord.class);
 		Assert.assertEquals("Wrong number of employees", 2, employeeRecords.size());
@@ -204,26 +227,45 @@ public class DatabaseTests {
 		Assert.assertNotNull("Could not find employee", employee);
 
 		List<List<Object>> parameterGroups = List.of(
-				List.of(3, "Employee Three", "employee-three@company.com"),
-				List.of(4, "Employee Four", "employee-four@company.com")
+				List.of(3, "Employee Three", "employee-three@company.com", Locale.US),
+				List.of(4, "Employee Four", "employee-four@company.com", Locale.JAPAN)
 		);
 
-		List<Long> updateCounts = customDatabase.executeBatch("INSERT INTO employee VALUES (?,?,?)", parameterGroups);
+		List<Long> updateCounts = customDatabase.executeBatch("INSERT INTO employee VALUES (?,?,?,?)", parameterGroups);
 
 		Assert.assertEquals("Wrong number of update counts", 2, updateCounts.size());
 		Assert.assertEquals("Wrong update count 1", 1, (long) updateCounts.get(0));
 		Assert.assertEquals("Wrong update count 2", 1, (long) updateCounts.get(1));
+
+		EmployeeClass employeeWithLocale = customDatabase.queryForObject("""
+				SELECT *
+				FROM employee
+				WHERE email_address=?
+				""", EmployeeClass.class, "employee-three@company.com").orElse(null);
+
+		Assert.assertNotNull("Unable to fetch employee with locale", employeeWithLocale);
+		Assert.assertEquals("Locale mismatch", Locale.US, employeeWithLocale.getLocale());
+		Assert.assertEquals("Raw locale mismatch", "en-US", employeeWithLocale.getRawLocale());
 	}
 
 	protected void createTestSchema(@Nonnull Database database) {
 		requireNonNull(database);
-		database.execute("CREATE TABLE employee (employee_id BIGINT, name VARCHAR(255) NOT NULL, email_address VARCHAR(255))");
+		database.execute("""
+				CREATE TABLE employee (
+				  employee_id BIGINT,
+				  name VARCHAR(255) NOT NULL,
+				  email_address VARCHAR(255),
+				  locale VARCHAR(255)
+				)
+				""");
 	}
 
 	@Nonnull
-	protected DataSource createInMemoryDataSource() {
+	protected DataSource createInMemoryDataSource(@Nonnull String databaseName) {
+		requireNonNull(databaseName);
+
 		JDBCDataSource dataSource = new JDBCDataSource();
-		dataSource.setUrl("jdbc:hsqldb:mem:example");
+		dataSource.setUrl(format("jdbc:hsqldb:mem:%s", databaseName));
 		dataSource.setUser("sa");
 		dataSource.setPassword("");
 

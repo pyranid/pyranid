@@ -696,7 +696,7 @@ public class Database {
 				Object parameter = parameters.get(i);
 
 				if (parameter != null)
-					getPreparedStatementParameterBinder().bind(statementContext, preparedStatement, parameter, i + 1);
+					getPreparedStatementBinder().bindParameter(statementContext, preparedStatement, parameter, i + 1);
 				else
 					preparedStatement.setObject(i + 1, parameter);
 			}
