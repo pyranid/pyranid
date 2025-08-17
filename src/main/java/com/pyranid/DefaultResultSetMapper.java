@@ -82,28 +82,31 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 			new ConcurrentHashMap<>();
 
 	/**
-	 * Creates a {@code ResultSetMapper} with default configuration.
+	 * Enables per-column {@link ResultSet} mapping customization.
 	 */
-	public DefaultResultSetMapper() {
-		this(null, null);
-	}
-
-	/**
-	 * Creates a {@code ResultSetMapper} for the given {@code databaseType}.
-	 *
-	 * @param databaseType the type of database we're working with
-	 */
-	public DefaultResultSetMapper(@Nullable DatabaseType databaseType) {
-		this(databaseType, null);
-	}
-
-	/**
-	 * Creates a {@code ResultSetMapper} for the given {@code timeZone}.
-	 *
-	 * @param timeZone the timezone to use when working with {@link java.sql.Timestamp} and similar values
-	 */
-	public DefaultResultSetMapper(@Nullable ZoneId timeZone) {
-		this(null, timeZone);
+	@FunctionalInterface
+	public interface ColumnMappingCustomizer {
+		/**
+		 * Return Optional.of(mapped) to short-circuit default mapping,
+		 * or Optional.empty() to let DefaultResultSetMapper proceed.
+		 *
+		 * @param statementContext    current SQL context
+		 * @param resultSet           provides raw row data to pull from*
+		 * @param resultSetColumnType the type to which the {@link ResultSet} column should be marshaled
+		 * @param originalValue       the already-read value
+		 * @param columnIndex         1-based column index, if available
+		 * @param columnLabel         normalized column label, if available
+		 * @param instanceProvider    instance-creation factory, may be used to instantiate values
+		 * @return an {@link Optional} which holds the preferred value for this {@link ResultSet} column, or {@link Optional#empty()} to fall back to default mapping
+		 */
+		@Nonnull
+		Optional<?> map(@Nonnull StatementContext<?> statementContext,
+										@Nonnull ResultSet resultSet,
+										@Nonnull Class<?> resultSetColumnType,
+										@Nonnull Object originalValue,
+										@Nullable Integer columnIndex,
+										@Nullable String columnLabel,
+										@Nonnull InstanceProvider instanceProvider) throws SQLException;
 	}
 
 	/**
@@ -111,7 +114,6 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 *
 	 * @param databaseType the type of database we're working with
 	 * @param timeZone     the timezone to use when working with {@link java.sql.Timestamp} and similar values
-	 * @since 1.0.15
 	 */
 	public DefaultResultSetMapper(@Nullable DatabaseType databaseType,
 																@Nullable ZoneId timeZone) {
