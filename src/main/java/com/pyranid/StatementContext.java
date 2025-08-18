@@ -134,18 +134,7 @@ public class StatementContext<T> {
 		requireNonNull(statement);
 		requireNonNull(database);
 
-		return new Builder<>(statement, database.getDatabaseType(), database.getTimeZone());
-	}
-
-	@Nonnull
-	public static <T> Builder<T> with(@Nonnull Statement statement,
-																		@Nonnull DatabaseType databaseType,
-																		@Nonnull ZoneId timeZone) {
-		requireNonNull(statement);
-		requireNonNull(databaseType);
-		requireNonNull(timeZone);
-
-		return new Builder<>(statement, databaseType, timeZone);
+		return new Builder<>(statement, database);
 	}
 
 	/**
@@ -170,15 +159,13 @@ public class StatementContext<T> {
 		private Class<T> resultSetRowType;
 
 		private Builder(@Nonnull Statement statement,
-										@Nonnull DatabaseType databaseType,
-										@Nonnull ZoneId timeZone) {
+										@Nonnull Database database) {
 			requireNonNull(statement);
-			requireNonNull(databaseType);
-			requireNonNull(timeZone);
+			requireNonNull(database);
 
 			this.statement = statement;
-			this.databaseType = databaseType;
-			this.timeZone = timeZone;
+			this.databaseType = database.getDatabaseType();
+			this.timeZone = database.getTimeZone();
 		}
 
 		@Nonnull
