@@ -388,7 +388,7 @@ public class Database {
 		requireNonNull(resultSetRowType);
 
 		List<T> list = new ArrayList<>();
-		StatementContext<T> statementContext = new StatementContext.Builder<T>(statement)
+		StatementContext<T> statementContext = StatementContext.<T>with(statement, this)
 				.resultSetRowType(resultSetRowType)
 				.parameters(parameters)
 				.build();
@@ -444,7 +444,7 @@ public class Database {
 		requireNonNull(statement);
 
 		ResultHolder<Long> resultHolder = new ResultHolder<>();
-		StatementContext<Void> statementContext = new StatementContext.Builder<>(statement)
+		StatementContext<Void> statementContext = StatementContext.with(statement, this)
 				.parameters(parameters)
 				.build();
 
@@ -604,7 +604,7 @@ public class Database {
 		requireNonNull(parameterGroups);
 
 		ResultHolder<List<Long>> resultHolder = new ResultHolder<>();
-		StatementContext<List<Long>> statementContext = new StatementContext.Builder<>(statement)
+		StatementContext<List<Long>> statementContext = StatementContext.with(statement, this)
 				.parameters((List) parameterGroups)
 				.resultSetRowType(List.class)
 				.build();
@@ -709,6 +709,22 @@ public class Database {
 	protected interface RawConnectionOperation<R> {
 		@Nonnull
 		Optional<R> perform(@Nonnull Connection connection) throws Exception;
+	}
+
+	/**
+	 * @since 2.1.0
+	 */
+	@Nonnull
+	public DatabaseType getDatabaseType() {
+		return this.databaseType;
+	}
+
+	/**
+	 * @since 2.1.0
+	 */
+	@Nonnull
+	public ZoneId getTimeZone() {
+		return this.timeZone;
 	}
 
 	/**

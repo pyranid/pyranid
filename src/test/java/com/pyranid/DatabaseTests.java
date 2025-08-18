@@ -26,7 +26,13 @@ import java.math.BigDecimal;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -248,6 +254,120 @@ public class DatabaseTests {
 		Assert.assertEquals("Raw locale mismatch", "en-US", employeeWithLocale.getRawLocale());
 	}
 
+	@Test
+	public void testDateAndTimeRoundTrips() {
+		DataSource ds = createInMemoryDataSource("dt_roundtrips");
+		ZoneId zone = ZoneId.of("America/New_York");
+
+		Database db = Database.forDataSource(ds)
+				.timeZone(zone)
+				.build();
+
+		// DATE <-> LocalDate
+		LocalDate ld = LocalDate.of(2020, 1, 2);
+		LocalDate ldRoundTrip = db.queryForObject("SELECT CAST(? AS DATE) FROM (VALUES (0)) AS t(x)", LocalDate.class, ld).get();
+		Assert.assertEquals(ld, ldRoundTrip);
+
+		// TIME <-> LocalTime (use second precision to avoid driver quirks)
+		LocalTime lt = LocalTime.of(3, 4, 5);
+		LocalTime ltRoundTrip = db.queryForObject("SELECT CAST(? AS TIME) FROM (VALUES (0)) AS t(x)", LocalTime.class, lt).get();
+		Assert.assertEquals(lt, ltRoundTrip);
+	}
+
+	@Test
+	public void testTimestampRoundTripsAllJavaTimeFlavors() {
+		DataSource ds = createInMemoryDataSource("ts_roundtrips");
+		ZoneId zone = ZoneId.of("America/New_York");
+
+		Database db = Database.forDataSource(ds)
+				.timeZone(zone)
+				.build();
+
+		// 1) LocalDateTime param
+		LocalDateTime ldt = LocalDateTime.of(2020, 1, 2, 3, 4, 5, 123_000_000); // 123ms for JDBC-friendly precision
+		// LocalDateTime -> TIMESTAMP -> LocalDateTime
+		LocalDateTime ldtRoundTrip = db.queryForObject("SELECT CAST(? AS TIMESTAMP) FROM (VALUES (0)) AS t(x)", LocalDateTime.class, ldt).get();
+		Assert.assertEquals("LocalDateTime round-trip mismatch", ldt, ldtRoundTrip);
+		// LocalDateTime -> TIMESTAMP -> Instant (interpreted in DB zone)
+		Instant expectedFromLdt = ldt.atZone(zone).toInstant().truncatedTo(ChronoUnit.MILLIS);
+		Instant instFromLdt = db.queryForObject("SELECT CAST(? AS TIMESTAMP) FROM (VALUES (0)) AS t(x)", Instant.class, ldt).get().truncatedTo(ChronoUnit.MILLIS);
+		Assert.assertEquals("LocalDateTime→Instant mapping mismatch", expectedFromLdt, instFromLdt);
+
+		// 2) Instant param
+		Instant instant = Instant.parse("2020-01-02T08:09:10.123Z");
+		// Instant -> TIMESTAMP -> Instant (should be identity)
+		Instant instRoundTrip = db.queryForObject("SELECT CAST(? AS TIMESTAMP) FROM (VALUES (0)) AS t(x)", Instant.class, instant).get().truncatedTo(ChronoUnit.MILLIS);
+		Assert.assertEquals("Instant round-trip mismatch", instant.truncatedTo(ChronoUnit.MILLIS), instRoundTrip);
+		// Instant -> TIMESTAMP -> LocalDateTime (in DB zone)
+		LocalDateTime expectedLdtFromInstant = LocalDateTime.ofInstant(instant, zone);
+		LocalDateTime ldtFromInstant = db.queryForObject("SELECT CAST(? AS TIMESTAMP) FROM (VALUES (0)) AS t(x)", LocalDateTime.class, instant).get();
+		Assert.assertEquals("Instant→LocalDateTime mapping mismatch", expectedLdtFromInstant, ldtFromInstant);
+
+		// 3) OffsetDateTime param (use odd offset and nanos to ensure normalization)
+		OffsetDateTime odt = OffsetDateTime.parse("2020-01-02T08:09:10.123456789-03:00");
+		Instant expectedFromOdt = odt.toInstant().truncatedTo(ChronoUnit.MILLIS);
+		Instant instFromOdt = db.queryForObject("SELECT CAST(? AS TIMESTAMP) FROM (VALUES (0)) AS t(x)", Instant.class, odt).get().truncatedTo(ChronoUnit.MILLIS);
+		Assert.assertEquals("OffsetDateTime→Instant mapping mismatch", expectedFromOdt, instFromOdt);
+		LocalDateTime expectedLdtFromOdt = LocalDateTime.ofInstant(odt.toInstant(), zone);
+		LocalDateTime ldtFromOdt = db.queryForObject("SELECT CAST(? AS TIMESTAMP) FROM (VALUES (0)) AS t(x)", LocalDateTime.class, odt).get();
+		Assert.assertEquals("OffsetDateTime→LocalDateTime mapping mismatch", truncate(expectedLdtFromOdt, ChronoUnit.MICROS), truncate(ldtFromOdt, ChronoUnit.MICROS));
+	}
+
+	@Test
+	public void testTimestampLiteralMappingRespectsDatabaseTimeZone() {
+		// Same SQL literal interpreted under two different DB zones
+		LocalDateTime ldt = LocalDateTime.of(2020, 1, 2, 3, 4, 5, 123_000_000);
+
+		// NY DB
+		DataSource dsNY = createInMemoryDataSource("ts_literal_ny");
+		ZoneId ny = ZoneId.of("America/New_York");
+		Database dbNY = Database.forDataSource(dsNY).timeZone(ny).build();
+		Instant expectedNY = ldt.atZone(ny).toInstant().truncatedTo(ChronoUnit.MILLIS);
+		Instant gotNY = dbNY.queryForObject("SELECT TIMESTAMP '2020-01-02 03:04:05.123' FROM (VALUES (0)) AS t(x)", Instant.class).get()
+				.truncatedTo(ChronoUnit.MILLIS);
+		Assert.assertEquals("NY literal TIMESTAMP→Instant mismatch", expectedNY, gotNY);
+
+		// But LocalDateTime should be the literal value regardless of zone
+		LocalDateTime gotNYLdt = dbNY.queryForObject("SELECT TIMESTAMP '2020-01-02 03:04:05.123' FROM (VALUES (0)) AS t(x)", LocalDateTime.class).get();
+		Assert.assertEquals("NY literal TIMESTAMP→LocalDateTime mismatch", ldt, gotNYLdt);
+
+		// UTC DB
+		DataSource dsUTC = createInMemoryDataSource("ts_literal_utc");
+		ZoneId utc = ZoneId.of("UTC");
+		Database dbUTC = Database.forDataSource(dsUTC).timeZone(utc).build();
+		Instant expectedUTC = ldt.atZone(utc).toInstant().truncatedTo(ChronoUnit.MILLIS);
+		Instant gotUTC = dbUTC.queryForObject("SELECT TIMESTAMP '2020-01-02 03:04:05.123' FROM (VALUES (0)) AS t(x)", Instant.class).get()
+				.truncatedTo(ChronoUnit.MILLIS);
+
+		Assert.assertEquals("UTC literal TIMESTAMP→Instant mismatch", expectedUTC, gotUTC);
+		LocalDateTime gotUTCLdt = dbUTC.queryForObject("SELECT TIMESTAMP '2020-01-02 03:04:05.123' FROM (VALUES (0)) AS t(x)", LocalDateTime.class).get();
+		Assert.assertEquals("UTC literal TIMESTAMP→LocalDateTime mismatch", ldt, gotUTCLdt);
+	}
+
+	@Test
+	public void testLegacySqlTypesRoundTrip() {
+		DataSource ds = createInMemoryDataSource("legacy_sql_types");
+		ZoneId zone = ZoneId.of("America/New_York");
+		Database db = Database.forDataSource(ds).timeZone(zone).build();
+
+		// java.sql.Timestamp
+		java.sql.Timestamp ts = java.sql.Timestamp.valueOf("2020-01-02 03:04:05.123");
+		Instant instFromSqlTs = db.queryForObject("SELECT CAST(? AS TIMESTAMP) FROM (VALUES (0)) AS t(x)", Instant.class, ts).get().truncatedTo(ChronoUnit.MILLIS);
+		Assert.assertEquals("java.sql.Timestamp→Instant mismatch",
+				ts.toInstant().truncatedTo(ChronoUnit.MILLIS), instFromSqlTs);
+
+		// java.sql.Date
+		java.sql.Date sqlDate = java.sql.Date.valueOf("2020-01-02");
+		LocalDate ldFromSqlDate = db.queryForObject("SELECT CAST(? AS DATE) FROM (VALUES (0)) AS t(x)", LocalDate.class, sqlDate).get();
+		Assert.assertEquals("java.sql.Date→LocalDate mismatch", sqlDate.toLocalDate(), ldFromSqlDate);
+
+		// java.sql.Time
+		java.sql.Time sqlTime = java.sql.Time.valueOf("03:04:05");
+		LocalTime ltFromSqlTime = db.queryForObject("SELECT CAST(? AS TIME) FROM (VALUES (0)) AS t(x)", LocalTime.class, sqlTime).get();
+		Assert.assertEquals("java.sql.Time→LocalTime mismatch", sqlTime.toLocalTime(), ltFromSqlTime);
+	}
+
+
 	protected void createTestSchema(@Nonnull Database database) {
 		requireNonNull(database);
 		database.execute("""
@@ -270,5 +390,19 @@ public class DatabaseTests {
 		dataSource.setPassword("");
 
 		return dataSource;
+	}
+
+	@Nonnull
+	protected LocalDateTime truncate(@Nonnull LocalDateTime localDateTime,
+																	 @Nonnull ChronoUnit chronoUnit) {
+		requireNonNull(localDateTime);
+		requireNonNull(chronoUnit);
+
+		return switch (chronoUnit) {
+			case NANOS -> localDateTime; // no-op
+			case MICROS -> localDateTime.withNano((localDateTime.getNano() / 1_000) * 1_000);
+			case MILLIS -> localDateTime.truncatedTo(ChronoUnit.MILLIS);
+			default -> localDateTime;
+		};
 	}
 }

@@ -31,7 +31,9 @@ import java.math.BigInteger;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Timestamp;
+import java.sql.Types;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -39,6 +41,10 @@ import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.OffsetTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Currency;
@@ -134,7 +140,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(instanceProvider);
 
 		try {
-			StandardTypeResult<T> standardTypeResult = mapResultSetToStandardType(resultSet, resultSetRowType);
+			StandardTypeResult<T> standardTypeResult = mapResultSetToStandardType(statementContext, resultSet, resultSetRowType);
 
 			if (standardTypeResult.isStandardType())
 				return standardTypeResult.getValue();
@@ -166,8 +172,10 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 */
 	@SuppressWarnings({"unchecked", "rawtypes"})
 	@Nonnull
-	protected <T> StandardTypeResult<T> mapResultSetToStandardType(@Nonnull ResultSet resultSet,
+	protected <T> StandardTypeResult<T> mapResultSetToStandardType(@Nonnull StatementContext<T> statementContext,
+																																 @Nonnull ResultSet resultSet,
 																																 @Nonnull Class<T> resultClass) throws Exception {
+		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(resultClass);
 
@@ -222,15 +230,20 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 			if (timestamp != null)
 				value = timestamp.toInstant();
 		} else if (resultClass.isAssignableFrom(LocalDate.class)) {
-			value = resultSet.getObject(1); // DATE
+			// DATE
+			value = TemporalReaders.asLocalDate(resultSet, 1);
 		} else if (resultClass.isAssignableFrom(LocalTime.class)) {
-			value = resultSet.getObject(1); // TIME
+			// TIME
+			value = TemporalReaders.asLocalTime(resultSet, 1);
 		} else if (resultClass.isAssignableFrom(LocalDateTime.class)) {
-			value = resultSet.getObject(1); // TIMESTAMP
+			// TIMESTAMP
+			value = TemporalReaders.asLocalDateTime(resultSet, 1, statementContext);
 		} else if (resultClass.isAssignableFrom(OffsetTime.class)) {
-			value = resultSet.getObject(1); // TIME WITH TIMEZONE
+			// TIME WITH TIMEZONE
+			value = TemporalReaders.asOffsetTime(resultSet, 1, statementContext);
 		} else if (resultClass.isAssignableFrom(OffsetDateTime.class)) {
-			value = resultSet.getObject(1); // TIMESTAMP WITH TIMEZONE
+			// TIMESTAMP WITH TIMEZONE
+			value = TemporalReaders.asOffsetDateTime(resultSet, 1, statementContext);
 		} else if (resultClass.isAssignableFrom(java.sql.Date.class)) {
 			value = resultSet.getDate(1, getTimeZoneCalendar());
 		} else if (resultClass.isAssignableFrom(ZoneId.class)) {
@@ -737,6 +750,212 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		@Nonnull
 		public Boolean isStandardType() {
 			return this.standardType;
+		}
+	}
+
+	@ThreadSafe
+	protected static final class TemporalReaders {
+		private TemporalReaders() {}
+
+		/**
+		 * Detect if the current column is TIMESTAMP WITH TIME ZONE (or equivalent)
+		 */
+		public static boolean isTimestampWithTimeZone(ResultSetMetaData md, int col, DatabaseType dbType) throws SQLException {
+			int jdbcType = md.getColumnType(col);
+			if (jdbcType == Types.TIMESTAMP_WITH_TIMEZONE) return true;
+
+			@Nullable String typeName = md.getColumnTypeName(col);
+			if (typeName == null) return false;
+			String u = typeName.toUpperCase(Locale.ROOT);
+
+			// Heuristics for drivers that still report plain TIMESTAMP:
+			// PostgreSQL: TIMESTAMPTZ, "timestamp with time zone"
+			// Oracle: "TIMESTAMP WITH TIME ZONE"
+			// HSQLDB: "TIMESTAMP WITH TIME ZONE"
+			return u.contains("WITH TIME ZONE") || u.contains("TIMESTAMPTZ");
+		}
+
+		public static boolean isTimeWithTimeZone(ResultSetMetaData md, int col) throws SQLException {
+			int jdbcType = md.getColumnType(col);
+			if (jdbcType == Types.TIME_WITH_TIMEZONE) return true;
+			@Nullable String name = md.getColumnTypeName(col);
+			return name != null && name.toUpperCase(Locale.ROOT).contains("TIME WITH TIME ZONE");
+		}
+
+		/**
+		 * Try JDBC 4.2 getObject; return null if unsupported.
+		 */
+		@Nullable
+		public static <T> T tryGet(ResultSet rs, int col, Class<T> cls) throws SQLException {
+			try {
+				return rs.getObject(col, cls);
+			} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
+				return null;
+			}
+		}
+
+		/**
+		 * Normalize to millisecond precision to avoid test flakiness across drivers.
+		 */
+		public static Instant toMillis(Instant inst) {
+			return inst == null ? null : inst.truncatedTo(ChronoUnit.MILLIS);
+		}
+
+		// ==== Targeted readers =====================================================
+
+		public static Instant asInstant(ResultSet rs, int col, StatementContext<?> ctx) throws SQLException {
+			ResultSetMetaData md = rs.getMetaData();
+			boolean withTz = isTimestampWithTimeZone(md, col, ctx.getDatabaseType());
+
+			// Modern fast-path
+			if (withTz) {
+				OffsetDateTime odt = tryGet(rs, col, OffsetDateTime.class);
+				if (odt != null) return toMillis(odt.toInstant());
+			} else {
+				LocalDateTime ldt = tryGet(rs, col, LocalDateTime.class);
+				if (ldt != null) return toMillis(ldt.atZone(ctx.getTimeZone()).toInstant());
+			}
+
+			// Tolerant fallbacks
+			Object raw = rs.getObject(col);
+			if (raw == null) return null;
+
+			if (raw instanceof Timestamp ts) {
+				// DO NOT use ts.toInstant() for WITHOUT TZ; interpret using DB zone
+				LocalDateTime ldt = ts.toLocalDateTime();
+				return toMillis(ldt.atZone(ctx.getTimeZone()).toInstant());
+			}
+			if (raw instanceof OffsetDateTime odt) return toMillis(odt.toInstant());
+			if (raw instanceof LocalDateTime ldt) return toMillis(ldt.atZone(ctx.getTimeZone()).toInstant());
+			if (raw instanceof String s) {
+				// ISO-8601 string literal? Try parse to OffsetDateTime / LocalDateTime.
+				try {
+					return toMillis(OffsetDateTime.parse(s).toInstant());
+				} catch (DateTimeParseException ignore) {
+				}
+				try {
+					return toMillis(LocalDateTime.parse(s).atZone(ctx.getTimeZone()).toInstant());
+				} catch (DateTimeParseException ignore) {
+				}
+			}
+
+			// Last resort: try classic getter
+			Timestamp ts = rs.getTimestamp(col);
+			if (ts != null) {
+				LocalDateTime ldt = ts.toLocalDateTime();
+				return toMillis(ldt.atZone(ctx.getTimeZone()).toInstant());
+			}
+			return null;
+		}
+
+		public static OffsetDateTime asOffsetDateTime(ResultSet rs, int col, StatementContext<?> ctx) throws SQLException {
+			ResultSetMetaData md = rs.getMetaData();
+			boolean withTz = isTimestampWithTimeZone(md, col, ctx.getDatabaseType());
+
+			OffsetDateTime got = tryGet(rs, col, OffsetDateTime.class);
+			if (got != null) return got;
+
+			if (withTz) {
+				// Try via Instant if driver only gives us Timestamp
+				Instant inst = asInstant(rs, col, ctx);
+				return inst == null ? null : inst.atOffset(ctx.getTimeZone().getRules().getOffset(inst));
+			} else {
+				LocalDateTime ldt = tryGet(rs, col, LocalDateTime.class);
+				if (ldt == null) {
+					Timestamp ts = rs.getTimestamp(col);
+					ldt = ts == null ? null : ts.toLocalDateTime();
+				}
+				if (ldt == null) return null;
+				ZoneOffset off = ctx.getTimeZone().getRules().getOffset(ldt.atZone(ctx.getTimeZone()).toInstant());
+				return ldt.atOffset(off);
+			}
+		}
+
+		public static ZonedDateTime asZonedDateTime(ResultSet rs, int col, StatementContext<?> ctx) throws SQLException {
+			Instant inst = asInstant(rs, col, ctx);
+			return inst == null ? null : inst.atZone(ctx.getTimeZone());
+		}
+
+		public static LocalDateTime asLocalDateTime(ResultSet rs, int col, StatementContext<?> ctx) throws SQLException {
+			ResultSetMetaData md = rs.getMetaData();
+			boolean withTz = isTimestampWithTimeZone(md, col, ctx.getDatabaseType());
+
+			LocalDateTime ldt = tryGet(rs, col, LocalDateTime.class);
+			if (ldt != null) return ldt;
+
+			Object raw = rs.getObject(col);
+			if (raw == null) return null;
+
+			if (raw instanceof Timestamp ts) return ts.toLocalDateTime();
+			if (raw instanceof OffsetDateTime odt) {
+				// normalize into DB zone then drop zone for stable wall time
+				return odt.atZoneSameInstant(ctx.getTimeZone()).toLocalDateTime();
+			}
+			if (raw instanceof Instant inst) return inst.atZone(ctx.getTimeZone()).toLocalDateTime();
+			if (raw instanceof String s) {
+				try {
+					return LocalDateTime.parse(s);
+				} catch (DateTimeParseException ignore) {
+				}
+				try {
+					return OffsetDateTime.parse(s).atZoneSameInstant(ctx.getTimeZone()).toLocalDateTime();
+				} catch (DateTimeParseException ignore) {
+				}
+			}
+
+			if (withTz) {
+				OffsetDateTime odt2 = tryGet(rs, col, OffsetDateTime.class);
+				if (odt2 != null) return odt2.atZoneSameInstant(ctx.getTimeZone()).toLocalDateTime();
+			}
+
+			Timestamp ts = rs.getTimestamp(col);
+			return ts == null ? null : ts.toLocalDateTime();
+		}
+
+		public static LocalDate asLocalDate(ResultSet rs, int col) throws SQLException {
+			LocalDate d = tryGet(rs, col, LocalDate.class);
+			if (d != null) return d;
+			Object raw = rs.getObject(col);
+			if (raw == null) return null;
+			if (raw instanceof java.sql.Date sqlDate) return sqlDate.toLocalDate();
+			if (raw instanceof String s) {
+				try {
+					return LocalDate.parse(s);
+				} catch (DateTimeParseException ignore) {
+				}
+			}
+			java.sql.Date d2 = rs.getDate(col);
+			return d2 == null ? null : d2.toLocalDate();
+		}
+
+		public static LocalTime asLocalTime(ResultSet rs, int col) throws SQLException {
+			LocalTime t = tryGet(rs, col, LocalTime.class);
+			if (t != null) return t;
+			Object raw = rs.getObject(col);
+			if (raw == null) return null;
+			if (raw instanceof java.sql.Time sqlTime) return sqlTime.toLocalTime();
+			if (raw instanceof String s) {
+				try {
+					return LocalTime.parse(s);
+				} catch (DateTimeParseException ignore) {
+				}
+			}
+			java.sql.Time t2 = rs.getTime(col);
+			return t2 == null ? null : t2.toLocalTime();
+		}
+
+		public static OffsetTime asOffsetTime(ResultSet rs, int col, StatementContext<?> ctx) throws SQLException {
+			if (isTimeWithTimeZone(rs.getMetaData(), col)) {
+				OffsetTime ot = tryGet(rs, col, OffsetTime.class);
+				if (ot != null) return ot;
+			}
+			// If DB has plain TIME, attach DB zone offset at an arbitrary date (offset depends on date!)
+			LocalTime lt = asLocalTime(rs, col);
+			if (lt == null) return null;
+			// Choose an arbitrary date with consistent offset, e.g., epoch day 0 in DB zone
+			Instant now = Instant.now();
+			ZoneOffset off = ctx.getTimeZone().getRules().getOffset(now);
+			return lt.atOffset(off);
 		}
 	}
 }

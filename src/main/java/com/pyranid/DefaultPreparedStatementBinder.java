@@ -21,10 +21,16 @@ import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import java.nio.ByteBuffer;
 import java.sql.Array;
+import java.sql.ParameterMetaData;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Timestamp;
+import java.sql.Types;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.Calendar;
 import java.util.Currency;
@@ -81,7 +87,11 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 		Object normalizedParameter = normalizeParameter(parameter).orElse(null);
 
-		if (normalizedParameter instanceof java.sql.Timestamp) {
+		if (normalizedParameter instanceof LocalTime localTime) {
+			// Some drivers "helpfully" apply a timezone when binding a LocalTime, which will break them in non-UTC tzs.
+			// This ensures the driver uses "CAST(? AS TIME)", which is truly tz-independent.
+			preparedStatement.setString(parameterIndex, localTime.toString());
+		} else if (normalizedParameter instanceof java.sql.Timestamp) {
 			java.sql.Timestamp timestamp = (java.sql.Timestamp) normalizedParameter;
 			preparedStatement.setTimestamp(parameterIndex, timestamp, getTimeZoneCalendar());
 		} else if (normalizedParameter instanceof java.sql.Date) {
@@ -90,12 +100,40 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		} else if (normalizedParameter instanceof java.sql.Time) {
 			java.sql.Time time = (java.sql.Time) normalizedParameter;
 			preparedStatement.setTime(parameterIndex, time, getTimeZoneCalendar());
+		} else if (normalizedParameter instanceof OffsetDateTime offsetDateTime) {
+			int sqlType = determineParameterSqlType(preparedStatement, parameterIndex);
+			boolean bound = false;
+
+			if (sqlType == Types.TIMESTAMP) {
+				// Column/CAST expects *no tz*: normalize to DB zone, drop zone
+				LocalDateTime localDateTime = offsetDateTime.atZoneSameInstant(statementContext.getTimeZone()).toLocalDateTime();
+				try {
+					preparedStatement.setObject(parameterIndex, localDateTime, Types.TIMESTAMP);
+					bound = true;
+				} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
+					preparedStatement.setTimestamp(parameterIndex, Timestamp.valueOf(localDateTime)); // fallback
+				}
+			}
+
+			if (!bound && sqlType == Types.TIMESTAMP_WITH_TIMEZONE) {
+				if (!trySetObject(preparedStatement, parameterIndex, offsetDateTime)) {
+					// Fallback: send ISO-8601 string; CAST(... AS TIMESTAMP WITH TIME ZONE) will parse it
+					preparedStatement.setString(parameterIndex, offsetDateTime.toString());
+				}
+
+				bound = true;
+			}
+
+			// Unknown parameter type: prefer preserving the offset
+			if (!bound && !trySetObject(preparedStatement, parameterIndex, offsetDateTime))
+				preparedStatement.setString(parameterIndex, offsetDateTime.toString());
 		} else if (normalizedParameter instanceof ArrayParameter arrayParameter) {
 			// Normalize each element in the array
 			Object[] normalizedArrayElements = normalizedArrayElements(arrayParameter.getElements());
 			Array array = preparedStatement.getConnection().createArrayOf(arrayParameter.getBaseTypeName(), normalizedArrayElements);
 			preparedStatement.setArray(parameterIndex, array);
-		} else if (normalizedParameter instanceof VectorParameter vectorParameter) {
+		} else if (normalizedParameter instanceof
+				VectorParameter vectorParameter) {
 			if (getDatabaseType() != DatabaseType.POSTGRESQL)
 				throw new IllegalArgumentException(format("%s types are only supported for %s.%s",
 						VectorParameter.class.getSimpleName(), DatabaseType.class.getSimpleName(), DatabaseType.POSTGRESQL.name()));
@@ -118,6 +156,36 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			normalizedElements[j] = normalizeParameter(elements[j]).orElse(null);
 
 		return normalizedElements;
+	}
+
+	@Nonnull
+	protected boolean trySetObject(@Nonnull PreparedStatement preparedStatement,
+																 @Nonnull Integer parameterIndex,
+																 @Nullable Object object) throws SQLException {
+		requireNonNull(preparedStatement);
+		requireNonNull(parameterIndex);
+
+		try {
+			preparedStatement.setObject(parameterIndex, object);
+			return true;
+		} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
+			return false;
+		}
+	}
+
+	protected int determineParameterSqlType(@Nonnull PreparedStatement preparedStatement,
+																					@Nonnull Integer parameterIndex) {
+		requireNonNull(preparedStatement);
+		requireNonNull(parameterIndex);
+
+		try {
+			ParameterMetaData parameterMetaData = preparedStatement.getParameterMetaData();
+			return parameterMetaData != null ? parameterMetaData.getParameterType(parameterIndex) : Integer.MIN_VALUE;
+		} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
+			return Integer.MIN_VALUE;
+		} catch (SQLException e) {
+			return Integer.MIN_VALUE;
+		}
 	}
 
 	@Nonnull
