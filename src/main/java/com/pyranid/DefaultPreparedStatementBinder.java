@@ -50,27 +50,6 @@ import static java.util.Objects.requireNonNull;
  */
 @ThreadSafe
 public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
-	@Nonnull
-	private final DatabaseType databaseType;
-	@Nonnull
-	private final ZoneId timeZone;
-
-	/**
-	 * Creates a {@code DefaultPreparedStatementBinder} for the given {@code databaseType} and DBMS {@code timeZone}.
-	 *
-	 * @param databaseType the type of database we're working with
-	 * @param timeZone     the timezone to use when working with {@link java.sql.Timestamp} and similar values
-	 * @since 2.1.0
-	 */
-	public DefaultPreparedStatementBinder(@Nonnull DatabaseType databaseType,
-																				@Nonnull ZoneId timeZone) {
-		requireNonNull(databaseType);
-		requireNonNull(timeZone);
-
-		this.databaseType = databaseType;
-		this.timeZone = timeZone;
-	}
-
 	@Override
 	public <T> void bindParameter(@Nonnull StatementContext<T> statementContext,
 																@Nonnull PreparedStatement preparedStatement,
@@ -81,7 +60,7 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		requireNonNull(parameter);
 		requireNonNull(parameterIndex);
 
-		Object normalizedParameter = normalizeParameter(parameter).orElse(null);
+		Object normalizedParameter = normalizeParameter(statementContext, parameter).orElse(null);
 
 		if (normalizedParameter instanceof LocalDate localDate) {
 			if (!trySetObject(preparedStatement, parameterIndex, localDate, Types.DATE))
@@ -157,14 +136,14 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		if (normalizedParameter instanceof ArrayParameter arrayParameter) {
-			Object[] normalizedElements = normalizedArrayElements(arrayParameter.getElements());
+			Object[] normalizedElements = normalizedArrayElements(statementContext, arrayParameter.getElements());
 			Array array = preparedStatement.getConnection().createArrayOf(arrayParameter.getBaseTypeName(), normalizedElements);
 			preparedStatement.setArray(parameterIndex, array);
 			return;
 		}
 
 		if (normalizedParameter instanceof VectorParameter vectorParameter) {
-			if (getDatabaseType() != DatabaseType.POSTGRESQL)
+			if (statementContext.getDatabaseType() != DatabaseType.POSTGRESQL)
 				throw new IllegalArgumentException(format("%s supported only on %s.%s",
 						VectorParameter.class.getSimpleName(), DatabaseType.class.getSimpleName(), DatabaseType.POSTGRESQL.name()));
 
@@ -180,11 +159,15 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	}
 
 	@Nonnull
-	protected Object[] normalizedArrayElements(@Nonnull Object[] elements) {
+	protected <T> Object[] normalizedArrayElements(@Nonnull StatementContext<T> statementContext,
+																								 @Nonnull Object[] elements) {
+		requireNonNull(statementContext);
+		requireNonNull(elements);
+
 		Object[] normalizedElements = new Object[elements.length];
 
 		for (int j = 0; j < elements.length; j++)
-			normalizedElements[j] = normalizeParameter(elements[j]).orElse(null);
+			normalizedElements[j] = normalizeParameter(statementContext, elements[j]).orElse(null);
 
 		return normalizedElements;
 	}
@@ -260,11 +243,15 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	 * <p>
 	 * For example, we need to do special work to prepare a {@link UUID} for Oracle.
 	 *
-	 * @param parameter the parameter to (possibly) massage
+	 * @param statementContext current SQL context
+	 * @param parameter        the parameter to (possibly) massage
 	 * @return the result of the massaging process
 	 */
 	@Nonnull
-	protected Optional<Object> normalizeParameter(@Nullable Object parameter) {
+	protected <T> Optional<Object> normalizeParameter(@Nonnull StatementContext<T> statementContext,
+																										@Nullable Object parameter) {
+		requireNonNull(statementContext);
+
 		if (parameter == null)
 			return Optional.empty();
 
@@ -289,7 +276,7 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			return Optional.of(((ZoneId) parameter).getId());
 
 		// Special handling for Oracle
-		if (getDatabaseType() == DatabaseType.ORACLE) {
+		if (statementContext.getDatabaseType() == DatabaseType.ORACLE) {
 			if (parameter instanceof java.util.UUID) {
 				ByteBuffer byteBuffer = ByteBuffer.wrap(new byte[16]);
 				byteBuffer.putLong(((UUID) parameter).getMostSignificantBits());
@@ -299,15 +286,5 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		return Optional.ofNullable(parameter);
-	}
-
-	@Nonnull
-	protected DatabaseType getDatabaseType() {
-		return this.databaseType;
-	}
-
-	@Nonnull
-	protected ZoneId getTimeZone() {
-		return this.timeZone;
 	}
 }

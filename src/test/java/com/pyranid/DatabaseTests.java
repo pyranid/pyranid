@@ -180,7 +180,7 @@ public class DatabaseTests {
 			}
 		};
 
-		PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder(DatabaseType.GENERIC, timeZone) {
+		PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder() {
 			@Override
 			public <T> void bindParameter(@Nonnull StatementContext<T> statementContext,
 																		@Nonnull PreparedStatement preparedStatement,
