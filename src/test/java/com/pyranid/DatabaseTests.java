@@ -166,7 +166,7 @@ public class DatabaseTests {
 			}
 		};
 
-		ResultSetMapper resultSetMapper = new DefaultResultSetMapper(DatabaseType.GENERIC, timeZone) {
+		ResultSetMapper resultSetMapper = new DefaultResultSetMapper() {
 			@Nonnull
 			@Override
 			public <T> Optional<T> map(@Nonnull StatementContext<T> statementContext,

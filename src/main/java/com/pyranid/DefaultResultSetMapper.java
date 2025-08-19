@@ -46,7 +46,6 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
-import java.util.Calendar;
 import java.util.Currency;
 import java.util.Date;
 import java.util.HashMap;
@@ -64,7 +63,6 @@ import static java.lang.String.format;
 import static java.util.Arrays.asList;
 import static java.util.Collections.unmodifiableMap;
 import static java.util.Collections.unmodifiableSet;
-import static java.util.Locale.ENGLISH;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.joining;
 import static java.util.stream.Collectors.toSet;
@@ -78,11 +76,7 @@ import static java.util.stream.Collectors.toSet;
 @ThreadSafe
 public class DefaultResultSetMapper implements ResultSetMapper {
 	@Nonnull
-	private final DatabaseType databaseType;
-	@Nonnull
-	private final ZoneId timeZone;
-	@Nonnull
-	private final Calendar timeZoneCalendar;
+	private final Locale normalizationLocale;
 	@Nonnull
 	private final Map<Class<?>, Map<String, Set<String>>> columnLabelAliasesByPropertyNameCache =
 			new ConcurrentHashMap<>();
@@ -116,16 +110,22 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	/**
-	 * Creates a {@code ResultSetMapper} for the given {@code databaseType} and {@code timeZone}.
-	 *
-	 * @param databaseType the type of database we're working with
-	 * @param timeZone     the timezone to use when working with {@link java.sql.Timestamp} and similar values
+	 * Creates a {@code ResultSetMapper} with an {@link Locale#ENGLISH} {@code normalizationLocale}.
+	 * <p>
+	 * The {@code normalizationLocale} is used when massaging JDBC column names for matching against JavaBean property names.
 	 */
-	public DefaultResultSetMapper(@Nullable DatabaseType databaseType,
-																@Nullable ZoneId timeZone) {
-		this.databaseType = databaseType == null ? DatabaseType.GENERIC : databaseType;
-		this.timeZone = timeZone == null ? ZoneId.systemDefault() : timeZone;
-		this.timeZoneCalendar = Calendar.getInstance(TimeZone.getTimeZone(this.timeZone));
+	public DefaultResultSetMapper() {
+		this(Locale.ENGLISH);
+	}
+
+	/**
+	 * Creates a {@code ResultSetMapper} for the given {@code normalizationLocale}.
+	 *
+	 * @param normalizationLocale The locale to use when massaging JDBC column names for matching against JavaBean property names.
+	 */
+	public DefaultResultSetMapper(@Nonnull Locale normalizationLocale) {
+		requireNonNull(normalizationLocale);
+		this.normalizationLocale = normalizationLocale;
 	}
 
 	@Override
@@ -198,12 +198,9 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 			value = resultSet.getBoolean(1);
 		} else if (resultClass.isAssignableFrom(Character.class) || resultClass.isAssignableFrom(char.class)) {
 			String string = resultSet.getString(1);
-
 			if (string != null)
-				if (string.length() == 1)
-					value = string.charAt(0);
-				else
-					throw new DatabaseException(format("Cannot map String value '%s' to %s", resultClass.getSimpleName()));
+				if (string.length() == 1) value = string.charAt(0);
+				else throw new DatabaseException(format("Cannot map String value '%s' to %s", resultClass.getSimpleName()));
 		} else if (resultClass.isAssignableFrom(String.class)) {
 			value = resultSet.getString(1);
 		} else if (resultClass.isAssignableFrom(byte[].class)) {
@@ -212,87 +209,55 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 			value = Enum.valueOf((Class) resultClass, resultSet.getString(1));
 		} else if (resultClass.isAssignableFrom(UUID.class)) {
 			String string = resultSet.getString(1);
-
-			if (string != null)
-				value = UUID.fromString(string);
+			if (string != null) value = UUID.fromString(string);
 		} else if (resultClass.isAssignableFrom(BigDecimal.class)) {
 			value = resultSet.getBigDecimal(1);
 		} else if (resultClass.isAssignableFrom(BigInteger.class)) {
-			BigDecimal bigDecimal = resultSet.getBigDecimal(1);
-
-			if (bigDecimal != null)
-				value = bigDecimal.toBigInteger();
+			BigDecimal bd = resultSet.getBigDecimal(1);
+			if (bd != null) value = bd.toBigInteger();
 		} else if (resultClass.isAssignableFrom(Date.class)) {
-			value = resultSet.getTimestamp(1, getTimeZoneCalendar());
+			Instant inst = TemporalReaders.asInstant(resultSet, 1, statementContext);
+			value = (inst == null) ? null : Date.from(inst);
 		} else if (resultClass.isAssignableFrom(Instant.class)) {
-			Timestamp timestamp = resultSet.getTimestamp(1, getTimeZoneCalendar());
-
-			if (timestamp != null)
-				value = timestamp.toInstant();
+			value = TemporalReaders.asInstant(resultSet, 1, statementContext);
 		} else if (resultClass.isAssignableFrom(LocalDate.class)) {
-			// DATE
 			value = TemporalReaders.asLocalDate(resultSet, 1);
 		} else if (resultClass.isAssignableFrom(LocalTime.class)) {
-			// TIME
 			value = TemporalReaders.asLocalTime(resultSet, 1);
 		} else if (resultClass.isAssignableFrom(LocalDateTime.class)) {
-			// TIMESTAMP
 			value = TemporalReaders.asLocalDateTime(resultSet, 1, statementContext);
 		} else if (resultClass.isAssignableFrom(OffsetTime.class)) {
-			// TIME WITH TIMEZONE
 			value = TemporalReaders.asOffsetTime(resultSet, 1, statementContext);
 		} else if (resultClass.isAssignableFrom(OffsetDateTime.class)) {
-			// TIMESTAMP WITH TIMEZONE
 			value = TemporalReaders.asOffsetDateTime(resultSet, 1, statementContext);
 		} else if (resultClass.isAssignableFrom(java.sql.Date.class)) {
-			value = resultSet.getDate(1, getTimeZoneCalendar());
+			LocalDate ld = TemporalReaders.asLocalDate(resultSet, 1);
+			value = (ld == null) ? null : java.sql.Date.valueOf(ld);
 		} else if (resultClass.isAssignableFrom(ZoneId.class)) {
 			String zoneId = resultSet.getString(1);
-
-			if (zoneId != null)
-				value = ZoneId.of(zoneId);
+			if (zoneId != null) value = ZoneId.of(zoneId);
 		} else if (resultClass.isAssignableFrom(TimeZone.class)) {
-			String timeZone = resultSet.getString(1);
-
-			if (timeZone != null)
-				value = TimeZone.getTimeZone(timeZone);
+			String tz = resultSet.getString(1);
+			if (tz != null) value = TimeZone.getTimeZone(tz);
 		} else if (resultClass.isAssignableFrom(Locale.class)) {
 			String locale = resultSet.getString(1);
-
-			if (locale != null)
-				value = Locale.forLanguageTag(locale);
+			if (locale != null) value = Locale.forLanguageTag(locale);
 		} else if (resultClass.isAssignableFrom(Currency.class)) {
 			String currency = resultSet.getString(1);
-
-			if (currency != null)
-				value = Currency.getInstance(currency);
+			if (currency != null) value = Currency.getInstance(currency);
 		} else if (resultClass.isEnum()) {
 			value = extractEnumValue(resultClass, resultSet.getObject(1));
-
-			// TODO: revisit java.sql.* handling
-
-			// } else if (resultClass.isAssignableFrom(java.sql.Blob.class)) {
-			// value = resultSet.getBlob(1);
-			// } else if (resultClass.isAssignableFrom(java.sql.Clob.class)) {
-			// value = resultSet.getClob(1);
-			// } else if (resultClass.isAssignableFrom(java.sql.Clob.class)) {
-			// value = resultSet.getClob(1);
-
 		} else {
 			standardType = false;
 		}
 
 		if (standardType) {
 			int columnCount = resultSet.getMetaData().getColumnCount();
-
 			if (columnCount != 1) {
-				List<String> columnLabels = new ArrayList<>(columnCount);
-
-				for (int i = 1; i <= columnCount; ++i)
-					columnLabels.add(resultSet.getMetaData().getColumnLabel(i));
-
+				List<String> labels = new ArrayList<>(columnCount);
+				for (int i = 1; i <= columnCount; ++i) labels.add(resultSet.getMetaData().getColumnLabel(i));
 				throw new DatabaseException(format("Expected 1 column to map to %s but encountered %s instead (%s)",
-						resultClass, columnCount, columnLabels.stream().collect(joining(", "))));
+						resultClass, columnCount, labels.stream().collect(joining(", "))));
 			}
 		}
 
@@ -322,7 +287,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 
 		RecordComponent[] recordComponents = resultSetRowType.getRecordComponents();
 		Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(resultSetRowType);
-		Map<String, Object> columnLabelsToValues = extractColumnLabelsToValues(resultSet);
+		Map<String, Object> columnLabelsToValues = extractColumnLabelsToValues(statementContext, resultSet);
 		Object[] args = new Object[recordComponents.length];
 
 		for (int i = 0; i < recordComponents.length; ++i) {
@@ -342,7 +307,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 			// Set the value for the Record ctor
 			for (String potentialPropertyName : potentialPropertyNames) {
 				if (columnLabelsToValues.containsKey(potentialPropertyName)) {
-					Object value = convertResultSetValueToPropertyType(columnLabelsToValues.get(potentialPropertyName), recordComponentType).orElse(null);
+					Object value = convertResultSetValueToPropertyType(statementContext, columnLabelsToValues.get(potentialPropertyName), recordComponentType).orElse(null);
 
 					if (value != null && !recordComponentType.isAssignableFrom(value.getClass())) {
 						String resultSetTypeDescription = value.getClass().toString();
@@ -386,7 +351,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 
 		T object = instanceProvider.provide(statementContext, resultSetRowType);
 		BeanInfo beanInfo = Introspector.getBeanInfo(resultSetRowType);
-		Map<String, Object> columnLabelsToValues = extractColumnLabelsToValues(resultSet);
+		Map<String, Object> columnLabelsToValues = extractColumnLabelsToValues(statementContext, resultSet);
 		Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(resultSetRowType);
 
 		for (PropertyDescriptor propertyDescriptor : beanInfo.getPropertyDescriptors()) {
@@ -418,7 +383,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 
 			for (String propertyName : propertyNames) {
 				if (columnLabelsToValues.containsKey(propertyName)) {
-					Object value = convertResultSetValueToPropertyType(columnLabelsToValues.get(propertyName), parameter.getType()).orElse(null);
+					Object value = convertResultSetValueToPropertyType(statementContext, columnLabelsToValues.get(propertyName), parameter.getType()).orElse(null);
 					Class<?> writeMethodParameterType = writeMethod.getParameterTypes()[0];
 
 					if (value != null && !writeMethodParameterType.isAssignableFrom(value.getClass())) {
@@ -464,33 +429,42 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@Nonnull
-	protected Map<String, Object> extractColumnLabelsToValues(@Nonnull ResultSet resultSet) throws SQLException {
+	protected <T> Map<String, Object> extractColumnLabelsToValues(@Nonnull StatementContext<T> statementContext,
+																																@Nonnull ResultSet resultSet) throws SQLException {
+		requireNonNull(statementContext);
+		requireNonNull(resultSet);
+
+		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 
 		ResultSetMetaData resultSetMetaData = resultSet.getMetaData();
 		int columnCount = resultSetMetaData.getColumnCount();
-		Set<String> columnLabels = new HashSet<>(columnCount);
+		Map<String, Object> columnLabelsToValues = new HashMap<>(columnCount);
 
-		for (int i = 0; i < columnCount; i++)
-			columnLabels.add(resultSetMetaData.getColumnLabel(i + 1));
+		for (int i = 1; i <= columnCount; i++) {
+			String label = normalizeColumnLabel(resultSetMetaData.getColumnLabel(i));
+			int jdbcType = resultSetMetaData.getColumnType(i);
 
-		Map<String, Object> columnLabelsToValues = new HashMap<>(columnLabels.size());
+			Object resultSetValue;
+			boolean tsTz = TemporalReaders.isTimestampWithTimeZone(resultSetMetaData, i, statementContext.getDatabaseType());
+			boolean timeTz = TemporalReaders.isTimeWithTimeZone(resultSetMetaData, i);
 
-		for (String columnLabel : columnLabels) {
-			Object resultSetValue = resultSet.getObject(columnLabel);
-
-			// If DB gives us time-related values, re-pull using specific RS methods so we can apply a timezone
-			if (resultSetValue != null) {
-				if (resultSetValue instanceof java.sql.Timestamp) {
-					resultSetValue = resultSet.getTimestamp(columnLabel, getTimeZoneCalendar());
-				} else if (resultSetValue instanceof java.sql.Date) {
-					resultSetValue = resultSet.getDate(columnLabel, getTimeZoneCalendar());
-				} else if (resultSetValue instanceof java.sql.Time) {
-					resultSetValue = resultSet.getTime(columnLabel, getTimeZoneCalendar());
-				}
+			if (tsTz) {
+				resultSetValue = TemporalReaders.asOffsetDateTime(resultSet, i, statementContext);
+			} else if (jdbcType == Types.TIMESTAMP) {
+				resultSetValue = TemporalReaders.asLocalDateTime(resultSet, i, statementContext);
+			} else if (jdbcType == Types.DATE) {
+				resultSetValue = TemporalReaders.asLocalDate(resultSet, i);
+			} else if (timeTz) {
+				resultSetValue = TemporalReaders.asOffsetTime(resultSet, i, statementContext);
+			} else if (jdbcType == Types.TIME) {
+				resultSetValue = TemporalReaders.asLocalTime(resultSet, i);
+			} else {
+				// Non-temporal or unknown: take the driver’s native object (PGobject, BigDecimal, etc.)
+				resultSetValue = resultSet.getObject(i);
 			}
 
-			columnLabelsToValues.put(normalizeColumnLabel(columnLabel), resultSetValue);
+			columnLabelsToValues.put(label, resultSetValue);
 		}
 
 		return columnLabelsToValues;
@@ -502,39 +476,37 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 * For example, the JDBC driver might give us {@link java.sql.Timestamp} but our corresponding JavaBean field is of
 	 * type {@link java.util.Date}, so we need to manually convert that ourselves.
 	 *
-	 * @param resultSetValue the value returned by {@link ResultSet#getObject(String)}
-	 * @param propertyType   the JavaBean property type we'd like to map {@code resultSetValue} to
+	 * @param statementContext current SQL context
+	 * @param resultSetValue   the value returned by {@link ResultSet#getObject(String)}
+	 * @param propertyType     the JavaBean property type we'd like to map {@code resultSetValue} to
 	 * @return a representation of {@code resultSetValue} that is of type {@code propertyType}
 	 */
 	@Nonnull
-	protected Optional<Object> convertResultSetValueToPropertyType(@Nullable Object resultSetValue,
-																																 @Nonnull Class<?> propertyType) {
+	protected <T> Optional<Object> convertResultSetValueToPropertyType(@Nonnull StatementContext<T> statementContext,
+																																		 @Nullable Object resultSetValue,
+																																		 @Nonnull Class<?> propertyType) {
+		requireNonNull(statementContext);
 		requireNonNull(propertyType);
 
 		if (resultSetValue == null)
 			return Optional.empty();
 
-		if (resultSetValue instanceof BigDecimal) {
-			BigDecimal bigDecimal = (BigDecimal) resultSetValue;
-
+		// ---------- Numbers ----------
+		if (resultSetValue instanceof BigDecimal bigDecimal) {
 			if (BigDecimal.class.isAssignableFrom(propertyType))
-				return Optional.ofNullable(bigDecimal);
+				return Optional.of(bigDecimal);
 			if (BigInteger.class.isAssignableFrom(propertyType))
 				return Optional.of(bigDecimal.toBigInteger());
 		}
 
-		if (resultSetValue instanceof BigInteger) {
-			BigInteger bigInteger = (BigInteger) resultSetValue;
-
+		if (resultSetValue instanceof BigInteger bigInteger) {
 			if (BigDecimal.class.isAssignableFrom(propertyType))
 				return Optional.of(new BigDecimal(bigInteger));
 			if (BigInteger.class.isAssignableFrom(propertyType))
-				return Optional.ofNullable(bigInteger);
+				return Optional.of(bigInteger);
 		}
 
-		if (resultSetValue instanceof Number) {
-			Number number = (Number) resultSetValue;
-
+		if (resultSetValue instanceof Number number) {
 			if (Byte.class.isAssignableFrom(propertyType))
 				return Optional.of(number.byteValue());
 			if (Short.class.isAssignableFrom(propertyType))
@@ -548,37 +520,119 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 			if (Double.class.isAssignableFrom(propertyType))
 				return Optional.of(number.doubleValue());
 			if (BigDecimal.class.isAssignableFrom(propertyType))
-				return Optional.of(BigDecimal.valueOf((number.doubleValue())));
+				return Optional.of(BigDecimal.valueOf(number.doubleValue()));
 			if (BigInteger.class.isAssignableFrom(propertyType))
 				return Optional.of(BigDecimal.valueOf(number.doubleValue()).toBigInteger());
-		} else if (resultSetValue instanceof java.sql.Timestamp) {
-			java.sql.Timestamp date = (java.sql.Timestamp) resultSetValue;
+		}
 
+		// Legacy java.sql.* coming from drivers
+		if (resultSetValue instanceof java.sql.Timestamp timestamp) {
 			if (Date.class.isAssignableFrom(propertyType))
-				return Optional.ofNullable(date);
+				return Optional.of(timestamp);
 			if (Instant.class.isAssignableFrom(propertyType))
-				return Optional.of(date.toInstant());
+				return Optional.of(timestamp.toInstant());
 			if (LocalDate.class.isAssignableFrom(propertyType))
-				return Optional.of(date.toInstant().atZone(getTimeZone()).toLocalDate());
+				return Optional.of(timestamp.toLocalDateTime().toLocalDate());
 			if (LocalDateTime.class.isAssignableFrom(propertyType))
-				return Optional.of(date.toLocalDateTime());
-		} else if (resultSetValue instanceof java.sql.Date) {
-			java.sql.Date date = (java.sql.Date) resultSetValue;
+				return Optional.of(timestamp.toLocalDateTime());
+			if (OffsetDateTime.class.isAssignableFrom(propertyType))
+				return Optional.of(timestamp.toInstant().atZone(statementContext.getTimeZone()).toOffsetDateTime());
+		}
 
+		if (resultSetValue instanceof java.sql.Date date) {
 			if (Date.class.isAssignableFrom(propertyType))
-				return Optional.ofNullable(date);
+				return Optional.of(date);
 			if (Instant.class.isAssignableFrom(propertyType))
 				return Optional.of(date.toInstant());
 			if (LocalDate.class.isAssignableFrom(propertyType))
 				return Optional.of(date.toLocalDate());
 			if (LocalDateTime.class.isAssignableFrom(propertyType))
-				return Optional.of(LocalDateTime.ofInstant(date.toInstant(), getTimeZone()));
-		} else if (resultSetValue instanceof java.sql.Time) {
-			java.sql.Time time = (java.sql.Time) resultSetValue;
+				return Optional.of(LocalDateTime.ofInstant(date.toInstant(), statementContext.getTimeZone()));
+		}
 
+		if (resultSetValue instanceof java.sql.Time time) {
 			if (LocalTime.class.isAssignableFrom(propertyType))
-				return Optional.ofNullable(time.toLocalTime());
-		} else if (propertyType.isAssignableFrom(ZoneId.class)) {
+				return Optional.of(time.toLocalTime());
+		}
+
+		// New java.time values (preferred)
+		if (resultSetValue instanceof Instant instant) {
+			if (Instant.class.isAssignableFrom(propertyType))
+				return Optional.of(instant);
+			if (Date.class.isAssignableFrom(propertyType))
+				return Optional.of(Date.from(instant));
+			if (LocalDateTime.class.isAssignableFrom(propertyType))
+				return Optional.of(instant.atZone(statementContext.getTimeZone()).toLocalDateTime());
+			if (LocalDate.class.isAssignableFrom(propertyType))
+				return Optional.of(instant.atZone(statementContext.getTimeZone()).toLocalDate());
+			if (OffsetDateTime.class.isAssignableFrom(propertyType))
+				return Optional.of(instant.atZone(statementContext.getTimeZone()).toOffsetDateTime());
+			if (java.sql.Timestamp.class.isAssignableFrom(propertyType))
+				return Optional.of(Timestamp.from(instant));
+			if (java.sql.Date.class.isAssignableFrom(propertyType))
+				return Optional.of(java.sql.Date.valueOf(instant.atZone(statementContext.getTimeZone()).toLocalDate()));
+		}
+
+		if (resultSetValue instanceof LocalDateTime localDateTime) {
+			if (LocalDateTime.class.isAssignableFrom(propertyType))
+				return Optional.of(localDateTime);
+			if (Instant.class.isAssignableFrom(propertyType))
+				return Optional.of(localDateTime.atZone(statementContext.getTimeZone()).toInstant());
+			if (Date.class.isAssignableFrom(propertyType))
+				return Optional.of(Date.from(localDateTime.atZone(statementContext.getTimeZone()).toInstant()));
+			if (LocalDate.class.isAssignableFrom(propertyType))
+				return Optional.of(localDateTime.toLocalDate());
+			if (OffsetDateTime.class.isAssignableFrom(propertyType))
+				return Optional.of(localDateTime.atZone(statementContext.getTimeZone()).toOffsetDateTime());
+			if (java.sql.Timestamp.class.isAssignableFrom(propertyType))
+				return Optional.of(Timestamp.valueOf(localDateTime));
+			if (java.sql.Date.class.isAssignableFrom(propertyType))
+				return Optional.of(java.sql.Date.valueOf(localDateTime.toLocalDate()));
+		}
+
+		if (resultSetValue instanceof OffsetDateTime offsetDateTime) {
+			if (OffsetDateTime.class.isAssignableFrom(propertyType))
+				return Optional.of(offsetDateTime);
+			if (Instant.class.isAssignableFrom(propertyType))
+				return Optional.of(offsetDateTime.toInstant());
+			if (LocalDateTime.class.isAssignableFrom(propertyType))
+				return Optional.of(offsetDateTime.atZoneSameInstant(statementContext.getTimeZone()).toLocalDateTime());
+			if (Date.class.isAssignableFrom(propertyType))
+				return Optional.of(Date.from(offsetDateTime.toInstant()));
+			if (java.sql.Timestamp.class.isAssignableFrom(propertyType))
+				return Optional.of(Timestamp.from(offsetDateTime.toInstant()));
+		}
+
+		if (resultSetValue instanceof LocalDate localDate) {
+			if (LocalDate.class.isAssignableFrom(propertyType))
+				return Optional.of(localDate);
+			if (LocalDateTime.class.isAssignableFrom(propertyType))
+				return Optional.of(localDate.atStartOfDay());
+			if (Instant.class.isAssignableFrom(propertyType))
+				return Optional.of(localDate.atStartOfDay(statementContext.getTimeZone()).toInstant());
+			if (java.sql.Date.class.isAssignableFrom(propertyType))
+				return Optional.of(java.sql.Date.valueOf(localDate));
+			if (Date.class.isAssignableFrom(propertyType))
+				return Optional.of(Date.from(localDate.atStartOfDay(statementContext.getTimeZone()).toInstant()));
+		}
+
+		if (resultSetValue instanceof LocalTime localTime) {
+			if (LocalTime.class.isAssignableFrom(propertyType))
+				return Optional.of(localTime);
+			if (java.sql.Time.class.isAssignableFrom(propertyType))
+				return Optional.of(java.sql.Time.valueOf(localTime));
+		}
+
+		if (resultSetValue instanceof OffsetTime offsetTime) {
+			if (OffsetTime.class.isAssignableFrom(propertyType))
+				return Optional.of(offsetTime);
+			if (LocalTime.class.isAssignableFrom(propertyType))
+				return Optional.of(offsetTime.toLocalTime());
+			if (java.sql.Time.class.isAssignableFrom(propertyType))
+				return Optional.of(java.sql.Time.valueOf(offsetTime.toLocalTime()));
+		}
+
+		if (propertyType.isAssignableFrom(ZoneId.class)) {
 			return Optional.ofNullable(ZoneId.of(resultSetValue.toString()));
 		} else if (propertyType.isAssignableFrom(TimeZone.class)) {
 			return Optional.ofNullable(TimeZone.getTimeZone(resultSetValue.toString()));
@@ -678,31 +732,11 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 * <p>
 	 * Used by {@link #normalizeColumnLabel(String)}.
 	 *
-	 * @return the locale to use for massaging, hardcoded to {@link Locale#ENGLISH} by default
+	 * @return the locale to use for massaging
 	 */
 	@Nonnull
 	protected Locale getNormalizationLocale() {
-		return ENGLISH;
-	}
-
-	/**
-	 * What kind of database are we working with?
-	 *
-	 * @return the kind of database we're working with
-	 */
-	@Nonnull
-	protected DatabaseType getDatabaseType() {
-		return this.databaseType;
-	}
-
-	@Nonnull
-	protected ZoneId getTimeZone() {
-		return this.timeZone;
-	}
-
-	@Nonnull
-	protected Calendar getTimeZoneCalendar() {
-		return this.timeZoneCalendar;
+		return this.normalizationLocale;
 	}
 
 	/**
