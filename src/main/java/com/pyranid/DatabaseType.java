@@ -37,7 +37,7 @@ public enum DatabaseType {
 	 */
 	GENERIC,
 	/**
-	 * A PostgreSQL database
+	 * A PostgreSQL database.
 	 */
 	POSTGRESQL,
 	/**

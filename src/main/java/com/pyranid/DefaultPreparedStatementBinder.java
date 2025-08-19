@@ -25,19 +25,18 @@ import java.sql.ParameterMetaData;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
-import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
-import java.util.Calendar;
+import java.time.ZonedDateTime;
 import java.util.Currency;
 import java.util.Date;
 import java.util.Locale;
 import java.util.Optional;
-import java.util.TimeZone;
 import java.util.UUID;
 
 import static java.lang.String.format;
@@ -55,8 +54,6 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	private final DatabaseType databaseType;
 	@Nonnull
 	private final ZoneId timeZone;
-	@Nonnull
-	private final Calendar timeZoneCalendar;
 
 	/**
 	 * Creates a {@code DefaultPreparedStatementBinder} for the given {@code databaseType} and DBMS {@code timeZone}.
@@ -72,7 +69,6 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 		this.databaseType = databaseType;
 		this.timeZone = timeZone;
-		this.timeZoneCalendar = Calendar.getInstance(TimeZone.getTimeZone(this.timeZone));
 	}
 
 	@Override
@@ -87,65 +83,100 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 		Object normalizedParameter = normalizeParameter(parameter).orElse(null);
 
+		if (normalizedParameter instanceof LocalDate localDate) {
+			if (!trySetObject(preparedStatement, parameterIndex, localDate, Types.DATE))
+				preparedStatement.setDate(parameterIndex, java.sql.Date.valueOf(localDate)); // fallback
+
+			return;
+		}
+
 		if (normalizedParameter instanceof LocalTime localTime) {
-			// Some drivers "helpfully" apply a timezone when binding a LocalTime, which will break them in non-UTC tzs.
-			// This ensures the driver uses "CAST(? AS TIME)", which is truly tz-independent.
+			// Some drivers used to offset LocalTime; safest is a tz-free string.
 			preparedStatement.setString(parameterIndex, localTime.toString());
-		} else if (normalizedParameter instanceof java.sql.Timestamp) {
-			java.sql.Timestamp timestamp = (java.sql.Timestamp) normalizedParameter;
-			preparedStatement.setTimestamp(parameterIndex, timestamp, getTimeZoneCalendar());
-		} else if (normalizedParameter instanceof java.sql.Date) {
-			java.sql.Date date = (java.sql.Date) normalizedParameter;
-			preparedStatement.setDate(parameterIndex, date, getTimeZoneCalendar());
-		} else if (normalizedParameter instanceof java.sql.Time) {
-			java.sql.Time time = (java.sql.Time) normalizedParameter;
-			preparedStatement.setTime(parameterIndex, time, getTimeZoneCalendar());
-		} else if (normalizedParameter instanceof OffsetDateTime offsetDateTime) {
+			return;
+		}
+
+		if (normalizedParameter instanceof LocalDateTime localDateTime) {
+			if (!trySetObject(preparedStatement, parameterIndex, localDateTime, Types.TIMESTAMP))
+				preparedStatement.setTimestamp(parameterIndex, java.sql.Timestamp.valueOf(localDateTime)); // fallback
+
+			return;
+		}
+
+		if (normalizedParameter instanceof OffsetDateTime offsetDateTime) {
 			int sqlType = determineParameterSqlType(preparedStatement, parameterIndex);
-			boolean bound = false;
 
 			if (sqlType == Types.TIMESTAMP) {
-				// Column/CAST expects *no tz*: normalize to DB zone, drop zone
+				// Coerce to DB zone and drop the offset.
 				LocalDateTime localDateTime = offsetDateTime.atZoneSameInstant(statementContext.getTimeZone()).toLocalDateTime();
-				try {
-					preparedStatement.setObject(parameterIndex, localDateTime, Types.TIMESTAMP);
-					bound = true;
-				} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
-					preparedStatement.setTimestamp(parameterIndex, Timestamp.valueOf(localDateTime)); // fallback
-				}
+				if (!trySetObject(preparedStatement, parameterIndex, localDateTime, Types.TIMESTAMP))
+					preparedStatement.setTimestamp(parameterIndex, java.sql.Timestamp.valueOf(localDateTime));
+
+				return;
 			}
 
-			if (!bound && sqlType == Types.TIMESTAMP_WITH_TIMEZONE) {
-				if (!trySetObject(preparedStatement, parameterIndex, offsetDateTime)) {
-					// Fallback: send ISO-8601 string; CAST(... AS TIMESTAMP WITH TIME ZONE) will parse it
-					preparedStatement.setString(parameterIndex, offsetDateTime.toString());
-				}
+			if (sqlType == Types.TIMESTAMP_WITH_TIMEZONE) {
+				if (!trySetObject(preparedStatement, parameterIndex, offsetDateTime, Types.TIMESTAMP_WITH_TIMEZONE))
+					preparedStatement.setTimestamp(parameterIndex, java.sql.Timestamp.from(offsetDateTime.toInstant()));
 
-				bound = true;
+				return;
 			}
 
-			// Unknown parameter type: prefer preserving the offset
-			if (!bound && !trySetObject(preparedStatement, parameterIndex, offsetDateTime))
-				preparedStatement.setString(parameterIndex, offsetDateTime.toString());
-		} else if (normalizedParameter instanceof ArrayParameter arrayParameter) {
-			// Normalize each element in the array
-			Object[] normalizedArrayElements = normalizedArrayElements(arrayParameter.getElements());
-			Array array = preparedStatement.getConnection().createArrayOf(arrayParameter.getBaseTypeName(), normalizedArrayElements);
+			// Unknown target: prefer preserving the offset/instant.
+			if (!trySetObject(preparedStatement, parameterIndex, offsetDateTime))
+				preparedStatement.setTimestamp(parameterIndex, java.sql.Timestamp.from(offsetDateTime.toInstant()));
+
+			return;
+		}
+
+		if (normalizedParameter instanceof Instant instant) {
+			int sqlType = determineParameterSqlType(preparedStatement, parameterIndex);
+
+			if (sqlType == Types.TIMESTAMP) {
+				LocalDateTime localDateTime = LocalDateTime.ofInstant(instant, statementContext.getTimeZone());
+
+				if (!trySetObject(preparedStatement, parameterIndex, localDateTime, Types.TIMESTAMP))
+					preparedStatement.setTimestamp(parameterIndex, java.sql.Timestamp.valueOf(localDateTime));
+
+				return;
+			}
+
+			// Default (and for TIMESTAMP WITH TIME ZONE): keep the instant.
+			if (!trySetObject(preparedStatement, parameterIndex, instant, Types.TIMESTAMP_WITH_TIMEZONE))
+				preparedStatement.setTimestamp(parameterIndex, java.sql.Timestamp.from(instant));
+
+			return;
+		}
+
+		if (normalizedParameter instanceof java.time.OffsetTime offsetTime) {
+			// If driver supports TIME WITH TIME ZONE, use it; else fall back to string.
+			if (!trySetObject(preparedStatement, parameterIndex, offsetTime, Types.TIME_WITH_TIMEZONE) && !trySetObject(preparedStatement, parameterIndex, offsetTime))
+				preparedStatement.setString(parameterIndex, offsetTime.toString());
+
+			return;
+		}
+
+		if (normalizedParameter instanceof ArrayParameter arrayParameter) {
+			Object[] normalizedElements = normalizedArrayElements(arrayParameter.getElements());
+			Array array = preparedStatement.getConnection().createArrayOf(arrayParameter.getBaseTypeName(), normalizedElements);
 			preparedStatement.setArray(parameterIndex, array);
-		} else if (normalizedParameter instanceof
-				VectorParameter vectorParameter) {
+			return;
+		}
+
+		if (normalizedParameter instanceof VectorParameter vectorParameter) {
 			if (getDatabaseType() != DatabaseType.POSTGRESQL)
-				throw new IllegalArgumentException(format("%s types are only supported for %s.%s",
+				throw new IllegalArgumentException(format("%s supported only on %s.%s",
 						VectorParameter.class.getSimpleName(), DatabaseType.class.getSimpleName(), DatabaseType.POSTGRESQL.name()));
 
-			org.postgresql.util.PGobject pgObject = new org.postgresql.util.PGobject();
-			pgObject.setType("vector");
-			pgObject.setValue(toPostgresLiteralValue(vectorParameter));
-
-			preparedStatement.setObject(parameterIndex, pgObject);
-		} else {
-			preparedStatement.setObject(parameterIndex, normalizedParameter);
+			org.postgresql.util.PGobject pg = new org.postgresql.util.PGobject();
+			pg.setType("vector");
+			pg.setValue(toPostgresLiteralValue(vectorParameter));
+			preparedStatement.setObject(parameterIndex, pg);
+			return;
 		}
+
+		// Everything else
+		preparedStatement.setObject(parameterIndex, normalizedParameter);
 	}
 
 	@Nonnull
@@ -167,6 +198,22 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 		try {
 			preparedStatement.setObject(parameterIndex, object);
+			return true;
+		} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
+			return false;
+		}
+	}
+
+	@Nonnull
+	protected boolean trySetObject(@Nonnull PreparedStatement preparedStatement,
+																 @Nonnull Integer parameterIndex,
+																 @Nullable Object object,
+																 int sqlType) throws SQLException {
+		requireNonNull(preparedStatement);
+		requireNonNull(parameterIndex);
+
+		try {
+			preparedStatement.setObject(parameterIndex, object, sqlType);
 			return true;
 		} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
 			return false;
@@ -221,18 +268,23 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		if (parameter == null)
 			return Optional.empty();
 
-		if (parameter instanceof Date)
-			return Optional.of(new Timestamp(((Date) parameter).getTime()));
-		if (parameter instanceof Instant)
-			return Optional.of(new Timestamp(((Instant) parameter).toEpochMilli()));
+		// Coerce to java.time whenever possible
+		if (parameter instanceof java.sql.Timestamp timestamp)
+			return Optional.of(timestamp.toInstant());
+		if (parameter instanceof java.sql.Date date)
+			return Optional.of(date.toLocalDate());
+		if (parameter instanceof java.sql.Time time)
+			return Optional.of(time.toLocalTime());
+		if (parameter instanceof Date date)
+			return Optional.of(Instant.ofEpochMilli(date.getTime()));
+		if (parameter instanceof ZonedDateTime zonedDateTime)
+			return Optional.of(zonedDateTime.toOffsetDateTime());
 		if (parameter instanceof Locale)
 			return Optional.of(((Locale) parameter).toLanguageTag());
 		if (parameter instanceof Currency)
 			return Optional.of(((Currency) parameter).getCurrencyCode());
 		if (parameter instanceof Enum)
 			return Optional.of(((Enum<?>) parameter).name());
-		// Java 11 uses internal implementation java.time.ZoneRegion, which Postgres JDBC driver does not support.
-		// Force ZoneId to use its ID here
 		if (parameter instanceof ZoneId)
 			return Optional.of(((ZoneId) parameter).getId());
 
@@ -244,8 +296,6 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 				byteBuffer.putLong(((UUID) parameter).getLeastSignificantBits());
 				return Optional.of(byteBuffer.array());
 			}
-
-			// Other massaging here if needed...
 		}
 
 		return Optional.ofNullable(parameter);
@@ -259,12 +309,5 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	@Nonnull
 	protected ZoneId getTimeZone() {
 		return this.timeZone;
-	}
-
-	@Nonnull
-	protected Calendar getTimeZoneCalendar() {
-		// Always make a defensive copy to prevent race conditions -
-		// Calendar is not threadsafe and we don't have guarantees on how JDBC driver will use it
-		return (Calendar) this.timeZoneCalendar.clone();
 	}
 }
