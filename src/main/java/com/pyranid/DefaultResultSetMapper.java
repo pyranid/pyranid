@@ -87,23 +87,22 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	@FunctionalInterface
 	public interface ColumnMappingCustomizer {
 		/**
-		 * Return Optional.of(mapped) to short-circuit default mapping,
-		 * or Optional.empty() to let DefaultResultSetMapper proceed.
+		 * Perform custom mapping of a {@link ResultSet} column: given a {@code resultSetValue}, optionally return an instance of {@code targetType} instead.
 		 *
-		 * @param statementContext    current SQL context
-		 * @param resultSet           provides raw row data to pull from*
-		 * @param resultSetColumnType the type to which the {@link ResultSet} column should be marshaled
-		 * @param originalValue       the already-read value
-		 * @param columnIndex         1-based column index, if available
-		 * @param columnLabel         normalized column label, if available
-		 * @param instanceProvider    instance-creation factory, may be used to instantiate values
+		 * @param statementContext current SQL context
+		 * @param resultSet        the {@link ResultSet} from which data was read
+		 * @param resultSetValue   the already-read value from the {@link ResultSet}, to be converted to an instance of {@code targetType}
+		 * @param targetType       the type to which the {@code resultSetValue} should be converted
+		 * @param columnIndex      1-based column index, if available
+		 * @param columnLabel      normalized column label, if available
+		 * @param instanceProvider instance-creation factory, may be used to instantiate values
 		 * @return an {@link Optional} which holds the preferred value for this {@link ResultSet} column, or {@link Optional#empty()} to fall back to default mapping
 		 */
 		@Nonnull
 		Optional<?> map(@Nonnull StatementContext<?> statementContext,
 										@Nonnull ResultSet resultSet,
-										@Nonnull Class<?> resultSetColumnType,
-										@Nonnull Object originalValue,
+										@Nonnull Object resultSetValue,
+										@Nonnull Class<?> targetType,
 										@Nullable Integer columnIndex,
 										@Nullable String columnLabel,
 										@Nonnull InstanceProvider instanceProvider) throws SQLException;
