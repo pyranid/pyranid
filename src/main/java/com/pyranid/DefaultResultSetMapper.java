@@ -85,6 +85,8 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	@Nonnull
 	private final Locale normalizationLocale;
 	@Nonnull
+	private final List<CustomColumnMapper> customColumnMappers;
+	@Nonnull
 	private final Map<Class<?>, Map<String, Set<String>>> columnLabelAliasesByPropertyNameCache =
 			new ConcurrentHashMap<>();
 
@@ -320,22 +322,45 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	/**
-	 * Creates a {@code ResultSetMapper} with an {@link Locale#ENGLISH} {@code normalizationLocale}.
+	 * Creates a {@code ResultSetMapper} with a {@link Locale#getDefault()} {@code normalizationLocale} and no column-mapping overrides.
 	 * <p>
 	 * The {@code normalizationLocale} is used when massaging JDBC column names for matching against JavaBean property names.
 	 */
 	public DefaultResultSetMapper() {
-		this(Locale.ENGLISH);
+		this(Locale.getDefault(), List.of());
 	}
 
 	/**
-	 * Creates a {@code ResultSetMapper} for the given {@code normalizationLocale}.
+	 * Creates a {@code ResultSetMapper} for the given {@code normalizationLocale} and no column-mapping overrides.
 	 *
-	 * @param normalizationLocale The locale to use when massaging JDBC column names for matching against JavaBean property names.
+	 * @param normalizationLocale The locale to use when massaging JDBC column names for matching against JavaBean property names
 	 */
 	public DefaultResultSetMapper(@Nonnull Locale normalizationLocale) {
+		this(requireNonNull(normalizationLocale), List.of());
+	}
+
+	/**
+	 * Creates a {@code ResultSetMapper} for the given {@code normalizationLocale} and no column-mapping overrides.
+	 *
+	 * @param customColumnMappers per-column mapping customizers, if any
+	 */
+	public DefaultResultSetMapper(@Nonnull List<CustomColumnMapper> customColumnMappers) {
+		this(Locale.getDefault(), requireNonNull(customColumnMappers));
+	}
+
+	/**
+	 * Creates a {@code ResultSetMapper} for the given {@code normalizationLocale} and no column-mapping overrides.
+	 *
+	 * @param normalizationLocale The locale to use when massaging JDBC column names for matching against JavaBean property names
+	 * @param customColumnMappers per-column mapping customizers, if any
+	 */
+	public DefaultResultSetMapper(@Nonnull Locale normalizationLocale,
+																@Nonnull List<CustomColumnMapper> customColumnMappers) {
 		requireNonNull(normalizationLocale);
+		requireNonNull(customColumnMappers);
+
 		this.normalizationLocale = normalizationLocale;
+		this.customColumnMappers = Collections.unmodifiableList(customColumnMappers);
 	}
 
 	@Override

@@ -57,8 +57,7 @@ public enum DatabaseType {
 	@Nonnull
 	public static DatabaseType fromDataSource(@Nonnull DataSource dataSource) {
 		requireNonNull(dataSource);
-
-
+		
 		try (Connection connection = dataSource.getConnection()) {
 			DatabaseMetaData databaseMetaData = connection.getMetaData();
 			String databaseProductName = databaseMetaData.getDatabaseProductName();
