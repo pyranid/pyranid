@@ -16,6 +16,8 @@
 
 package com.pyranid;
 
+import com.pyranid.DefaultResultSetMapper.CustomColumnMapper.TargetType;
+
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
@@ -65,6 +67,7 @@ import java.util.Set;
 import java.util.TimeZone;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 import static java.lang.String.format;
 import static java.util.Arrays.asList;
@@ -76,6 +79,8 @@ import static java.util.stream.Collectors.toSet;
 
 /**
  * Basic implementation of {@link ResultSetMapper}.
+ * <p>
+ * "Surgical" per-column mapping customization is supported by providing {@link CustomColumnMapper} instances.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 1.0.0
@@ -86,9 +91,11 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	private final Locale normalizationLocale;
 	@Nonnull
 	private final List<CustomColumnMapper> customColumnMappers;
+	// Enables faster lookup of CustomColumnMapper instances by remembering which TargetType they've been used on before.
 	@Nonnull
-	private final Map<Class<?>, Map<String, Set<String>>> columnLabelAliasesByPropertyNameCache =
-			new ConcurrentHashMap<>();
+	private final ConcurrentMap<TargetType, List<CustomColumnMapper>> customColumnMappersByTargetTypeCache;
+	@Nonnull
+	private final ConcurrentMap<Class<?>, Map<String, Set<String>>> columnLabelAliasesByPropertyNameCache;
 
 	/**
 	 * Enables per-column {@link ResultSet} mapping customization.
@@ -258,7 +265,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 
 	// Package-private implementation
 	@ThreadSafe
-	final static class DefaultTargetType implements CustomColumnMapper.TargetType {
+	final static class DefaultTargetType implements TargetType {
 		@Nonnull
 		private final Type type;
 
@@ -283,31 +290,31 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 				return (Class<?>) parameterizedType.getRawType();
 
 			if (type instanceof GenericArrayType genericArrayType) {
-				Class<?> componentClass = CustomColumnMapper.TargetType.of(genericArrayType.getGenericComponentType()).getRawClass();
+				Class<?> componentClass = TargetType.of(genericArrayType.getGenericComponentType()).getRawClass();
 				return Array.newInstance(componentClass, 0).getClass();
 			}
 
 			if (type instanceof TypeVariable<?> typeVariable) {
 				Type[] bounds = typeVariable.getBounds();
-				return bounds.length == 0 ? Object.class : CustomColumnMapper.TargetType.of(bounds[0]).getRawClass();
+				return bounds.length == 0 ? Object.class : TargetType.of(bounds[0]).getRawClass();
 			}
 
 			if (type instanceof WildcardType wildcardType) {
 				Type[] uppers = wildcardType.getUpperBounds();
-				return uppers.length == 0 ? Object.class : CustomColumnMapper.TargetType.of(uppers[0]).getRawClass();
+				return uppers.length == 0 ? Object.class : TargetType.of(uppers[0]).getRawClass();
 			}
 
 			return Object.class;
 		}
 
 		@Nonnull
-		public List<CustomColumnMapper.TargetType> getTypeArguments() {
+		public List<TargetType> getTypeArguments() {
 			if (getType() instanceof ParameterizedType parameterizedType) {
 				Type[] actualTypeArguments = parameterizedType.getActualTypeArguments();
-				List<CustomColumnMapper.TargetType> targetTypes = new ArrayList<>(actualTypeArguments.length);
+				List<TargetType> targetTypes = new ArrayList<>(actualTypeArguments.length);
 
 				for (Type actualTypeArgument : actualTypeArguments)
-					targetTypes.add(CustomColumnMapper.TargetType.of(actualTypeArgument));
+					targetTypes.add(TargetType.of(actualTypeArgument));
 
 				return Collections.unmodifiableList(targetTypes);
 			}
@@ -322,7 +329,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	/**
-	 * Creates a {@code ResultSetMapper} with a {@link Locale#getDefault()} {@code normalizationLocale} and no column-mapping overrides.
+	 * Creates a {@code ResultSetMapper} with a {@link Locale#getDefault()} {@code normalizationLocale} and no column-mapping customization.
 	 * <p>
 	 * The {@code normalizationLocale} is used when massaging JDBC column names for matching against JavaBean property names.
 	 */
@@ -331,7 +338,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	/**
-	 * Creates a {@code ResultSetMapper} for the given {@code normalizationLocale} and no column-mapping overrides.
+	 * Creates a {@code ResultSetMapper} for the given {@code normalizationLocale} and no column-mapping customization.
 	 *
 	 * @param normalizationLocale The locale to use when massaging JDBC column names for matching against JavaBean property names
 	 */
@@ -340,7 +347,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	/**
-	 * Creates a {@code ResultSetMapper} for the given {@code normalizationLocale} and no column-mapping overrides.
+	 * Creates a {@code ResultSetMapper} with a {@link Locale#getDefault()} {@code normalizationLocale} and the specified column-mapping customizers.
 	 *
 	 * @param customColumnMappers per-column mapping customizers, if any
 	 */
@@ -349,7 +356,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	/**
-	 * Creates a {@code ResultSetMapper} for the given {@code normalizationLocale} and no column-mapping overrides.
+	 * Creates a {@code ResultSetMapper} for the given {@code normalizationLocale} and the specified column-mapping customizers.
 	 *
 	 * @param normalizationLocale The locale to use when massaging JDBC column names for matching against JavaBean property names
 	 * @param customColumnMappers per-column mapping customizers, if any
@@ -361,6 +368,8 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 
 		this.normalizationLocale = normalizationLocale;
 		this.customColumnMappers = Collections.unmodifiableList(customColumnMappers);
+		this.customColumnMappersByTargetTypeCache = new ConcurrentHashMap<>();
+		this.columnLabelAliasesByPropertyNameCache = new ConcurrentHashMap<>();
 	}
 
 	@Override
@@ -644,7 +653,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	protected Map<String, Set<String>> determineColumnLabelAliasesByPropertyName(@Nonnull Class<?> resultClass) {
 		requireNonNull(resultClass);
 
-		return columnLabelAliasesByPropertyNameCache.computeIfAbsent(
+		return getColumnLabelAliasesByPropertyNameCache().computeIfAbsent(
 				resultClass,
 				(key) -> {
 					Map<String, Set<String>> cachedColumnLabelAliasesByPropertyName = new HashMap<>();
@@ -1226,5 +1235,20 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 			ZoneOffset off = ctx.getTimeZone().getRules().getOffset(now);
 			return lt.atOffset(off);
 		}
+	}
+
+	@Nonnull
+	protected List<CustomColumnMapper> getCustomColumnMappers() {
+		return this.customColumnMappers;
+	}
+
+	@Nonnull
+	protected ConcurrentMap<TargetType, List<CustomColumnMapper>> getCustomColumnMappersByTargetTypeCache() {
+		return this.customColumnMappersByTargetTypeCache;
+	}
+
+	@Nonnull
+	protected ConcurrentMap<Class<?>, Map<String, Set<String>>> getColumnLabelAliasesByPropertyNameCache() {
+		return this.columnLabelAliasesByPropertyNameCache;
 	}
 }
