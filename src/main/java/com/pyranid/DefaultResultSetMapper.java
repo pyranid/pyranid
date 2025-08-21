@@ -22,10 +22,16 @@ import javax.annotation.concurrent.ThreadSafe;
 import java.beans.BeanInfo;
 import java.beans.Introspector;
 import java.beans.PropertyDescriptor;
+import java.lang.reflect.Array;
 import java.lang.reflect.Field;
+import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
+import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.RecordComponent;
+import java.lang.reflect.Type;
+import java.lang.reflect.TypeVariable;
+import java.lang.reflect.WildcardType;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.sql.ResultSet;
@@ -46,6 +52,7 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Currency;
 import java.util.Date;
 import java.util.HashMap;
@@ -83,15 +90,20 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 
 	/**
 	 * Enables per-column {@link ResultSet} mapping customization.
+	 *
+	 * @author <a href="https://www.revetkn.com">Mark Allen</a>
+	 * @since 2.1.0
 	 */
 	@FunctionalInterface
-	public interface ColumnMappingCustomizer {
+	public interface CustomColumnMapper {
 		/**
 		 * Perform custom mapping of a {@link ResultSet} column: given a {@code resultSetValue}, optionally return an instance of {@code targetType} instead.
+		 * <p>
+		 * This function is only invoked when {@code resultSetValue} is non-null.
 		 *
 		 * @param statementContext current SQL context
 		 * @param resultSet        the {@link ResultSet} from which data was read
-		 * @param resultSetValue   the already-read value from the {@link ResultSet}, to be converted to an instance of {@code targetType}
+		 * @param resultSetValue   the already-read value from the {@link ResultSet}, to be optionally converted to an instance of {@code targetType}
 		 * @param targetType       the type to which the {@code resultSetValue} should be converted
 		 * @param columnIndex      1-based column index, if available
 		 * @param columnLabel      normalized column label, if available
@@ -102,10 +114,209 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		Optional<?> map(@Nonnull StatementContext<?> statementContext,
 										@Nonnull ResultSet resultSet,
 										@Nonnull Object resultSetValue,
-										@Nonnull Class<?> targetType,
+										@Nonnull TargetType targetType,
 										@Nullable Integer columnIndex,
 										@Nullable String columnLabel,
 										@Nonnull InstanceProvider instanceProvider) throws SQLException;
+
+		/**
+		 * A developer-friendly view over a reflective {@link java.lang.reflect.Type} used by the {@link ResultSet}-mapping pipeline for {@link DefaultResultSetMapper}.
+		 *
+		 * @author <a href="https://www.revetkn.com">Mark Allen</a>
+		 * @see java.lang.reflect.Type
+		 * @since 2.1.0
+		 */
+		interface TargetType {
+			/**
+			 * The original reflective type ({@code Class}, {@code ParameterizedType}, etc.)
+			 */
+			@Nonnull
+			Type getType();
+
+			/**
+			 * Raw class, with erasure ({@code List.class} for {@code List<UUID>}, etc.)
+			 */
+			@Nonnull
+			Class<?> getRawClass();
+
+			/**
+			 * @return {@code true} if {@link #getRawClass()} matches the provided {@code rawClass} (no subtype/parameter checks), {@code false} otherwise.
+			 */
+			@Nonnull
+			default Boolean matchesClass(@Nonnull Class<?> rawClass) {
+				requireNonNull(rawClass);
+				return getRawClass().equals(rawClass);
+			}
+
+			/**
+			 * Does this instance match the given raw class and its parameterized type arguments?
+			 * <p>
+			 * For example, invoke {@code matchesParameterizedType(List.class, UUID.class)} to determine "is this type a {@code List<UUID>}?"
+			 */
+			@Nonnull
+			default Boolean matchesParameterizedType(@Nonnull Class<?> rawClass,
+																							 @Nullable Class<?>... typeArguments) {
+				requireNonNull(rawClass);
+
+				if (typeArguments == null || typeArguments.length == 0)
+					return matchesClass(rawClass);
+
+				if (!(getType() instanceof ParameterizedType parameterizedType) || !rawClass.equals(parameterizedType.getRawType()))
+					return false;
+
+				Type[] actualTypeArguments = parameterizedType.getActualTypeArguments();
+
+				if (actualTypeArguments.length != typeArguments.length)
+					return false;
+
+				for (int i = 0; i < actualTypeArguments.length; i++)
+					if (!(actualTypeArguments[i] instanceof Class<?> actualClass) || !actualClass.equals(typeArguments[i]))
+						return false;
+
+				return true;
+			}
+
+			@Nonnull
+			default Boolean isList() {
+				return matchesClass(List.class);
+			}
+
+			@Nonnull
+			default Optional<TargetType> getListElementType() {
+				return matchesClass(List.class) ? getFirstTargetTypeArgument() : Optional.empty();
+			}
+
+			@Nonnull
+			default Boolean isSet() {
+				return matchesClass(Set.class);
+			}
+
+			@Nonnull
+			default Optional<TargetType> getSetElementType() {
+				return matchesClass(Set.class) ? getFirstTargetTypeArgument() : Optional.empty();
+			}
+
+			@Nonnull
+			default Boolean isMap() {
+				return matchesClass(Map.class);
+			}
+
+			@Nonnull
+			default Optional<TargetType> getMapKeyType() {
+				return matchesClass(Map.class) ? getTargetTypeArgumentAtIndex(0) : Optional.empty();
+			}
+
+			@Nonnull
+			default Optional<TargetType> getMapValueType() {
+				return matchesClass(Map.class) ? getTargetTypeArgumentAtIndex(1) : Optional.empty();
+			}
+
+			@Nonnull
+			default Boolean isArray() {
+				return getRawClass().isArray() || getType() instanceof GenericArrayType;
+			}
+
+			@Nonnull
+			default Optional<TargetType> getArrayComponentType() {
+				if (getRawClass().isArray())
+					return Optional.of(TargetType.of(getRawClass().getComponentType()));
+
+				if (getType() instanceof GenericArrayType genericArrayType)
+					return Optional.of(TargetType.of(genericArrayType.getGenericComponentType()));
+
+				return Optional.empty();
+			}
+
+			/**
+			 * All type arguments wrapped (empty for raw/non-parameterized).
+			 */
+			@Nonnull
+			List<TargetType> getTypeArguments();
+
+			@Nonnull
+			static TargetType of(@Nonnull Type type) {
+				requireNonNull(type);
+				return new DefaultTargetType(type);
+			}
+
+			@Nonnull
+			private Optional<TargetType> getFirstTargetTypeArgument() {
+				return getTargetTypeArgumentAtIndex(0);
+			}
+
+			@Nonnull
+			private Optional<TargetType> getTargetTypeArgumentAtIndex(@Nonnull Integer index) {
+				requireNonNull(index);
+
+				List<TargetType> targetTypeArguments = getTypeArguments();
+				return index < targetTypeArguments.size() ? Optional.of(targetTypeArguments.get(index)) : Optional.empty();
+			}
+		}
+	}
+
+	// Package-private implementation
+	@ThreadSafe
+	final static class DefaultTargetType implements CustomColumnMapper.TargetType {
+		@Nonnull
+		private final Type type;
+
+		DefaultTargetType(@Nonnull Type type) {
+			requireNonNull(type);
+			this.type = requireNonNull(type);
+		}
+
+		@Override
+		@Nonnull
+		public Type getType() {
+			return this.type;
+		}
+
+		@Override
+		@Nonnull
+		public Class<?> getRawClass() {
+			if (type instanceof Class<?> rawClass)
+				return rawClass;
+
+			if (type instanceof ParameterizedType parameterizedType)
+				return (Class<?>) parameterizedType.getRawType();
+
+			if (type instanceof GenericArrayType genericArrayType) {
+				Class<?> componentClass = CustomColumnMapper.TargetType.of(genericArrayType.getGenericComponentType()).getRawClass();
+				return Array.newInstance(componentClass, 0).getClass();
+			}
+
+			if (type instanceof TypeVariable<?> typeVariable) {
+				Type[] bounds = typeVariable.getBounds();
+				return bounds.length == 0 ? Object.class : CustomColumnMapper.TargetType.of(bounds[0]).getRawClass();
+			}
+
+			if (type instanceof WildcardType wildcardType) {
+				Type[] uppers = wildcardType.getUpperBounds();
+				return uppers.length == 0 ? Object.class : CustomColumnMapper.TargetType.of(uppers[0]).getRawClass();
+			}
+
+			return Object.class;
+		}
+
+		@Nonnull
+		public List<CustomColumnMapper.TargetType> getTypeArguments() {
+			if (getType() instanceof ParameterizedType parameterizedType) {
+				Type[] actualTypeArguments = parameterizedType.getActualTypeArguments();
+				List<CustomColumnMapper.TargetType> targetTypes = new ArrayList<>(actualTypeArguments.length);
+
+				for (Type actualTypeArgument : actualTypeArguments)
+					targetTypes.add(CustomColumnMapper.TargetType.of(actualTypeArgument));
+
+				return Collections.unmodifiableList(targetTypes);
+			}
+
+			return List.of();
+		}
+
+		@Override
+		public String toString() {
+			return format("%s{type=%s}", getClass().getSimpleName(), getType().getTypeName());
+		}
 	}
 
 	/**
