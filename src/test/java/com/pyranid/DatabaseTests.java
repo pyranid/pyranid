@@ -16,7 +16,9 @@
 
 package com.pyranid;
 
+import com.pyranid.DefaultResultSetMapper.CustomColumnMapper;
 import org.hsqldb.jdbc.JDBCDataSource;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -367,6 +369,33 @@ public class DatabaseTests {
 		Assert.assertEquals("java.sql.Time→LocalTime mismatch", sqlTime.toLocalTime(), ltFromSqlTime);
 	}
 
+	@Test
+	public void testCustomColumnMapper() {
+		DataSource dataSource = createInMemoryDataSource("testCustomColumnMapper");
+
+		List<CustomColumnMapper> customColumnMappers = List.of(
+				new CustomColumnMapper() {
+					@Nonnull
+					@Override
+					public Optional<?> map(@Nonnull StatementContext<?> statementContext,
+																 @Nonnull ResultSet resultSet,
+																 @Nonnull Object resultSetValue,
+																 @Nonnull TargetType targetType,
+																 @Nullable Integer columnIndex,
+																 @Nullable String columnLabel,
+																 @Nonnull InstanceProvider instanceProvider) throws SQLException {
+						// TODO: implement tests
+						return Optional.empty();
+					}
+				}
+		);
+
+		Database customDatabase = Database.forDataSource(dataSource)
+				.resultSetMapper(new DefaultResultSetMapper(customColumnMappers))
+				.build();
+
+		createTestSchema(customDatabase);
+	}
 
 	protected void createTestSchema(@Nonnull Database database) {
 		requireNonNull(database);

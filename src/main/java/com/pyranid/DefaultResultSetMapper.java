@@ -62,6 +62,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TimeZone;
@@ -91,7 +92,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	private final Locale normalizationLocale;
 	@Nonnull
 	private final List<CustomColumnMapper> customColumnMappers;
-	// Enables faster lookup of CustomColumnMapper instances by remembering which TargetType they've been used on before.
+	// Enables faster lookup of CustomColumnMapper instances by remembering which TargetType they've been used with before.
 	@Nonnull
 	private final ConcurrentMap<TargetType, List<CustomColumnMapper>> customColumnMappersByTargetTypeCache;
 	@Nonnull
@@ -275,6 +276,20 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		@Override
+		public boolean equals(@Nullable Object object) {
+			if (object == null || getClass() != object.getClass())
+				return false;
+
+			DefaultTargetType that = (DefaultTargetType) object;
+			return Objects.equals(getType(), that.getType());
+		}
+
+		@Override
+		public int hashCode() {
+			return Objects.hashCode(getType());
+		}
+
+		@Override
 		@Nonnull
 		public Type getType() {
 			return this.type;
@@ -403,7 +418,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 
 	/**
 	 * Attempts to map the current {@code resultSet} row to an instance of {@code resultClass} using one of the
-	 * "out-of-the-box" types (primitives, common types like {@link UUID}, etc.
+	 * "out-of-the-box" types (primitives, common types like {@link UUID}, etc.)
 	 * <p>
 	 * This does not attempt to map to a user-defined JavaBean - see {@link #mapResultSetToBean(StatementContext, ResultSet, InstanceProvider)} for
 	 * that functionality.
