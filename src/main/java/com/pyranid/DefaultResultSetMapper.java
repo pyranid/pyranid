@@ -104,7 +104,6 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	 * @author <a href="https://www.revetkn.com">Mark Allen</a>
 	 * @since 2.1.0
 	 */
-	@FunctionalInterface
 	public interface CustomColumnMapper {
 		/**
 		 * Perform custom mapping of a {@link ResultSet} column: given a {@code resultSetValue}, optionally return an instance of {@code targetType} instead.
@@ -128,6 +127,19 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 										@Nullable Integer columnIndex,
 										@Nullable String columnLabel,
 										@Nonnull InstanceProvider instanceProvider) throws SQLException;
+
+		/**
+		 * Specifies which types this mapper should handle.
+		 * <p>
+		 * For example, if this mapper should apply when marshaling to {@code MyCustomType}, this method could return {@code targetType.matchesClass(MyCustomType.class)}.
+		 * <p>
+		 * For parameterized types like {@code List<UUID>}, this method could return {@code targetType.matchesParameterizedType(List.class, UUID.class)}.
+		 *
+		 * @param targetType the target type to evaluate - should this mapper handle it or not?
+		 * @return {@code true} if this mapper should handle the type, {@code false} otherwise.
+		 */
+		@Nonnull
+		Boolean appliesTo(@Nonnull TargetType targetType);
 
 		/**
 		 * A developer-friendly view over a reflective {@link java.lang.reflect.Type} used by the {@link ResultSet}-mapping pipeline for {@link DefaultResultSetMapper}.
