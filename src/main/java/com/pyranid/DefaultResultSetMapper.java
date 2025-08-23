@@ -96,6 +96,8 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	@Nonnull
 	private final ConcurrentMap<TargetType, List<CustomColumnMapper>> customColumnMappersByTargetTypeCache;
 	@Nonnull
+	private final ConcurrentMap<SourceTargetKey, CustomColumnMapper> preferredColumnMapperBySourceTargetKey;
+	@Nonnull
 	private final ConcurrentMap<Class<?>, Map<String, Set<String>>> columnLabelAliasesByPropertyNameCache;
 
 	/**
@@ -355,6 +357,105 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		}
 	}
 
+	// Internal cache key for column mapper applicability cache
+	@ThreadSafe
+	protected static final class SourceTargetKey {
+		private final Class<?> sourceClass;
+		private final TargetType targetType;
+
+		public SourceTargetKey(@Nonnull Class<?> sourceClass,
+													 @Nonnull TargetType targetType) {
+			requireNonNull(sourceClass);
+			requireNonNull(targetType);
+
+			this.sourceClass = sourceClass;
+			this.targetType = targetType;
+		}
+
+		@Override
+		public boolean equals(Object o) {
+			if (this == o) return true;
+			if (o == null || getClass() != o.getClass()) return false;
+			SourceTargetKey that = (SourceTargetKey) o;
+			return sourceClass.equals(that.sourceClass) && targetType.equals(that.targetType);
+		}
+
+		@Override
+		public int hashCode() {
+			return 31 * sourceClass.hashCode() + targetType.hashCode();
+		}
+	}
+
+	@Nonnull
+	protected List<CustomColumnMapper> customColumnMappersFor(@Nonnull TargetType targetType) {
+		requireNonNull(targetType);
+
+		return getCustomColumnMappersByTargetTypeCache().computeIfAbsent(targetType, applicableTargetType -> {
+			requireNonNull(applicableTargetType);
+
+			if (getCustomColumnMappers().isEmpty())
+				return List.of();
+
+			List<CustomColumnMapper> filtered = new ArrayList<>(getCustomColumnMappers().size());
+
+			for (CustomColumnMapper customColumnMapper : getCustomColumnMappers())
+				if (customColumnMapper.appliesTo(applicableTargetType))
+					filtered.add(customColumnMapper);
+
+			return Collections.unmodifiableList(filtered);
+		});
+	}
+
+	@Nonnull
+	protected <T> Optional<Object> tryCustomColumnMappers(@Nonnull StatementContext<T> statementContext,
+																												@Nonnull ResultSet resultSet,
+																												@Nonnull Object resultSetValue,
+																												@Nonnull TargetType targetType,
+																												@Nullable Integer columnIndex,
+																												@Nullable String columnLabel,
+																												@Nonnull InstanceProvider instanceProvider) throws SQLException {
+		requireNonNull(statementContext);
+		requireNonNull(resultSet);
+		requireNonNull(resultSetValue);
+		requireNonNull(targetType);
+		requireNonNull(instanceProvider);
+
+		List<CustomColumnMapper> customColumnMappers = customColumnMappersFor(targetType);
+
+		if (customColumnMappers.isEmpty())
+			return Optional.empty();
+
+		Class<?> sourceClass = resultSetValue.getClass();
+		SourceTargetKey sourceTargetKey = new SourceTargetKey(sourceClass, targetType);
+
+		CustomColumnMapper preferredCustomColumnMapper = getPreferredColumnMapperBySourceTargetKey().get(sourceTargetKey);
+
+		// If we have a known preference, try it first
+		if (preferredCustomColumnMapper != null) {
+			Optional<?> mappedResult = preferredCustomColumnMapper.map(statementContext, resultSet, resultSetValue, targetType, columnIndex, columnLabel, instanceProvider);
+
+			if (mappedResult.isPresent())
+				return (Optional<Object>) mappedResult;
+		}
+
+		// If it didn't apply this time, we'll try the rest; we keep the hint because it'll likely hit again later.
+		for (CustomColumnMapper customColumnMapper : customColumnMappers) {
+			// Skip over anything we've already seen
+			if (customColumnMapper == preferredCustomColumnMapper)
+				continue;
+
+			Optional<?> mappedResult = customColumnMapper.map(statementContext, resultSet, resultSetValue, targetType, columnIndex, columnLabel, instanceProvider);
+
+			if (mappedResult.isPresent()) {
+				getPreferredColumnMapperBySourceTargetKey().put(sourceTargetKey, customColumnMapper); // learn the winner for this (sourceClass,targetType)
+				return (Optional<Object>) mappedResult;
+			}
+		}
+
+		// No custom mapper applied
+		return Optional.empty();
+	}
+
 	/**
 	 * Creates a {@code ResultSetMapper} with a {@link Locale#getDefault()} {@code normalizationLocale} and no column-mapping customization.
 	 * <p>
@@ -396,6 +497,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		this.normalizationLocale = normalizationLocale;
 		this.customColumnMappers = Collections.unmodifiableList(customColumnMappers);
 		this.customColumnMappersByTargetTypeCache = new ConcurrentHashMap<>();
+		this.preferredColumnMapperBySourceTargetKey = new ConcurrentHashMap<>();
 		this.columnLabelAliasesByPropertyNameCache = new ConcurrentHashMap<>();
 	}
 
@@ -1272,6 +1374,11 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	@Nonnull
 	protected ConcurrentMap<TargetType, List<CustomColumnMapper>> getCustomColumnMappersByTargetTypeCache() {
 		return this.customColumnMappersByTargetTypeCache;
+	}
+
+	@Nonnull
+	protected ConcurrentMap<SourceTargetKey, CustomColumnMapper> getPreferredColumnMapperBySourceTargetKey() {
+		return this.preferredColumnMapperBySourceTargetKey;
 	}
 
 	@Nonnull

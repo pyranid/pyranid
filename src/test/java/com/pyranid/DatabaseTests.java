@@ -377,6 +377,12 @@ public class DatabaseTests {
 				new CustomColumnMapper() {
 					@Nonnull
 					@Override
+					public Boolean appliesTo(@Nonnull TargetType targetType) {
+						return targetType.matchesClass(Locale.class);
+					}
+
+					@Nonnull
+					@Override
 					public Optional<?> map(@Nonnull StatementContext<?> statementContext,
 																 @Nonnull ResultSet resultSet,
 																 @Nonnull Object resultSetValue,
