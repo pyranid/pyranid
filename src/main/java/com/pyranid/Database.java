@@ -119,7 +119,7 @@ public class Database {
 	@Nonnull
 	public Optional<Transaction> currentTransaction() {
 		Deque<Transaction> transactionStack = TRANSACTION_STACK_HOLDER.get();
-		return Optional.ofNullable(transactionStack.size() == 0 ? null : transactionStack.peek());
+		return Optional.ofNullable(transactionStack.isEmpty() ? null : transactionStack.peek());
 	}
 
 	/**
@@ -355,7 +355,7 @@ public class Database {
 		if (list.size() > 1)
 			throw new DatabaseException(format("Expected 1 row in resultset but got %s instead", list.size()));
 
-		return Optional.ofNullable(list.size() == 0 ? null : list.get(0));
+		return Optional.ofNullable(list.isEmpty() ? null : list.get(0));
 	}
 
 	/**
