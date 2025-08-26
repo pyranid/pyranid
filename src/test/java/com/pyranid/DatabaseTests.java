@@ -35,11 +35,15 @@ import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
@@ -371,36 +375,183 @@ public class DatabaseTests {
 
 	@Test
 	public void testCustomColumnMapper() {
-		DataSource dataSource = createInMemoryDataSource("testCustomColumnMapper");
+		DataSource dataSource = createInMemoryDataSource("cm_basic");
 
-		List<CustomColumnMapper> customColumnMappers = List.of(
-				new CustomColumnMapper() {
-					@Nonnull
-					@Override
-					public Boolean appliesTo(@Nonnull TargetType targetType) {
-						return targetType.matchesClass(Locale.class);
-					}
+		// Mapper: for any Locale target, always return CANADA (to prove the custom path is used)
+		CustomColumnMapper localeOverride = new CustomColumnMapper() {
+			@Nonnull
+			@Override
+			public Boolean appliesTo(@Nonnull CustomColumnMapper.TargetType targetType) {
+				return targetType.matchesClass(Locale.class);
+			}
 
-					@Nonnull
-					@Override
-					public Optional<?> map(@Nonnull StatementContext<?> statementContext,
-																 @Nonnull ResultSet resultSet,
-																 @Nonnull Object resultSetValue,
-																 @Nonnull TargetType targetType,
-																 @Nullable Integer columnIndex,
-																 @Nullable String columnLabel,
-																 @Nonnull InstanceProvider instanceProvider) throws SQLException {
-						// TODO: implement tests
-						return Optional.empty();
-					}
-				}
-		);
+			@Nonnull
+			@Override
+			public Optional<?> map(@Nonnull StatementContext<?> statementContext,
+														 @Nonnull ResultSet resultSet,
+														 @Nonnull Object resultSetValue,
+														 @Nonnull TargetType targetType,
+														 @Nullable Integer columnIndex,
+														 @Nullable String columnLabel,
+														 @Nonnull InstanceProvider instanceProvider) {
+				// ignore DB value; force a deterministic value so we can assert override happened
+				return Optional.of(Locale.CANADA);
+			}
+		};
 
-		Database customDatabase = Database.forDataSource(dataSource)
-				.resultSetMapper(new DefaultResultSetMapper(customColumnMappers))
+		Database db = Database.forDataSource(dataSource)
+				.resultSetMapper(new DefaultResultSetMapper(List.of(localeOverride)))
 				.build();
 
-		createTestSchema(customDatabase);
+		createTestSchema(db);
+
+		db.execute("INSERT INTO employee VALUES (1, 'A', 'a@x.com', 'en-US')");
+		db.execute("INSERT INTO employee VALUES (2, 'B', 'b@x.com', 'ja-JP')");
+
+		// JavaBean target
+		EmployeeClass e1 = db.queryForObject("SELECT * FROM employee WHERE employee_id=1", EmployeeClass.class).orElse(null);
+		Assert.assertNotNull(e1);
+		Assert.assertEquals("Custom mapper did not override Locale for bean", Locale.CANADA, e1.getLocale());
+		Assert.assertEquals("Raw locale should remain the DB string", "en-US", e1.getRawLocale());
+
+		// Record target
+		EmployeeRecord r2 = db.queryForObject("SELECT * FROM employee WHERE employee_id=2", EmployeeRecord.class).orElse(null);
+		Assert.assertNotNull(r2);
+		Assert.assertEquals("Custom mapper did not override Locale for record", Locale.CANADA, r2.locale());
+	}
+
+	@Test
+	public void testCustomColumnMapperPreferredCache() {
+		DataSource dataSource = createInMemoryDataSource("cm_cache");
+
+		AtomicInteger firstCalls = new AtomicInteger(0);
+		AtomicInteger secondCalls = new AtomicInteger(0);
+
+		// First mapper applies to Locale but never handles (returns empty). We count calls.
+		CustomColumnMapper first = new CustomColumnMapper() {
+			@Nonnull
+			@Override
+			public Boolean appliesTo(@Nonnull TargetType targetType) {
+				return targetType.matchesClass(Locale.class);
+			}
+
+			@Nonnull
+			@Override
+			public Optional<?> map(@Nonnull StatementContext<?> statementContext,
+														 @Nonnull ResultSet resultSet,
+														 @Nonnull Object resultSetValue,
+														 @Nonnull TargetType targetType,
+														 @Nullable Integer columnIndex,
+														 @Nullable String columnLabel,
+														 @Nonnull InstanceProvider instanceProvider) {
+				firstCalls.incrementAndGet();
+				return Optional.empty();
+			}
+		};
+
+		// Second mapper actually handles and returns a fixed Locale
+		CustomColumnMapper second = new CustomColumnMapper() {
+			@Nonnull
+			@Override
+			public Boolean appliesTo(@Nonnull TargetType targetType) {
+				return targetType.matchesClass(Locale.class);
+			}
+
+			@Nonnull
+			@Override
+			public Optional<?> map(@Nonnull StatementContext<?> statementContext,
+														 @Nonnull ResultSet resultSet,
+														 @Nonnull Object resultSetValue,
+														 @Nonnull TargetType targetType,
+														 @Nullable Integer columnIndex,
+														 @Nullable String columnLabel,
+														 @Nonnull InstanceProvider instanceProvider) {
+				secondCalls.incrementAndGet();
+				return Optional.of(Locale.GERMANY);
+			}
+		};
+
+		Database db = Database.forDataSource(dataSource)
+				.resultSetMapper(new DefaultResultSetMapper(List.of(first, second)))
+				.build();
+
+		createTestSchema(db);
+
+		// Insert multiple rows so the winner cache has a chance to kick in
+		db.execute("INSERT INTO employee VALUES (1, 'A', 'a@x.com', 'en-US')");
+		db.execute("INSERT INTO employee VALUES (2, 'B', 'b@x.com', 'fr-FR')");
+		db.execute("INSERT INTO employee VALUES (3, 'C', 'c@x.com', 'ja-JP')");
+
+		List<EmployeeClass> rows = db.queryForList("SELECT * FROM employee ORDER BY employee_id", EmployeeClass.class);
+		Assert.assertEquals(3, rows.size());
+		rows.forEach(e -> Assert.assertEquals("Winner mapper should set GERMANY", Locale.GERMANY, e.getLocale()));
+
+		// Expected call pattern with positive winner cache:
+		// Row1: first called (empty), second called (handles) -> cache winner=(String, Locale) -> second
+		// Row2: second called only
+		// Row3: second called only
+		Assert.assertEquals("First mapper should be tried only on the first row", 1, firstCalls.get());
+		Assert.assertEquals("Second mapper should handle every row", 3, secondCalls.get());
+	}
+
+	public record GroupRow(String groupName, List<UUID> ids) {}
+
+	@Test
+	public void testCustomColumnMapperParameterizedList() {
+		DataSource dataSource = createInMemoryDataSource("cm_list_uuid");
+
+		// Mapper: List<UUID> from CSV string (e.g., "u1,u2")
+		CustomColumnMapper csvUuidList = new CustomColumnMapper() {
+			@Nonnull
+			@Override
+			public Boolean appliesTo(@Nonnull TargetType targetType) {
+				return targetType.matchesParameterizedType(List.class, UUID.class);
+			}
+
+			@Nonnull
+			@Override
+			public Optional<?> map(@Nonnull StatementContext<?> statementContext,
+														 @Nonnull ResultSet resultSet,
+														 @Nonnull Object resultSetValue,
+														 @Nonnull TargetType targetType,
+														 @Nullable Integer columnIndex,
+														 @Nullable String columnLabel,
+														 @Nonnull InstanceProvider instanceProvider) {
+				String s = resultSetValue == null ? null : resultSetValue.toString();
+				if (s == null || s.isBlank()) return Optional.of(List.of());
+
+				List<UUID> uuids = Arrays.stream(s.split(","))
+						.map(String::trim)
+						.filter(str -> !str.isEmpty())
+						.map(UUID::fromString)
+						.collect(Collectors.toList());
+
+				return Optional.of(uuids);
+			}
+		};
+
+		Database db = Database.forDataSource(dataSource)
+				.resultSetMapper(new DefaultResultSetMapper(List.of(csvUuidList)))
+				.build();
+
+		// Simple schema for the test
+		db.execute("""
+				CREATE TABLE group_data (
+				  group_name VARCHAR(255),
+				  ids VARCHAR(2000)
+				)
+				""");
+
+		UUID u1 = UUID.fromString("11111111-1111-1111-1111-111111111111");
+		UUID u2 = UUID.fromString("22222222-2222-2222-2222-222222222222");
+		db.execute("INSERT INTO group_data VALUES (?, ?)", "alpha", u1 + "," + u2);
+
+		// Note: property "groupName" should match DB column "group_name" via normalization logic
+		GroupRow row = db.queryForObject("SELECT group_name, ids FROM group_data WHERE group_name=?", GroupRow.class, "alpha").orElse(null);
+
+		Assert.assertNotNull(row);
+		Assert.assertEquals("alpha", row.groupName());
+		Assert.assertEquals(List.of(u1, u2), row.ids());
 	}
 
 	protected void createTestSchema(@Nonnull Database database) {
