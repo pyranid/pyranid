@@ -23,6 +23,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import javax.annotation.Nonnull;
+import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
@@ -50,6 +51,7 @@ import static java.util.Objects.requireNonNull;
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 2.0.0
  */
+@ThreadSafe
 public class DatabaseTests {
 	public record EmployeeRecord(@DatabaseColumn("name") String displayName, String emailAddress, Locale locale) {}
 

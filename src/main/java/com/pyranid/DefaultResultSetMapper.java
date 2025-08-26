@@ -25,6 +25,9 @@ import java.beans.BeanInfo;
 import java.beans.IntrospectionException;
 import java.beans.Introspector;
 import java.beans.PropertyDescriptor;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.GenericArrayType;
@@ -102,6 +105,9 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	private final ConcurrentMap<Class<?>, Map<String, TargetType>> propertyTargetTypeCache = new ConcurrentHashMap<>();
 	@Nonnull
 	private final ConcurrentMap<Class<?>, Map<String, Set<String>>> columnLabelAliasesByPropertyNameCache;
+	// Only used if row-planning is enabled
+	@Nonnull
+	private final ConcurrentMap<PlanKey, RowPlan<?>> rowPlanningCache = new ConcurrentHashMap<>();
 
 	/**
 	 * Enables per-column {@link ResultSet} mapping customization.
@@ -552,6 +558,23 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(resultSetRowType);
 		requireNonNull(instanceProvider);
 
+		// TODO: remove this hack, introduce a field via builder to control this
+		if (getNormalizationLocale().equals(Locale.CANADA))
+			return mapWithRowPlanning(statementContext, resultSet, resultSetRowType, instanceProvider);
+
+		return mapWithoutRowPlanning(statementContext, resultSet, resultSetRowType, instanceProvider);
+	}
+
+	@Nonnull
+	protected <T> Optional<T> mapWithoutRowPlanning(@Nonnull StatementContext<T> statementContext,
+																									@Nonnull ResultSet resultSet,
+																									@Nonnull Class<T> resultSetRowType,
+																									@Nonnull InstanceProvider instanceProvider) {
+		requireNonNull(statementContext);
+		requireNonNull(resultSet);
+		requireNonNull(resultSetRowType);
+		requireNonNull(instanceProvider);
+
 		try {
 			StandardTypeResult<T> standardTypeResult = mapResultSetToStandardType(statementContext, resultSet, resultSetRowType);
 
@@ -567,6 +590,100 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		} catch (Exception e) {
 			throw new DatabaseException(format("Unable to map JDBC %s to %s", ResultSet.class.getSimpleName(), resultSetRowType),
 					e);
+		}
+	}
+
+
+	@Nonnull
+	protected <T> Optional<T> mapWithRowPlanning(@Nonnull StatementContext<T> statementContext,
+																							 @Nonnull ResultSet resultSet,
+																							 @Nonnull Class<T> resultSetRowType,
+																							 @Nonnull InstanceProvider instanceProvider) {
+		requireNonNull(statementContext);
+		requireNonNull(resultSet);
+		requireNonNull(resultSetRowType);
+		requireNonNull(instanceProvider);
+
+		try {
+			// Use "standard type" fast path
+			StandardTypeResult<T> standardTypeResult = mapResultSetToStandardType(statementContext, resultSet, resultSetRowType);
+			if (standardTypeResult.isStandardType()) return standardTypeResult.getValue();
+
+			// Otherwise, use a per-schema row plan
+			RowPlan<T> plan = buildPlan(statementContext, resultSet, resultSetRowType, instanceProvider);
+			// Per-row raw cache: 1-based, size = columnCount + 1
+			final Object[] rawByCol = new Object[plan.columnCount + 1];
+			final boolean[] rawLoaded = new boolean[plan.columnCount + 1];
+
+			if (plan.isRecord) {
+				RecordComponent[] rc = resultSetRowType.getRecordComponents();
+				Object[] args = new Object[rc.length];
+
+				for (ColumnBinding b : plan.bindings) {
+					if (b.recordArgIndexOrMinusOne < 0) continue; // bean binding or SKIP
+					Object raw;
+					if (!rawLoaded[b.columnIndex]) {
+						raw = b.reader.read(resultSet, statementContext, b.columnIndex);
+						rawByCol[b.columnIndex] = raw;
+						rawLoaded[b.columnIndex] = true;
+					} else {
+						raw = rawByCol[b.columnIndex];
+					}
+					Object val = b.converter.convert(raw, resultSet, statementContext);
+
+					if (val != null && !b.targetRawClass.isInstance(val)) {
+						String resultSetTypeDescription = val.getClass().toString();
+						throw new DatabaseException(format(
+								"Property '%s' of %s expects type %s, but the ResultSet produced %s. "
+										+ "Consider providing a %s to %s to detect instances of %s and convert them to %s",
+								b.propertyName, resultSetRowType, b.targetRawClass, resultSetTypeDescription,
+								CustomColumnMapper.class.getSimpleName(), DefaultResultSetMapper.class.getSimpleName(),
+								resultSetTypeDescription, b.targetRawClass));
+					}
+
+					args[b.recordArgIndexOrMinusOne] = val;
+				}
+
+				@SuppressWarnings("unchecked")
+				T rec = (T) plan.recordCtor.invokeWithArguments(args);
+				return Optional.of(rec);
+			} else {
+				// Bean
+				T object = instanceProvider.provide(statementContext, resultSetRowType);
+
+				for (ColumnBinding b : plan.bindings) {
+					if (b.setterOrNull == null) continue; // record-only or SKIP
+					Object raw;
+					if (!rawLoaded[b.columnIndex]) {
+						raw = b.reader.read(resultSet, statementContext, b.columnIndex);
+						rawByCol[b.columnIndex] = raw;
+						rawLoaded[b.columnIndex] = true;
+					} else {
+						raw = rawByCol[b.columnIndex];
+					}
+					Object val = b.converter.convert(raw, resultSet, statementContext);
+
+					if (val != null && !b.targetRawClass.isInstance(val)) {
+						String resultSetTypeDescription = val.getClass().toString();
+						throw new DatabaseException(format(
+								"Property '%s' of %s has a write method of type %s, but the ResultSet type %s does not match. "
+										+ "Consider providing a %s to %s to detect instances of %s and convert them to %s",
+								b.propertyName, resultSetRowType, b.targetRawClass, resultSetTypeDescription,
+								CustomColumnMapper.class.getSimpleName(), DefaultResultSetMapper.class.getSimpleName(),
+								resultSetTypeDescription, b.targetRawClass));
+					}
+
+					if (val != null) {
+						b.setterOrNull.invoke(object, val);
+					}
+				}
+
+				return Optional.of(object);
+			}
+		} catch (DatabaseException e) {
+			throw e;
+		} catch (Throwable t) {
+			throw new DatabaseException(format("Unable to map JDBC %s to %s", ResultSet.class.getSimpleName(), resultSetRowType), t);
 		}
 	}
 
@@ -927,7 +1044,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		if (resultSetValue == null)
 			return Optional.empty();
 
-		// ---------- Numbers ----------
+		// Numbers
 		if (resultSetValue instanceof BigDecimal bigDecimal) {
 			if (BigDecimal.class.isAssignableFrom(propertyType))
 				return Optional.of(bigDecimal);
@@ -1068,7 +1185,9 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 				return Optional.of(java.sql.Time.valueOf(offsetTime.toLocalTime()));
 		}
 
-		if (ZoneId.class.isAssignableFrom(propertyType)) {
+		if (UUID.class.isAssignableFrom(propertyType)) {
+			return Optional.ofNullable(UUID.fromString(resultSetValue.toString()));
+		} else if (ZoneId.class.isAssignableFrom(propertyType)) {
 			return Optional.ofNullable(ZoneId.of(resultSetValue.toString()));
 		} else if (TimeZone.class.isAssignableFrom(propertyType)) {
 			return Optional.ofNullable(TimeZone.getTimeZone(resultSetValue.toString()));
@@ -1429,6 +1548,256 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		}
 	}
 
+	@ThreadSafe
+	protected static final class PlanKey {
+		final Class<?> resultClass;
+		final String schemaSignature;
+
+		PlanKey(@Nonnull Class<?> resultClass, @Nonnull String schemaSignature) {
+			this.resultClass = requireNonNull(resultClass);
+			this.schemaSignature = requireNonNull(schemaSignature);
+		}
+
+		@Override
+		public boolean equals(@Nullable Object o) {
+			if (this == o) return true;
+			if (o == null || getClass() != o.getClass()) return false;
+			PlanKey that = (PlanKey) o;
+			return resultClass.equals(that.resultClass) && schemaSignature.equals(that.schemaSignature);
+		}
+
+		@Override
+		public int hashCode() {
+			return 31 * resultClass.hashCode() + schemaSignature.hashCode();
+		}
+	}
+
+	/**
+	 * Reads a single column value, using the right temporal/native getter decided at plan time.
+	 */
+	@FunctionalInterface
+	protected interface ColumnReader {
+		@Nullable
+		Object read(@Nonnull ResultSet rs,
+								@Nonnull StatementContext<?> ctx,
+								int col) throws SQLException;
+	}
+
+	/**
+	 * Converts a raw value to the property/record target type, including custom mappers.
+	 */
+	@FunctionalInterface
+	protected interface Converter {
+		@Nullable
+		Object convert(@Nullable Object raw, @Nonnull ResultSet rs, @Nonnull StatementContext<?> ctx);
+	}
+
+	@ThreadSafe
+	protected static final class ColumnBinding {
+		final int columnIndex; // 1-based
+		final int recordArgIndexOrMinusOne; // >=0 for record components, -1 for bean or SKIP
+		final @Nullable MethodHandle setterOrNull; // for bean properties; type: (Declaring, Param)void or (Declaring, Param)Object
+		final @Nonnull ColumnReader reader; // chosen at plan time
+		final @Nonnull Converter converter; // chosen at plan time
+		final @Nonnull Class<?> targetRawClass; // for type checks / helpful errors
+		final @Nonnull String propertyName; // for helpful errors; empty if SKIP
+
+		ColumnBinding(int columnIndex,
+									int recordArgIndexOrMinusOne,
+									@Nullable MethodHandle setterOrNull,
+									@Nonnull ColumnReader reader,
+									@Nonnull Converter converter,
+									@Nonnull Class<?> targetRawClass,
+									@Nonnull String propertyName) {
+			this.columnIndex = columnIndex;
+			this.recordArgIndexOrMinusOne = recordArgIndexOrMinusOne;
+			this.setterOrNull = setterOrNull;
+			this.reader = requireNonNull(reader);
+			this.converter = requireNonNull(converter);
+			this.targetRawClass = requireNonNull(targetRawClass);
+			this.propertyName = requireNonNull(propertyName);
+		}
+	}
+
+	@ThreadSafe
+	protected static final class RowPlan<T> {
+		final boolean isRecord;
+		final @Nullable MethodHandle recordCtor; // canonical ctor for records; null for beans
+		final int columnCount;                   // for per-row raw caching
+		final @Nonnull List<ColumnBinding> bindings; // may contain multiple entries per column (fan-out)
+
+		RowPlan(boolean isRecord, @Nullable MethodHandle recordCtor, int columnCount, @Nonnull List<ColumnBinding> bindings) {
+			this.isRecord = isRecord;
+			this.recordCtor = recordCtor;
+			this.columnCount = columnCount;
+			this.bindings = requireNonNull(bindings);
+		}
+	}
+
+	@SuppressWarnings({"unchecked", "rawtypes"})
+	@Nonnull
+	protected <T> RowPlan<T> buildPlan(@Nonnull StatementContext<T> ctx,
+																		 @Nonnull ResultSet rs,
+																		 @Nonnull Class<T> resultClass,
+																		 @Nonnull InstanceProvider instanceProvider) throws Exception {
+		requireNonNull(ctx);
+		requireNonNull(rs);
+		requireNonNull(resultClass);
+		requireNonNull(instanceProvider);
+
+		ResultSetMetaData md = rs.getMetaData();
+		int cols = md.getColumnCount();
+
+		// Build a stable schema signature (normalized label + JDBC/vendortype + tz flags)
+		StringBuilder sig = new StringBuilder(64 + cols * 48).append(cols);
+		for (int i = 1; i <= cols; i++) {
+			String labelNorm = normalizeColumnLabel(md.getColumnLabel(i));
+			int jdbcType = md.getColumnType(i);
+			boolean tsTz = TemporalReaders.isTimestampWithTimeZone(md, i, ctx.getDatabaseType());
+			boolean timeTz = TemporalReaders.isTimeWithTimeZone(md, i);
+			String typeName = Objects.toString(md.getColumnTypeName(i), "");
+			sig.append('|').append(labelNorm)
+					.append(':').append(jdbcType)
+					.append(':').append(tsTz ? 'T' : 't')
+					.append(':').append(timeTz ? 'Z' : 'z')
+					.append(':').append(typeName);
+		}
+		PlanKey key = new PlanKey(resultClass, sig.toString());
+		RowPlan<?> cached = getRowPlanningCache().get(key);
+		if (cached != null) return (RowPlan<T>) cached;
+
+		// Precompute property metadata for this class
+		Map<String, TargetType> propertyTargetTypes = determinePropertyTargetTypes(resultClass);
+		Map<String, Set<String>> aliasByProp = determineColumnLabelAliasesByPropertyName(resultClass);
+
+		final boolean isRecord = resultClass.isRecord();
+		final MethodHandles.Lookup lookup = MethodHandles.lookup();
+
+		// record: ctor + name->index map
+		final MethodHandle recordCtor;
+		final Map<String, Integer> recordIndexByProp = new HashMap<>();
+		if (isRecord) {
+			RecordComponent[] rc = resultClass.getRecordComponents();
+			Class<?>[] argTypes = new Class<?>[rc.length];
+			for (int i = 0; i < rc.length; i++) {
+				argTypes[i] = rc[i].getType();
+				recordIndexByProp.put(rc[i].getName(), i);
+			}
+			recordCtor = lookup.findConstructor(resultClass, MethodType.methodType(void.class, argTypes));
+		} else {
+			recordCtor = null;
+		}
+
+		// bean: property -> setter handle
+		final Map<String, MethodHandle> setterByProp = new HashMap<>();
+		if (!isRecord) {
+			BeanInfo beanInfo = Introspector.getBeanInfo(resultClass);
+			for (PropertyDescriptor pd : beanInfo.getPropertyDescriptors()) {
+				Method w = pd.getWriteMethod();
+				if (w != null) setterByProp.put(pd.getName(), lookup.unreflect(w));
+			}
+		}
+
+		// Union of all writable property names
+		Set<String> allProps = new HashSet<>();
+		allProps.addAll(setterByProp.keySet());
+		allProps.addAll(recordIndexByProp.keySet());
+
+		// For each property, compute all acceptable normalized labels (aliases + default strategy)
+		Map<String, Set<String>> acceptableLabels = new HashMap<>(allProps.size() * 2);
+		for (String prop : allProps) {
+			Set<String> labels = new HashSet<>();
+			Set<String> anno = aliasByProp.get(prop);
+			if (anno != null) labels.addAll(anno);
+			labels.addAll(databaseColumnNamesForPropertyName(prop));
+			acceptableLabels.put(prop, labels);
+		}
+
+		// Build per-column readers (decided once)
+		final ColumnReader[] readers = new ColumnReader[cols + 1]; // 1-based indexing
+		for (int i = 1; i <= cols; i++) {
+			int jdbcType = md.getColumnType(i);
+			boolean tsTz = TemporalReaders.isTimestampWithTimeZone(md, i, ctx.getDatabaseType());
+			boolean timeTz = TemporalReaders.isTimeWithTimeZone(md, i);
+			if (tsTz) {
+				readers[i] = (r, c, col) -> TemporalReaders.asOffsetDateTime(r, col, c);
+			} else if (jdbcType == Types.TIMESTAMP) {
+				readers[i] = (r, c, col) -> TemporalReaders.asLocalDateTime(r, col, c);
+			} else if (jdbcType == Types.DATE) {
+				readers[i] = (r, c, col) -> TemporalReaders.asLocalDate(r, col);
+			} else if (timeTz) {
+				readers[i] = (r, c, col) -> TemporalReaders.asOffsetTime(r, col, c);
+			} else if (jdbcType == Types.TIME) {
+				readers[i] = (r, c, col) -> TemporalReaders.asLocalTime(r, col);
+			} else {
+				readers[i] = (r, c, col) -> r.getObject(col);
+			}
+		}
+
+		// For each column, bind ALL matching properties (fan-out)
+		List<ColumnBinding> bindings = new ArrayList<>();
+		for (int i = 1; i <= cols; i++) {
+			String labelNorm = normalizeColumnLabel(md.getColumnLabel(i));
+			ColumnReader reader = readers[i];
+
+			// Find all properties that claim this label
+			List<String> matchedProps = new ArrayList<>(2);
+			for (Map.Entry<String, Set<String>> e : acceptableLabels.entrySet()) {
+				if (e.getValue().contains(labelNorm)) matchedProps.add(e.getKey());
+			}
+
+			if (matchedProps.isEmpty()) {
+				// No property claims this column — add a SKIP binding to keep behavior explicit
+				bindings.add(new ColumnBinding(i, -1, null, reader, (raw, rrs, cctx) -> raw, Object.class, ""));
+				continue;
+			}
+
+			// Create one binding per matched property
+			for (String prop : matchedProps) {
+				// Determine precise TargetType (generic aware)
+				TargetType ttype = propertyTargetTypes.get(prop);
+				if (ttype == null) {
+					if (isRecord) {
+						int argIndex = requireNonNull(recordIndexByProp.get(prop));
+						ttype = CustomColumnMapper.TargetType.of(resultClass.getRecordComponents()[argIndex].getGenericType());
+					} else {
+						MethodHandle setter = setterByProp.get(prop);
+						Class<?> param = setter.type().parameterType(1); // (Declaring, Param)
+						ttype = CustomColumnMapper.TargetType.of(param);
+					}
+				}
+
+				final int recordArgIndex = isRecord ? requireNonNull(recordIndexByProp.get(prop)) : -1;
+				final MethodHandle setterMH = isRecord ? null : setterByProp.get(prop);
+				final Class<?> rawTargetClass = isRecord
+						? resultClass.getRecordComponents()[recordArgIndex].getType()
+						: setterMH.type().parameterType(1);
+
+				final TargetType targetTypeFinal = ttype;
+				final String propertyNameFinal = prop;
+				final int colIndexFinal = i;
+				final String labelFinal = labelNorm;
+
+				Converter converter = (raw, rrs, cctx) -> {
+					if (raw == null) return null;
+					try {
+						return tryCustomColumnMappers(cctx, rrs, raw, targetTypeFinal, colIndexFinal, labelFinal, instanceProvider)
+								.or(() -> convertResultSetValueToPropertyType(cctx, raw, rawTargetClass))
+								.orElse(raw);
+					} catch (SQLException e) {
+						throw new DatabaseException(e);
+					}
+				};
+
+				bindings.add(new ColumnBinding(i, recordArgIndex, setterMH, reader, converter, rawTargetClass, propertyNameFinal));
+			}
+		}
+
+		RowPlan<T> plan = new RowPlan<>(isRecord, recordCtor, cols, bindings);
+		getRowPlanningCache().putIfAbsent(key, plan);
+		return plan;
+	}
+
 	@Nonnull
 	protected List<CustomColumnMapper> getCustomColumnMappers() {
 		return this.customColumnMappers;
@@ -1452,5 +1821,10 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	@Nonnull
 	protected ConcurrentMap<Class<?>, Map<String, Set<String>>> getColumnLabelAliasesByPropertyNameCache() {
 		return this.columnLabelAliasesByPropertyNameCache;
+	}
+
+	@Nonnull
+	protected ConcurrentMap<PlanKey, RowPlan<?>> getRowPlanningCache() {
+		return this.rowPlanningCache;
 	}
 }
