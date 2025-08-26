@@ -381,7 +381,7 @@ public class DatabaseTests {
 		CustomColumnMapper localeOverride = new CustomColumnMapper() {
 			@Nonnull
 			@Override
-			public Boolean appliesTo(@Nonnull CustomColumnMapper.TargetType targetType) {
+			public Boolean appliesTo(@Nonnull TargetType targetType) {
 				return targetType.matchesClass(Locale.class);
 			}
 

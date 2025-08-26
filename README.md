@@ -40,7 +40,7 @@ Java 16+
 <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid</artifactId>
-  <version>2.0.1</version>
+  <version>2.1.0</version>
 </dependency>
 ```
 
@@ -56,7 +56,7 @@ Java 8+ (legacy; only critical fixes will be applied)
 
 ### Direct Download
 
-If you don't use Maven, you can drop [pyranid-2.0.1.jar](https://repo1.maven.org/maven2/com/pyranid/pyranid/2.0.1/pyranid-2.0.1.jar) directly into your project.  No other dependencies are required.
+If you don't use Maven, you can drop [pyranid-2.1.0.jar](https://repo1.maven.org/maven2/com/pyranid/pyranid/2.1.0/pyranid-2.1.0.jar) directly into your project.  No other dependencies are required.
 
 ## Configuration
 
@@ -71,9 +71,6 @@ Database database = Database.forDataSource(dataSource).build();
 ### Customized setup
 
 ```java
-// Useful if your JVM's default timezone doesn't match your Database's default timezone
-ZoneId timeZone = ZoneId.of("UTC");
-
 // Controls how Pyranid creates instances of objects that represent ResultSet rows
 InstanceProvider instanceProvider = new DefaultInstanceProvider() {
   @Override
@@ -96,7 +93,7 @@ InstanceProvider instanceProvider = new DefaultInstanceProvider() {
 };
 
 // Copies data from a ResultSet row to an instance of the specified type
-ResultSetMapper resultSetMapper = new DefaultResultSetMapper(timeZone) {
+ResultSetMapper resultSetMapper = new DefaultResultSetMapper() {
   @Nonnull
   @Override
   public <T> Optional<T> map(@Nonnull StatementContext<T> statementContext,
@@ -109,7 +106,7 @@ ResultSetMapper resultSetMapper = new DefaultResultSetMapper(timeZone) {
 };
 
 // Binds parameters to a SQL PreparedStatement
-PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder(timeZone) {
+PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder() {
   @Override
   public <T> void bind(@Nonnull StatementContext<T> statementContext,
                        @Nonnull PreparedStatement preparedStatement,
@@ -127,6 +124,9 @@ StatementLogger statementLogger = new StatementLogger() {
     out.println(statementLog);
   }
 };
+
+// Useful if your JVM's default timezone doesn't match your Database's default timezone
+ZoneId timeZone = ZoneId.of("UTC");
 
 Database customDatabase = Database.forDataSource(dataSource)
   .timeZone(timeZone)
