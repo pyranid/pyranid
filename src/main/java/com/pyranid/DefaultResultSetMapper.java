@@ -1068,13 +1068,13 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 				return Optional.of(java.sql.Time.valueOf(offsetTime.toLocalTime()));
 		}
 
-		if (propertyType.isAssignableFrom(ZoneId.class)) {
+		if (ZoneId.class.isAssignableFrom(propertyType)) {
 			return Optional.ofNullable(ZoneId.of(resultSetValue.toString()));
-		} else if (propertyType.isAssignableFrom(TimeZone.class)) {
+		} else if (TimeZone.class.isAssignableFrom(propertyType)) {
 			return Optional.ofNullable(TimeZone.getTimeZone(resultSetValue.toString()));
-		} else if (propertyType.isAssignableFrom(Locale.class)) {
+		} else if (Locale.class.isAssignableFrom(propertyType)) {
 			return Optional.ofNullable(Locale.forLanguageTag(resultSetValue.toString()));
-		} else if (propertyType.isAssignableFrom(Currency.class)) {
+		} else if (Currency.class.isAssignableFrom(propertyType)) {
 			return Optional.ofNullable(Currency.getInstance(resultSetValue.toString()));
 		} else if (propertyType.isEnum()) {
 			return Optional.ofNullable(extractEnumValue(propertyType, resultSetValue));

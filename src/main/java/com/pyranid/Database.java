@@ -224,7 +224,13 @@ public class Database {
 
 			throw new RuntimeException(t);
 		} finally {
-			TRANSACTION_STACK_HOLDER.get().pop();
+			Deque<Transaction> transactionStack = TRANSACTION_STACK_HOLDER.get();
+
+			transactionStack.pop();
+
+			// Ensure txn stack is fully cleaned up
+			if (transactionStack.isEmpty())
+				TRANSACTION_STACK_HOLDER.remove();
 
 			try {
 				try {

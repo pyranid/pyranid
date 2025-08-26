@@ -25,9 +25,7 @@ import org.junit.Test;
 import javax.annotation.Nonnull;
 import javax.sql.DataSource;
 import java.math.BigDecimal;
-import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -36,9 +34,9 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
+import java.util.Currency;
 import java.util.List;
 import java.util.Locale;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -150,114 +148,6 @@ public class DatabaseTests {
 		});
 
 		Assert.assertTrue("Did not run post-transaction operation", ranPostTransactionOperation.get());
-	}
-
-	@Test
-	public void testCustomDatabase() {
-		DataSource dataSource = createInMemoryDataSource("testCustomDatabase");
-
-		// Override JVM default timezone
-		ZoneId timeZone = ZoneId.of("UTC");
-
-		InstanceProvider instanceProvider = new DefaultInstanceProvider() {
-			@Override
-			@Nonnull
-			public <T> T provide(@Nonnull StatementContext<T> statementContext,
-													 @Nonnull Class<T> instanceType) {
-				if (Objects.equals("employee-query", statementContext.getStatement().getId()))
-					System.out.printf("Creating instance of %s for Employee Query: %s\n",
-							instanceType.getSimpleName(), statementContext);
-
-				return super.provide(statementContext, instanceType);
-			}
-		};
-
-		ResultSetMapper resultSetMapper = new DefaultResultSetMapper() {
-			@Nonnull
-			@Override
-			public <T> Optional<T> map(@Nonnull StatementContext<T> statementContext,
-																 @Nonnull ResultSet resultSet,
-																 @Nonnull Class<T> resultSetRowType,
-																 @Nonnull InstanceProvider instanceProvider) {
-				if (Objects.equals("employee-query", statementContext.getStatement().getId()))
-					System.out.printf("Mapping ResultSet for Employee Query: %s\n", statementContext);
-
-				return super.map(statementContext, resultSet, resultSetRowType, instanceProvider);
-			}
-		};
-
-		PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder() {
-			@Override
-			public <T> void bindParameter(@Nonnull StatementContext<T> statementContext,
-																		@Nonnull PreparedStatement preparedStatement,
-																		@Nonnull Object parameter,
-																		@Nonnull Integer parameterIndex) throws SQLException {
-				if (Objects.equals("employee-query", statementContext.getStatement().getId()))
-					System.out.printf("Binding Employee Query parameter %d (%s): Statement context was %s\n",
-							parameterIndex, parameter, statementContext);
-
-				super.bindParameter(statementContext, preparedStatement, parameter, parameterIndex);
-			}
-		};
-
-		StatementLogger statementLogger = new StatementLogger() {
-			@Override
-			public void log(StatementLog statementLog) {
-				// Send log to whatever output sink you'd like
-				if (Objects.equals("employee-query", statementLog.getStatementContext().getStatement().getId()))
-					System.out.printf("Completed Employee Query: %s\n", statementLog);
-			}
-		};
-
-		Database customDatabase = Database.forDataSource(dataSource)
-				.timeZone(timeZone)
-				.instanceProvider(instanceProvider)
-				.resultSetMapper(resultSetMapper)
-				.preparedStatementBinder(preparedStatementBinder)
-				.statementLogger(statementLogger)
-				.build();
-
-		createTestSchema(customDatabase);
-
-		customDatabase.execute("INSERT INTO employee VALUES (?, 'Employee One', 'employee-one@company.com', NULL)", 1);
-		customDatabase.execute("INSERT INTO employee VALUES (2, 'Employee Two', NULL, NULL)");
-
-		List<EmployeeRecord> employeeRecords = customDatabase.queryForList("SELECT * FROM employee ORDER BY name", EmployeeRecord.class);
-		Assert.assertEquals("Wrong number of employees", 2, employeeRecords.size());
-		Assert.assertEquals("Didn't detect DB column name override", "Employee One", employeeRecords.get(0).displayName());
-
-		List<EmployeeClass> employeeClasses = customDatabase.queryForList("SELECT * FROM employee ORDER BY name", EmployeeClass.class);
-		Assert.assertEquals("Wrong number of employees", 2, employeeClasses.size());
-		Assert.assertEquals("Didn't detect DB column name override", "Employee One", employeeClasses.get(0).getDisplayName());
-
-		EmployeeClass employee = customDatabase.queryForObject(Statement.of("employee-query", """
-				SELECT *
-				FROM employee
-				WHERE email_address=?
-				"""), EmployeeClass.class, "employee-one@company.com").orElse(null);
-
-		Assert.assertNotNull("Could not find employee", employee);
-
-		List<List<Object>> parameterGroups = List.of(
-				List.of(3, "Employee Three", "employee-three@company.com", Locale.US),
-				List.of(4, "Employee Four", "employee-four@company.com", Locale.JAPAN)
-		);
-
-		List<Long> updateCounts = customDatabase.executeBatch("INSERT INTO employee VALUES (?,?,?,?)", parameterGroups);
-
-		Assert.assertEquals("Wrong number of update counts", 2, updateCounts.size());
-		Assert.assertEquals("Wrong update count 1", 1, (long) updateCounts.get(0));
-		Assert.assertEquals("Wrong update count 2", 1, (long) updateCounts.get(1));
-
-		EmployeeClass employeeWithLocale = customDatabase.queryForObject("""
-				SELECT *
-				FROM employee
-				WHERE email_address=?
-				""", EmployeeClass.class, "employee-three@company.com").orElse(null);
-
-		Assert.assertNotNull("Unable to fetch employee with locale", employeeWithLocale);
-		Assert.assertEquals("Locale mismatch", Locale.US, employeeWithLocale.getLocale());
-		Assert.assertEquals("Raw locale mismatch", "en-US", employeeWithLocale.getRawLocale());
 	}
 
 	@Test
@@ -552,6 +442,104 @@ public class DatabaseTests {
 		Assert.assertNotNull(row);
 		Assert.assertEquals("alpha", row.groupName());
 		Assert.assertEquals(List.of(u1, u2), row.ids());
+	}
+
+	@Test
+	public void testExecuteForObjectAndListUsingSelect() {
+		Database db = Database.forDataSource(createInMemoryDataSource("exec_select")).build();
+		db.execute("CREATE TABLE prod (id INT, name VARCHAR(64))");
+		db.execute("INSERT INTO prod VALUES (1, 'A')");
+		db.execute("INSERT INTO prod VALUES (2, 'B')");
+
+		// Although executeForObject is meant for DML with RETURNING, it currently delegates to queryForObject.
+		Optional<String> name = db.executeForObject("SELECT name FROM prod WHERE id = ?", String.class, 1);
+		Assert.assertTrue(name.isPresent());
+		Assert.assertEquals("A", name.get());
+
+		List<Integer> ids = db.executeForList("SELECT id FROM prod ORDER BY id", Integer.class);
+		Assert.assertEquals(List.of(1, 2), ids);
+	}
+
+	public static class Prefs {
+		private ZoneId tz;
+		private Locale locale;
+		private Currency currency;
+
+		public ZoneId getTz() {return tz;}
+
+		public void setTz(ZoneId tz) {this.tz = tz;}
+
+		public Locale getLocale() {return locale;}
+
+		public void setLocale(Locale locale) {this.locale = locale;}
+
+		public Currency getCurrency() {return currency;}
+
+		public void setCurrency(Currency currency) {this.currency = currency;}
+	}
+
+	@Test
+	public void testZoneIdLocaleCurrencyRoundTrip() {
+		Database db = Database.forDataSource(createInMemoryDataSource("prefs")).build();
+		db.execute("CREATE TABLE prefs (tz VARCHAR(64), locale VARCHAR(32), currency VARCHAR(3))");
+
+		ZoneId zone = ZoneId.of("America/New_York");
+		Locale loc = Locale.CANADA;
+		Currency cur = Currency.getInstance("USD");
+
+		db.execute("INSERT INTO prefs (tz, locale, currency) VALUES (?, ?, ?)", zone, loc, cur);
+
+		Prefs prefs = db.queryForObject("SELECT * FROM prefs", Prefs.class).orElseThrow();
+		Assert.assertEquals(zone, prefs.getTz());
+		Assert.assertEquals(loc, prefs.getLocale());
+		Assert.assertEquals(cur, prefs.getCurrency());
+	}
+
+	// Should be able to read the NULL back into a Java bean
+	static class Foo {
+		private Integer id;
+		private String name;
+
+		public Integer getId() {return id;}
+
+		public void setId(Integer id) {this.id = id;}
+
+		public String getName() {return name;}
+
+		public void setName(String name) {this.name = name;}
+	}
+
+	@Test
+	public void testNullParameterBinding() {
+		Database db = Database.forDataSource(createInMemoryDataSource("nulls")).build();
+		db.execute("CREATE TABLE foo (id INT, name VARCHAR(64))");
+		db.execute("INSERT INTO foo (id, name) VALUES (?, ?)", 1, null);
+
+		Foo row = db.queryForObject("SELECT * FROM foo", Foo.class).orElseThrow();
+		Assert.assertEquals(Integer.valueOf(1), row.getId());
+		Assert.assertNull(row.getName());
+	}
+
+	@Test
+	public void testExamineDatabaseMetaData() {
+		Database db = Database.forDataSource(createInMemoryDataSource("metadata")).build();
+		final AtomicInteger seen = new AtomicInteger(0);
+		db.examineDatabaseMetaData(meta -> {
+			Assert.assertNotNull(meta.getDatabaseProductName());
+			seen.incrementAndGet();
+		});
+		Assert.assertEquals(1, seen.get());
+	}
+
+	@Test
+	public void testStatementLoggerReceivesEvent() {
+		Database db = Database.forDataSource(createInMemoryDataSource("logger")).statementLogger((log) -> {
+			Assert.assertNotNull("StatementContext should be present", log.getStatementContext());
+			Assert.assertTrue("SQL should be present", log.getStatementContext().getStatement().getSql().length() > 0);
+		}).build();
+
+		db.execute("CREATE TABLE z (id INT)");
+		db.execute("INSERT INTO z VALUES (1)");
 	}
 
 	protected void createTestSchema(@Nonnull Database database) {

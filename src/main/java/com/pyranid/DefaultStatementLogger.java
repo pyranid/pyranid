@@ -18,6 +18,7 @@ package com.pyranid;
 
 import javax.annotation.Nonnull;
 import javax.annotation.concurrent.ThreadSafe;
+import java.lang.reflect.Array;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Level;
@@ -112,10 +113,10 @@ public class DefaultStatementLogger implements StatementLogger {
 					return format("%s", parameter);
 
 				if (parameter.getClass().isArray()) {
-					// TODO: cap size of arrays
-
 					if (parameter instanceof byte[])
 						return format("[byte array of length %d]", ((byte[]) parameter).length);
+
+					return format("[array of length %d]", Array.getLength(parameter));
 				}
 
 				return format("'%s'", ellipsize(parameter.toString(), MAXIMUM_PARAMETER_LOGGING_LENGTH));
