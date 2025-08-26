@@ -22,6 +22,7 @@ import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import java.beans.BeanInfo;
+import java.beans.IntrospectionException;
 import java.beans.Introspector;
 import java.beans.PropertyDescriptor;
 import java.lang.reflect.Array;
@@ -97,6 +98,8 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	private final ConcurrentMap<TargetType, List<CustomColumnMapper>> customColumnMappersByTargetTypeCache;
 	@Nonnull
 	private final ConcurrentMap<SourceTargetKey, CustomColumnMapper> preferredColumnMapperBySourceTargetKey;
+	@Nonnull
+	private final ConcurrentMap<Class<?>, Map<String, TargetType>> propertyTargetTypeCache = new ConcurrentHashMap<>();
 	@Nonnull
 	private final ConcurrentMap<Class<?>, Map<String, Set<String>>> columnLabelAliasesByPropertyNameCache;
 
@@ -456,6 +459,43 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		return Optional.empty();
 	}
 
+
+	/**
+	 * Determines (and caches) the TargetType of each writable JavaBean property and each Record component
+	 * for the given result class. Keys are property/record-component names.
+	 */
+	@Nonnull
+	protected Map<String, TargetType> determinePropertyTargetTypes(@Nonnull Class<?> resultClass) {
+		requireNonNull(resultClass);
+
+		return getPropertyTargetTypeCache().computeIfAbsent(resultClass, rc -> {
+			Map<String, TargetType> types = new HashMap<>();
+
+			// JavaBean setters (preserve generics like List<UUID>)
+			try {
+				BeanInfo beanInfo = Introspector.getBeanInfo(rc);
+				for (PropertyDescriptor propertyDescriptor : beanInfo.getPropertyDescriptors()) {
+					Method writeMethod = propertyDescriptor.getWriteMethod();
+
+					if (writeMethod == null)
+						continue;
+
+					Type genericParameterType = writeMethod.getGenericParameterTypes()[0];
+					types.put(propertyDescriptor.getName(), TargetType.of(genericParameterType));
+				}
+			} catch (IntrospectionException e) {
+				throw new RuntimeException(format("Unable to introspect properties for %s", rc.getName()), e);
+			}
+
+			// Java records (preserve generics)
+			if (rc.isRecord())
+				for (RecordComponent recordComponent : rc.getRecordComponents())
+					types.put(recordComponent.getName(), TargetType.of(recordComponent.getGenericType()));
+
+			return Collections.unmodifiableMap(types);
+		});
+	}
+
 	/**
 	 * Creates a {@code ResultSetMapper} with a {@link Locale#getDefault()} {@code normalizationLocale} and no column-mapping customization.
 	 * <p>
@@ -661,45 +701,59 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		RecordComponent[] recordComponents = resultSetRowType.getRecordComponents();
 		Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(resultSetRowType);
 		Map<String, Object> columnLabelsToValues = extractColumnLabelsToValues(statementContext, resultSet);
+
+		Map<String, TargetType> propertyTargetTypes = determinePropertyTargetTypes(resultSetRowType);
+
 		Object[] args = new Object[recordComponents.length];
 
 		for (int i = 0; i < recordComponents.length; ++i) {
 			RecordComponent recordComponent = recordComponents[i];
-
 			String propertyName = recordComponent.getName();
 
 			// If there are any @DatabaseColumn annotations on this field, respect them
 			Set<String> potentialPropertyNames = columnLabelAliasesByPropertyName.get(propertyName);
 
 			// There were no @DatabaseColumn annotations, use the default naming strategy
-			if (potentialPropertyNames == null || potentialPropertyNames.size() == 0)
+			if (potentialPropertyNames == null || potentialPropertyNames.isEmpty())
 				potentialPropertyNames = databaseColumnNamesForPropertyName(propertyName);
 
 			Class<?> recordComponentType = recordComponent.getType();
 
+			// Get the precise TargetType (generic-aware) for this component
+			TargetType targetType = propertyTargetTypes.get(propertyName);
+			if (targetType == null) targetType = TargetType.of(recordComponent.getGenericType());
+
 			// Set the value for the Record ctor
 			for (String potentialPropertyName : potentialPropertyNames) {
-				if (columnLabelsToValues.containsKey(potentialPropertyName)) {
-					Object value = convertResultSetValueToPropertyType(statementContext, columnLabelsToValues.get(potentialPropertyName), recordComponentType).orElse(null);
+				if (!columnLabelsToValues.containsKey(potentialPropertyName))
+					continue;
 
-					if (value != null && !recordComponentType.isAssignableFrom(value.getClass())) {
-						String resultSetTypeDescription = value.getClass().toString();
+				Object rawValue = columnLabelsToValues.get(potentialPropertyName);
 
-						throw new DatabaseException(
-								format(
-										"Property '%s' of %s has a write method of type %s, but the ResultSet type %s does not match. "
-												+ "Consider creating your own %s and overriding convertResultSetValueToPropertyType() to detect instances of %s and convert them to %s",
-										recordComponent.getName(), resultSetRowType, recordComponentType, resultSetTypeDescription,
-										DefaultResultSetMapper.class.getSimpleName(), resultSetTypeDescription, recordComponentType));
-					}
+				Object value = rawValue == null
+						? null
+						: // Try custom mappers first; if none apply, fall back to built-ins
+						tryCustomColumnMappers(statementContext, resultSet, rawValue, targetType, null, potentialPropertyName, instanceProvider)
+								.or(() -> convertResultSetValueToPropertyType(statementContext, rawValue, recordComponentType))
+								.orElse(null);
 
-					args[i] = value;
+				if (value != null && !recordComponentType.isAssignableFrom(value.getClass())) {
+					String resultSetTypeDescription = value.getClass().toString();
+					throw new DatabaseException(
+							format(
+									"Property '%s' of %s has a write method of type %s, but the ResultSet type %s does not match. "
+											+ "Consider providing a %s to %s to detect instances of %s and convert them to %s",
+									recordComponent.getName(), resultSetRowType, recordComponentType, resultSetTypeDescription,
+									CustomColumnMapper.class.getSimpleName(), DefaultResultSetMapper.class.getSimpleName(), resultSetTypeDescription, recordComponentType));
 				}
+
+				args[i] = value;
 			}
 		}
 
 		return instanceProvider.provideRecord(statementContext, resultSetRowType, args);
 	}
+
 
 	/**
 	 * Attempts to map the current {@code resultSet} row to an instance of {@code resultClass}, which should be a
@@ -727,51 +781,60 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		Map<String, Object> columnLabelsToValues = extractColumnLabelsToValues(statementContext, resultSet);
 		Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(resultSetRowType);
 
+		// Compute once per class (generic-aware)
+		Map<String, TargetType> propertyTargetTypes = determinePropertyTargetTypes(resultSetRowType);
+
 		for (PropertyDescriptor propertyDescriptor : beanInfo.getPropertyDescriptors()) {
 			Method writeMethod = propertyDescriptor.getWriteMethod();
-
-			if (writeMethod == null)
-				continue;
+			if (writeMethod == null) continue;
 
 			Parameter parameter = writeMethod.getParameters()[0];
+			Class<?> writeMethodParameterType = writeMethod.getParameterTypes()[0];
 
 			// Pull in property names, taking into account any aliases defined by @DatabaseColumn
 			Set<String> propertyNames = columnLabelAliasesByPropertyName.get(propertyDescriptor.getName());
-
-			if (propertyNames == null)
-				propertyNames = new HashSet<>();
-			else
-				propertyNames = new HashSet<>(propertyNames);
+			if (propertyNames == null) propertyNames = new HashSet<>();
+			else propertyNames = new HashSet<>(propertyNames);
 
 			// If no @DatabaseColumn annotation, then use the field name itself
-			if (propertyNames.size() == 0)
+			if (propertyNames.isEmpty())
 				propertyNames.add(propertyDescriptor.getName());
 
 			// Normalize property names to database column names.
-			// For example, a property name of "address1" would get normalized to the set of "address1" and "address_1" by
-			// default
 			propertyNames =
-					propertyNames.stream().map(propertyName -> databaseColumnNamesForPropertyName(propertyName))
-							.flatMap(columnNames -> columnNames.stream()).collect(toSet());
+					propertyNames.stream()
+							.map(this::databaseColumnNamesForPropertyName)
+							.flatMap(Set::stream)
+							.collect(toSet());
+
+			// Precise TargetType for this property (generic-aware)
+			TargetType targetType = propertyTargetTypes.get(propertyDescriptor.getName());
+			if (targetType == null) targetType = TargetType.of(parameter.getParameterizedType());
 
 			for (String propertyName : propertyNames) {
-				if (columnLabelsToValues.containsKey(propertyName)) {
-					Object value = convertResultSetValueToPropertyType(statementContext, columnLabelsToValues.get(propertyName), parameter.getType()).orElse(null);
-					Class<?> writeMethodParameterType = writeMethod.getParameterTypes()[0];
+				if (!columnLabelsToValues.containsKey(propertyName))
+					continue;
 
-					if (value != null && !writeMethodParameterType.isAssignableFrom(value.getClass())) {
-						String resultSetTypeDescription = value.getClass().toString();
+				Object rawValue = columnLabelsToValues.get(propertyName);
 
-						throw new DatabaseException(
-								format(
-										"Property '%s' of %s has a write method of type %s, but the ResultSet type %s does not match. "
-												+ "Consider creating your own %s and overriding convertResultSetValueToPropertyType() to detect instances of %s and convert them to %s",
-										propertyDescriptor.getName(), resultSetRowType, writeMethodParameterType, resultSetTypeDescription,
-										DefaultResultSetMapper.class.getSimpleName(), resultSetTypeDescription, writeMethodParameterType));
-					}
+				Object value = (rawValue == null)
+						? null
+						: // Try custom mappers first; if none apply, fall back to built-ins
+						tryCustomColumnMappers(statementContext, resultSet, rawValue, targetType, null, propertyName, instanceProvider)
+								.or(() -> convertResultSetValueToPropertyType(statementContext, rawValue, writeMethodParameterType))
+								.orElse(null);
 
-					writeMethod.invoke(object, value);
+				if (value != null && !writeMethodParameterType.isAssignableFrom(value.getClass())) {
+					String resultSetTypeDescription = value.getClass().toString();
+					throw new DatabaseException(
+							format(
+									"Property '%s' of %s has a write method of type %s, but the ResultSet type %s does not match. "
+											+ "Consider providing a %s to %s to detect instances of %s and convert them to %s",
+									propertyDescriptor.getName(), resultSetRowType, writeMethodParameterType, resultSetTypeDescription,
+									CustomColumnMapper.class.getSimpleName(), DefaultResultSetMapper.class.getSimpleName(), resultSetTypeDescription, writeMethodParameterType));
 				}
+
+				writeMethod.invoke(object, value);
 			}
 		}
 
@@ -1379,6 +1442,11 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	@Nonnull
 	protected ConcurrentMap<SourceTargetKey, CustomColumnMapper> getPreferredColumnMapperBySourceTargetKey() {
 		return this.preferredColumnMapperBySourceTargetKey;
+	}
+
+	@Nonnull
+	protected ConcurrentMap<Class<?>, Map<String, TargetType>> getPropertyTargetTypeCache() {
+		return this.propertyTargetTypeCache;
 	}
 
 	@Nonnull
