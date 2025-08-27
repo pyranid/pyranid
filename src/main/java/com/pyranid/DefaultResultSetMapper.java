@@ -20,6 +20,7 @@ import com.pyranid.DefaultResultSetMapper.CustomColumnMapper.TargetType;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
 import java.beans.BeanInfo;
 import java.beans.IntrospectionException;
@@ -96,6 +97,9 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	private final Locale normalizationLocale;
 	@Nonnull
 	private final List<CustomColumnMapper> customColumnMappers;
+	@Nonnull
+	private final Boolean planCachingEnabled;
+
 	// Enables faster lookup of CustomColumnMapper instances by remembering which TargetType they've been used with before.
 	@Nonnull
 	private final ConcurrentMap<TargetType, List<CustomColumnMapper>> customColumnMappersByTargetTypeCache;
@@ -108,6 +112,102 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	// Only used if row-planning is enabled
 	@Nonnull
 	private final ConcurrentMap<PlanKey, RowPlan<?>> rowPlanningCache = new ConcurrentHashMap<>();
+
+	@Nonnull
+	public static Builder withNormalizationLocale(@Nonnull Locale normalizationLocale) {
+		requireNonNull(normalizationLocale);
+		return new Builder().normalizationLocale(normalizationLocale);
+	}
+
+	@Nonnull
+	public static Builder withCustomColumnMappers(@Nonnull List<CustomColumnMapper> customColumnMappers) {
+		requireNonNull(customColumnMappers);
+		return new Builder().customColumnMappers(customColumnMappers);
+	}
+
+	@Nonnull
+	public static Builder withPlanCachingEnabled(@Nonnull Boolean planCachingEnabled) {
+		requireNonNull(planCachingEnabled);
+		return new Builder().planCachingEnabled(planCachingEnabled);
+	}
+
+	@Nonnull
+	public static DefaultResultSetMapper withDefaultConfiguration() {
+		return new Builder().build();
+	}
+
+	/**
+	 * Builder used to construct instances of {@link DefaultResultSetMapper}.
+	 * <p>
+	 * This class is intended for use by a single thread.
+	 *
+	 * @author <a href="https://www.revetkn.com">Mark Allen</a>
+	 * @since 2.1.0
+	 */
+	@NotThreadSafe
+	public static class Builder {
+		@Nonnull
+		private Locale normalizationLocale;
+		@Nonnull
+		private List<CustomColumnMapper> customColumnMappers;
+		@Nonnull
+		private Boolean planCachingEnabled;
+
+		private Builder() {
+			this.normalizationLocale = Locale.getDefault();
+			this.customColumnMappers = List.of();
+			this.planCachingEnabled = false;
+		}
+
+		/**
+		 * Specifies the locale to use when massaging JDBC column names for matching against Java property names.
+		 *
+		 * @param normalizationLocale the locale to use when massaging JDBC column names for matching against Java property names
+		 * @return this {@code Builder}, for chaining
+		 */
+		@Nonnull
+		public Builder normalizationLocale(@Nonnull Locale normalizationLocale) {
+			requireNonNull(normalizationLocale);
+			this.normalizationLocale = normalizationLocale;
+			return this;
+		}
+
+		/**
+		 * Specifies a {@link List} of custom column-specific mapping logic to apply, in priority order.
+		 *
+		 * @param customColumnMappers a {@link List} of custom column-specific mapping logic to apply, in priority order
+		 * @return this {@code Builder}, for chaining
+		 */
+		@Nonnull
+		public Builder customColumnMappers(@Nonnull List<CustomColumnMapper> customColumnMappers) {
+			requireNonNull(customColumnMappers);
+			this.customColumnMappers = customColumnMappers;
+			return this;
+		}
+
+		/**
+		 * Specifies whether an internal "mapping plan" cache should be used to speed up {@link ResultSet} mapping.
+		 *
+		 * @param planCachingEnabled whether an internal "mapping plan" cache should be used to speed up {@link ResultSet} mapping
+		 * @return this {@code Builder}, for chaining
+		 */
+		@Nonnull
+		public Builder planCachingEnabled(@Nonnull Boolean planCachingEnabled) {
+			requireNonNull(planCachingEnabled);
+			this.planCachingEnabled = planCachingEnabled;
+			return this;
+		}
+
+		/**
+		 * Constructs a {@code DefaultResultSetMapper} instance.
+		 *
+		 * @return a {@code DefaultResultSetMapper} instance
+		 */
+		@Nonnull
+		public DefaultResultSetMapper build() {
+			return new DefaultResultSetMapper(this);
+		}
+	}
 
 	/**
 	 * Enables per-column {@link ResultSet} mapping customization.
@@ -502,46 +602,13 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		});
 	}
 
-	/**
-	 * Creates a {@code ResultSetMapper} with a {@link Locale#getDefault()} {@code normalizationLocale} and no column-mapping customization.
-	 * <p>
-	 * The {@code normalizationLocale} is used when massaging JDBC column names for matching against JavaBean property names.
-	 */
-	public DefaultResultSetMapper() {
-		this(Locale.getDefault(), List.of());
-	}
+	private DefaultResultSetMapper(@Nonnull Builder builder) {
+		requireNonNull(builder);
 
-	/**
-	 * Creates a {@code ResultSetMapper} for the given {@code normalizationLocale} and no column-mapping customization.
-	 *
-	 * @param normalizationLocale The locale to use when massaging JDBC column names for matching against JavaBean property names
-	 */
-	public DefaultResultSetMapper(@Nonnull Locale normalizationLocale) {
-		this(requireNonNull(normalizationLocale), List.of());
-	}
+		this.normalizationLocale = requireNonNull(builder.normalizationLocale);
+		this.customColumnMappers = Collections.unmodifiableList(requireNonNull(builder.customColumnMappers));
+		this.planCachingEnabled = requireNonNull(builder.planCachingEnabled);
 
-	/**
-	 * Creates a {@code ResultSetMapper} with a {@link Locale#getDefault()} {@code normalizationLocale} and the specified column-mapping customizers.
-	 *
-	 * @param customColumnMappers per-column mapping customizers, if any
-	 */
-	public DefaultResultSetMapper(@Nonnull List<CustomColumnMapper> customColumnMappers) {
-		this(Locale.getDefault(), requireNonNull(customColumnMappers));
-	}
-
-	/**
-	 * Creates a {@code ResultSetMapper} for the given {@code normalizationLocale} and the specified column-mapping customizers.
-	 *
-	 * @param normalizationLocale The locale to use when massaging JDBC column names for matching against JavaBean property names
-	 * @param customColumnMappers per-column mapping customizers, if any
-	 */
-	public DefaultResultSetMapper(@Nonnull Locale normalizationLocale,
-																@Nonnull List<CustomColumnMapper> customColumnMappers) {
-		requireNonNull(normalizationLocale);
-		requireNonNull(customColumnMappers);
-
-		this.normalizationLocale = normalizationLocale;
-		this.customColumnMappers = Collections.unmodifiableList(customColumnMappers);
 		this.customColumnMappersByTargetTypeCache = new ConcurrentHashMap<>();
 		this.preferredColumnMapperBySourceTargetKey = new ConcurrentHashMap<>();
 		this.columnLabelAliasesByPropertyNameCache = new ConcurrentHashMap<>();
@@ -558,8 +625,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(resultSetRowType);
 		requireNonNull(instanceProvider);
 
-		// TODO: remove this hack, introduce a field via builder to control this
-		if (getNormalizationLocale().equals(Locale.CANADA))
+		if (getPlanCachingEnabled())
 			return mapWithRowPlanning(statementContext, resultSet, resultSetRowType, instanceProvider);
 
 		return mapWithoutRowPlanning(statementContext, resultSet, resultSetRowType, instanceProvider);
@@ -1801,6 +1867,11 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	@Nonnull
 	protected List<CustomColumnMapper> getCustomColumnMappers() {
 		return this.customColumnMappers;
+	}
+
+	@Nonnull
+	protected Boolean getPlanCachingEnabled() {
+		return this.planCachingEnabled;
 	}
 
 	@Nonnull

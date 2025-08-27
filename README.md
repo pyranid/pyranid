@@ -92,18 +92,38 @@ InstanceProvider instanceProvider = new DefaultInstanceProvider() {
   }
 };
 
-// Copies data from a ResultSet row to an instance of the specified type
-ResultSetMapper resultSetMapper = new DefaultResultSetMapper() {
+// ResultSetMapper copies data from a ResultSet row to an instance of the specified type.
+// Can supply "surgical" overrides to handle custom types.
+CustomColumnMapper moneyColumnMapper = new CustomColumnMapper() {
   @Nonnull
   @Override
-  public <T> Optional<T> map(@Nonnull StatementContext<T> statementContext,
-                             @Nonnull ResultSet resultSet,
-                             @Nonnull Class<T> resultSetRowType,
-                             @Nonnull InstanceProvider instanceProvider) {
-    // Customize mapping here if needed
-    return super.map(statementContext, resultSet, resultSetRowType, instanceProvider);
+  public Boolean appliesTo(@Nonnull TargetType targetType) {
+    // Can also apply to parameterized types, e.g.
+    // targetType.matchesParameterizedType(List.class, UUID.class) for List<UUID>
+    return targetType.matchesClass(Money.class);
+  }
+
+  @Nonnull
+  @Override
+  public Optional<?> map(
+    @Nonnull StatementContext<?> statementContext,
+    @Nonnull ResultSet resultSet,
+    @Nonnull Object resultSetValue,
+    @Nonnull TargetType targetType,
+    @Nullable Integer columnIndex,
+    @Nullable String columnLabel,
+    @Nonnull InstanceProvider instanceProvider
+  ) {
+    String moneyAsString = resultSetValue.toString();
+    // Or return Optional.empty() to use default mapping behavior
+    return Optional.of(Money.parse(moneyAsString));
   }
 };
+
+ResultSetMapper resultSetMapper = DefaultResultSetMapper.withPlanCachingEnabled(true)
+  .customColumnMappers(List.of(moneyColumnMapper))
+  .normalizationLocale(Locale.of("pt-BR"))
+  .build();
 
 // Binds parameters to a SQL PreparedStatement
 PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder() {

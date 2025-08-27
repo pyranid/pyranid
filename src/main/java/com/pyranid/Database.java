@@ -91,7 +91,7 @@ public class Database {
 		this.timeZone = builder.timeZone == null ? ZoneId.systemDefault() : builder.timeZone;
 		this.instanceProvider = builder.instanceProvider == null ? new DefaultInstanceProvider() : builder.instanceProvider;
 		this.preparedStatementBinder = builder.preparedStatementBinder == null ? new DefaultPreparedStatementBinder() : builder.preparedStatementBinder;
-		this.resultSetMapper = builder.resultSetMapper == null ? new DefaultResultSetMapper() : builder.resultSetMapper;
+		this.resultSetMapper = builder.resultSetMapper == null ? DefaultResultSetMapper.withDefaultConfiguration() : builder.resultSetMapper;
 		this.statementLogger = builder.statementLogger == null ? new DefaultStatementLogger() : builder.statementLogger;
 		this.defaultIdGenerator = new AtomicInteger();
 		this.logger = Logger.getLogger(getClass().getName());

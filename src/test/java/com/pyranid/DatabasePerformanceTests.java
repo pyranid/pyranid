@@ -480,12 +480,12 @@ public class DatabasePerformanceTests {
 
 	@Nonnull
 	private ResultSetMapper createPlannedMapper() {
-		return new DefaultResultSetMapper(Locale.CANADA);
+		return DefaultResultSetMapper.withPlanCachingEnabled(true).build();
 	}
 
 	@Nullable
 	private ResultSetMapper createStandardMapper() {
-		return new DefaultResultSetMapper(Locale.US);
+		return DefaultResultSetMapper.withPlanCachingEnabled(false).build();
 	}
 
 	private void createWideSchema(@Nonnull Database db) {

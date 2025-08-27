@@ -292,7 +292,7 @@ public class DatabaseTests {
 		};
 
 		Database db = Database.forDataSource(dataSource)
-				.resultSetMapper(new DefaultResultSetMapper(List.of(localeOverride)))
+				.resultSetMapper(DefaultResultSetMapper.withCustomColumnMappers(List.of(localeOverride)).build())
 				.build();
 
 		createTestSchema(db);
@@ -364,7 +364,7 @@ public class DatabaseTests {
 		};
 
 		Database db = Database.forDataSource(dataSource)
-				.resultSetMapper(new DefaultResultSetMapper(List.of(first, second)))
+				.resultSetMapper(DefaultResultSetMapper.withCustomColumnMappers(List.of(first, second)).build())
 				.build();
 
 		createTestSchema(db);
@@ -423,7 +423,7 @@ public class DatabaseTests {
 		};
 
 		Database db = Database.forDataSource(dataSource)
-				.resultSetMapper(new DefaultResultSetMapper(List.of(csvUuidList)))
+				.resultSetMapper(DefaultResultSetMapper.withCustomColumnMappers(List.of(csvUuidList)).build())
 				.build();
 
 		// Simple schema for the test
