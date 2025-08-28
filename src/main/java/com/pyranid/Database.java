@@ -91,7 +91,7 @@ public class Database {
 		this.timeZone = builder.timeZone == null ? ZoneId.systemDefault() : builder.timeZone;
 		this.instanceProvider = builder.instanceProvider == null ? new DefaultInstanceProvider() : builder.instanceProvider;
 		this.preparedStatementBinder = builder.preparedStatementBinder == null ? new DefaultPreparedStatementBinder() : builder.preparedStatementBinder;
-		this.resultSetMapper = builder.resultSetMapper == null ? DefaultResultSetMapper.withDefaultConfiguration() : builder.resultSetMapper;
+		this.resultSetMapper = builder.resultSetMapper == null ? ResultSetMapper.withDefaultConfiguration() : builder.resultSetMapper;
 		this.statementLogger = builder.statementLogger == null ? new DefaultStatementLogger() : builder.statementLogger;
 		this.defaultIdGenerator = new AtomicInteger();
 		this.logger = Logger.getLogger(getClass().getName());
@@ -409,8 +409,12 @@ public class Database {
 				startTime = nanoTime();
 
 				while (resultSet.next()) {
-					T listElement = getResultSetMapper().map(statementContext, resultSet, statementContext.getResultSetRowType().get(), getInstanceProvider()).orElse(null);
-					list.add(listElement);
+					try {
+						T listElement = getResultSetMapper().map(statementContext, resultSet, statementContext.getResultSetRowType().get(), getInstanceProvider()).orElse(null);
+						list.add(listElement);
+					} catch (SQLException e) {
+						throw new DatabaseException(format("Unable to map JDBC %s to %s", ResultSet.class.getSimpleName(), statementContext.getResultSetRowType().get()), e);
+					}
 				}
 
 				Duration resultSetMappingDuration = Duration.ofNanos(nanoTime() - startTime);

@@ -92,8 +92,8 @@ InstanceProvider instanceProvider = new DefaultInstanceProvider() {
   }
 };
 
-// ResultSetMapper copies data from a ResultSet row to an instance of the specified type.
-// Can supply "surgical" overrides to handle custom types.
+// ResultSetMapper handles copying data from a ResultSet row to an instance of the specified type.
+// CustomColumnMappers supply "surgical" overrides to handle custom types.
 CustomColumnMapper moneyColumnMapper = new CustomColumnMapper() {
   @Nonnull
   @Override
@@ -115,12 +115,12 @@ CustomColumnMapper moneyColumnMapper = new CustomColumnMapper() {
     @Nonnull InstanceProvider instanceProvider
   ) {
     String moneyAsString = resultSetValue.toString();
-    // Or return Optional.empty() to use default mapping behavior
+    // Or return Optional.empty() to fall back to default mapping behavior
     return Optional.of(Money.parse(moneyAsString));
   }
 };
 
-ResultSetMapper resultSetMapper = DefaultResultSetMapper.withPlanCachingEnabled(true)
+ResultSetMapper resultSetMapper = ResultSetMapper.withPlanCachingEnabled(true)
   .customColumnMappers(List.of(moneyColumnMapper))
   .normalizationLocale(Locale.of("pt-BR"))
   .build();

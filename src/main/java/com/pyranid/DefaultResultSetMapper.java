@@ -16,11 +16,8 @@
 
 package com.pyranid;
 
-import com.pyranid.DefaultResultSetMapper.CustomColumnMapper.TargetType;
-
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
-import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
 import java.beans.BeanInfo;
 import java.beans.IntrospectionException;
@@ -29,16 +26,11 @@ import java.beans.PropertyDescriptor;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
-import java.lang.reflect.Array;
 import java.lang.reflect.Field;
-import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
-import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
-import java.lang.reflect.TypeVariable;
-import java.lang.reflect.WildcardType;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.sql.ResultSet;
@@ -84,7 +76,7 @@ import static java.util.stream.Collectors.joining;
 import static java.util.stream.Collectors.toSet;
 
 /**
- * Basic implementation of {@link ResultSetMapper}.
+ * Package-private standard implementation of {@link ResultSetMapper}.
  * <p>
  * "Surgical" per-column mapping customization is supported by providing {@link CustomColumnMapper} instances.
  *
@@ -92,7 +84,7 @@ import static java.util.stream.Collectors.toSet;
  * @since 1.0.0
  */
 @ThreadSafe
-public class DefaultResultSetMapper implements ResultSetMapper {
+class DefaultResultSetMapper implements ResultSetMapper {
 	@Nonnull
 	private final Locale normalizationLocale;
 	@Nonnull
@@ -112,359 +104,6 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	// Only used if row-planning is enabled
 	@Nonnull
 	private final ConcurrentMap<PlanKey, RowPlan<?>> rowPlanningCache = new ConcurrentHashMap<>();
-
-	@Nonnull
-	public static Builder withNormalizationLocale(@Nonnull Locale normalizationLocale) {
-		requireNonNull(normalizationLocale);
-		return new Builder().normalizationLocale(normalizationLocale);
-	}
-
-	@Nonnull
-	public static Builder withCustomColumnMappers(@Nonnull List<CustomColumnMapper> customColumnMappers) {
-		requireNonNull(customColumnMappers);
-		return new Builder().customColumnMappers(customColumnMappers);
-	}
-
-	@Nonnull
-	public static Builder withPlanCachingEnabled(@Nonnull Boolean planCachingEnabled) {
-		requireNonNull(planCachingEnabled);
-		return new Builder().planCachingEnabled(planCachingEnabled);
-	}
-
-	@Nonnull
-	public static DefaultResultSetMapper withDefaultConfiguration() {
-		return new Builder().build();
-	}
-
-	/**
-	 * Builder used to construct instances of {@link DefaultResultSetMapper}.
-	 * <p>
-	 * This class is intended for use by a single thread.
-	 *
-	 * @author <a href="https://www.revetkn.com">Mark Allen</a>
-	 * @since 2.1.0
-	 */
-	@NotThreadSafe
-	public static class Builder {
-		@Nonnull
-		private Locale normalizationLocale;
-		@Nonnull
-		private List<CustomColumnMapper> customColumnMappers;
-		@Nonnull
-		private Boolean planCachingEnabled;
-
-		private Builder() {
-			this.normalizationLocale = Locale.getDefault();
-			this.customColumnMappers = List.of();
-			this.planCachingEnabled = false;
-		}
-
-		/**
-		 * Specifies the locale to use when massaging JDBC column names for matching against Java property names.
-		 *
-		 * @param normalizationLocale the locale to use when massaging JDBC column names for matching against Java property names
-		 * @return this {@code Builder}, for chaining
-		 */
-		@Nonnull
-		public Builder normalizationLocale(@Nonnull Locale normalizationLocale) {
-			requireNonNull(normalizationLocale);
-			this.normalizationLocale = normalizationLocale;
-			return this;
-		}
-
-		/**
-		 * Specifies a {@link List} of custom column-specific mapping logic to apply, in priority order.
-		 *
-		 * @param customColumnMappers a {@link List} of custom column-specific mapping logic to apply, in priority order
-		 * @return this {@code Builder}, for chaining
-		 */
-		@Nonnull
-		public Builder customColumnMappers(@Nonnull List<CustomColumnMapper> customColumnMappers) {
-			requireNonNull(customColumnMappers);
-			this.customColumnMappers = customColumnMappers;
-			return this;
-		}
-
-		/**
-		 * Specifies whether an internal "mapping plan" cache should be used to speed up {@link ResultSet} mapping.
-		 *
-		 * @param planCachingEnabled whether an internal "mapping plan" cache should be used to speed up {@link ResultSet} mapping
-		 * @return this {@code Builder}, for chaining
-		 */
-		@Nonnull
-		public Builder planCachingEnabled(@Nonnull Boolean planCachingEnabled) {
-			requireNonNull(planCachingEnabled);
-			this.planCachingEnabled = planCachingEnabled;
-			return this;
-		}
-
-		/**
-		 * Constructs a {@code DefaultResultSetMapper} instance.
-		 *
-		 * @return a {@code DefaultResultSetMapper} instance
-		 */
-		@Nonnull
-		public DefaultResultSetMapper build() {
-			return new DefaultResultSetMapper(this);
-		}
-	}
-
-	/**
-	 * Enables per-column {@link ResultSet} mapping customization.
-	 *
-	 * @author <a href="https://www.revetkn.com">Mark Allen</a>
-	 * @since 2.1.0
-	 */
-	public interface CustomColumnMapper {
-		/**
-		 * Perform custom mapping of a {@link ResultSet} column: given a {@code resultSetValue}, optionally return an instance of {@code targetType} instead.
-		 * <p>
-		 * This function is only invoked when {@code resultSetValue} is non-null.
-		 *
-		 * @param statementContext current SQL context
-		 * @param resultSet        the {@link ResultSet} from which data was read
-		 * @param resultSetValue   the already-read value from the {@link ResultSet}, to be optionally converted to an instance of {@code targetType}
-		 * @param targetType       the type to which the {@code resultSetValue} should be converted
-		 * @param columnIndex      1-based column index, if available
-		 * @param columnLabel      normalized column label, if available
-		 * @param instanceProvider instance-creation factory, may be used to instantiate values
-		 * @return an {@link Optional} which holds the preferred value for this {@link ResultSet} column, or {@link Optional#empty()} to fall back to default mapping
-		 */
-		@Nonnull
-		Optional<?> map(@Nonnull StatementContext<?> statementContext,
-										@Nonnull ResultSet resultSet,
-										@Nonnull Object resultSetValue,
-										@Nonnull TargetType targetType,
-										@Nullable Integer columnIndex,
-										@Nullable String columnLabel,
-										@Nonnull InstanceProvider instanceProvider) throws SQLException;
-
-		/**
-		 * Specifies which types this mapper should handle.
-		 * <p>
-		 * For example, if this mapper should apply when marshaling to {@code MyCustomType}, this method could return {@code targetType.matchesClass(MyCustomType.class)}.
-		 * <p>
-		 * For parameterized types like {@code List<UUID>}, this method could return {@code targetType.matchesParameterizedType(List.class, UUID.class)}.
-		 *
-		 * @param targetType the target type to evaluate - should this mapper handle it or not?
-		 * @return {@code true} if this mapper should handle the type, {@code false} otherwise.
-		 */
-		@Nonnull
-		Boolean appliesTo(@Nonnull TargetType targetType);
-
-		/**
-		 * A developer-friendly view over a reflective {@link java.lang.reflect.Type} used by the {@link ResultSet}-mapping pipeline for {@link DefaultResultSetMapper}.
-		 *
-		 * @author <a href="https://www.revetkn.com">Mark Allen</a>
-		 * @see java.lang.reflect.Type
-		 * @since 2.1.0
-		 */
-		interface TargetType {
-			/**
-			 * The original reflective type ({@code Class}, {@code ParameterizedType}, etc.)
-			 */
-			@Nonnull
-			Type getType();
-
-			/**
-			 * Raw class, with erasure ({@code List.class} for {@code List<UUID>}, etc.)
-			 */
-			@Nonnull
-			Class<?> getRawClass();
-
-			/**
-			 * @return {@code true} if {@link #getRawClass()} matches the provided {@code rawClass} (no subtype/parameter checks), {@code false} otherwise.
-			 */
-			@Nonnull
-			default Boolean matchesClass(@Nonnull Class<?> rawClass) {
-				requireNonNull(rawClass);
-				return getRawClass().equals(rawClass);
-			}
-
-			/**
-			 * Does this instance match the given raw class and its parameterized type arguments?
-			 * <p>
-			 * For example, invoke {@code matchesParameterizedType(List.class, UUID.class)} to determine "is this type a {@code List<UUID>}?"
-			 */
-			@Nonnull
-			default Boolean matchesParameterizedType(@Nonnull Class<?> rawClass,
-																							 @Nullable Class<?>... typeArguments) {
-				requireNonNull(rawClass);
-
-				if (typeArguments == null || typeArguments.length == 0)
-					return matchesClass(rawClass);
-
-				if (!(getType() instanceof ParameterizedType parameterizedType) || !rawClass.equals(parameterizedType.getRawType()))
-					return false;
-
-				Type[] actualTypeArguments = parameterizedType.getActualTypeArguments();
-
-				if (actualTypeArguments.length != typeArguments.length)
-					return false;
-
-				for (int i = 0; i < actualTypeArguments.length; i++)
-					if (!(actualTypeArguments[i] instanceof Class<?> actualClass) || !actualClass.equals(typeArguments[i]))
-						return false;
-
-				return true;
-			}
-
-			@Nonnull
-			default Boolean isList() {
-				return matchesClass(List.class);
-			}
-
-			@Nonnull
-			default Optional<TargetType> getListElementType() {
-				return matchesClass(List.class) ? getFirstTargetTypeArgument() : Optional.empty();
-			}
-
-			@Nonnull
-			default Boolean isSet() {
-				return matchesClass(Set.class);
-			}
-
-			@Nonnull
-			default Optional<TargetType> getSetElementType() {
-				return matchesClass(Set.class) ? getFirstTargetTypeArgument() : Optional.empty();
-			}
-
-			@Nonnull
-			default Boolean isMap() {
-				return matchesClass(Map.class);
-			}
-
-			@Nonnull
-			default Optional<TargetType> getMapKeyType() {
-				return matchesClass(Map.class) ? getTargetTypeArgumentAtIndex(0) : Optional.empty();
-			}
-
-			@Nonnull
-			default Optional<TargetType> getMapValueType() {
-				return matchesClass(Map.class) ? getTargetTypeArgumentAtIndex(1) : Optional.empty();
-			}
-
-			@Nonnull
-			default Boolean isArray() {
-				return getRawClass().isArray() || getType() instanceof GenericArrayType;
-			}
-
-			@Nonnull
-			default Optional<TargetType> getArrayComponentType() {
-				if (getRawClass().isArray())
-					return Optional.of(TargetType.of(getRawClass().getComponentType()));
-
-				if (getType() instanceof GenericArrayType genericArrayType)
-					return Optional.of(TargetType.of(genericArrayType.getGenericComponentType()));
-
-				return Optional.empty();
-			}
-
-			/**
-			 * All type arguments wrapped (empty for raw/non-parameterized).
-			 */
-			@Nonnull
-			List<TargetType> getTypeArguments();
-
-			@Nonnull
-			static TargetType of(@Nonnull Type type) {
-				requireNonNull(type);
-				return new DefaultTargetType(type);
-			}
-
-			@Nonnull
-			private Optional<TargetType> getFirstTargetTypeArgument() {
-				return getTargetTypeArgumentAtIndex(0);
-			}
-
-			@Nonnull
-			private Optional<TargetType> getTargetTypeArgumentAtIndex(@Nonnull Integer index) {
-				requireNonNull(index);
-
-				List<TargetType> targetTypeArguments = getTypeArguments();
-				return index < targetTypeArguments.size() ? Optional.of(targetTypeArguments.get(index)) : Optional.empty();
-			}
-		}
-	}
-
-	// Package-private implementation
-	@ThreadSafe
-	final static class DefaultTargetType implements TargetType {
-		@Nonnull
-		private final Type type;
-
-		DefaultTargetType(@Nonnull Type type) {
-			requireNonNull(type);
-			this.type = requireNonNull(type);
-		}
-
-		@Override
-		public boolean equals(@Nullable Object object) {
-			if (object == null || getClass() != object.getClass())
-				return false;
-
-			DefaultTargetType that = (DefaultTargetType) object;
-			return Objects.equals(getType(), that.getType());
-		}
-
-		@Override
-		public int hashCode() {
-			return Objects.hashCode(getType());
-		}
-
-		@Override
-		@Nonnull
-		public Type getType() {
-			return this.type;
-		}
-
-		@Override
-		@Nonnull
-		public Class<?> getRawClass() {
-			if (type instanceof Class<?> rawClass)
-				return rawClass;
-
-			if (type instanceof ParameterizedType parameterizedType)
-				return (Class<?>) parameterizedType.getRawType();
-
-			if (type instanceof GenericArrayType genericArrayType) {
-				Class<?> componentClass = TargetType.of(genericArrayType.getGenericComponentType()).getRawClass();
-				return Array.newInstance(componentClass, 0).getClass();
-			}
-
-			if (type instanceof TypeVariable<?> typeVariable) {
-				Type[] bounds = typeVariable.getBounds();
-				return bounds.length == 0 ? Object.class : TargetType.of(bounds[0]).getRawClass();
-			}
-
-			if (type instanceof WildcardType wildcardType) {
-				Type[] uppers = wildcardType.getUpperBounds();
-				return uppers.length == 0 ? Object.class : TargetType.of(uppers[0]).getRawClass();
-			}
-
-			return Object.class;
-		}
-
-		@Nonnull
-		public List<TargetType> getTypeArguments() {
-			if (getType() instanceof ParameterizedType parameterizedType) {
-				Type[] actualTypeArguments = parameterizedType.getActualTypeArguments();
-				List<TargetType> targetTypes = new ArrayList<>(actualTypeArguments.length);
-
-				for (Type actualTypeArgument : actualTypeArguments)
-					targetTypes.add(TargetType.of(actualTypeArgument));
-
-				return Collections.unmodifiableList(targetTypes);
-			}
-
-			return List.of();
-		}
-
-		@Override
-		public String toString() {
-			return format("%s{type=%s}", getClass().getSimpleName(), getType().getTypeName());
-		}
-	}
 
 	// Internal cache key for column mapper applicability cache
 	@ThreadSafe
@@ -602,7 +241,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 		});
 	}
 
-	private DefaultResultSetMapper(@Nonnull Builder builder) {
+	DefaultResultSetMapper(@Nonnull Builder builder) {
 		requireNonNull(builder);
 
 		this.normalizationLocale = requireNonNull(builder.normalizationLocale);
@@ -619,7 +258,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	public <T> Optional<T> map(@Nonnull StatementContext<T> statementContext,
 														 @Nonnull ResultSet resultSet,
 														 @Nonnull Class<T> resultSetRowType,
-														 @Nonnull InstanceProvider instanceProvider) {
+														 @Nonnull InstanceProvider instanceProvider) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(resultSetRowType);
@@ -635,7 +274,7 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 	protected <T> Optional<T> mapWithoutRowPlanning(@Nonnull StatementContext<T> statementContext,
 																									@Nonnull ResultSet resultSet,
 																									@Nonnull Class<T> resultSetRowType,
-																									@Nonnull InstanceProvider instanceProvider) {
+																									@Nonnull InstanceProvider instanceProvider) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(resultSetRowType);
@@ -653,18 +292,19 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 			return Optional.ofNullable(mapResultSetToBean(statementContext, resultSet, instanceProvider));
 		} catch (DatabaseException e) {
 			throw e;
+		} catch (SQLException e) {
+			throw e;
 		} catch (Exception e) {
 			throw new DatabaseException(format("Unable to map JDBC %s to %s", ResultSet.class.getSimpleName(), resultSetRowType),
 					e);
 		}
 	}
 
-
 	@Nonnull
 	protected <T> Optional<T> mapWithRowPlanning(@Nonnull StatementContext<T> statementContext,
 																							 @Nonnull ResultSet resultSet,
 																							 @Nonnull Class<T> resultSetRowType,
-																							 @Nonnull InstanceProvider instanceProvider) {
+																							 @Nonnull InstanceProvider instanceProvider) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(resultSetRowType);
@@ -747,6 +387,8 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 				return Optional.of(object);
 			}
 		} catch (DatabaseException e) {
+			throw e;
+		} catch (SQLException e) {
 			throw e;
 		} catch (Throwable t) {
 			throw new DatabaseException(format("Unable to map JDBC %s to %s", ResultSet.class.getSimpleName(), resultSetRowType), t);
@@ -1825,11 +1467,11 @@ public class DefaultResultSetMapper implements ResultSetMapper {
 				if (ttype == null) {
 					if (isRecord) {
 						int argIndex = requireNonNull(recordIndexByProp.get(prop));
-						ttype = CustomColumnMapper.TargetType.of(resultClass.getRecordComponents()[argIndex].getGenericType());
+						ttype = TargetType.of(resultClass.getRecordComponents()[argIndex].getGenericType());
 					} else {
 						MethodHandle setter = setterByProp.get(prop);
 						Class<?> param = setter.type().parameterType(1); // (Declaring, Param)
-						ttype = CustomColumnMapper.TargetType.of(param);
+						ttype = TargetType.of(param);
 					}
 				}
 

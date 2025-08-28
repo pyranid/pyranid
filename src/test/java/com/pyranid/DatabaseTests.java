@@ -16,7 +16,6 @@
 
 package com.pyranid;
 
-import com.pyranid.DefaultResultSetMapper.CustomColumnMapper;
 import org.hsqldb.jdbc.JDBCDataSource;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -292,7 +291,7 @@ public class DatabaseTests {
 		};
 
 		Database db = Database.forDataSource(dataSource)
-				.resultSetMapper(DefaultResultSetMapper.withCustomColumnMappers(List.of(localeOverride)).build())
+				.resultSetMapper(ResultSetMapper.withCustomColumnMappers(List.of(localeOverride)).build())
 				.build();
 
 		createTestSchema(db);
@@ -364,7 +363,7 @@ public class DatabaseTests {
 		};
 
 		Database db = Database.forDataSource(dataSource)
-				.resultSetMapper(DefaultResultSetMapper.withCustomColumnMappers(List.of(first, second)).build())
+				.resultSetMapper(ResultSetMapper.withCustomColumnMappers(List.of(first, second)).build())
 				.build();
 
 		createTestSchema(db);
@@ -423,7 +422,7 @@ public class DatabaseTests {
 		};
 
 		Database db = Database.forDataSource(dataSource)
-				.resultSetMapper(DefaultResultSetMapper.withCustomColumnMappers(List.of(csvUuidList)).build())
+				.resultSetMapper(ResultSetMapper.withCustomColumnMappers(List.of(csvUuidList)).build())
 				.build();
 
 		// Simple schema for the test
