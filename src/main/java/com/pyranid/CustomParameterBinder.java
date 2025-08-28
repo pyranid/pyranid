@@ -34,16 +34,16 @@ public interface CustomParameterBinder {
 	 *
 	 * @param statementContext  current SQL context
 	 * @param preparedStatement the prepared statement to bind to
-	 * @param index             the index at which to perform the binding
-	 * @param value             the value to bind at the specified index
+	 * @param parameterIndex    1-based parameter index at which to perform the binding
+	 * @param parameterValue    the value to bind at the specified index
 	 * @return {@code true} if the custom binding was performed, or {@code false} to fall back to default binding strategy
 	 * @throws SQLException if an error occurs during binding
 	 */
 	@Nonnull
 	Boolean bind(@Nonnull StatementContext<?> statementContext,
 							 @Nonnull PreparedStatement preparedStatement,
-							 @Nonnull Integer index,
-							 @Nonnull Object value) throws SQLException;
+							 @Nonnull Integer parameterIndex,
+							 @Nonnull Object parameterValue) throws SQLException;
 
 	/**
 	 * Specifies which types this custom binder should handle.
