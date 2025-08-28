@@ -42,6 +42,7 @@ public interface CustomColumnMapper {
 	 * @param columnLabel      normalized column label, if available
 	 * @param instanceProvider instance-creation factory, may be used to instantiate values
 	 * @return an {@link Optional} which holds the preferred value for this {@link ResultSet} column, or {@link Optional#empty()} to fall back to default mapping
+	 * @throws SQLException if an error occurs during mapping
 	 */
 	@Nonnull
 	Optional<?> map(@Nonnull StatementContext<?> statementContext,
