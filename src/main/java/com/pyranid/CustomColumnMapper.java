@@ -18,17 +18,9 @@ package com.pyranid;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
-import java.lang.reflect.GenericArrayType;
-import java.lang.reflect.ParameterizedType;
-import java.lang.reflect.Type;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.List;
-import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
-
-import static java.util.Objects.requireNonNull;
 
 /**
  * Enables per-column {@link ResultSet} mapping customization via {@link ResultSetMapper}.
@@ -40,7 +32,7 @@ public interface CustomColumnMapper {
 	/**
 	 * Perform custom mapping of a {@link ResultSet} column: given a {@code resultSetValue}, optionally return an instance of {@code targetType} instead.
 	 * <p>
-	 * This function is only invoked when {@code resultSetValue} is non-null.
+	 * This method is only invoked when {@code resultSetValue} is non-null.
 	 *
 	 * @param statementContext current SQL context
 	 * @param resultSet        the {@link ResultSet} from which data was read
