@@ -132,6 +132,8 @@ public interface ResultSetMapper {
 
 	/**
 	 * Acquires a concrete implementation of this interface with out-of-the-box defaults.
+	 * <p>
+	 * The returned instance is thread-safe.
 	 *
 	 * @return a concrete implementation of this interface with out-of-the-box defaults
 	 */
@@ -204,6 +206,8 @@ public interface ResultSetMapper {
 
 		/**
 		 * Constructs a default {@code ResultSetMapper} instance.
+		 * <p>
+		 * The constructed instance is thread-safe.
 		 *
 		 * @return a {@code ResultSetMapper} instance
 		 */

@@ -33,11 +33,15 @@ import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.util.Collections;
 import java.util.Currency;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
@@ -49,18 +53,47 @@ import static java.util.Objects.requireNonNull;
  * @since 1.0.0
  */
 @ThreadSafe
-public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
+class DefaultPreparedStatementBinder implements PreparedStatementBinder {
+	@Nonnull
+	private final List<CustomParameterBinder> customParameterBinders;
+
+	// Cache: which binders apply for a given target type?
+	@Nonnull
+	private final ConcurrentMap<TargetType, List<CustomParameterBinder>> bindersByTargetTypeCache;
+
+	// Cache: which binder last won for (valueClass, sqlType)?
+	@Nonnull
+	private final ConcurrentMap<InboundKey, CustomParameterBinder> preferredBinderByInboundKey;
+
+
+	DefaultPreparedStatementBinder() {
+		this(List.of());
+	}
+
+	DefaultPreparedStatementBinder(@Nonnull List<CustomParameterBinder> customParameterBinders) {
+		requireNonNull(customParameterBinders);
+		this.customParameterBinders = Collections.unmodifiableList(customParameterBinders);
+		this.bindersByTargetTypeCache = new ConcurrentHashMap<>();
+		this.preferredBinderByInboundKey = new ConcurrentHashMap<>();
+	}
+
 	@Override
 	public <T> void bindParameter(@Nonnull StatementContext<T> statementContext,
 																@Nonnull PreparedStatement preparedStatement,
-																@Nonnull Object parameter,
-																@Nonnull Integer parameterIndex) throws SQLException {
+																@Nonnull Integer parameterIndex,
+																@Nonnull Object parameter) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(preparedStatement);
-		requireNonNull(parameter);
 		requireNonNull(parameterIndex);
+		requireNonNull(parameter);
 
-		Object normalizedParameter = normalizeParameter(statementContext, parameter).orElse(null);
+		Integer sqlType = determineParameterSqlType(preparedStatement, parameterIndex).orElse(Types.OTHER);
+
+		// Try custom binders first (if they exist) on the raw value
+		if (!getCustomParameterBinders().isEmpty() && tryCustomBinders(statementContext, preparedStatement, parameterIndex, parameter, sqlType))
+			return;
+
+		Object normalizedParameter = normalizeParameter(statementContext, parameter);
 
 		if (normalizedParameter instanceof LocalDate localDate) {
 			if (!trySetObject(preparedStatement, parameterIndex, localDate, Types.DATE))
@@ -83,8 +116,6 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		if (normalizedParameter instanceof OffsetDateTime offsetDateTime) {
-			int sqlType = determineParameterSqlType(preparedStatement, parameterIndex);
-
 			if (sqlType == Types.TIMESTAMP) {
 				// Coerce to DB zone and drop the offset.
 				LocalDateTime localDateTime = offsetDateTime.atZoneSameInstant(statementContext.getTimeZone()).toLocalDateTime();
@@ -109,8 +140,6 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		if (normalizedParameter instanceof Instant instant) {
-			int sqlType = determineParameterSqlType(preparedStatement, parameterIndex);
-
 			if (sqlType == Types.TIMESTAMP) {
 				LocalDateTime localDateTime = LocalDateTime.ofInstant(instant, statementContext.getTimeZone());
 
@@ -167,7 +196,7 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		Object[] normalizedElements = new Object[elements.length];
 
 		for (int j = 0; j < elements.length; j++)
-			normalizedElements[j] = normalizeParameter(statementContext, elements[j]).orElse(null);
+			normalizedElements[j] = normalizeParameter(statementContext, elements[j]);
 
 		return normalizedElements;
 	}
@@ -175,12 +204,12 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	@Nonnull
 	protected boolean trySetObject(@Nonnull PreparedStatement preparedStatement,
 																 @Nonnull Integer parameterIndex,
-																 @Nullable Object object) throws SQLException {
+																 @Nullable Object parameter) throws SQLException {
 		requireNonNull(preparedStatement);
 		requireNonNull(parameterIndex);
 
 		try {
-			preparedStatement.setObject(parameterIndex, object);
+			preparedStatement.setObject(parameterIndex, parameter);
 			return true;
 		} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
 			return false;
@@ -190,31 +219,134 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	@Nonnull
 	protected boolean trySetObject(@Nonnull PreparedStatement preparedStatement,
 																 @Nonnull Integer parameterIndex,
-																 @Nullable Object object,
-																 int sqlType) throws SQLException {
+																 @Nullable Object parameter,
+																 @Nonnull Integer sqlType) throws SQLException {
 		requireNonNull(preparedStatement);
 		requireNonNull(parameterIndex);
+		requireNonNull(sqlType);
 
 		try {
-			preparedStatement.setObject(parameterIndex, object, sqlType);
+			preparedStatement.setObject(parameterIndex, parameter, sqlType);
 			return true;
 		} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
 			return false;
 		}
 	}
 
-	protected int determineParameterSqlType(@Nonnull PreparedStatement preparedStatement,
-																					@Nonnull Integer parameterIndex) {
+	@Nonnull
+	protected Optional<Integer> determineParameterSqlType(@Nonnull PreparedStatement preparedStatement,
+																												@Nonnull Integer parameterIndex) throws SQLException {
 		requireNonNull(preparedStatement);
 		requireNonNull(parameterIndex);
 
 		try {
 			ParameterMetaData parameterMetaData = preparedStatement.getParameterMetaData();
-			return parameterMetaData != null ? parameterMetaData.getParameterType(parameterIndex) : Integer.MIN_VALUE;
+
+			if (parameterMetaData == null)
+				return Optional.empty();
+
+			return Optional.of(parameterMetaData.getParameterType(parameterIndex));
 		} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
-			return Integer.MIN_VALUE;
-		} catch (SQLException e) {
-			return Integer.MIN_VALUE;
+			return Optional.empty();
+		}
+	}
+
+	/**
+	 * Try custom binders for the given value. Returns true if a binder handled it.
+	 */
+	@Nonnull
+	protected <T> Boolean tryCustomBinders(@Nonnull StatementContext<T> statementContext,
+																				 @Nonnull PreparedStatement preparedStatement,
+																				 @Nonnull Integer parameterIndex,
+																				 @Nonnull Object parameter,
+																				 @Nonnull Integer sqlType) throws SQLException {
+		requireNonNull(statementContext);
+		requireNonNull(preparedStatement);
+		requireNonNull(parameterIndex);
+		requireNonNull(parameter);
+		requireNonNull(sqlType);
+
+		TargetType targetType = TargetType.of(parameter.getClass());
+		List<CustomParameterBinder> candidates = customBindersFor(targetType);
+
+		if (candidates.isEmpty())
+			return false;
+
+		InboundKey key = new InboundKey(parameter.getClass(), sqlType);
+		CustomParameterBinder cached = getPreferredBinderByInboundKey().get(key);
+
+		// Fast path: try cached binder first
+		if (cached != null) {
+			boolean handled = cached.bind(statementContext, preparedStatement, parameterIndex, parameter);
+
+			if (handled)
+				return true;
+
+			// If it no longer applies, fall through to the rest (keep the hint; may win next time)
+		}
+
+		// Slow path: scan applicable binders
+		for (CustomParameterBinder customParameterBinder : candidates) {
+			Boolean handled = customParameterBinder.bind(statementContext, preparedStatement, parameterIndex, parameter);
+
+			if (handled) {
+				getPreferredBinderByInboundKey().putIfAbsent(key, customParameterBinder);
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Filter and cache the binders whose {@code appliesTo(targetType)} returned true.
+	 */
+	@Nonnull
+	protected List<CustomParameterBinder> customBindersFor(@Nonnull TargetType targetType) {
+		requireNonNull(targetType);
+
+		if (getCustomParameterBinders().isEmpty())
+			return List.of();
+
+		return getBindersByTargetTypeCache().computeIfAbsent(targetType, tt -> {
+			// Evaluate once per unique TargetType instance (equals/hash provided by DefaultTargetType)
+			new Object(); // noop anchor for clarity
+			return getCustomParameterBinders().stream()
+					.filter(b -> b.appliesTo(tt))
+					.toList();
+		});
+	}
+
+	@ThreadSafe
+	protected static final class InboundKey {
+		@Nonnull
+		private final Class<?> valueClass;
+		@Nonnull
+		private final Integer sqlType;
+
+		InboundKey(@Nonnull Class<?> valueClass,
+							 @Nonnull Integer sqlType) {
+			requireNonNull(valueClass);
+			requireNonNull(sqlType);
+
+			this.valueClass = valueClass;
+			this.sqlType = sqlType;
+		}
+
+		@Override
+		public boolean equals(Object o) {
+			if (this == o) return true;
+			if (o == null || getClass() != o.getClass()) return false;
+			InboundKey that = (InboundKey) o;
+			return valueClass.equals(that.valueClass) &&
+					(sqlType == null ? that.sqlType == null : sqlType.equals(that.sqlType));
+		}
+
+		@Override
+		public int hashCode() {
+			int result = valueClass.hashCode();
+			result = 31 * result + (sqlType == null ? 0 : sqlType.hashCode());
+			return result;
 		}
 	}
 
@@ -248,32 +380,30 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	 * @return the result of the massaging process
 	 */
 	@Nonnull
-	protected <T> Optional<Object> normalizeParameter(@Nonnull StatementContext<T> statementContext,
-																										@Nullable Object parameter) {
+	protected <T> Object normalizeParameter(@Nonnull StatementContext<T> statementContext,
+																					@Nonnull Object parameter) {
 		requireNonNull(statementContext);
-
-		if (parameter == null)
-			return Optional.empty();
+		requireNonNull(parameter);
 
 		// Coerce to java.time whenever possible
 		if (parameter instanceof java.sql.Timestamp timestamp)
-			return Optional.of(timestamp.toInstant());
+			return timestamp.toInstant();
 		if (parameter instanceof java.sql.Date date)
-			return Optional.of(date.toLocalDate());
+			return date.toLocalDate();
 		if (parameter instanceof java.sql.Time time)
-			return Optional.of(time.toLocalTime());
+			return time.toLocalTime();
 		if (parameter instanceof Date date)
-			return Optional.of(Instant.ofEpochMilli(date.getTime()));
+			return Instant.ofEpochMilli(date.getTime());
 		if (parameter instanceof ZonedDateTime zonedDateTime)
-			return Optional.of(zonedDateTime.toOffsetDateTime());
+			return zonedDateTime.toOffsetDateTime();
 		if (parameter instanceof Locale)
-			return Optional.of(((Locale) parameter).toLanguageTag());
+			return ((Locale) parameter).toLanguageTag();
 		if (parameter instanceof Currency)
-			return Optional.of(((Currency) parameter).getCurrencyCode());
+			return ((Currency) parameter).getCurrencyCode();
 		if (parameter instanceof Enum)
-			return Optional.of(((Enum<?>) parameter).name());
+			return ((Enum<?>) parameter).name();
 		if (parameter instanceof ZoneId)
-			return Optional.of(((ZoneId) parameter).getId());
+			return ((ZoneId) parameter).getId();
 
 		// Special handling for Oracle
 		if (statementContext.getDatabaseType() == DatabaseType.ORACLE) {
@@ -281,10 +411,25 @@ public class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 				ByteBuffer byteBuffer = ByteBuffer.wrap(new byte[16]);
 				byteBuffer.putLong(((UUID) parameter).getMostSignificantBits());
 				byteBuffer.putLong(((UUID) parameter).getLeastSignificantBits());
-				return Optional.of(byteBuffer.array());
+				return byteBuffer.array();
 			}
 		}
 
-		return Optional.ofNullable(parameter);
+		return parameter;
+	}
+
+	@Nonnull
+	protected List<CustomParameterBinder> getCustomParameterBinders() {
+		return this.customParameterBinders;
+	}
+
+	@Nonnull
+	protected ConcurrentMap<TargetType, List<CustomParameterBinder>> getBindersByTargetTypeCache() {
+		return this.bindersByTargetTypeCache;
+	}
+
+	@Nonnull
+	protected ConcurrentMap<InboundKey, CustomParameterBinder> getPreferredBinderByInboundKey() {
+		return this.preferredBinderByInboundKey;
 	}
 }

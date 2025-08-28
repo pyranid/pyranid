@@ -90,7 +90,7 @@ public class Database {
 		this.databaseType = requireNonNull(builder.databaseType);
 		this.timeZone = builder.timeZone == null ? ZoneId.systemDefault() : builder.timeZone;
 		this.instanceProvider = builder.instanceProvider == null ? new DefaultInstanceProvider() : builder.instanceProvider;
-		this.preparedStatementBinder = builder.preparedStatementBinder == null ? new DefaultPreparedStatementBinder() : builder.preparedStatementBinder;
+		this.preparedStatementBinder = builder.preparedStatementBinder == null ? PreparedStatementBinder.withDefaultConfiguration() : builder.preparedStatementBinder;
 		this.resultSetMapper = builder.resultSetMapper == null ? ResultSetMapper.withDefaultConfiguration() : builder.resultSetMapper;
 		this.statementLogger = builder.statementLogger == null ? new DefaultStatementLogger() : builder.statementLogger;
 		this.defaultIdGenerator = new AtomicInteger();
@@ -706,7 +706,7 @@ public class Database {
 				Object parameter = parameters.get(i);
 
 				if (parameter != null)
-					getPreparedStatementBinder().bindParameter(statementContext, preparedStatement, parameter, i + 1);
+					getPreparedStatementBinder().bindParameter(statementContext, preparedStatement, i + 1, parameter);
 				else
 					preparedStatement.setObject(i + 1, parameter);
 			}

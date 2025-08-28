@@ -30,12 +30,12 @@ public interface CustomParameterBinder {
 	/**
 	 * Perform custom binding of a {@link PreparedStatement} value given a {@code value} and its {@code index}.
 	 * <p>
-	 * This function is only invoked when {@code value} is non-null.
+	 * This function is only invoked when {@code parameter} is non-null.
 	 *
 	 * @param statementContext  current SQL context
 	 * @param preparedStatement the prepared statement to bind to
 	 * @param parameterIndex    1-based parameter index at which to perform the binding
-	 * @param parameterValue    the value to bind at the specified index
+	 * @param parameter         the parameter to bind at the specified index
 	 * @return {@code true} if the custom binding was performed, or {@code false} to fall back to default binding strategy
 	 * @throws SQLException if an error occurs during binding
 	 */
@@ -43,7 +43,7 @@ public interface CustomParameterBinder {
 	Boolean bind(@Nonnull StatementContext<?> statementContext,
 							 @Nonnull PreparedStatement preparedStatement,
 							 @Nonnull Integer parameterIndex,
-							 @Nonnull Object parameterValue) throws SQLException;
+							 @Nonnull Object parameter) throws SQLException;
 
 	/**
 	 * Specifies which types this custom binder should handle.
