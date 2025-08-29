@@ -164,7 +164,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			return;
 		}
 
-		if (normalizedParameter instanceof ArrayParameter arrayParameter) {
+		if (normalizedParameter instanceof ArrayParameter<?> arrayParameter) {
 			Object[] elements = arrayParameter.getElements().orElse(null);
 
 			if (elements == null) {
