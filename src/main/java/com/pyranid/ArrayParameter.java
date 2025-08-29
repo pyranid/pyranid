@@ -25,7 +25,7 @@ import java.util.Optional;
 import static java.util.Objects.requireNonNull;
 
 /**
- * Encapsulates prepared-statement parameter data meant to be bound to a formal <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/Array.html" target="_blank">{@code java.sql.Array}</a> type by {@link PreparedStatementBinder}.
+ * Encapsulates {@link java.sql.PreparedStatement} parameter data meant to be bound to a formal <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/Array.html" target="_blank">{@code java.sql.Array}</a> type by {@link PreparedStatementBinder}.
  * <p>
  * The {@code baseTypeName} corresponds to the value of <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/Array.html#getBaseTypeName()" target="_blank">{@code java.sql.Array#getBaseTypeName()}</a>
  * and is database-specific.

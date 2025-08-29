@@ -24,7 +24,7 @@ import java.util.Optional;
 import static java.util.Objects.requireNonNull;
 
 /**
- * Encapsulates prepared-statement parameter data meant to be bound to a DBMS-specific type (e.g. {@code JSON} or {@code JSONB} for PostgreSQL) by {@link PreparedStatementBinder}.
+ * Encapsulates {@link java.sql.PreparedStatement} parameter data meant to be bound to a DBMS-specific type (for example, {@code JSON} or {@code JSONB} for PostgreSQL) by {@link PreparedStatementBinder}.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 2.1.0
@@ -60,22 +60,22 @@ public final class JsonParameter {
 	}
 
 	/**
-	 * Specifies how a {@link JsonParameter} should be bound - DBMS-specific sensible default, binary (e.g. {@code JSONB} for PostgreSQL), or text.
+	 * Specifies how a {@link JsonParameter} should be bound - DBMS-specific sensible default, binary (for example, {@code JSONB} for PostgreSQL), or text.
 	 *
 	 * @author <a href="https://www.revetkn.com">Mark Allen</a>
 	 * @since 2.1.0
 	 */
 	public enum BindingPreference {
 		/**
-		 * Prefer the most capable native type for the target DB (e.g. {@code JSONB} for PostgreSQL), else text.
+		 * Prefer the most capable native type for the target DB (for example, {@code JSONB} for PostgreSQL), else text.
 		 */
 		AUTOMATIC,
 		/**
-		 * Prefer a binary/native JSON type when available (e.g. {@code JSONB} for PostgreSQL), else text.
+		 * Prefer a binary/native JSON type when available (for example, {@code JSONB} for PostgreSQL), else text.
 		 */
 		BINARY,
 		/**
-		 * Prefer to bind as text (e.g. {@code VARCHAR}/{@code TEXT}/{@code NVARCHAR} or {@code JSON} for PostgreSQL).
+		 * Prefer to bind as text (for example, {@code VARCHAR}/{@code TEXT}/{@code NVARCHAR} or {@code JSON} for PostgreSQL).
 		 */
 		TEXT
 	}
