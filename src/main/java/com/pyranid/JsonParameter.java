@@ -45,6 +45,17 @@ public final class JsonParameter {
 	}
 
 	/**
+	 * Acquires a JSON parameter for "stringified" JSON, using {@link BindingPreference#AUTOMATIC}.
+	 *
+	 * @param json the stringified JSON for this parameter
+	 * @return the JSON parameter
+	 */
+	@Nonnull
+	public static JsonParameter of(@Nullable String json) {
+		return new JsonParameter(json, BindingPreference.AUTOMATIC);
+	}
+
+	/**
 	 * Acquires a JSON parameter for "stringified" JSON.
 	 *
 	 * @param json              the stringified JSON for this parameter

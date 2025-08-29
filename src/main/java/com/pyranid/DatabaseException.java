@@ -219,7 +219,7 @@ public class DatabaseException extends RuntimeException {
 		if (getWhere().isPresent())
 			components.add(format("where=%s", getWhere().get()));
 
-		return format("%s{%s}", getClass().getSimpleName(), components.stream().collect(Collectors.joining(", ")));
+		return format("%s: %s", getClass().getName(), components.stream().collect(Collectors.joining(", ")));
 	}
 
 	/**
