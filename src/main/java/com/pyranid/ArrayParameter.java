@@ -17,8 +17,10 @@
 package com.pyranid;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import java.util.List;
+import java.util.Optional;
 
 import static java.util.Objects.requireNonNull;
 
@@ -37,16 +39,15 @@ import static java.util.Objects.requireNonNull;
 public final class ArrayParameter {
 	@Nonnull
 	private final String baseTypeName; // e.g. "text", "uuid", "integer", ...
-	@Nonnull
+	@Nullable
 	private final Object[] elements;
 
 	private ArrayParameter(@Nonnull String baseTypeName,
-												 @Nonnull Object[] elements) {
+												 @Nullable Object[] elements) {
 		requireNonNull(baseTypeName);
-		requireNonNull(elements);
 
 		this.baseTypeName = baseTypeName;
-		this.elements = elements.clone(); // Always perform a defensive copy
+		this.elements = elements == null ? null : elements.clone(); // Always perform a defensive copy
 	}
 
 	/**
@@ -60,11 +61,9 @@ public final class ArrayParameter {
 	 */
 	@Nonnull
 	public static ArrayParameter of(@Nonnull String baseTypeName,
-																	@Nonnull List<?> list) {
+																	@Nullable List<?> list) {
 		requireNonNull(baseTypeName);
-		requireNonNull(list);
-
-		return new ArrayParameter(baseTypeName, list.toArray());
+		return new ArrayParameter(baseTypeName, list == null ? null : list.toArray());
 	}
 
 	/**
@@ -78,10 +77,8 @@ public final class ArrayParameter {
 	 */
 	@Nonnull
 	public static ArrayParameter of(@Nonnull String baseTypeName,
-																	@Nonnull Object[] array) {
+																	@Nullable Object[] array) {
 		requireNonNull(baseTypeName);
-		requireNonNull(array);
-
 		return new ArrayParameter(baseTypeName, array);
 	}
 
@@ -102,8 +99,8 @@ public final class ArrayParameter {
 	 * @return the elements of this SQL ARRAY
 	 */
 	@Nonnull
-	public Object[] getElements() {
+	public Optional<Object[]> getElements() {
 		// Defensive copy
-		return this.elements.clone();
+		return this.elements == null ? Optional.empty() : Optional.of(this.elements.clone());
 	}
 }

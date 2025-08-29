@@ -17,9 +17,11 @@
 package com.pyranid;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Optional;
 
 import static java.util.Objects.requireNonNull;
 
@@ -31,11 +33,14 @@ import static java.util.Objects.requireNonNull;
  */
 @ThreadSafe
 public final class VectorParameter {
-	@Nonnull
+	@Nullable
 	private final double[] elements;
 
-	private VectorParameter(@Nonnull double[] elements) {
-		requireNonNull(elements);
+	private VectorParameter(@Nullable double[] elements) {
+		if (elements == null) {
+			this.elements = null;
+			return;
+		}
 
 		if (elements.length == 0)
 			throw new IllegalArgumentException("Vector parameters must have at least 1 element");
@@ -55,8 +60,7 @@ public final class VectorParameter {
 	 * @return the vector parameter
 	 */
 	@Nonnull
-	public static VectorParameter ofDoubles(@Nonnull double[] elements) {
-		requireNonNull(elements);
+	public static VectorParameter ofDoubles(@Nullable double[] elements) {
 		return new VectorParameter(elements);
 	}
 
@@ -67,8 +71,9 @@ public final class VectorParameter {
 	 * @return the vector parameter
 	 */
 	@Nonnull
-	public static VectorParameter ofDoubles(@Nonnull List<Double> elements) {
-		requireNonNull(elements);
+	public static VectorParameter ofDoubles(@Nullable List<Double> elements) {
+		if (elements == null)
+			return new VectorParameter(null);
 
 		double[] doubles = new double[elements.size()];
 		for (int i = 0; i < doubles.length; i++) doubles[i] = requireNonNull(elements.get(i));
@@ -82,8 +87,9 @@ public final class VectorParameter {
 	 * @return the vector parameter
 	 */
 	@Nonnull
-	public static VectorParameter ofFloats(@Nonnull float[] elements) {
-		requireNonNull(elements);
+	public static VectorParameter ofFloats(@Nullable float[] elements) {
+		if (elements == null)
+			return new VectorParameter(null);
 
 		double[] doubles = new double[elements.length];
 		for (int i = 0; i < elements.length; i++) doubles[i] = elements[i];
@@ -97,8 +103,9 @@ public final class VectorParameter {
 	 * @return the vector parameter
 	 */
 	@Nonnull
-	public static VectorParameter ofFloats(@Nonnull List<Float> elements) {
-		requireNonNull(elements);
+	public static VectorParameter ofFloats(@Nullable List<Float> elements) {
+		if (elements == null)
+			return new VectorParameter(null);
 
 		double[] doubles = new double[elements.size()];
 		for (int i = 0; i < doubles.length; i++) doubles[i] = requireNonNull(elements.get(i));
@@ -112,8 +119,9 @@ public final class VectorParameter {
 	 * @return the vector parameter
 	 */
 	@Nonnull
-	public static VectorParameter ofBigDecimals(@Nonnull List<BigDecimal> elements) {
-		requireNonNull(elements);
+	public static VectorParameter ofBigDecimals(@Nullable List<BigDecimal> elements) {
+		if (elements == null)
+			return new VectorParameter(null);
 
 		double[] d = new double[elements.size()];
 		for (int i = 0; i < d.length; i++) d[i] = requireNonNull(elements.get(i)).doubleValue();
@@ -126,8 +134,8 @@ public final class VectorParameter {
 	 * @return the elements of this vector
 	 */
 	@Nonnull
-	public double[] getElements() {
+	public Optional<double[]> getElements() {
 		// Defensive copy
-		return this.elements.clone();
+		return this.elements == null ? Optional.empty() : Optional.of(this.elements.clone());
 	}
 }

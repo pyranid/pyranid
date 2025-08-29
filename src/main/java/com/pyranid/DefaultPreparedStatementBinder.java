@@ -165,9 +165,16 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		if (normalizedParameter instanceof ArrayParameter arrayParameter) {
-			Object[] normalizedElements = normalizedArrayElements(statementContext, arrayParameter.getElements());
-			Array array = preparedStatement.getConnection().createArrayOf(arrayParameter.getBaseTypeName(), normalizedElements);
-			preparedStatement.setArray(parameterIndex, array);
+			Object[] elements = arrayParameter.getElements().orElse(null);
+
+			if (elements == null) {
+				preparedStatement.setNull(parameterIndex, Types.NULL);
+			} else {
+				Object[] normalizedElements = normalizedArrayElements(statementContext, elements);
+				Array array = preparedStatement.getConnection().createArrayOf(arrayParameter.getBaseTypeName(), normalizedElements);
+				preparedStatement.setArray(parameterIndex, array);
+			}
+
 			return;
 		}
 
@@ -176,10 +183,38 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 				throw new IllegalArgumentException(format("%s supported only on %s.%s",
 						VectorParameter.class.getSimpleName(), DatabaseType.class.getSimpleName(), DatabaseType.POSTGRESQL.name()));
 
-			org.postgresql.util.PGobject pg = new org.postgresql.util.PGobject();
-			pg.setType("vector");
-			pg.setValue(toPostgresLiteralValue(vectorParameter));
-			preparedStatement.setObject(parameterIndex, pg);
+			double[] elements = vectorParameter.getElements().orElse(null);
+
+			if (elements == null) {
+				preparedStatement.setNull(parameterIndex, Types.NULL);
+			} else {
+				org.postgresql.util.PGobject pg = new org.postgresql.util.PGobject();
+				pg.setType("vector");
+				pg.setValue(toPostgresVectorLiteralValue(elements));
+				preparedStatement.setObject(parameterIndex, pg);
+			}
+
+			return;
+		}
+
+		if (normalizedParameter instanceof JsonParameter jsonParameter) {
+			String json = jsonParameter.getJson().orElse(null);
+
+			if (json == null) {
+				preparedStatement.setNull(parameterIndex, Types.NULL);
+			} else {
+				// For now, only special handling for PostgreSQL.
+				// Later, we can add more handling for other DB types.
+				if (statementContext.getDatabaseType() == DatabaseType.POSTGRESQL) {
+					org.postgresql.util.PGobject pg = new org.postgresql.util.PGobject();
+					pg.setType(jsonParameter.getBindingPreference() == JsonParameter.BindingPreference.TEXT ? "json" : "jsonb");
+					pg.setValue(json);
+					preparedStatement.setObject(parameterIndex, pg);
+				} else {
+					preparedStatement.setString(parameterIndex, json);
+				}
+			}
+
 			return;
 		}
 
@@ -351,10 +386,9 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	}
 
 	@Nonnull
-	protected String toPostgresLiteralValue(@Nonnull VectorParameter vectorParameter) {
-		requireNonNull(vectorParameter);
+	protected String toPostgresVectorLiteralValue(@Nonnull double[] elements) {
+		requireNonNull(elements);
 
-		double[] elements = vectorParameter.getElements();
 		StringBuilder sb = new StringBuilder(2 + elements.length * 8);
 
 		sb.append('[');
