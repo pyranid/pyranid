@@ -24,7 +24,9 @@ import javax.annotation.concurrent.ThreadSafe;
 import java.lang.reflect.Type;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static java.util.Objects.requireNonNull;
 
@@ -321,5 +323,63 @@ public final class Parameters {
 
 		Type listOfE = new DefaultParameterizedType(List.class, new Type[]{elementType}, null);
 		return new DefaultTypedParameter(listOfE, list);
+	}
+
+	/**
+	 * Acquires a parameter of type {@link Set}, preserving type information so it is accessible at runtime.
+	 * <p>
+	 * This is useful when you want to bind a parameterized collection such as {@code Set<UUID>} or
+	 * {@code Set<String>} and need the generic type argument (e.g. {@code UUID.class}) to be preserved.
+	 * <p>
+	 * The resulting {@link TypedParameter} carries both the runtime value and its generic type so that
+	 * {@link CustomParameterBinder#appliesTo(TargetType)} can match against the element type.
+	 * <p>
+	 * <strong>Note:</strong> this kind of parameter requires a corresponding {@link CustomParameterBinder}
+	 * to be registered; otherwise, binding will fall back or fail depending on configuration.
+	 *
+	 * @param elementType the {@link Class} representing the type of elements contained in the set;
+	 *                    used to preserve generic type information
+	 * @param set         the set value to wrap; may be {@code null}
+	 * @param <E>         the element type of the set
+	 * @return a {@link TypedParameter} representing a {@code Set<E>} suitable for use with custom binders
+	 */
+	@Nonnull
+	public static <E> TypedParameter setOf(@Nonnull Class<E> elementType,
+																				 @Nullable Set<E> set) {
+		requireNonNull(elementType);
+
+		Type setOfE = new DefaultParameterizedType(Set.class, new Type[]{elementType}, null);
+		return new DefaultTypedParameter(setOfE, set);
+	}
+
+	/**
+	 * Acquires a parameter of type {@link Map}, preserving key and value type information
+	 * so they are accessible at runtime.
+	 * <p>
+	 * This is useful when you want to bind a parameterized collection such as {@code Map<UUID, Integer>}
+	 * and need the generic type arguments (e.g. {@code UUID.class} and {@code Integer.class}) to be preserved.
+	 * <p>
+	 * The resulting {@link TypedParameter} carries both the runtime value and its generic type so that
+	 * {@link CustomParameterBinder#appliesTo(TargetType)} can match against the element type.
+	 * <p>
+	 * <strong>Note:</strong> this kind of parameter requires a corresponding {@link CustomParameterBinder}
+	 * to be registered; otherwise, binding will fall back or fail depending on configuration.
+	 *
+	 * @param keyType   the type of the map keys
+	 * @param valueType the type of the map values
+	 * @param map       the map value; may be {@code null}
+	 * @param <K>       the key type
+	 * @param <V>       the value type
+	 * @return a {@link TypedParameter} representing {@code Map<K,V>}
+	 */
+	@Nonnull
+	public static <K, V> TypedParameter mapOf(@Nonnull Class<K> keyType,
+																						@Nonnull Class<V> valueType,
+																						@Nullable Map<K, V> map) {
+		requireNonNull(keyType);
+		requireNonNull(valueType);
+
+		Type mapOfKV = new DefaultParameterizedType(Map.class, new Type[]{keyType, valueType}, null);
+		return new DefaultTypedParameter(mapOfKV, map);
 	}
 }
