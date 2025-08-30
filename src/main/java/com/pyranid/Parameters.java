@@ -42,7 +42,7 @@ public final class Parameters {
 	/**
 	 * Acquires a SQL ARRAY parameter for a {@link List} given an appropriate <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/Array.html#getBaseTypeName()" target="_blank">{@code java.sql.Array#getBaseTypeName()}</a>.
 	 * <p>
-	 * You may determine available {@code baseTypeName} values for your database by examining metadata exposed via {@link Database#examineDatabaseMetaData(DatabaseMetaDataExaminer)}.
+	 * You may determine available {@code baseTypeName} values for your database by examining metadata exposed via {@link Database#readDatabaseMetaData(DatabaseMetaDataReader)}.
 	 *
 	 * @param baseTypeName the SQL ARRAY element type, e.g. {@code "text"}, {@code "uuid"}, {@code "float4"}, {@code "float8"} ...
 	 * @param list         the list whose elements will be used to populate the SQL ARRAY
@@ -59,7 +59,7 @@ public final class Parameters {
 	/**
 	 * Acquires a SQL ARRAY parameter for a native Java array given an appropriate <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/Array.html#getBaseTypeName()" target="_blank">{@code java.sql.Array#getBaseTypeName()}</a>.
 	 * <p>
-	 * You may determine available {@code baseTypeName} values for your database by examining metadata exposed via {@link Database#examineDatabaseMetaData(DatabaseMetaDataExaminer)}.
+	 * You may determine available {@code baseTypeName} values for your database by examining metadata exposed via {@link Database#readDatabaseMetaData(DatabaseMetaDataReader)}.
 	 *
 	 * @param baseTypeName the SQL ARRAY element type, e.g. {@code "text"}, {@code "uuid"}, {@code "float4"}, {@code "float8"} ...
 	 * @param array        the native Java array whose elements will be used to populate the SQL ARRAY

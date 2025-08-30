@@ -27,7 +27,7 @@ import java.util.Optional;
  * The {@code baseTypeName} corresponds to the value of <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/Array.html#getBaseTypeName()" target="_blank">{@code java.sql.Array#getBaseTypeName()}</a>
  * and is database-specific.
  * <p>
- * You may determine available {@code baseTypeName} values for your database by examining metadata exposed via {@link Database#examineDatabaseMetaData(DatabaseMetaDataExaminer)}.
+ * You may determine available {@code baseTypeName} values for your database by examining metadata exposed via {@link Database#readDatabaseMetaData(DatabaseMetaDataReader)}.
  * <p>
  * Stardard instances may be constructed via {@link Parameters#arrayOf(String, Object[])} and {@link Parameters#arrayOf(String, List)}.
  * <p>

@@ -21,18 +21,18 @@ import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
 
 /**
- * Functional interface used by {@link Database#examineDatabaseMetaData(DatabaseMetaDataExaminer)}, which permits callers to examine a transient {@link DatabaseMetaData} instance.
+ * Functional interface used by {@link Database#readDatabaseMetaData(DatabaseMetaDataReader)}, which permits callers to examine a transient {@link DatabaseMetaData} instance.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 2.1.0
  */
 @FunctionalInterface
-public interface DatabaseMetaDataExaminer {
+public interface DatabaseMetaDataReader {
 	/**
 	 * Examines a JDBC {@link DatabaseMetaData}, which provides comprehensive vendor-specific information about this database as a whole.
 	 *
 	 * @param databaseMetaData JBDC metadata for this database
 	 * @throws SQLException if an error occurs while examining metadata
 	 */
-	void examine(@Nonnull DatabaseMetaData databaseMetaData) throws SQLException;
+	void read(@Nonnull DatabaseMetaData databaseMetaData) throws SQLException;
 }

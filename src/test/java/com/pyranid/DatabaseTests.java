@@ -523,10 +523,10 @@ public class DatabaseTests {
 	}
 
 	@Test
-	public void testExamineDatabaseMetaData() {
+	public void testReadDatabaseMetaData() {
 		Database db = Database.forDataSource(createInMemoryDataSource("metadata")).build();
 		final AtomicInteger seen = new AtomicInteger(0);
-		db.examineDatabaseMetaData(meta -> {
+		db.readDatabaseMetaData(meta -> {
 			Assert.assertNotNull(meta.getDatabaseProductName());
 			seen.incrementAndGet();
 		});

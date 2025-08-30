@@ -668,15 +668,15 @@ public class Database {
 	 * <p>
 	 * It does <strong>not</strong> participate in the active transaction, if one exists.
 	 * <p>
-	 * The connection is closed as soon as {@link DatabaseMetaDataExaminer#examine(DatabaseMetaData)} completes.
+	 * The connection is closed as soon as {@link DatabaseMetaDataReader#read(DatabaseMetaData)} completes.
 	 * <p>
 	 * See <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/DatabaseMetaData.html">{@code DatabaseMetaData} Javadoc</a> for details.
 	 */
-	public void examineDatabaseMetaData(@Nonnull DatabaseMetaDataExaminer databaseMetaDataExaminer) {
-		requireNonNull(databaseMetaDataExaminer);
+	public void readDatabaseMetaData(@Nonnull DatabaseMetaDataReader databaseMetaDataReader) {
+		requireNonNull(databaseMetaDataReader);
 
 		performRawConnectionOperation((connection -> {
-			databaseMetaDataExaminer.examine(connection.getMetaData());
+			databaseMetaDataReader.read(connection.getMetaData());
 			return Optional.empty();
 		}), false);
 	}
@@ -740,7 +740,7 @@ public class Database {
 	/**
 	 * Useful for single-shot "utility" calls that operate outside of normal query operations, e.g. pulling DB metadata.
 	 * <p>
-	 * Example: {@link #examineDatabaseMetaData(DatabaseMetaDataExaminer)}.
+	 * Example: {@link #readDatabaseMetaData(DatabaseMetaDataReader)}.
 	 */
 	@Nonnull
 	protected <R> Optional<R> performRawConnectionOperation(@Nonnull RawConnectionOperation<R> rawConnectionOperation,
