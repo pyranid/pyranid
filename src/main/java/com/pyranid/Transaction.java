@@ -71,6 +71,10 @@ public class Transaction {
 	private Boolean rollbackOnly;
 	@Nullable
 	private Boolean initialAutoCommit;
+	@Nullable
+	private Integer initialTransactionIsolationJdbcLevel;
+	@Nonnull
+	private Boolean transactionIsolationWasChanged;
 
 	Transaction(@Nonnull DataSource dataSource,
 							@Nonnull TransactionIsolation transactionIsolation) {
@@ -83,6 +87,7 @@ public class Transaction {
 		this.connection = null;
 		this.rollbackOnly = false;
 		this.initialAutoCommit = null;
+		this.transactionIsolationWasChanged = false;
 		this.postTransactionOperations = new CopyOnWriteArrayList();
 		this.connectionLock = new ReentrantLock();
 		this.logger = Logger.getLogger(Transaction.class.getName());
@@ -281,10 +286,36 @@ public class Transaction {
 				throw new DatabaseException("Unable to determine database connection autocommit setting", e);
 			}
 
+			// Track initial isolation
+			try {
+				this.initialTransactionIsolationJdbcLevel = this.connection.getTransactionIsolation();
+			} catch (SQLException e) {
+				throw new DatabaseException("Unable to determine database connection transaction isolation", e);
+			}
+
 			// Immediately flip autocommit to false if needed...if initially true, it will get set back to true by Database at
 			// the end of the transaction
 			if (this.initialAutoCommit)
 				setAutoCommit(false);
+
+			// Apply requested isolation if not DEFAULT and different from current
+			TransactionIsolation desiredTransactionIsolation = getTransactionIsolation();
+
+			if (desiredTransactionIsolation != TransactionIsolation.DEFAULT) {
+				// Safe; only DEFAULT has a null value
+				int desiredJdbcLevel = desiredTransactionIsolation.getJdbcLevel().get();
+				// Apply only if different from current (or current unknown)
+				if (this.initialTransactionIsolationJdbcLevel == null || this.initialTransactionIsolationJdbcLevel.intValue() != desiredJdbcLevel) {
+					try {
+						// In the future, we might check supportsTransactionIsolationLevel via DatabaseMetaData first.
+						// Probably want to calculate that at Database init time and cache it off
+						this.connection.setTransactionIsolation(desiredJdbcLevel);
+						this.transactionIsolationWasChanged = true;
+					} catch (SQLException e) {
+						throw new DatabaseException(format("Unable to set transaction isolation to %s", desiredTransactionIsolation.name()), e);
+					}
+				}
+			}
 
 			return this.connection;
 		} finally {
@@ -302,6 +333,29 @@ public class Transaction {
 		}
 	}
 
+	void restoreTransactionIsolationIfNeeded() {
+		getConnectionLock().lock();
+
+		try {
+			if (this.connection == null)
+				return;
+
+			Integer initialTransactionIsolationJdbcLevel = getInitialTransactionIsolationJdbcLevel().orElse(null);
+
+			if (getTransactionIsolationWasChanged() && initialTransactionIsolationJdbcLevel != null) {
+				try {
+					this.connection.setTransactionIsolation(initialTransactionIsolationJdbcLevel.intValue());
+				} catch (SQLException e) {
+					throw new DatabaseException("Unable to restore original transaction isolation", e);
+				} finally {
+					this.transactionIsolationWasChanged = false;
+				}
+			}
+		} finally {
+			getConnectionLock().unlock();
+		}
+	}
+
 	@Nonnull
 	Long generateId() {
 		return ID_GENERATOR.incrementAndGet();
@@ -315,6 +369,16 @@ public class Transaction {
 	@Nonnull
 	DataSource getDataSource() {
 		return this.dataSource;
+	}
+
+	@Nonnull
+	protected Optional<Integer> getInitialTransactionIsolationJdbcLevel() {
+		return Optional.ofNullable(this.initialTransactionIsolationJdbcLevel);
+	}
+
+	@Nonnull
+	protected Boolean getTransactionIsolationWasChanged() {
+		return this.transactionIsolationWasChanged;
 	}
 
 	@Nonnull

@@ -234,6 +234,8 @@ public class Database {
 
 			try {
 				try {
+					transaction.restoreTransactionIsolationIfNeeded();
+
 					if (transaction.getInitialAutoCommit().isPresent() && transaction.getInitialAutoCommit().get())
 						// Autocommit was true initially, so restoring to true now that transaction has completed
 						transaction.setAutoCommit(true);

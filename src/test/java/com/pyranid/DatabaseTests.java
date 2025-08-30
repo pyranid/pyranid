@@ -26,6 +26,7 @@ import javax.annotation.Nonnull;
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
 import java.math.BigDecimal;
+import java.sql.Connection;
 import java.sql.ResultSet;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -615,6 +616,48 @@ public class DatabaseTests {
 		} catch (DatabaseException expected) {
 			// pass
 		}
+	}
+
+	@Test
+	public void testTransactionIsolation() {
+		Database db = Database.withDataSource(createInMemoryDataSource("txn_isolation")).build();
+
+		db.transaction(TransactionIsolation.SERIALIZABLE, () -> {
+			db.performRawConnectionOperation(conn -> {
+				int level = conn.getTransactionIsolation();
+				Assert.assertEquals(Connection.TRANSACTION_SERIALIZABLE, level);
+				Assert.assertEquals(TransactionIsolation.SERIALIZABLE, db.currentTransaction().get().getTransactionIsolation());
+				return Optional.empty();
+			}, true);
+		});
+
+		// Another transaction; isolation restored
+		db.transaction(() -> {
+			db.performRawConnectionOperation(conn -> {
+				int level = conn.getTransactionIsolation();
+				Assert.assertEquals(Connection.TRANSACTION_READ_COMMITTED, level);
+				Assert.assertEquals(TransactionIsolation.DEFAULT, db.currentTransaction().get().getTransactionIsolation());
+				return Optional.empty();
+			}, true);
+		});
+
+		// Another txn level
+		db.transaction(TransactionIsolation.REPEATABLE_READ, () -> {
+			db.performRawConnectionOperation(conn -> {
+				int level = conn.getTransactionIsolation();
+				Assert.assertEquals(Connection.TRANSACTION_REPEATABLE_READ, level);
+				Assert.assertEquals(TransactionIsolation.REPEATABLE_READ, db.currentTransaction().get().getTransactionIsolation());
+				return Optional.empty();
+			}, true);
+		});
+
+		// Non-transactional; verifies restoration
+		db.performRawConnectionOperation(conn -> {
+			int level = conn.getTransactionIsolation();
+			// compare to what HSQLDB default was before entering the txn
+			Assert.assertEquals(Connection.TRANSACTION_READ_COMMITTED, level); // example default
+			return Optional.empty();
+		}, false);
 	}
 
 	protected void createTestSchema(@Nonnull Database database) {
