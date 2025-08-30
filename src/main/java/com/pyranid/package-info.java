@@ -21,7 +21,7 @@
  *
  * <pre>
  * // Minimal setup, uses defaults
- * Database database = Database.forDataSource(dataSource).build();
+ * Database database = Database.withDataSource(dataSource).build();
  *
  * // Customized setup
  *
@@ -80,7 +80,7 @@
  *   }
  * };
  *
- * Database customDatabase = Database.forDataSource(dataSource)
+ * Database customDatabase = Database.withDataSource(dataSource)
  *   .timeZone(timeZone)
  *   .instanceProvider(instanceProvider)
  *   .resultSetMapper(resultSetMapper)

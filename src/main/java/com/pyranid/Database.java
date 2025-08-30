@@ -106,7 +106,7 @@ public class Database {
 	 * @return a {@link Database} builder
 	 */
 	@Nonnull
-	public static Builder forDataSource(@Nonnull DataSource dataSource) {
+	public static Builder withDataSource(@Nonnull DataSource dataSource) {
 		requireNonNull(dataSource);
 		return new Builder(dataSource);
 	}

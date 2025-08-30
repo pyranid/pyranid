@@ -445,7 +445,7 @@ public class DatabasePerformanceTests {
 		requireNonNull(mapper);
 
 		DataSource ds = createInMemoryDataSource(dbName);
-		Database db = Database.forDataSource(ds)
+		Database db = Database.withDataSource(ds)
 				.timeZone(ZoneId.of("America/New_York"))
 				.resultSetMapper(mapper)
 				.build();

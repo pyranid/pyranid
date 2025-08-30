@@ -65,7 +65,7 @@ If you don't use Maven, you can drop [pyranid-2.1.0.jar](https://repo1.maven.org
 ```java
 // Create a Database backed by a DataSource
 DataSource dataSource = obtainDataSource();
-Database database = Database.forDataSource(dataSource).build();
+Database database = Database.withDataSource(dataSource).build();
 ```
 
 ### Customized setup
@@ -148,7 +148,7 @@ StatementLogger statementLogger = new StatementLogger() {
 // Useful if your JVM's default timezone doesn't match your Database's default timezone
 ZoneId timeZone = ZoneId.of("UTC");
 
-Database customDatabase = Database.forDataSource(dataSource)
+Database customDatabase = Database.withDataSource(dataSource)
   .timeZone(timeZone)
   .instanceProvider(instanceProvider)
   .resultSetMapper(resultSetMapper)
@@ -661,7 +661,7 @@ Examples of usage include:
 * Collecting a set of queries executed across a unit of work for bulk analysis (e.g. a [`ThreadLocal`](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/ThreadLocal.html) scoped to a single web request)
 
 ```java
-Database database = Database.forDataSource(dataSource)
+Database database = Database.withDataSource(dataSource)
   .statementLogger(new StatementLogger() {
     Duration SLOW_QUERY_THRESHOLD = Duration.ofMillis(500);
 
@@ -732,7 +732,7 @@ A corresponding [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.ht
 
 ```java
 // Ensure our StatementLogger implementation takes HOT_QUERY into account 
-Database database = Database.forDataSource(dataSource)
+Database database = Database.withDataSource(dataSource)
   .statementLogger(new StatementLogger() {
     @Override
     public void log(@Nonnull StatementLog statementLog) {

@@ -96,7 +96,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testBasicQueries() {
-		Database database = Database.forDataSource(createInMemoryDataSource("testBasicQueries")).build();
+		Database database = Database.withDataSource(createInMemoryDataSource("testBasicQueries")).build();
 
 		createTestSchema(database);
 
@@ -116,7 +116,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testTransactions() {
-		Database database = Database.forDataSource(createInMemoryDataSource("testTransactions")).build();
+		Database database = Database.withDataSource(createInMemoryDataSource("testTransactions")).build();
 
 		database.execute("CREATE TABLE product (product_id BIGINT, name VARCHAR(255) NOT NULL, price DECIMAL)");
 
@@ -157,7 +157,7 @@ public class DatabaseTests {
 		DataSource ds = createInMemoryDataSource("dt_roundtrips");
 		ZoneId zone = ZoneId.of("America/New_York");
 
-		Database db = Database.forDataSource(ds)
+		Database db = Database.withDataSource(ds)
 				.timeZone(zone)
 				.build();
 
@@ -177,7 +177,7 @@ public class DatabaseTests {
 		DataSource ds = createInMemoryDataSource("ts_roundtrips");
 		ZoneId zone = ZoneId.of("America/New_York");
 
-		Database db = Database.forDataSource(ds)
+		Database db = Database.withDataSource(ds)
 				.timeZone(zone)
 				.build();
 
@@ -219,7 +219,7 @@ public class DatabaseTests {
 		// NY DB
 		DataSource dsNY = createInMemoryDataSource("ts_literal_ny");
 		ZoneId ny = ZoneId.of("America/New_York");
-		Database dbNY = Database.forDataSource(dsNY).timeZone(ny).build();
+		Database dbNY = Database.withDataSource(dsNY).timeZone(ny).build();
 		Instant expectedNY = ldt.atZone(ny).toInstant().truncatedTo(ChronoUnit.MILLIS);
 		Instant gotNY = dbNY.queryForObject("SELECT TIMESTAMP '2020-01-02 03:04:05.123' FROM (VALUES (0)) AS t(x)", Instant.class).get()
 				.truncatedTo(ChronoUnit.MILLIS);
@@ -232,7 +232,7 @@ public class DatabaseTests {
 		// UTC DB
 		DataSource dsUTC = createInMemoryDataSource("ts_literal_utc");
 		ZoneId utc = ZoneId.of("UTC");
-		Database dbUTC = Database.forDataSource(dsUTC).timeZone(utc).build();
+		Database dbUTC = Database.withDataSource(dsUTC).timeZone(utc).build();
 		Instant expectedUTC = ldt.atZone(utc).toInstant().truncatedTo(ChronoUnit.MILLIS);
 		Instant gotUTC = dbUTC.queryForObject("SELECT TIMESTAMP '2020-01-02 03:04:05.123' FROM (VALUES (0)) AS t(x)", Instant.class).get()
 				.truncatedTo(ChronoUnit.MILLIS);
@@ -246,7 +246,7 @@ public class DatabaseTests {
 	public void testLegacySqlTypesRoundTrip() {
 		DataSource ds = createInMemoryDataSource("legacy_sql_types");
 		ZoneId zone = ZoneId.of("America/New_York");
-		Database db = Database.forDataSource(ds).timeZone(zone).build();
+		Database db = Database.withDataSource(ds).timeZone(zone).build();
 
 		// java.sql.Timestamp
 		java.sql.Timestamp ts = java.sql.Timestamp.valueOf("2020-01-02 03:04:05.123");
@@ -291,7 +291,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database.forDataSource(dataSource)
+		Database db = Database.withDataSource(dataSource)
 				.resultSetMapper(ResultSetMapper.withCustomColumnMappers(List.of(localeOverride)).build())
 				.build();
 
@@ -363,7 +363,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database.forDataSource(dataSource)
+		Database db = Database.withDataSource(dataSource)
 				.resultSetMapper(ResultSetMapper.withCustomColumnMappers(List.of(first, second)).build())
 				.build();
 
@@ -422,7 +422,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database.forDataSource(dataSource)
+		Database db = Database.withDataSource(dataSource)
 				.resultSetMapper(ResultSetMapper.withCustomColumnMappers(List.of(csvUuidList)).build())
 				.build();
 
@@ -448,7 +448,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testExecuteForObjectAndListUsingSelect() {
-		Database db = Database.forDataSource(createInMemoryDataSource("exec_select")).build();
+		Database db = Database.withDataSource(createInMemoryDataSource("exec_select")).build();
 		db.execute("CREATE TABLE prod (id INT, name VARCHAR(64))");
 		db.execute("INSERT INTO prod VALUES (1, 'A')");
 		db.execute("INSERT INTO prod VALUES (2, 'B')");
@@ -482,7 +482,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testZoneIdLocaleCurrencyRoundTrip() {
-		Database db = Database.forDataSource(createInMemoryDataSource("prefs")).build();
+		Database db = Database.withDataSource(createInMemoryDataSource("prefs")).build();
 		db.execute("CREATE TABLE prefs (tz VARCHAR(64), locale VARCHAR(32), currency VARCHAR(3))");
 
 		ZoneId zone = ZoneId.of("America/New_York");
@@ -513,7 +513,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testNullParameterBinding() {
-		Database db = Database.forDataSource(createInMemoryDataSource("nulls")).build();
+		Database db = Database.withDataSource(createInMemoryDataSource("nulls")).build();
 		db.execute("CREATE TABLE foo (id INT, name VARCHAR(64))");
 		db.execute("INSERT INTO foo (id, name) VALUES (?, ?)", 1, null);
 
@@ -524,7 +524,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testReadDatabaseMetaData() {
-		Database db = Database.forDataSource(createInMemoryDataSource("metadata")).build();
+		Database db = Database.withDataSource(createInMemoryDataSource("metadata")).build();
 		final AtomicInteger seen = new AtomicInteger(0);
 		db.readDatabaseMetaData(meta -> {
 			Assert.assertNotNull(meta.getDatabaseProductName());
@@ -535,7 +535,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testStatementLoggerReceivesEvent() {
-		Database db = Database.forDataSource(createInMemoryDataSource("logger")).statementLogger((log) -> {
+		Database db = Database.withDataSource(createInMemoryDataSource("logger")).statementLogger((log) -> {
 			Assert.assertNotNull("StatementContext should be present", log.getStatementContext());
 			Assert.assertTrue("SQL should be present", log.getStatementContext().getStatement().getSql().length() > 0);
 		}).build();
@@ -546,7 +546,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testArrayParameter_insertAndReadBack() {
-		Database db = Database.forDataSource(createInMemoryDataSource("it_array_param")).build();
+		Database db = Database.withDataSource(createInMemoryDataSource("it_array_param")).build();
 
 		// HSQLDB array column syntax: VARCHAR(100) ARRAY
 		db.execute("CREATE TABLE t_array (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, tags VARCHAR(100) ARRAY)");
@@ -572,7 +572,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testArrayParameter_emptyArray() {
-		Database db = Database.forDataSource(createInMemoryDataSource("it_array_param_empty")).build();
+		Database db = Database.withDataSource(createInMemoryDataSource("it_array_param_empty")).build();
 		db.execute("CREATE TABLE t_array (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, tags VARCHAR(100) ARRAY)");
 
 		db.execute("INSERT INTO t_array(tags) VALUES (?)",
@@ -585,7 +585,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testJsonParameter_roundTrip_textOnHsqldb() {
-		Database db = Database.forDataSource(createInMemoryDataSource("it_json_param")).build();
+		Database db = Database.withDataSource(createInMemoryDataSource("it_json_param")).build();
 		db.execute("CREATE TABLE t_json (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, body LONGVARCHAR)");
 
 		String json = "{\"a\":1,\"b\":[true,false],\"s\":\"x\"}";
@@ -606,7 +606,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testVectorParameter_throwsOnNonPostgres() {
-		Database db = Database.forDataSource(createInMemoryDataSource("it_vector_param")).build();
+		Database db = Database.withDataSource(createInMemoryDataSource("it_vector_param")).build();
 		db.execute("CREATE TABLE t_vec (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, v LONGVARCHAR)");
 
 		try {
