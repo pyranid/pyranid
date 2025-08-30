@@ -19,6 +19,7 @@ package com.pyranid;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
@@ -110,6 +111,123 @@ public final class Parameters {
 		@Nonnull
 		@Override
 		public Optional<Object[]> getElements() {
+			// Defensive copy
+			return this.elements == null ? Optional.empty() : Optional.of(this.elements.clone());
+		}
+	}
+
+
+	/**
+	 * Acquires a vector parameter for an array of {@code double}.
+	 *
+	 * @param elements the elements of the vector parameter
+	 * @return the vector parameter
+	 */
+	@Nonnull
+	public static VectorParameter vectorOfDoubles(@Nullable double[] elements) {
+		return new DefaultVectorParameter(elements);
+	}
+
+	/**
+	 * Acquires a vector parameter for a {@link List} of {@link Double}.
+	 *
+	 * @param elements the elements of the vector parameter
+	 * @return the vector parameter
+	 */
+	@Nonnull
+	public static VectorParameter vectorOfDoubles(@Nullable List<Double> elements) {
+		if (elements == null)
+			return new DefaultVectorParameter(null);
+
+		double[] doubles = new double[elements.size()];
+		for (int i = 0; i < doubles.length; i++) doubles[i] = requireNonNull(elements.get(i));
+		return new DefaultVectorParameter(doubles);
+	}
+
+	/**
+	 * Acquires a vector parameter for an array of {@code float}.
+	 *
+	 * @param elements the elements of the vector parameter
+	 * @return the vector parameter
+	 */
+	@Nonnull
+	public static VectorParameter vectorOfFloats(@Nullable float[] elements) {
+		if (elements == null)
+			return new DefaultVectorParameter(null);
+
+		double[] doubles = new double[elements.length];
+		for (int i = 0; i < elements.length; i++) doubles[i] = elements[i];
+		return new DefaultVectorParameter(doubles);
+	}
+
+	/**
+	 * Acquires a vector parameter for a {@link List} of {@link Float}.
+	 *
+	 * @param elements the elements of the vector parameter
+	 * @return the vector parameter
+	 */
+	@Nonnull
+	public static VectorParameter vectorOfFloats(@Nullable List<Float> elements) {
+		if (elements == null)
+			return new DefaultVectorParameter(null);
+
+		double[] doubles = new double[elements.size()];
+		for (int i = 0; i < doubles.length; i++) doubles[i] = requireNonNull(elements.get(i));
+		return new DefaultVectorParameter(doubles);
+	}
+
+	/**
+	 * Acquires a vector parameter for a {@link List} of {@link BigDecimal}.
+	 *
+	 * @param elements the elements of the vector parameter
+	 * @return the vector parameter
+	 */
+	@Nonnull
+	public static VectorParameter vectorOfBigDecimals(@Nullable List<BigDecimal> elements) {
+		if (elements == null)
+			return new DefaultVectorParameter(null);
+
+		double[] d = new double[elements.size()];
+		for (int i = 0; i < d.length; i++) d[i] = requireNonNull(elements.get(i)).doubleValue();
+		return new DefaultVectorParameter(d);
+	}
+
+	/**
+	 * Default package-private implementation of {@link VectorParameter}.
+	 *
+	 * @author <a href="https://www.revetkn.com">Mark Allen</a>
+	 * @since 2.1.0
+	 */
+	@ThreadSafe
+	static class DefaultVectorParameter implements VectorParameter {
+		@Nullable
+		private final double[] elements;
+
+		private DefaultVectorParameter(@Nullable double[] elements) {
+			if (elements == null) {
+				this.elements = null;
+				return;
+			}
+
+			if (elements.length == 0)
+				throw new IllegalArgumentException("Vector parameters must have at least 1 element");
+
+			for (double d : elements)
+				if (!Double.isFinite(d))
+					throw new IllegalArgumentException("Vector parameter elements must be finite (no NaN/Infinity)");
+
+			// Always defensive copy
+			this.elements = elements.clone();
+		}
+
+		/**
+		 * Gets the elements of this vector.
+		 *
+		 * @return the elements of this vector
+		 */
+		@Nonnull
+		@Override
+		public Optional<double[]> getElements() {
 			// Defensive copy
 			return this.elements == null ? Optional.empty() : Optional.of(this.elements.clone());
 		}
