@@ -17,13 +17,17 @@
 package com.pyranid;
 
 import javax.annotation.Nonnull;
+import javax.annotation.concurrent.ThreadSafe;
 
 /**
  * Contract for handling database statement log events.
+ * <p>
+ * Implementations should be threadsafe.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 1.0.0
  */
+@ThreadSafe
 @FunctionalInterface
 public interface StatementLogger {
 	/**

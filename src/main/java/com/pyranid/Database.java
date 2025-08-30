@@ -92,7 +92,7 @@ public class Database {
 		this.instanceProvider = builder.instanceProvider == null ? new InstanceProvider() {} : builder.instanceProvider;
 		this.preparedStatementBinder = builder.preparedStatementBinder == null ? PreparedStatementBinder.withDefaultConfiguration() : builder.preparedStatementBinder;
 		this.resultSetMapper = builder.resultSetMapper == null ? ResultSetMapper.withDefaultConfiguration() : builder.resultSetMapper;
-		this.statementLogger = builder.statementLogger == null ? new DefaultStatementLogger() : builder.statementLogger;
+		this.statementLogger = builder.statementLogger == null ? (statementLog) -> {} : builder.statementLogger;
 		this.defaultIdGenerator = new AtomicInteger();
 		this.logger = Logger.getLogger(getClass().getName());
 		this.executeLargeBatchSupported = DatabaseOperationSupportStatus.UNKNOWN;
