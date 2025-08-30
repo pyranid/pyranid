@@ -21,6 +21,7 @@ import com.pyranid.JsonParameter.BindingPreference;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
+import java.lang.reflect.Type;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
@@ -293,5 +294,32 @@ public final class Parameters {
 		public BindingPreference getBindingPreference() {
 			return this.bindingPreference;
 		}
+	}
+
+	/**
+	 * Acquires a parameter of type {@link List}, preserving type information so it is accessible at runtime.
+	 * <p>
+	 * This is useful when you want to bind a parameterized collection such as {@code List<UUID>} or
+	 * {@code List<String>} and need the generic type argument (e.g. {@code UUID.class}) to be preserved.
+	 * <p>
+	 * The resulting {@link TypedParameter} carries both the runtime value and its generic type so that
+	 * {@link CustomParameterBinder#appliesTo(TargetType)} can match against the element type.
+	 * <p>
+	 * <strong>Note:</strong> this kind of parameter requires a corresponding {@link CustomParameterBinder}
+	 * to be registered; otherwise, binding will fall back or fail depending on configuration.
+	 *
+	 * @param elementType the {@link Class} representing the type of elements contained in the list;
+	 *                    used to preserve generic type information
+	 * @param list        the list value to wrap; may be {@code null}
+	 * @param <E>         the element type of the list
+	 * @return a {@link TypedParameter} representing a {@code List<E>} suitable for use with custom binders
+	 */
+	@Nonnull
+	public static <E> TypedParameter listOf(@Nonnull Class<E> elementType,
+																					@Nullable List<E> list) {
+		requireNonNull(elementType);
+
+		Type listOfE = new DefaultParameterizedType(List.class, new Type[]{elementType}, null);
+		return new DefaultTypedParameter(listOfE, list);
 	}
 }

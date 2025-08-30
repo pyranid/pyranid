@@ -180,7 +180,7 @@ public class DatabaseException extends RuntimeException {
 		List<String> components = new ArrayList<>(20);
 
 		if (getMessage() != null && getMessage().trim().length() > 0)
-			components.add(format("message=%s", getMessage()));
+			components.add(format("message=%s", getMessage().trim()));
 
 		if (getErrorCode().isPresent())
 			components.add(format("errorCode=%s", getErrorCode().get()));

@@ -87,13 +87,21 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		requireNonNull(parameterIndex);
 		requireNonNull(parameter);
 
+		// Unwrap typed parameters if needed
+		Object rawParameter = (parameter instanceof TypedParameter typedParameter) ? typedParameter.getValue().orElse(null) : parameter;
+		TargetType explicitTargetType =
+				(parameter instanceof TypedParameter typedParameter)
+						? TargetType.of(typedParameter.getExplicitType())
+						: TargetType.of(rawParameter.getClass());
+
 		Integer sqlType = determineParameterSqlType(preparedStatement, parameterIndex).orElse(Types.OTHER);
 
 		// Try custom binders first (if they exist) on the raw value
-		if (!getCustomParameterBinders().isEmpty() && tryCustomBinders(statementContext, preparedStatement, parameterIndex, parameter, sqlType))
+		if (!getCustomParameterBinders().isEmpty()
+				&& tryCustomBinders(statementContext, preparedStatement, parameterIndex, rawParameter, sqlType, explicitTargetType))
 			return;
 
-		Object normalizedParameter = normalizeParameter(statementContext, parameter);
+		Object normalizedParameter = normalizeParameter(statementContext, rawParameter);
 
 		if (normalizedParameter instanceof LocalDate localDate) {
 			if (!trySetObject(preparedStatement, parameterIndex, localDate, Types.DATE))
@@ -293,15 +301,17 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	protected <T> Boolean tryCustomBinders(@Nonnull StatementContext<T> statementContext,
 																				 @Nonnull PreparedStatement preparedStatement,
 																				 @Nonnull Integer parameterIndex,
-																				 @Nonnull Object parameter,
-																				 @Nonnull Integer sqlType) throws SQLException {
+																				 @Nonnull Object parameter, /* must be the UNWRAPPED value */
+																				 @Nonnull Integer sqlType,
+																				 @Nonnull TargetType targetType /* explicit target (from TypedParameter if present) */) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(preparedStatement);
 		requireNonNull(parameterIndex);
 		requireNonNull(parameter);
 		requireNonNull(sqlType);
+		requireNonNull(targetType);
 
-		TargetType targetType = TargetType.of(parameter.getClass());
+		// use the provided target instead of TargetType.of(parameter.getClass())
 		List<CustomParameterBinder> candidates = customBindersFor(targetType);
 
 		if (candidates.isEmpty())
