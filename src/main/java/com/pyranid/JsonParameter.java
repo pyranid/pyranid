@@ -17,66 +17,28 @@
 package com.pyranid;
 
 import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import java.util.Optional;
 
-import static java.util.Objects.requireNonNull;
-
 /**
  * Encapsulates {@link java.sql.PreparedStatement} parameter data meant to be bound to a DBMS-specific type (for example, {@code JSON} or {@code JSONB} for PostgreSQL) by {@link PreparedStatementBinder}.
+ * <p>
+ * Stardard instances may be constructed via {@link Parameters#jsonOf(String)} and {@link Parameters#jsonOf(String, BindingPreference)}.
+ * <p>
+ * Implementations should be threadsafe.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 2.1.0
  */
 @ThreadSafe
-public final class JsonParameter {
-	@Nullable
-	private final String json;
-	@Nonnull
-	private final BindingPreference bindingPreference;
-
-	private JsonParameter(@Nullable String json,
-												@Nonnull BindingPreference bindingPreference) {
-		requireNonNull(bindingPreference);
-
-		this.json = json;
-		this.bindingPreference = bindingPreference;
-	}
-
-	/**
-	 * Acquires a JSON parameter for "stringified" JSON, using {@link BindingPreference#AUTOMATIC}.
-	 *
-	 * @param json the stringified JSON for this parameter
-	 * @return the JSON parameter
-	 */
-	@Nonnull
-	public static JsonParameter of(@Nullable String json) {
-		return new JsonParameter(json, BindingPreference.AUTOMATIC);
-	}
-
-	/**
-	 * Acquires a JSON parameter for "stringified" JSON.
-	 *
-	 * @param json              the stringified JSON for this parameter
-	 * @param bindingPreference how the JSON parameter should be bound to a {@link java.sql.PreparedStatement}
-	 * @return the JSON parameter
-	 */
-	@Nonnull
-	public static JsonParameter of(@Nullable String json,
-																 @Nonnull BindingPreference bindingPreference) {
-		requireNonNull(bindingPreference);
-
-		return new JsonParameter(json, bindingPreference);
-	}
-
+public interface JsonParameter {
 	/**
 	 * Specifies how a {@link JsonParameter} should be bound - DBMS-specific sensible default, binary (for example, {@code JSONB} for PostgreSQL), or text.
 	 *
 	 * @author <a href="https://www.revetkn.com">Mark Allen</a>
 	 * @since 2.1.0
 	 */
-	public enum BindingPreference {
+	enum BindingPreference {
 		/**
 		 * Prefer the most capable native type for the target DB (for example, {@code JSONB} for PostgreSQL), else text.
 		 */
@@ -91,13 +53,19 @@ public final class JsonParameter {
 		TEXT
 	}
 
+	/**
+	 * Gets the "stringified" JSON.
+	 *
+	 * @return the "stringified" JSON
+	 */
 	@Nonnull
-	public Optional<String> getJson() {
-		return Optional.ofNullable(this.json);
-	}
+	Optional<String> getJson();
 
+	/**
+	 * Gets how the JSON should be bound (automatic, binary, text).
+	 *
+	 * @return how the JSON should be bound
+	 */
 	@Nonnull
-	public BindingPreference getBindingPreference() {
-		return this.bindingPreference;
-	}
+	BindingPreference getBindingPreference();
 }

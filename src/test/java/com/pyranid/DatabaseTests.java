@@ -591,7 +591,7 @@ public class DatabaseTests {
 		String json = "{\"a\":1,\"b\":[true,false],\"s\":\"x\"}";
 
 		// AUTOMATIC mode should fall back to text on HSQLDB and insert successfully
-		db.execute("INSERT INTO t_json(body) VALUES (?)", JsonParameter.of(json));
+		db.execute("INSERT INTO t_json(body) VALUES (?)", Parameters.jsonOf(json));
 
 		Optional<String> got = db.executeForObject("SELECT body FROM t_json FETCH FIRST ROW ONLY", String.class);
 		Assert.assertTrue(got.isPresent());
@@ -599,7 +599,7 @@ public class DatabaseTests {
 
 		// TEXT is honored (also text on HSQLDB)
 		String json2 = "{\"k\":\"v\"}";
-		db.execute("INSERT INTO t_json(body) VALUES (?)", JsonParameter.of(json2, BindingPreference.TEXT));
+		db.execute("INSERT INTO t_json(body) VALUES (?)", Parameters.jsonOf(json2, BindingPreference.TEXT));
 		List<String> bodies = db.executeForList("SELECT body FROM t_json ORDER BY id", String.class);
 		Assert.assertEquals(List.of(json, json2), bodies);
 	}

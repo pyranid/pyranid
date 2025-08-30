@@ -16,6 +16,8 @@
 
 package com.pyranid;
 
+import com.pyranid.JsonParameter.BindingPreference;
+
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
@@ -64,6 +66,7 @@ public final class Parameters {
 	 * @param <E>          the element type of the Java array ({@code T[]}); each element must be bindable to {@code baseTypeName} by the active {@link PreparedStatementBinder}.
 	 * @return a SQL ARRAY parameter for the given Java array
 	 */
+	@Nonnull
 	public static <E> ArrayParameter<E> arrayOf(@Nonnull String baseTypeName,
 																							@Nullable E[] array) {
 		requireNonNull(baseTypeName);
@@ -115,7 +118,6 @@ public final class Parameters {
 			return this.elements == null ? Optional.empty() : Optional.of(this.elements.clone());
 		}
 	}
-
 
 	/**
 	 * Acquires a vector parameter for an array of {@code double}.
@@ -230,6 +232,66 @@ public final class Parameters {
 		public Optional<double[]> getElements() {
 			// Defensive copy
 			return this.elements == null ? Optional.empty() : Optional.of(this.elements.clone());
+		}
+	}
+
+	/**
+	 * Acquires a JSON parameter for "stringified" JSON, using {@link BindingPreference#AUTOMATIC}.
+	 *
+	 * @param json the stringified JSON for this parameter
+	 * @return the JSON parameter
+	 */
+	@Nonnull
+	public static JsonParameter jsonOf(@Nullable String json) {
+		return new DefaultJsonParameter(json, BindingPreference.AUTOMATIC);
+	}
+
+	/**
+	 * Acquires a JSON parameter for "stringified" JSON.
+	 *
+	 * @param json              the stringified JSON for this parameter
+	 * @param bindingPreference how the JSON parameter should be bound to a {@link java.sql.PreparedStatement}
+	 * @return the JSON parameter
+	 */
+	@Nonnull
+	public static JsonParameter jsonOf(@Nullable String json,
+																		 @Nonnull BindingPreference bindingPreference) {
+		requireNonNull(bindingPreference);
+
+		return new DefaultJsonParameter(json, bindingPreference);
+	}
+
+	/**
+	 * Default package-private implementation of {@link JsonParameter}.
+	 *
+	 * @author <a href="https://www.revetkn.com">Mark Allen</a>
+	 * @since 2.1.0
+	 */
+	@ThreadSafe
+	static class DefaultJsonParameter implements JsonParameter {
+		@Nullable
+		private final String json;
+		@Nonnull
+		private final BindingPreference bindingPreference;
+
+		private DefaultJsonParameter(@Nullable String json,
+																 @Nonnull BindingPreference bindingPreference) {
+			requireNonNull(bindingPreference);
+
+			this.json = json;
+			this.bindingPreference = bindingPreference;
+		}
+
+		@Nonnull
+		@Override
+		public Optional<String> getJson() {
+			return Optional.ofNullable(this.json);
+		}
+
+		@Nonnull
+		@Override
+		public BindingPreference getBindingPreference() {
+			return this.bindingPreference;
 		}
 	}
 }
