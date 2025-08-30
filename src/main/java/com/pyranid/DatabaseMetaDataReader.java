@@ -24,7 +24,7 @@ import java.sql.SQLException;
  * Functional interface used by {@link Database#readDatabaseMetaData(DatabaseMetaDataReader)}, which permits callers to examine a transient {@link DatabaseMetaData} instance.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
- * @since 2.1.0
+ * @since 3.0.0
  */
 @FunctionalInterface
 public interface DatabaseMetaDataReader {

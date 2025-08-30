@@ -31,7 +31,7 @@ import static java.util.Objects.requireNonNull;
  * Fluent interface for acquiring instances of specialized parameter types.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
- * @since 2.1.0
+ * @since 3.0.0
  */
 @ThreadSafe
 public final class Parameters {
@@ -77,7 +77,7 @@ public final class Parameters {
 	 * Default package-private implementation of {@link ArrayParameter}.
 	 *
 	 * @author <a href="https://www.revetkn.com">Mark Allen</a>
-	 * @since 2.1.0
+	 * @since 3.0.0
 	 */
 	@ThreadSafe
 	static class DefaultArrayParameter implements ArrayParameter {
@@ -198,7 +198,7 @@ public final class Parameters {
 	 * Default package-private implementation of {@link VectorParameter}.
 	 *
 	 * @author <a href="https://www.revetkn.com">Mark Allen</a>
-	 * @since 2.1.0
+	 * @since 3.0.0
 	 */
 	@ThreadSafe
 	static class DefaultVectorParameter implements VectorParameter {
@@ -265,7 +265,7 @@ public final class Parameters {
 	 * Default package-private implementation of {@link JsonParameter}.
 	 *
 	 * @author <a href="https://www.revetkn.com">Mark Allen</a>
-	 * @since 2.1.0
+	 * @since 3.0.0
 	 */
 	@ThreadSafe
 	static class DefaultJsonParameter implements JsonParameter {

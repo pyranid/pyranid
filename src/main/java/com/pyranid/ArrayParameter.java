@@ -35,7 +35,7 @@ import java.util.Optional;
  *
  * @param <E> the Java element type of the array; each element must be bindable to the SQL element type named by {@link #getBaseTypeName()} by the active {@link PreparedStatementBinder}.
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
- * @since 2.1.0
+ * @since 3.0.0
  */
 @ThreadSafe
 public interface ArrayParameter<E> {

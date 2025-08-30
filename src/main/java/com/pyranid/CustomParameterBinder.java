@@ -24,7 +24,7 @@ import java.sql.SQLException;
  * Enables {@link java.sql.PreparedStatement} parameter binding customization via {@link PreparedStatementBinder}.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
- * @since 2.1.0
+ * @since 3.0.0
  */
 public interface CustomParameterBinder {
 	/**

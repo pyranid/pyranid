@@ -26,7 +26,7 @@ import java.util.Optional;
  * Enables per-column {@link ResultSet} mapping customization via {@link ResultSetMapper}.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
- * @since 2.1.0
+ * @since 3.0.0
  */
 public interface CustomColumnMapper {
 	/**

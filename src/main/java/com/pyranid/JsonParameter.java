@@ -28,7 +28,7 @@ import java.util.Optional;
  * Implementations should be threadsafe.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
- * @since 2.1.0
+ * @since 3.0.0
  */
 @ThreadSafe
 public interface JsonParameter {
@@ -36,7 +36,7 @@ public interface JsonParameter {
 	 * Specifies how a {@link JsonParameter} should be bound - DBMS-specific sensible default, binary (for example, {@code JSONB} for PostgreSQL), or text.
 	 *
 	 * @author <a href="https://www.revetkn.com">Mark Allen</a>
-	 * @since 2.1.0
+	 * @since 3.0.0
 	 */
 	enum BindingPreference {
 		/**

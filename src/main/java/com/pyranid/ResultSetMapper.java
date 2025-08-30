@@ -148,7 +148,7 @@ public interface ResultSetMapper {
 	 * This class is intended for use by a single thread.
 	 *
 	 * @author <a href="https://www.revetkn.com">Mark Allen</a>
-	 * @since 2.1.0
+	 * @since 3.0.0
 	 */
 	@NotThreadSafe
 	class Builder {

@@ -724,7 +724,7 @@ public class Database {
 	}
 
 	/**
-	 * @since 2.1.0
+	 * @since 3.0.0
 	 */
 	@Nonnull
 	public DatabaseType getDatabaseType() {
@@ -732,7 +732,7 @@ public class Database {
 	}
 
 	/**
-	 * @since 2.1.0
+	 * @since 3.0.0
 	 */
 	@Nonnull
 	public ZoneId getTimeZone() {
