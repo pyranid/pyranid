@@ -415,7 +415,7 @@ public class Database {
 						T listElement = getResultSetMapper().map(statementContext, resultSet, statementContext.getResultSetRowType().get(), getInstanceProvider()).orElse(null);
 						list.add(listElement);
 					} catch (SQLException e) {
-						throw new DatabaseException(format("Unable to map JDBC %s to %s", ResultSet.class.getSimpleName(), statementContext.getResultSetRowType().get()), e);
+						throw new DatabaseException(format("Unable to map JDBC %s row to %s", ResultSet.class.getSimpleName(), statementContext.getResultSetRowType().get()), e);
 					}
 				}
 

@@ -295,7 +295,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		} catch (SQLException e) {
 			throw e;
 		} catch (Exception e) {
-			throw new DatabaseException(format("Unable to map JDBC %s to %s", ResultSet.class.getSimpleName(), resultSetRowType),
+			throw new DatabaseException(format("Unable to map JDBC %s row to %s", ResultSet.class.getSimpleName(), resultSetRowType),
 					e);
 		}
 	}
@@ -391,7 +391,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		} catch (SQLException e) {
 			throw e;
 		} catch (Throwable t) {
-			throw new DatabaseException(format("Unable to map JDBC %s to %s", ResultSet.class.getSimpleName(), resultSetRowType), t);
+			throw new DatabaseException(format("Unable to map JDBC %s row to %s", ResultSet.class.getSimpleName(), resultSetRowType), t);
 		}
 	}
 
@@ -468,6 +468,17 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			value = TemporalReaders.asOffsetTime(resultSet, 1, statementContext);
 		} else if (resultClass.isAssignableFrom(OffsetDateTime.class)) {
 			value = TemporalReaders.asOffsetDateTime(resultSet, 1, statementContext);
+		} else if (resultClass.isAssignableFrom(java.sql.Timestamp.class)) {
+			ResultSetMetaData md = resultSet.getMetaData();
+			boolean withTz = TemporalReaders.isTimestampWithTimeZone(md, 1, statementContext.getDatabaseType());
+
+			if (withTz) {
+				Instant inst = TemporalReaders.asInstant(resultSet, 1, statementContext);
+				value = (inst == null) ? null : Timestamp.from(inst);
+			} else {
+				LocalDateTime ldt = TemporalReaders.asLocalDateTime(resultSet, 1, statementContext);
+				value = (ldt == null) ? null : Timestamp.valueOf(ldt);
+			}
 		} else if (resultClass.isAssignableFrom(java.sql.Date.class)) {
 			LocalDate ld = TemporalReaders.asLocalDate(resultSet, 1);
 			value = (ld == null) ? null : java.sql.Date.valueOf(ld);
