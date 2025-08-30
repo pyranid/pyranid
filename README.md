@@ -29,7 +29,7 @@ Full documentation is available at [https://www.pyranid.com](https://www.pyranid
 
 Similarly-flavored commercially-friendly OSS libraries are available.
 
-* [Soklet](https://www.soklet.com) - DI-friendly HTTP 1.1 server that supports [JEP 444 Virtual Threads](https://openjdk.org/jeps/444)
+* [Soklet](https://www.soklet.com) - DI-friendly HTTP 1.1 (and SSE) server that supports [JEP 444 Virtual Threads](https://openjdk.org/jeps/444)
 * [Lokalized](https://www.lokalized.com) - natural-sounding translations (i18n) via expression language
 
 ### Maven Installation
@@ -64,7 +64,7 @@ If you don't use Maven, you can drop [pyranid-3.0.0.jar](https://repo1.maven.org
 
 ```java
 // Create a Database backed by a DataSource
-DataSource dataSource = obtainDataSource();
+DataSource dataSource = ...;
 Database database = Database.withDataSource(dataSource).build();
 ```
 
