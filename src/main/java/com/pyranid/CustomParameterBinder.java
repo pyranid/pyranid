@@ -28,7 +28,7 @@ import java.sql.SQLException;
  */
 public interface CustomParameterBinder {
 	/**
-	 * Perform custom binding of a {@link PreparedStatement} value given a {@code value} and its {@code index}.
+	 * Performs custom binding of a {@link PreparedStatement} value given a {@code value} and its {@code index} when {@link #appliesTo(TargetType)} is {@code true}.
 	 * <p>
 	 * This function is only invoked when {@code parameter} is non-null.
 	 *

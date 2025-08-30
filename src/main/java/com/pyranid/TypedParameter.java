@@ -19,11 +19,20 @@ package com.pyranid;
 import javax.annotation.Nonnull;
 import javax.annotation.concurrent.ThreadSafe;
 import java.lang.reflect.Type;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Special "type carrier" which avoids generic type erasure at runtime when {@link PreparedStatementBinder} binds parameters to {@link java.sql.PreparedStatement}.
  * <p>
+ * Examples of where this is used:
+ * <ul>
+ *   <li>{@link Parameters#listOf(Class, List)}</li>
+ *   <li>{@link Parameters#setOf(Class, Set)}</li>
+ *   <li>{@link Parameters#mapOf(Class, Class, Map)}</li>
+ * </ul>
  * Implementations should be threadsafe.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
