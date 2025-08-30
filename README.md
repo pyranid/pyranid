@@ -72,7 +72,7 @@ Database database = Database.withDataSource(dataSource).build();
 
 ```java
 // Controls how Pyranid creates instances of objects that represent ResultSet rows
-InstanceProvider instanceProvider = new DefaultInstanceProvider() {
+InstanceProvider instanceProvider = new InstanceProvider() {
   @Override
   @Nonnull
   public <T> T provide(@Nonnull StatementContext<T> statementContext,

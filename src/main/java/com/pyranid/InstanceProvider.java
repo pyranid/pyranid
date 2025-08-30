@@ -18,10 +18,12 @@ package com.pyranid;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import javax.annotation.concurrent.ThreadSafe;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.util.Arrays;
 
+import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
 /**
@@ -31,32 +33,46 @@ import static java.util.Objects.requireNonNull;
  * <p>
  * Implementors are suggested to employ application-specific strategies, such as having a DI container handle instance
  * creation.
+ * <p>
+ * Implementations should be threadsafe.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 1.0.0
  */
+@ThreadSafe
 public interface InstanceProvider {
 	/**
 	 * Provides an instance of the given {@code instanceType}.
 	 * <p>
 	 * Whether the instance is new every time or shared/reused is implementation-dependent.
 	 *
-	 * @param <T>           instance type token
+	 * @param <T>          instance type token
 	 * @param instanceType the type of instance to create
 	 * @return an instance of the given {@code instanceType}
 	 */
 	@Nonnull
-	<T> T provide(@Nonnull StatementContext<T> statementContext,
-								@Nonnull Class<T> instanceType);
+	default <T> T provide(@Nonnull StatementContext<T> statementContext,
+												@Nonnull Class<T> instanceType) {
+		requireNonNull(statementContext);
+		requireNonNull(instanceType);
+
+		try {
+			return instanceType.getDeclaredConstructor().newInstance();
+		} catch (Exception e) {
+			throw new DatabaseException(format(
+					"Unable to create an instance of %s. Please verify that %s has a public no-argument constructor",
+					instanceType, instanceType.getSimpleName()), e);
+		}
+	}
 
 	/**
 	 * Provides an instance of the given {@code recordType}.
 	 * <p>
 	 * Whether the instance is new every time or shared/reused is implementation-dependent.
 	 *
-	 * @param <T>         instance type token
+	 * @param <T>        instance type token
 	 * @param recordType the type of instance to create (must be a record)
-	 * @param initargs    values used to construct the record instance
+	 * @param initargs   values used to construct the record instance
 	 * @return an instance of the given {@code recordType}
 	 * @since 2.0.0
 	 */

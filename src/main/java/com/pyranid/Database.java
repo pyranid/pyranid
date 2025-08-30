@@ -89,7 +89,7 @@ public class Database {
 		this.dataSource = requireNonNull(builder.dataSource);
 		this.databaseType = requireNonNull(builder.databaseType);
 		this.timeZone = builder.timeZone == null ? ZoneId.systemDefault() : builder.timeZone;
-		this.instanceProvider = builder.instanceProvider == null ? new DefaultInstanceProvider() : builder.instanceProvider;
+		this.instanceProvider = builder.instanceProvider == null ? new InstanceProvider() {} : builder.instanceProvider;
 		this.preparedStatementBinder = builder.preparedStatementBinder == null ? PreparedStatementBinder.withDefaultConfiguration() : builder.preparedStatementBinder;
 		this.resultSetMapper = builder.resultSetMapper == null ? ResultSetMapper.withDefaultConfiguration() : builder.resultSetMapper;
 		this.statementLogger = builder.statementLogger == null ? new DefaultStatementLogger() : builder.statementLogger;
