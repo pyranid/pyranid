@@ -21,72 +21,8 @@
  *
  * <pre>
  * // Minimal setup, uses defaults
+ * DataSource dataSource = ...
  * Database database = Database.withDataSource(dataSource).build();
- *
- * // Customized setup
- *
- * // Override JVM default timezone
- * ZoneId timeZone = ZoneId.of("UTC");
- *
- * // Controls how Pyranid creates instances of objects that represent ResultSet rows
- * InstanceProvider instanceProvider = new DefaultInstanceProvider() {
- *   &#064;Override
- *   &#064;Nonnull
- *   public &lt;T&gt; T provide(&#064;Nonnull StatementContext&lt;T&gt; statementContext,
- *                        &#064;Nonnull Class&lt;T&gt; instanceType) {
- *     // You might have your DI framework vend regular object instances
- *     return guiceInjector.getInstance(instanceType);
- *   }
- *
- *   &#064;Override
- *   &#064;Nonnull
- *   public &lt;T extends Record&gt; T provideRecord(&#064;Nonnull StatementContext&lt;T&gt; statementContext,
- *                                             &#064;Nonnull Class&lt;T&gt; recordType,
- *                                             &#064;Nullable Object... initargs) {
- *     // If you use Record types, customize their instantiation here.
- *     // Default implementation will use the canonical constructor
- *     return super.provideRecord(statementContext, recordType, initargs);
- *   }
- * };
- *
- * // Copies data from a ResultSet row to an instance of the specified type
- * ResultSetMapper resultSetMapper = new DefaultResultSetMapper(timeZone) {
- *   &#064;Nonnull
- *   &#064;Override
- *   public &lt;T&gt; Optional&lt;T&gt; map(&#064;Nonnull StatementContext&lt;T&gt; statementContext,
- *                              &#064;Nonnull ResultSet resultSet,
- *                              &#064;Nonnull Class&lt;T&gt; resultSetRowType,
- *                              &#064;Nonnull InstanceProvider instanceProvider) {
- *     return super.map(statementContext, resultSet, resultSetRowType, instanceProvider);
- *   }
- * };
- *
- * // Binds parameters to a SQL PreparedStatement
- * PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder(timeZone) {
- *   &#064;Override
- *   public &lt;T&gt; void bind(&#064;Nonnull StatementContext&lt;T&gt; statementContext,
- *                        &#064;Nonnull PreparedStatement preparedStatement,
- *                        &#064;Nonnull List&lt;Object&gt; parameters) {
- *     super.bind(statementContext, preparedStatement, parameters);
- *   }
- * };
- *
- * // Optionally logs SQL statements
- * StatementLogger statementLogger = new StatementLogger() {
- *   &#064;Override
- *   public void log(&#064;Nonnull StatementLog statementLog) {
- *     // Send to whatever output sink you'd like
- *     System.out.println(statementLog);
- *   }
- * };
- *
- * Database customDatabase = Database.withDataSource(dataSource)
- *   .timeZone(timeZone)
- *   .instanceProvider(instanceProvider)
- *   .resultSetMapper(resultSetMapper)
- *   .preparedStatementBinder(preparedStatementBinder)
- *   .statementLogger(statementLogger)
- *   .build();
  *
  * // Queries
  * Optional&lt;Car&gt; specificCar = database.queryForObject("SELECT * FROM car WHERE id = ?", Car.class, 123);
@@ -108,8 +44,7 @@
  *
  *   database.execute("UPDATE account SET balance = ? WHERE id = 1", balance1);
  *   database.execute("UPDATE account SET balance = ? WHERE id = 2", balance2);
- * });
- * </pre>
+ * });</pre>
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 1.0.0
