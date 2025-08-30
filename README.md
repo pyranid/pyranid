@@ -92,37 +92,36 @@ InstanceProvider instanceProvider = new InstanceProvider() {
   }
 };
 
-// ResultSetMapper handles copying data from a ResultSet row to an instance of the specified type.
+// Handles copying data from a ResultSet row to an instance of the specified type.
 // CustomColumnMappers supply "surgical" overrides to handle custom types.
-CustomColumnMapper moneyColumnMapper = new CustomColumnMapper() {
-  @Nonnull
-  @Override
-  public Boolean appliesTo(@Nonnull TargetType targetType) {
-    // Can also apply to parameterized types, e.g.
-    // targetType.matchesParameterizedType(List.class, UUID.class) for List<UUID>
-    return targetType.matchesClass(Money.class);
-  }
-
-  @Nonnull
-  @Override
-  public Optional<?> map(
-    @Nonnull StatementContext<?> statementContext,
-    @Nonnull ResultSet resultSet,
-    @Nonnull Object resultSetValue,
-    @Nonnull TargetType targetType,
-    @Nullable Integer columnIndex,
-    @Nullable String columnLabel,
-    @Nonnull InstanceProvider instanceProvider
-  ) {
-    String moneyAsString = resultSetValue.toString();
-    // Or return Optional.empty() to fall back to default mapping behavior
-    return Optional.of(Money.parse(moneyAsString));
-  }
-};
-
 ResultSetMapper resultSetMapper = ResultSetMapper.withPlanCachingEnabled(true)
-  .customColumnMappers(List.of(moneyColumnMapper))
   .normalizationLocale(Locale.of("pt-BR"))
+  .customColumnMappers(List.of(new CustomColumnMapper() {
+    @Nonnull
+    @Override
+    public Boolean appliesTo(@Nonnull TargetType targetType) {
+      // Can also apply to parameterized types, e.g.
+      // targetType.matchesParameterizedType(List.class, UUID.class) for List<UUID>
+      return targetType.matchesClass(Money.class);
+    }
+
+    @Nonnull
+    @Override
+    public Optional<?> map(
+      @Nonnull StatementContext<?> statementContext,
+      @Nonnull ResultSet resultSet,
+      @Nonnull Object resultSetValue,
+      @Nonnull TargetType targetType,
+      @Nullable Integer columnIndex,
+      @Nullable String columnLabel,
+      @Nonnull InstanceProvider instanceProvider
+    ) {
+      // Don't need null checks - map() is only invoked when resultSetValue is non-null
+      String moneyAsString = resultSetValue.toString();
+      // Or return Optional.empty() to fall back to default mapping behavior
+      return Optional.of(Money.parse(moneyAsString));
+    }
+  }))
   .build();
 
 // Binds parameters to a SQL PreparedStatement
