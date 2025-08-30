@@ -30,7 +30,7 @@ import static java.util.Objects.requireNonNull;
  * @since 2.0.0
  */
 @ThreadSafe
-public class Statement {
+public final class Statement {
 	@Nonnull
 	private final Object id;
 	@Nonnull

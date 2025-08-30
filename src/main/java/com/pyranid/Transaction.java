@@ -44,7 +44,7 @@ import static java.util.Objects.requireNonNull;
  * @since 1.0.0
  */
 @ThreadSafe
-public class Transaction {
+public final class Transaction {
 	@Nonnull
 	private static final AtomicLong ID_GENERATOR;
 

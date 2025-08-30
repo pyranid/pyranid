@@ -51,7 +51,7 @@ import static java.util.logging.Level.WARNING;
  * @since 1.0.0
  */
 @ThreadSafe
-public class Database {
+public final class Database {
 	@Nonnull
 	private static final ThreadLocal<Deque<Transaction>> TRANSACTION_STACK_HOLDER;
 
@@ -824,7 +824,7 @@ public class Database {
 					closeConnection(connection);
 			} finally {
 				StatementLog statementLog =
-						StatementLog.forStatementContext(statementContext)
+						StatementLog.withStatementContext(statementContext)
 								.connectionAcquisitionDuration(connectionAcquisitionDuration)
 								.preparationDuration(preparationDuration)
 								.executionDuration(executionDuration)

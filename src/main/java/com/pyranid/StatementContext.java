@@ -39,7 +39,7 @@ import static java.util.Objects.requireNonNull;
  * @since 2.0.0
  */
 @ThreadSafe
-public class StatementContext<T> {
+public final class StatementContext<T> {
 	@Nonnull
 	private final Statement statement;
 	@Nonnull

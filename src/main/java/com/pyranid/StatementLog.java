@@ -37,7 +37,7 @@ import static java.util.Objects.requireNonNull;
  * @since 1.0.0
  */
 @ThreadSafe
-public class StatementLog<T> {
+public final class StatementLog<T> {
 	@Nonnull
 	private final StatementContext<T> statementContext;
 	@Nonnull
@@ -95,7 +95,7 @@ public class StatementLog<T> {
 	 * @return a {@link StatementLog} builder
 	 */
 	@Nonnull
-	public static <T> Builder forStatementContext(@Nonnull StatementContext<T> statementContext) {
+	public static <T> Builder withStatementContext(@Nonnull StatementContext<T> statementContext) {
 		requireNonNull(statementContext);
 		return new Builder(statementContext);
 	}
