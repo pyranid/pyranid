@@ -34,7 +34,7 @@ Similarly-flavored commercially-friendly OSS libraries are available.
 
 ### Maven Installation
 
-Java 16+
+Java 17+
 
 ```xml
 <dependency>
