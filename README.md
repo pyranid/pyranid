@@ -742,49 +742,6 @@ Database database = Database.withDataSource(dataSource)
   }).build();
 ```
 
-### Internal Logging
-
-Pyranid uses [`java.util.Logging`](https://docs.oracle.com/en/java/javase/21/docs/api/java.logging/java/util/logging/package-summary.html) internally for diagnostics.  This is not normally useful for Pyranid users, but the usual way to hook into this is with [SLF4J](http://slf4j.org), which can funnel all the different logging mechanisms in your app through a single one, normally [Logback](http://logback.qos.ch).  Your Maven configuration might look like this:
-
-```xml
-<dependency>
-  <groupId>ch.qos.logback</groupId>
-  <artifactId>logback-classic</artifactId>
-  <version>1.4.11</version>
-</dependency>
-
-<dependency>
-  <groupId>org.slf4j</groupId>
-  <artifactId>jul-to-slf4j</artifactId>
-  <version>2.0.7</version>
-</dependency>
-```
-
-You might have code like this which runs at startup:
-
-```java
-// Bridge all java.util.logging to SLF4J
-java.util.logging.Logger rootLogger = java.util.logging.LogManager.getLogManager().getLogger("");
-for (Handler handler : rootLogger.getHandlers())
-  rootLogger.removeHandler(handler);
-
-SLF4JBridgeHandler.install();
-```
-
-Don't forget to uninstall the bridge at shutdown time:
-
-```java
-// Sometime later
-SLF4JBridgeHandler.uninstall();
-```
-
-Note: [`SLF4JBridgeHandler`](https://www.slf4j.org/api/org/slf4j/bridge/SLF4JBridgeHandler.html) can impact performance.  You can mitigate that with Logback's [`LevelChangePropagator`](https://logback.qos.ch/apidocs/ch/qos/logback/classic/jul/LevelChangePropagator.html) configuration option [as described here](http://logback.qos.ch/manual/configuration.html#LevelChangePropagator).
-
-## TODOs
-
-* Formalize BLOB/CLOB handling
-* Work around more Oracle quirks
-
 ## About
 
 Pyranid was created by [Mark Allen](https://www.revetkn.com) and sponsored by [Transmogrify LLC](https://www.xmog.com) and [Revetware LLC](https://www.revetware.com).
