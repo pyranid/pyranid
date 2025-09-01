@@ -18,6 +18,7 @@ package com.pyranid;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import javax.annotation.concurrent.ThreadSafe;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Optional;
@@ -41,17 +42,17 @@ public interface CustomColumnMapper {
 	 * @param columnIndex      1-based column index, if available
 	 * @param columnLabel      normalized column label, if available
 	 * @param instanceProvider instance-creation factory, may be used to instantiate values
-	 * @return an {@link Optional} which holds the preferred value for this {@link ResultSet} column, or {@link Optional#empty()} to fall back to default mapping
+	 * @return the result of the custom column mapping operation - either {@link MappingResult#useValue(Object)} to indicate a successfully-mapped value or {@link MappingResult#fallback()} if Pyranid should fall back to the registered {@link ResultSetMapper}.
 	 * @throws SQLException if an error occurs during mapping
 	 */
 	@Nonnull
-	Optional<?> map(@Nonnull StatementContext<?> statementContext,
-									@Nonnull ResultSet resultSet,
-									@Nonnull Object resultSetValue,
-									@Nonnull TargetType targetType,
-									@Nullable Integer columnIndex,
-									@Nullable String columnLabel,
-									@Nonnull InstanceProvider instanceProvider) throws SQLException;
+	MappingResult map(@Nonnull StatementContext<?> statementContext,
+										@Nonnull ResultSet resultSet,
+										@Nonnull Object resultSetValue,
+										@Nonnull TargetType targetType,
+										@Nullable Integer columnIndex,
+										@Nullable String columnLabel,
+										@Nonnull InstanceProvider instanceProvider) throws SQLException;
 
 	/**
 	 * Specifies which types this mapper should handle.
@@ -65,4 +66,47 @@ public interface CustomColumnMapper {
 	 */
 	@Nonnull
 	Boolean appliesTo(@Nonnull TargetType targetType);
+
+	/**
+	 * Result of a custom column mapping attempt.
+	 *
+	 * <p>Use {@link #useValue(Object)} to indicate a successfully mapped value,
+	 * or {@link #fallback()} to indicate "don't map; fall back to the registered {@link ResultSetMapper}".</p>
+	 */
+	@ThreadSafe
+	sealed abstract class MappingResult permits MappingResult.UseValue, MappingResult.Fallback {
+		private MappingResult() {}
+
+		@Nonnull
+		public static MappingResult useValue(@Nullable Object value) {
+			return new UseValue(value);
+		}
+
+		@Nonnull
+		public static MappingResult fallback() {
+			return Fallback.INSTANCE;
+		}
+
+		@ThreadSafe
+		static final class UseValue extends MappingResult {
+			@Nullable
+			private final Object value;
+
+			private UseValue(@Nullable Object value) {
+				this.value = value;
+			}
+
+			@Nonnull
+			public Optional<Object> getValue() {
+				return Optional.ofNullable(value);
+			}
+		}
+
+		@ThreadSafe
+		static final class Fallback extends MappingResult {
+			static final Fallback INSTANCE = new Fallback();
+
+			private Fallback() {}
+		}
+	}
 }
