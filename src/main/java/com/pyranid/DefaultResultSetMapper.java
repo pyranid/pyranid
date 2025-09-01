@@ -16,6 +16,8 @@
 
 package com.pyranid;
 
+import com.pyranid.CustomColumnMapper.MappingResult;
+
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
@@ -155,6 +157,24 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@Nonnull
+	protected Boolean mappingApplied(@Nonnull MappingResult mappingResult) {
+		requireNonNull(mappingResult);
+
+		// Cache preference if a mapper *applied*, regardless of whether it produced null.
+		return !(mappingResult instanceof MappingResult.Fallback);
+	}
+
+	@Nonnull
+	protected Optional<Object> mappedValue(@Nonnull MappingResult mappingResult) {
+		requireNonNull(mappingResult);
+
+		if (mappingResult instanceof MappingResult.CustomMapping u)
+			return u.getValue(); // Optional<Object> already
+
+		return Optional.empty();
+	}
+
+	@Nonnull
 	protected <T> Optional<Object> tryCustomColumnMappers(@Nonnull StatementContext<T> statementContext,
 																												@Nonnull ResultSet resultSet,
 																												@Nonnull Object resultSetValue,
@@ -168,42 +188,42 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(targetType);
 		requireNonNull(instanceProvider);
 
-		List<CustomColumnMapper> customColumnMappers = customColumnMappersFor(targetType);
-
-		if (customColumnMappers.isEmpty())
-			return Optional.empty();
+		List<CustomColumnMapper> mappers = customColumnMappersFor(targetType);
+		if (mappers.isEmpty()) return Optional.empty();
 
 		Class<?> sourceClass = resultSetValue.getClass();
-		SourceTargetKey sourceTargetKey = new SourceTargetKey(sourceClass, targetType);
+		SourceTargetKey key = new SourceTargetKey(sourceClass, targetType);
 
-		CustomColumnMapper preferredCustomColumnMapper = getPreferredColumnMapperBySourceTargetKey().get(sourceTargetKey);
+		CustomColumnMapper preferred = getPreferredColumnMapperBySourceTargetKey().get(key);
 
-		// If we have a known preference, try it first
-		if (preferredCustomColumnMapper != null) {
-			Optional<?> mappedResult = preferredCustomColumnMapper.map(statementContext, resultSet, resultSetValue, targetType, columnIndex, columnLabel, instanceProvider);
+		// 1) Try the preferred mapper first, if any
+		if (preferred != null) {
+			CustomColumnMapper.MappingResult mappingResult =
+					preferred.map(statementContext, resultSet, resultSetValue, targetType, columnIndex, columnLabel, instanceProvider);
 
-			if (mappedResult.isPresent())
-				return (Optional<Object>) mappedResult;
+			if (mappingApplied(mappingResult))
+				// Keep the preference (it applied); return its (possibly null) value
+				return mappedValue(mappingResult);
+			// If it didn’t apply this time, fall through to try others; retain hint for future rows.
 		}
 
-		// If it didn't apply this time, we'll try the rest; we keep the hint because it'll likely hit again later.
-		for (CustomColumnMapper customColumnMapper : customColumnMappers) {
-			// Skip over anything we've already seen
-			if (customColumnMapper == preferredCustomColumnMapper)
-				continue;
+		// 2) Try the remaining applicable mappers
+		for (CustomColumnMapper mapper : mappers) {
+			if (mapper == preferred) continue;
 
-			Optional<?> mappedResult = customColumnMapper.map(statementContext, resultSet, resultSetValue, targetType, columnIndex, columnLabel, instanceProvider);
+			CustomColumnMapper.MappingResult mappingResult =
+					mapper.map(statementContext, resultSet, resultSetValue, targetType, columnIndex, columnLabel, instanceProvider);
 
-			if (mappedResult.isPresent()) {
-				getPreferredColumnMapperBySourceTargetKey().put(sourceTargetKey, customColumnMapper); // learn the winner for this (sourceClass,targetType)
-				return (Optional<Object>) mappedResult;
+			if (mappingApplied(mappingResult)) {
+				// Learn the winner for (sourceClass, targetType) even if it produced null
+				getPreferredColumnMapperBySourceTargetKey().put(key, mapper);
+				return mappedValue(mappingResult);
 			}
 		}
 
-		// No custom mapper applied
+		// 3) No custom mapper applied
 		return Optional.empty();
 	}
-
 
 	/**
 	 * Determines (and caches) the TargetType of each writable JavaBean property and each Record component

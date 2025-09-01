@@ -42,7 +42,7 @@ public interface CustomColumnMapper {
 	 * @param columnIndex      1-based column index, if available
 	 * @param columnLabel      normalized column label, if available
 	 * @param instanceProvider instance-creation factory, may be used to instantiate values
-	 * @return the result of the custom column mapping operation - either {@link MappingResult#useValue(Object)} to indicate a successfully-mapped value or {@link MappingResult#fallback()} if Pyranid should fall back to the registered {@link ResultSetMapper}.
+	 * @return the result of the custom column mapping operation - either {@link MappingResult#of(Object)} to indicate a successfully-mapped value or {@link MappingResult#fallback()} if Pyranid should fall back to the registered {@link ResultSetMapper}.
 	 * @throws SQLException if an error occurs during mapping
 	 */
 	@Nonnull
@@ -70,29 +70,40 @@ public interface CustomColumnMapper {
 	/**
 	 * Result of a custom column mapping attempt.
 	 *
-	 * <p>Use {@link #useValue(Object)} to indicate a successfully mapped value,
+	 * <p>Use {@link #of(Object)} to indicate a successfully mapped value,
 	 * or {@link #fallback()} to indicate "don't map; fall back to the registered {@link ResultSetMapper}".</p>
 	 */
 	@ThreadSafe
-	sealed abstract class MappingResult permits MappingResult.UseValue, MappingResult.Fallback {
+	sealed abstract class MappingResult permits MappingResult.CustomMapping, MappingResult.Fallback {
 		private MappingResult() {}
 
+		/**
+		 * Indicates a successfully-mapped custom value.
+		 *
+		 * @param value the custom value, may be {@code null}
+		 * @return a result which indicates a successfully-mapped custom value
+		 */
 		@Nonnull
-		public static MappingResult useValue(@Nullable Object value) {
-			return new UseValue(value);
+		public static MappingResult of(@Nullable Object value) {
+			return new CustomMapping(value);
 		}
 
+		/**
+		 * Indicates that this mapper did not map a custom value and prefers to fall back to the behavior of the registered {@link ResultSetMapper}.
+		 *
+		 * @return a result which indicates that this mapper did not map a custom value
+		 */
 		@Nonnull
 		public static MappingResult fallback() {
 			return Fallback.INSTANCE;
 		}
 
 		@ThreadSafe
-		static final class UseValue extends MappingResult {
+		static final class CustomMapping extends MappingResult {
 			@Nullable
 			private final Object value;
 
-			private UseValue(@Nullable Object value) {
+			private CustomMapping(@Nullable Object value) {
 				this.value = value;
 			}
 

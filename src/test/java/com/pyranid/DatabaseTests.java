@@ -288,15 +288,15 @@ public class DatabaseTests {
 
 			@Nonnull
 			@Override
-			public Optional<?> map(@Nonnull StatementContext<?> statementContext,
-														 @Nonnull ResultSet resultSet,
-														 @Nonnull Object resultSetValue,
-														 @Nonnull TargetType targetType,
-														 @Nullable Integer columnIndex,
-														 @Nullable String columnLabel,
-														 @Nonnull InstanceProvider instanceProvider) {
+			public MappingResult map(@Nonnull StatementContext<?> statementContext,
+															 @Nonnull ResultSet resultSet,
+															 @Nonnull Object resultSetValue,
+															 @Nonnull TargetType targetType,
+															 @Nullable Integer columnIndex,
+															 @Nullable String columnLabel,
+															 @Nonnull InstanceProvider instanceProvider) {
 				// ignore DB value; force a deterministic value so we can assert override happened
-				return Optional.of(Locale.CANADA);
+				return MappingResult.of(Locale.CANADA);
 			}
 		};
 
@@ -338,15 +338,15 @@ public class DatabaseTests {
 
 			@Nonnull
 			@Override
-			public Optional<?> map(@Nonnull StatementContext<?> statementContext,
-														 @Nonnull ResultSet resultSet,
-														 @Nonnull Object resultSetValue,
-														 @Nonnull TargetType targetType,
-														 @Nullable Integer columnIndex,
-														 @Nullable String columnLabel,
-														 @Nonnull InstanceProvider instanceProvider) {
+			public MappingResult map(@Nonnull StatementContext<?> statementContext,
+															 @Nonnull ResultSet resultSet,
+															 @Nonnull Object resultSetValue,
+															 @Nonnull TargetType targetType,
+															 @Nullable Integer columnIndex,
+															 @Nullable String columnLabel,
+															 @Nonnull InstanceProvider instanceProvider) {
 				firstCalls.incrementAndGet();
-				return Optional.empty();
+				return MappingResult.fallback();
 			}
 		};
 
@@ -360,15 +360,15 @@ public class DatabaseTests {
 
 			@Nonnull
 			@Override
-			public Optional<?> map(@Nonnull StatementContext<?> statementContext,
-														 @Nonnull ResultSet resultSet,
-														 @Nonnull Object resultSetValue,
-														 @Nonnull TargetType targetType,
-														 @Nullable Integer columnIndex,
-														 @Nullable String columnLabel,
-														 @Nonnull InstanceProvider instanceProvider) {
+			public MappingResult map(@Nonnull StatementContext<?> statementContext,
+															 @Nonnull ResultSet resultSet,
+															 @Nonnull Object resultSetValue,
+															 @Nonnull TargetType targetType,
+															 @Nullable Integer columnIndex,
+															 @Nullable String columnLabel,
+															 @Nonnull InstanceProvider instanceProvider) {
 				secondCalls.incrementAndGet();
-				return Optional.of(Locale.GERMANY);
+				return MappingResult.of(Locale.GERMANY);
 			}
 		};
 
@@ -411,15 +411,16 @@ public class DatabaseTests {
 
 			@Nonnull
 			@Override
-			public Optional<?> map(@Nonnull StatementContext<?> statementContext,
-														 @Nonnull ResultSet resultSet,
-														 @Nonnull Object resultSetValue,
-														 @Nonnull TargetType targetType,
-														 @Nullable Integer columnIndex,
-														 @Nullable String columnLabel,
-														 @Nonnull InstanceProvider instanceProvider) {
+			public MappingResult map(@Nonnull StatementContext<?> statementContext,
+															 @Nonnull ResultSet resultSet,
+															 @Nonnull Object resultSetValue,
+															 @Nonnull TargetType targetType,
+															 @Nullable Integer columnIndex,
+															 @Nullable String columnLabel,
+															 @Nonnull InstanceProvider instanceProvider) {
 				String s = resultSetValue == null ? null : resultSetValue.toString();
-				if (s == null || s.isBlank()) return Optional.of(List.of());
+				if (s == null || s.isBlank())
+					return MappingResult.of(List.of());
 
 				List<UUID> uuids = Arrays.stream(s.split(","))
 						.map(String::trim)
@@ -427,7 +428,7 @@ public class DatabaseTests {
 						.map(UUID::fromString)
 						.collect(Collectors.toList());
 
-				return Optional.of(uuids);
+				return MappingResult.of(uuids);
 			}
 		};
 
