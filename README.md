@@ -629,8 +629,9 @@ class MySpecialType {
 }
 ```
 
+Just add a [`CustomColumnMapper`](https://javadoc.pyranid.com/com/pyranid/CustomColumnMapper.html) that handles it:
+
 ```java
-// And a CustomColumnMapper that handles it:
 ResultSetMapper resultSetMapper = ResultSetMapper.withCustomColumnMappers(List.of(new CustomColumnMapper() {
   @Nonnull
   @Override
