@@ -153,7 +153,7 @@ ResultSetMapper customResultSetMapper = new ResultSetMapper() {
 PreparedStatementBinder basicPreparedStatementBinder = PreparedStatementBinder.withDefaultConfiguration();
 
 // ...or turn some knobs.
-// CustomColumnMappers supply "surgical" overrides to handle custom types.
+// CustomParameterBinders supply "surgical" overrides to handle custom types.
 // Here, we transform List<UUID> types into a comma-delimited string 
 PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCustomParameterBinders(List.of(
   new CustomParameterBinder() {
