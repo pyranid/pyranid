@@ -245,7 +245,7 @@ public final class Parameters {
 	 * @return the JSON parameter
 	 */
 	@Nonnull
-	public static JsonParameter jsonOf(@Nullable String json) {
+	public static JsonParameter json(@Nullable String json) {
 		return new DefaultJsonParameter(json, BindingPreference.AUTOMATIC);
 	}
 
@@ -257,8 +257,8 @@ public final class Parameters {
 	 * @return the JSON parameter
 	 */
 	@Nonnull
-	public static JsonParameter jsonOf(@Nullable String json,
-																		 @Nonnull BindingPreference bindingPreference) {
+	public static JsonParameter json(@Nullable String json,
+																	 @Nonnull BindingPreference bindingPreference) {
 		requireNonNull(bindingPreference);
 
 		return new DefaultJsonParameter(json, bindingPreference);

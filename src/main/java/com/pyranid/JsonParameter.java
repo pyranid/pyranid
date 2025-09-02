@@ -23,7 +23,7 @@ import java.util.Optional;
 /**
  * Encapsulates {@link java.sql.PreparedStatement} parameter data meant to be bound to a DBMS-specific type (for example, {@code JSON} or {@code JSONB} for PostgreSQL) by {@link PreparedStatementBinder}.
  * <p>
- * Stardard instances may be constructed via {@link Parameters#jsonOf(String)} and {@link Parameters#jsonOf(String, BindingPreference)}.
+ * Stardard instances may be constructed via {@link Parameters#json(String)} and {@link Parameters#json(String, BindingPreference)}.
  * <p>
  * Implementations should be threadsafe.
  *
