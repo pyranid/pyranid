@@ -44,7 +44,7 @@ import static java.util.Objects.requireNonNull;
  * // Customized
  * ResultSetMapper custom = ResultSetMapper.withPlanCachingEnabled(true)
  *  .customColumnMappers(List.of(...))
- *  .normalizationLocale(Locale.of("pt-BR"))
+ *  .normalizationLocale(Locale.forLanguageTag("pt-BR"))
  *  .build();}</pre> Or, implement your own: <pre>{@code  ResultSetMapper myImpl = new ResultSetMapper() {
  *   @Nonnull
  *   @Override

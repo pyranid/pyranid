@@ -93,9 +93,15 @@ InstanceProvider instanceProvider = new InstanceProvider() {
 };
 
 // Handles copying data from a ResultSet row to an instance of the specified type.
-// CustomColumnMappers supply "surgical" overrides to handle custom types.
+// You might use out-of-the-box defaults...
+ResultSetMapper basicResultSetMapper = ResultSetMapper.withDefaultConfiguration();
+
+// ...or turn some knobs.
+// Plan caching trades memory for faster mapping of wide ResultSets.
+// Normalization locale should match the language of your database tables/column names.
+// CustomColumnMappers supply "surgical" overrides to handle custom types
 ResultSetMapper resultSetMapper = ResultSetMapper.withPlanCachingEnabled(true)
-  .normalizationLocale(Locale.of("pt-BR"))
+  .normalizationLocale(Locale.forLanguageTag("pt-BR"))
   .customColumnMappers(List.of(new CustomColumnMapper() {
     @Nonnull
     @Override
@@ -107,7 +113,7 @@ ResultSetMapper resultSetMapper = ResultSetMapper.withPlanCachingEnabled(true)
 
     @Nonnull
     @Override
-    public Optional<?> map(
+    public MappingResult map(
       @Nonnull StatementContext<?> statementContext,
       @Nonnull ResultSet resultSet,
       @Nonnull Object resultSetValue,
@@ -116,13 +122,31 @@ ResultSetMapper resultSetMapper = ResultSetMapper.withPlanCachingEnabled(true)
       @Nullable String columnLabel,
       @Nonnull InstanceProvider instanceProvider
     ) {
-      // Don't need null checks - map() is only invoked when resultSetValue is non-null
+      // Convert the ResultSet column's value to the "appliesTo" Java type.
+      // Don't need null checks - this method is only invoked when the value is non-null
       String moneyAsString = resultSetValue.toString();
-      // Or return Optional.empty() to fall back to default mapping behavior
-      return Optional.of(Money.parse(moneyAsString));
+      Money money = Money.parse(moneyAsString);
+
+      // Or return MappingResult.fallback() to indicate "I don't want to do custom mapping"
+      // and Pyranid will fall back to the registered ResultSetMapper's mapping behavior
+      return MappingResult.of(money);
     }
   }))
   .build();
+
+// You can also bring your own implementation for full customization.
+ResultSetMapper customResultSetMapper = new ResultSetMapper() {
+  @Nonnull
+  <T> Optional<T> map(
+    @Nonnull StatementContext<T> statementContext,
+    @Nonnull ResultSet resultSet,
+    @Nonnull Class<T> resultSetRowType,
+    @Nonnull InstanceProvider instanceProvider
+  ) throws SQLException {
+    // TODO: your own code mapping the current ResultSet row to an instance of T.
+    // Pyranid handles moving the ResultSet cursor for you
+  }
+};
 
 // Binds parameters to a SQL PreparedStatement
 PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder() {
