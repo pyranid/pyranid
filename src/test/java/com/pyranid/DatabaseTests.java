@@ -292,7 +292,7 @@ public class DatabaseTests {
 															 @Nonnull ResultSet resultSet,
 															 @Nonnull Object resultSetValue,
 															 @Nonnull TargetType targetType,
-															 @Nullable Integer columnIndex,
+															 @Nonnull Integer columnIndex,
 															 @Nullable String columnLabel,
 															 @Nonnull InstanceProvider instanceProvider) {
 				// ignore DB value; force a deterministic value so we can assert override happened
@@ -342,7 +342,7 @@ public class DatabaseTests {
 															 @Nonnull ResultSet resultSet,
 															 @Nonnull Object resultSetValue,
 															 @Nonnull TargetType targetType,
-															 @Nullable Integer columnIndex,
+															 @Nonnull Integer columnIndex,
 															 @Nullable String columnLabel,
 															 @Nonnull InstanceProvider instanceProvider) {
 				firstCalls.incrementAndGet();
@@ -364,7 +364,7 @@ public class DatabaseTests {
 															 @Nonnull ResultSet resultSet,
 															 @Nonnull Object resultSetValue,
 															 @Nonnull TargetType targetType,
-															 @Nullable Integer columnIndex,
+															 @Nonnull Integer columnIndex,
 															 @Nullable String columnLabel,
 															 @Nonnull InstanceProvider instanceProvider) {
 				secondCalls.incrementAndGet();
@@ -415,7 +415,7 @@ public class DatabaseTests {
 															 @Nonnull ResultSet resultSet,
 															 @Nonnull Object resultSetValue,
 															 @Nonnull TargetType targetType,
-															 @Nullable Integer columnIndex,
+															 @Nonnull Integer columnIndex,
 															 @Nullable String columnLabel,
 															 @Nonnull InstanceProvider instanceProvider) {
 				String s = resultSetValue == null ? null : resultSetValue.toString();

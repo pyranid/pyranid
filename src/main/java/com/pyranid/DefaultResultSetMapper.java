@@ -179,7 +179,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 																												@Nonnull ResultSet resultSet,
 																												@Nonnull Object resultSetValue,
 																												@Nonnull TargetType targetType,
-																												@Nullable Integer columnIndex,
+																												@Nonnull Integer columnIndex,
 																												@Nullable String columnLabel,
 																												@Nonnull InstanceProvider instanceProvider) throws SQLException {
 		requireNonNull(statementContext);

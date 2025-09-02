@@ -118,7 +118,7 @@ ResultSetMapper resultSetMapper = ResultSetMapper.withPlanCachingEnabled(true)
       @Nonnull ResultSet resultSet,
       @Nonnull Object resultSetValue,
       @Nonnull TargetType targetType,
-      @Nullable Integer columnIndex,
+      @Nonnull Integer columnIndex,
       @Nullable String columnLabel,
       @Nonnull InstanceProvider instanceProvider
     ) {
@@ -646,7 +646,7 @@ ResultSetMapper resultSetMapper = ResultSetMapper.withCustomColumnMappers(List.o
     @Nonnull ResultSet resultSet,
     @Nonnull Object resultSetValue,
     @Nonnull TargetType targetType,
-    @Nullable Integer columnIndex,
+    @Nonnull Integer columnIndex,
     @Nullable String columnLabel,
     @Nonnull InstanceProvider instanceProvider
   ) {
