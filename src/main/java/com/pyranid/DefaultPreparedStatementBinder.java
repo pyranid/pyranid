@@ -16,6 +16,8 @@
 
 package com.pyranid;
 
+import com.pyranid.CustomParameterBinder.BindingResult;
+
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
@@ -322,9 +324,9 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 		// Fast path: try cached binder first
 		if (cached != null) {
-			boolean handled = cached.bind(statementContext, preparedStatement, parameterIndex, parameter);
+			BindingResult bindingResult = requireNonNull(cached.bind(statementContext, preparedStatement, parameterIndex, parameter));
 
-			if (handled)
+			if (bindingResult == BindingResult.HANDLED)
 				return true;
 
 			// If it no longer applies, fall through to the rest (keep the hint; may win next time)
@@ -332,9 +334,9 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 		// Slow path: scan applicable binders
 		for (CustomParameterBinder customParameterBinder : candidates) {
-			Boolean handled = customParameterBinder.bind(statementContext, preparedStatement, parameterIndex, parameter);
+			BindingResult bindingResult = requireNonNull(customParameterBinder.bind(statementContext, preparedStatement, parameterIndex, parameter));
 
-			if (handled) {
+			if (bindingResult == BindingResult.HANDLED) {
 				getPreferredBinderByInboundKey().putIfAbsent(key, customParameterBinder);
 				return true;
 			}

@@ -17,6 +17,7 @@
 package com.pyranid;
 
 import javax.annotation.Nonnull;
+import javax.annotation.concurrent.ThreadSafe;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 
@@ -36,14 +37,14 @@ public interface CustomParameterBinder {
 	 * @param preparedStatement the prepared statement to bind to
 	 * @param parameterIndex    1-based parameter index at which to perform the binding
 	 * @param parameter         the parameter to bind at the specified index
-	 * @return {@code true} if the custom binding was performed, or {@code false} to fall back to default binding strategy
+	 * @return {@link BindingResult#HANDLED} if the custom binding was performed, or {@link BindingResult#FALLBACK} to fall back to default {@link PreparedStatementBinder} behavior
 	 * @throws SQLException if an error occurs during binding
 	 */
 	@Nonnull
-	Boolean bind(@Nonnull StatementContext<?> statementContext,
-							 @Nonnull PreparedStatement preparedStatement,
-							 @Nonnull Integer parameterIndex,
-							 @Nonnull Object parameter) throws SQLException;
+	BindingResult bind(@Nonnull StatementContext<?> statementContext,
+										 @Nonnull PreparedStatement preparedStatement,
+										 @Nonnull Integer parameterIndex,
+										 @Nonnull Object parameter) throws SQLException;
 
 	/**
 	 * Specifies which types this custom binder should handle.
@@ -57,4 +58,15 @@ public interface CustomParameterBinder {
 	 */
 	@Nonnull
 	Boolean appliesTo(@Nonnull TargetType targetType);
+
+	/**
+	 * Result of a custom parameter binding attempt.
+	 * <p>
+	 * Use {@link #HANDLED} to indicate a successfully-bound value or {@link #FALLBACK} to indicate "didn't bind; fall back to the registered {@link PreparedStatementBinder} behavior".</p>
+	 */
+	@ThreadSafe
+	enum BindingResult {
+		HANDLED,
+		FALLBACK
+	}
 }

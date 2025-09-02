@@ -42,7 +42,7 @@ public interface CustomColumnMapper {
 	 * @param columnIndex      1-based column index, if available
 	 * @param columnLabel      normalized column label, if available
 	 * @param instanceProvider instance-creation factory, may be used to instantiate values
-	 * @return the result of the custom column mapping operation - either {@link MappingResult#of(Object)} to indicate a successfully-mapped value or {@link MappingResult#fallback()} if Pyranid should fall back to the registered {@link ResultSetMapper}.
+	 * @return the result of the custom column mapping operation - either {@link MappingResult#of(Object)} to indicate a successfully-mapped value or {@link MappingResult#fallback()} if Pyranid should fall back to the registered {@link ResultSetMapper} mapping behavior.
 	 * @throws SQLException if an error occurs during mapping
 	 */
 	@Nonnull
@@ -69,9 +69,8 @@ public interface CustomColumnMapper {
 
 	/**
 	 * Result of a custom column mapping attempt.
-	 *
-	 * <p>Use {@link #of(Object)} to indicate a successfully mapped value,
-	 * or {@link #fallback()} to indicate "don't map; fall back to the registered {@link ResultSetMapper}".</p>
+	 * <p>
+	 * Use {@link #of(Object)} to indicate a successfully mapped value or {@link #fallback()} to indicate "didn't map; fall back to the registered {@link ResultSetMapper} behavior".</p>
 	 */
 	@ThreadSafe
 	sealed abstract class MappingResult permits MappingResult.CustomMapping, MappingResult.Fallback {

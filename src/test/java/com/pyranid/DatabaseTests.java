@@ -793,11 +793,11 @@ public class DatabaseTests {
 		AtomicInteger calls = new AtomicInteger(0);
 		CustomParameterBinder localeBinder = new CustomParameterBinder() {
 			@Override
-			public Boolean bind(StatementContext<?> ctx, java.sql.PreparedStatement ps, Integer index, Object param) throws java.sql.SQLException {
-				if (!(param instanceof Locale)) return false;
+			public BindingResult bind(StatementContext<?> ctx, java.sql.PreparedStatement ps, Integer index, Object param) throws java.sql.SQLException {
+				if (!(param instanceof Locale)) return BindingResult.FALLBACK;
 				calls.incrementAndGet();
 				ps.setString(index, "CUSTOM:" + ((Locale) param).toLanguageTag());
-				return true;
+				return BindingResult.HANDLED;
 			}
 
 			@Override
@@ -909,14 +909,14 @@ public class DatabaseTests {
 		CustomParameterBinder localeBinder = new CustomParameterBinder() {
 			@Nonnull
 			@Override
-			public Boolean bind(@Nonnull StatementContext<?> sc,
-													@Nonnull PreparedStatement ps,
-													@Nonnull Integer idx,
-													@Nonnull Object param) throws SQLException {
+			public BindingResult bind(@Nonnull StatementContext<?> sc,
+																@Nonnull PreparedStatement ps,
+																@Nonnull Integer idx,
+																@Nonnull Object param) throws SQLException {
 				Assert.assertTrue("Expected Locale", param instanceof Locale);
 				calls.incrementAndGet();
 				ps.setString(idx, "CUSTOM:" + ((Locale) param).toLanguageTag());
-				return true; // handled
+				return BindingResult.HANDLED;
 			}
 
 			@Nonnull
@@ -954,7 +954,7 @@ public class DatabaseTests {
 		CustomParameterBinder intOnly = new CustomParameterBinder() {
 			@Nonnull
 			@Override
-			public Boolean bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) {
+			public BindingResult bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) {
 				neverCalled.incrementAndGet();
 				throw new AssertionError("Should not be called for Locale");
 			}
@@ -969,10 +969,10 @@ public class DatabaseTests {
 		CustomParameterBinder localeBinder = new CustomParameterBinder() {
 			@Nonnull
 			@Override
-			public Boolean bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) throws SQLException {
+			public BindingResult bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) throws SQLException {
 				called.incrementAndGet();
 				ps.setString(idx, "OK");
-				return true;
+				return BindingResult.HANDLED;
 			}
 
 			@Nonnull
@@ -1009,10 +1009,10 @@ public class DatabaseTests {
 		CustomParameterBinder first = new CustomParameterBinder() {
 			@Nonnull
 			@Override
-			public Boolean bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) throws SQLException {
+			public BindingResult bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) throws SQLException {
 				firstCalls.incrementAndGet();
 				ps.setString(idx, "FIRST");
-				return true;
+				return BindingResult.HANDLED;
 			}
 
 			@Nonnull
@@ -1025,10 +1025,10 @@ public class DatabaseTests {
 		CustomParameterBinder second = new CustomParameterBinder() {
 			@Nonnull
 			@Override
-			public Boolean bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) throws SQLException {
+			public BindingResult bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) throws SQLException {
 				secondCalls.incrementAndGet();
 				ps.setString(idx, "SECOND");
-				return true;
+				return BindingResult.HANDLED;
 			}
 
 			@Nonnull
@@ -1068,12 +1068,12 @@ public class DatabaseTests {
 		CustomParameterBinder listUuidBinder = new CustomParameterBinder() {
 			@Nonnull
 			@Override
-			public Boolean bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) throws SQLException {
-				if (!(param instanceof List<?> list)) return false;
-				for (Object o : list) if (!(o instanceof UUID)) return false;
+			public BindingResult bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) throws SQLException {
+				if (!(param instanceof List<?> list)) return BindingResult.FALLBACK;
+				for (Object o : list) if (!(o instanceof UUID)) return BindingResult.FALLBACK;
 				String joined = list.stream().map(Object::toString).reduce((a, b) -> a + "," + b).orElse("");
 				ps.setString(idx, joined);
-				return true;
+				return BindingResult.HANDLED;
 			}
 
 			@Nonnull
@@ -1111,9 +1111,9 @@ public class DatabaseTests {
 		CustomParameterBinder alwaysFalseForString = new CustomParameterBinder() {
 			@Nonnull
 			@Override
-			public Boolean bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) {
+			public BindingResult bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) {
 				falseCalls.incrementAndGet();
-				return false; // claim applicability but decide not to handle now
+				return BindingResult.FALLBACK; // claim applicability but decide not to handle now
 			}
 
 			@Nonnull
@@ -1144,7 +1144,7 @@ public class DatabaseTests {
 		CustomParameterBinder throwingBinder = new CustomParameterBinder() {
 			@Nonnull
 			@Override
-			public Boolean bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) throws SQLException {
+			public BindingResult bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) throws SQLException {
 				throw new SQLException("boom");
 			}
 
@@ -1183,10 +1183,10 @@ public class DatabaseTests {
 		CustomParameterBinder localeBinder = new CustomParameterBinder() {
 			@Nonnull
 			@Override
-			public Boolean bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) throws SQLException {
-				if (!(param instanceof Locale l)) return false;
+			public BindingResult bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) throws SQLException {
+				if (!(param instanceof Locale l)) return BindingResult.FALLBACK;
 				ps.setString(idx, l.toLanguageTag());
-				return true;
+				return BindingResult.HANDLED;
 			}
 
 			@Nonnull
@@ -1218,12 +1218,12 @@ public class DatabaseTests {
 		CustomParameterBinder setUuidBinder = new CustomParameterBinder() {
 			@Nonnull
 			@Override
-			public Boolean bind(@Nonnull StatementContext<?> sc,
-													@Nonnull PreparedStatement ps,
-													@Nonnull Integer idx,
-													@Nonnull Object param) throws SQLException {
-				if (!(param instanceof Set<?> set)) return false;
-				for (Object o : set) if (!(o instanceof UUID)) return false;
+			public BindingResult bind(@Nonnull StatementContext<?> sc,
+																@Nonnull PreparedStatement ps,
+																@Nonnull Integer idx,
+																@Nonnull Object param) throws SQLException {
+				if (!(param instanceof Set<?> set)) return BindingResult.FALLBACK;
+				for (Object o : set) if (!(o instanceof UUID)) return BindingResult.FALLBACK;
 
 				// Stable serialization: sort lexicographically then join by comma
 				String joined = set.stream()
@@ -1232,7 +1232,7 @@ public class DatabaseTests {
 						.reduce((a, b) -> a + "," + b)
 						.orElse("");
 				ps.setString(idx, joined);
-				return true;
+				return BindingResult.HANDLED;
 			}
 
 			@Nonnull
@@ -1269,16 +1269,16 @@ public class DatabaseTests {
 		CustomParameterBinder mapBinder = new CustomParameterBinder() {
 			@Nonnull
 			@Override
-			public Boolean bind(@Nonnull StatementContext<?> sc,
-													@Nonnull PreparedStatement ps,
-													@Nonnull Integer idx,
-													@Nonnull Object param) throws SQLException {
-				if (!(param instanceof Map<?, ?> map)) return false;
+			public BindingResult bind(@Nonnull StatementContext<?> sc,
+																@Nonnull PreparedStatement ps,
+																@Nonnull Integer idx,
+																@Nonnull Object param) throws SQLException {
+				if (!(param instanceof Map<?, ?> map)) return BindingResult.FALLBACK;
 
 				// Validate key/value types at runtime
 				for (Map.Entry<?, ?> e : map.entrySet()) {
-					if (!(e.getKey() instanceof String)) return false;
-					if (!(e.getValue() instanceof Integer)) return false;
+					if (!(e.getKey() instanceof String)) return BindingResult.FALLBACK;
+					if (!(e.getValue() instanceof Integer)) return BindingResult.FALLBACK;
 				}
 
 				// Stable serialization: sort by key, "k=v" pairs joined by comma
@@ -1290,7 +1290,7 @@ public class DatabaseTests {
 						.reduce((a, b) -> a + "," + b)
 						.orElse("");
 				ps.setString(idx, joined);
-				return true;
+				return BindingResult.HANDLED;
 			}
 
 			@Nonnull

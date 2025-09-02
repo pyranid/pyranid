@@ -17,10 +17,10 @@
 package com.pyranid;
 
 import javax.annotation.Nonnull;
+import javax.annotation.concurrent.ThreadSafe;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.List;
-import java.util.Locale;
 
 import static java.util.Objects.requireNonNull;
 
@@ -48,11 +48,21 @@ public interface PreparedStatementBinder {
 												 @Nonnull Integer parameterIndex,
 												 @Nonnull Object parameter) throws SQLException;
 
+	/**
+	 *
+	 * @return
+	 */
 	@Nonnull
 	static PreparedStatementBinder withDefaultConfiguration() {
 		return new DefaultPreparedStatementBinder();
 	}
 
+	/**
+	 * Acquires a builder for a concrete implementation of this interface, specifying
+	 *
+	 * @param customParameterBinders the locale to use when massaging JDBC column names for matching against Java property names
+	 * @return a {@code Builder} for a concrete implementation
+	 */
 	@Nonnull
 	static PreparedStatementBinder withCustomParameterBinders(@Nonnull List<CustomParameterBinder> customParameterBinders) {
 		requireNonNull(customParameterBinders);
