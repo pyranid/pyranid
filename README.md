@@ -177,9 +177,7 @@ PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCu
       List<UUID> uuids = (List<UUID>) param;
       String uuidsAsString = uuids.isEmpty()
         ? null
-        : uuids.stream()
-          .map(Object::toString)
-          .collect(Collectors.joining(","));
+        : uuids.stream().map(Object::toString).collect(Collectors.joining(","));
 
       // Bind to the PreparedStatement
       preparedStatement.setString(parameterIndex, uuidsAsString);
