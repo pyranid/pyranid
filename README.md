@@ -148,14 +148,59 @@ ResultSetMapper customResultSetMapper = new ResultSetMapper() {
   }
 };
 
-// Binds parameters to a SQL PreparedStatement
-PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder() {
+// Binds parameters to a SQL PreparedStatement.
+// You might use out-of-the-box defaults...
+PreparedStatementBinder basicPreparedStatementBinder = PreparedStatementBinder.withDefaultConfiguration();
+
+// ...or turn some knobs.
+// CustomColumnMappers supply "surgical" overrides to handle custom types.
+// Here, we transform List<UUID> types into a comma-delimited string 
+PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCustomParameterBinders(List.of(
+  new CustomParameterBinder() {
+    @Nonnull
+    @Override
+    public Boolean appliesTo(@Nonnull TargetType targetType) {
+      // Can also apply to non-parameterized types, e.g.
+      // targetType.matchesClass(MonthYear.class) for MonthYear
+      return targetType.matchesParameterizedType(List.class, UUID.class);
+    }		
+			
+    @Nonnull
+    @Override
+    public BindingResult bind(
+      @Nonnull StatementContext<?> statementContext, 
+      @Nonnull PreparedStatement preparedStatement,
+      @Nonnull Integer parameterIndex,
+      @Nonnull Object parameter
+    ) throws SQLException {
+      // Convert UUIDs to a comma-delimited string, or null for the empty list 
+      List<UUID> uuids = (List<UUID>) param;
+      String uuidsAsString = uuids.isEmpty()
+        ? null
+        : uuids.stream()
+          .map(Object::toString)
+          .collect(Collectors.joining(","));
+
+      // Bind to the PreparedStatement
+      preparedStatement.setString(parameterIndex, uuidsAsString);
+
+      // Or return BindingResult.FALLBACK to indicate "I don't want to do custom binding"
+      // and Pyranid will fall back to the registered PreparedStatementBinder's binding behavior
+      return BindingResult.HANDLED;
+    }
+  }  
+));
+
+// You can also bring your own implementation for full customization.
+PreparedStatementBinder customPreparedStatementBinder = new PreparedStatementBinder() {
   @Override
-  public <T> void bind(@Nonnull StatementContext<T> statementContext,
-                       @Nonnull PreparedStatement preparedStatement,
-                       @Nonnull List<Object> parameters) {
-    // Customize parameter binding here if needed
-    super.bind(statementContext, preparedStatement, parameters);
+  <T> void bindParameter(
+    @Nonnull StatementContext<T> statementContext,
+    @Nonnull PreparedStatement preparedStatement,
+    @Nonnull Integer parameterIndex,
+    @Nonnull Object parameter
+  ) throws SQLException {
+    // TODO: your own code that binds the parameter at the specified index to the PreparedStatement
   }
 };
 
