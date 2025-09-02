@@ -39,7 +39,7 @@ public interface CustomColumnMapper {
 	 * @param resultSet        the {@link ResultSet} from which data was read
 	 * @param resultSetValue   the already-read value from the {@link ResultSet}, to be optionally converted to an instance of {@code targetType}
 	 * @param targetType       the type to which the {@code resultSetValue} should be converted
-	 * @param columnIndex      1-based column index, if available
+	 * @param columnIndex      1-based column index
 	 * @param columnLabel      normalized column label, if available
 	 * @param instanceProvider instance-creation factory, may be used to instantiate values
 	 * @return the result of the custom column mapping operation - either {@link MappingResult#of(Object)} to indicate a successfully-mapped value or {@link MappingResult#fallback()} if Pyranid should fall back to the registered {@link ResultSetMapper} mapping behavior.
