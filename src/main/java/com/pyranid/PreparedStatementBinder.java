@@ -17,7 +17,6 @@
 package com.pyranid;
 
 import javax.annotation.Nonnull;
-import javax.annotation.concurrent.ThreadSafe;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.List;
@@ -26,6 +25,29 @@ import static java.util.Objects.requireNonNull;
 
 /**
  * Contract for binding parameters to SQL prepared statements.
+ * <p>
+ * A production-ready concrete implementation is available via the following static methods:
+ * <ul>
+ *   <li>{@link #withDefaultConfiguration()}</li>
+ *   <li>{@link #withCustomParameterBinders(List)}</li>
+ * </ul>
+ * How to acquire an instance:
+ * <pre>{@code  // With out-of-the-box defaults
+ * PreparedStatementBinder default = PreparedStatementBinder.withDefaultConfiguration();
+ *
+ * // Customized
+ * PreparedStatementBinder custom = PreparedStatementBinder.withCustomParameterBinders(List.of(...));}</pre>
+ * Or, implement your own: <pre>{@code  PreparedStatementBinder myImpl = new PreparedStatementBinder() {
+ *   @Override
+ *   <T> void bindParameter(
+ *     @Nonnull StatementContext<T> statementContext,
+ *     @Nonnull PreparedStatement preparedStatement,
+ *     @Nonnull Integer parameterIndex,
+ *     @Nonnull Object parameter
+ *   ) throws SQLException {
+ *     // TODO: your own code that binds the parameter at the specified index to the PreparedStatement
+ *   }
+ * };}</pre>
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 1.0.0
@@ -49,8 +71,11 @@ public interface PreparedStatementBinder {
 												 @Nonnull Object parameter) throws SQLException;
 
 	/**
+	 * Acquires a concrete implementation of this interface with out-of-the-box defaults.
+	 * <p>
+	 * The returned instance is thread-safe.
 	 *
-	 * @return
+	 * @return a concrete implementation of this interface with out-of-the-box defaults
 	 */
 	@Nonnull
 	static PreparedStatementBinder withDefaultConfiguration() {
@@ -58,10 +83,12 @@ public interface PreparedStatementBinder {
 	}
 
 	/**
-	 * Acquires a builder for a concrete implementation of this interface, specifying
+	 * Acquires a concrete implementation of this interface, specifying "surgical" per-type custom parameter binders.
+	 * <p>
+	 * The returned instance is thread-safe.
 	 *
-	 * @param customParameterBinders the locale to use when massaging JDBC column names for matching against Java property names
-	 * @return a {@code Builder} for a concrete implementation
+	 * @param customParameterBinders the "surgical" per-type custom parameter binders
+	 * @return a concrete implementation of this interface
 	 */
 	@Nonnull
 	static PreparedStatementBinder withCustomParameterBinders(@Nonnull List<CustomParameterBinder> customParameterBinders) {
