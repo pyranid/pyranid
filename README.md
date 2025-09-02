@@ -538,13 +538,13 @@ class DatabaseTransactionFilter implements Filter {
 
 ## ResultSet Mapping
 
-The [`DefaultResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/DefaultResultSetMapper.html) supports user-defined types that follow the JavaBean getter/setter conventions, primitives, and some additional common JDK types.
+The out-of-the-box [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) implementation supports user-defined types that follow the JavaBean getter/setter conventions, primitives, and some additional common JDK types.
 
 [`Record`](https://openjdk.org/jeps/395) types are also supported.
 
 ### User-defined Types
 
-In the case of user-defined types and Records, [`DefaultResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/DefaultResultSetMapper.html) examines the names of columns in the [`ResultSet`](https://docs.oracle.com/en/java/javase/21/docs/api/java.sql/javax/sql/ResultSet.html) and matches them to corresponding fields via reflection.  The [`@DatabaseColumn`](https://javadoc.pyranid.com/com/pyranid/DatabaseColumn.html) annotation allows per-field customization of mapping behavior.
+In the case of user-defined types and Records, the standard [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) examines the names of columns in the [`ResultSet`](https://docs.oracle.com/en/java/javase/21/docs/api/java.sql/javax/sql/ResultSet.html) and matches them to corresponding fields via reflection.  The [`@DatabaseColumn`](https://javadoc.pyranid.com/com/pyranid/DatabaseColumn.html) annotation allows per-field customization of mapping behavior.
 
 By default, column names are assumed to be separated by `_` characters and are mapped to their camel-case equivalent.  For example:
 
@@ -596,7 +596,7 @@ car = database.queryForObject("SELECT some_id AS car_id, some_color AS color FRO
 * `Float`
 * `Double`
 * `Boolean`
-* `Char`
+* `Character`
 * `String`
 * `byte[]`
 
@@ -617,9 +617,53 @@ car = database.queryForObject("SELECT some_id AS car_id, some_color AS color FRO
 * `TimeZone`
 * `Locale` (IETF BCP 47 "language tag" format)
 
-### Other Types
+### Custom Mapping
 
-* Store Postgres JSONB data using a SQL cast of `String`, e.g. `CAST(? AS JSONB)`. Retrieve JSONB data using `String`
+Fine-grained control of mapping is supported by registering [`CustomColumnMapper`](https://javadoc.pyranid.com/com/pyranid/CustomColumnMapper.html) instances.  For example, you might want to "inflate" a `JSONB` column into a Java type:
+
+```java
+// Your application-specific type
+class MySpecialType {
+  List<UUID> uuids;
+  Currency currency;	 
+}
+```
+
+```java
+// And a CustomColumnMapper that handles it:
+ResultSetMapper resultSetMapper = ResultSetMapper.withCustomColumnMappers(List.of(new CustomColumnMapper() {
+  @Nonnull
+  @Override
+  public Boolean appliesTo(@Nonnull TargetType targetType) {
+    return targetType.matchesClass(MySpecialType.class);
+  }
+
+  @Nonnull
+  @Override
+  public MappingResult map(
+    @Nonnull StatementContext<?> statementContext,
+    @Nonnull ResultSet resultSet,
+    @Nonnull Object resultSetValue,
+    @Nonnull TargetType targetType,
+    @Nullable Integer columnIndex,
+    @Nullable String columnLabel,
+    @Nonnull InstanceProvider instanceProvider
+  ) {
+    String json = resultSetValue.toString();
+    MySpecialType mySpecialType = GSON.fromJson(json, MySpecialType.class);
+
+    // Or return MappingResult.fallback() to indicate "I don't want to do custom mapping"
+    // and Pyranid will fall back to the registered ResultSetMapper's mapping behavior
+    return MappingResult.of(mySpecialType);
+  }
+  }))
+  .build();
+
+// Construct your database with the custom mapper
+Database database = Database.withDataSource(...)
+  .resultSetMapper(resultSetMapper)
+  .build();
+```
 
 ### Kotlin Types
 
@@ -653,6 +697,10 @@ val cars = database.queryForList("SELECT * FROM cars WHERE car_id IN (?, ?) LIMI
                                  Car::class,
                                  *listOf(car1Id, car2Id, 10).toTypedArray())
 ```
+
+## Parameter Binding
+
+
 
 ## Error Handling
 
