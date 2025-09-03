@@ -758,9 +758,15 @@ database.execute("INSERT INTO example (data) VALUES (?)",
 );
 ```
 
-By default, Pyranid will use your database's binary JSON format if supported and fall back to a text representation if not.
+By default, Pyranid will use your database's binary JSON format if supported and fall back to a text representation otherwise.
 
-If you want to force text storage (e.g. if whitespace is important), specify a binding preference like this: `Parameters.json(json, BindingPreference.TEXT)`.
+If you want to force text storage (e.g. if whitespace is important), specify a binding preference like this:
+
+```java
+database.execute("INSERT INTO example (data) VALUES (?)",
+  Parameters.json(json, BindingPreference.TEXT)
+);
+```
 
 #### Vector
 
