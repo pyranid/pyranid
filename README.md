@@ -739,7 +739,7 @@ Supported methods:
 * [`Parameters::json(String)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#json(java.lang.String))
 * [`Parameters::json(String, BindingPreference)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#json(java.lang.String,com.pyranid.JsonParameter.BindingPreference))
 
-Create a JSONB storage table...
+You might create a JSONB storage table...
 
 ```sql
 CREATE TABLE example (
@@ -780,11 +780,11 @@ Supported methods:
 * [`Parameters::vectorOfFloats(List<Float>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#vectorOfFloats(java.util.List))
 * [`Parameters::vectorOfBigDecimals(List<BigDecimal>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#vectorOfBigDecimals(java.util.List))
 
-Create a vector storage table...
+You might create a vector storage table...
 
 ```sql
 CREATE TABLE vector_embedding (
-  vector_embedding_id UUID NOT NULL DEFAULT uuid_generate_v4() PRIMARY KEY,
+  vector_embedding_id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   embedding VECTOR(1536) NOT NULL,
   content TEXT NOT NULL
 );
@@ -803,9 +803,44 @@ database.execute("INSERT INTO vector_embedding (embedding, content) VALUES (?,?)
 
 #### SQL ARRAY
 
+Single-dimension array column binding is supported out-of-the-box.
 
+You might create a table with some array columns...
+
+```sql
+CREATE TABLE product (
+  product_id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  name TEXT NOT NULL,
+  vendor_flags INTEGER[] NOT NULL,
+  tags TEXT[]
+);
+```
+
+...and write array data to it:
+
+```java
+String name = "...";
+int[] vendorFlags = { 1, 2, 3 };
+List<String> tags = List.of("alpha", "beta");
+
+database.execute("""
+  INSERT INTO product (
+    name,
+    vendor_flags,
+    tags
+  ) VALUES (?,?,?)
+""", 
+  name,
+  Parameters.arrayOf("INTEGER", vendorFlags),
+  Parameters.arrayOf("VARCHAR", tags)
+);
+```
+
+If you need support for multidimensional array storage, implement a [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) as outlined below. 
 
 ### Custom Parameters
+
+TODO
 
 ## Error Handling
 
