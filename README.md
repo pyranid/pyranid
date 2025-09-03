@@ -100,7 +100,7 @@ ResultSetMapper basicResultSetMapper = ResultSetMapper.withDefaultConfiguration(
 // Plan caching trades memory for faster mapping of wide ResultSets.
 // Normalization locale should match the language of your database tables/column names.
 // CustomColumnMappers supply "surgical" overrides to handle custom types
-ResultSetMapper resultSetMapper = ResultSetMapper.withPlanCachingEnabled(true)
+ResultSetMapper resultSetMapper = ResultSetMapper.withPlanCachingEnabled(false)
   .normalizationLocale(Locale.forLanguageTag("pt-BR"))
   .customColumnMappers(List.of(new CustomColumnMapper() {
     @Nonnull

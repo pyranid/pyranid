@@ -42,7 +42,7 @@ import static java.util.Objects.requireNonNull;
  * ResultSetMapper default = ResultSetMapper.withDefaultConfiguration();
  *
  * // Customized
- * ResultSetMapper custom = ResultSetMapper.withPlanCachingEnabled(true)
+ * ResultSetMapper custom = ResultSetMapper.withPlanCachingEnabled(false)
  *  .customColumnMappers(List.of(...))
  *  .normalizationLocale(Locale.forLanguageTag("pt-BR"))
  *  .build();}</pre> Or, implement your own: <pre>{@code  ResultSetMapper myImpl = new ResultSetMapper() {
@@ -162,7 +162,7 @@ public interface ResultSetMapper {
 		private Builder() {
 			this.normalizationLocale = Locale.getDefault();
 			this.customColumnMappers = List.of();
-			this.planCachingEnabled = false;
+			this.planCachingEnabled = true;
 		}
 
 		/**
