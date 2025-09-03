@@ -17,6 +17,7 @@
 package com.pyranid;
 
 import com.pyranid.CustomParameterBinder.BindingResult;
+import com.pyranid.JsonParameter.BindingPreference;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -217,7 +218,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 				// Later, we can add more handling for other DB types.
 				if (statementContext.getDatabaseType() == DatabaseType.POSTGRESQL) {
 					org.postgresql.util.PGobject pg = new org.postgresql.util.PGobject();
-					pg.setType(jsonParameter.getBindingPreference() == JsonParameter.BindingPreference.TEXT ? "json" : "jsonb");
+					pg.setType(jsonParameter.getBindingPreference() == BindingPreference.TEXT ? "json" : "jsonb");
 					pg.setValue(json);
 					preparedStatement.setObject(parameterIndex, pg);
 				} else {

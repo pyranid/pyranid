@@ -11,6 +11,10 @@ A zero-dependency JDBC interface for modern Java applications, powering producti
 
 Pyranid takes care of boilerplate and lets you focus on writing and thinking in SQL.  It is not an ORM.
 
+Pyranid makes working with JDBC pleasant and puts your relational database first. Writing SQL "just works". Closure-based transactions are simple to reason about. Modern Java language features are supported.
+
+No new query languages to learn. No leaky object-relational abstractions. No kitchen-sink frameworks that come along for the ride. No magic.
+
 Full documentation is available at [https://www.pyranid.com](https://www.pyranid.com).
 
 ### Design Goals
@@ -701,7 +705,101 @@ val cars = database.queryForList("SELECT * FROM cars WHERE car_id IN (?, ?) LIMI
 
 ## Parameter Binding
 
+The out-of-the-box [`PreparedStatementBinder`](https://javadoc.pyranid.com/com/pyranid/PreparedStatementBinder.html) implementation supports binding common JDK types to `?` placeholders and generally "just works" as you would expect.
 
+For example:
+
+```java
+UUID departmentId = ...;
+
+List<Employee> = database.queryForList("""
+  SELECT *
+  FROM employee
+  WHERE department_id=?
+""", Employee.class, departmentId);
+
+database.execute("""
+  INSERT INTO account_award (
+    account_id, 
+    award_type
+  ) VALUES (?,?)
+  """, accountId, AwardType.BIG);
+```
+
+### Special Parameters
+
+Special support is provided for JSON/JSONB, vector, and SQL ARRAY parameters.
+
+#### JSON/JSONB
+
+Useful for storing "stringified" JSON data by taking advantage of the DBMS' native JSON storage facilities, if available (e.g. PostgreSQL's `JSONB` type).
+
+Supported methods:
+
+* [`Parameters::json(String)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#json(java.lang.String))
+* [`Parameters::json(String, BindingPreference)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#json(java.lang.String,com.pyranid.JsonParameter.BindingPreference))
+
+Create a JSONB storage table...
+
+```sql
+CREATE TABLE example (
+  example_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  data JSONB NOT NULL
+);
+```
+
+...and write JSON to it:
+
+```java
+String json = "{\"testing\": 123}";
+
+database.execute("INSERT INTO example (data) VALUES (?)",
+  Parameters.json(json)
+);
+```
+
+By default, Pyranid will use your database's binary JSON format if supported and fall back to a text representation if not.
+
+If you want to force text storage (e.g. if whitespace is important), specify a binding preference like this: `Parameters.json(json, BindingPreference.TEXT)`.
+
+#### Vector
+
+Useful for storing [`pgvector`](https://github.com/pgvector/pgvector) data, often used for Artificial Intelligence tasks. Currently only supported for PostgreSQL.
+
+Supported methods:
+
+* [`Parameters::vectorOfDoubles(double[])`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#vectorOfDoubles(double%5B%5D))
+* [`Parameters::vectorOfDoubles(List<Double>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#vectorOfDoubles(java.util.List))
+* [`Parameters::vectorOfFloats(float[])`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#vectorOfFloats(float%5B%5D))
+* [`Parameters::vectorOfFloats(List<Float>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#vectorOfFloats(java.util.List))
+* [`Parameters::vectorOfBigDecimals(List<BigDecimal>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#vectorOfBigDecimals(java.util.List))
+
+Create a vector storage table...
+
+```sql
+CREATE TABLE vector_embedding (
+  vector_embedding_id UUID NOT NULL DEFAULT uuid_generate_v4() PRIMARY KEY,
+  embedding VECTOR(1536) NOT NULL,
+  content TEXT NOT NULL
+);
+```
+
+...and write vector data to it:
+
+```java
+double[] embedding = ...;
+String content = "...";
+
+database.execute("INSERT INTO vector_embedding (embedding, content) VALUES (?,?)",
+  Parameters.vectorOfDoubles(embedding), content
+);
+```
+
+#### SQL ARRAY
+
+
+
+### Custom Parameters
 
 ## Error Handling
 

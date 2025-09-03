@@ -33,18 +33,14 @@ import java.util.Optional;
 @ThreadSafe
 public interface JsonParameter {
 	/**
-	 * Specifies how a {@link JsonParameter} should be bound - DBMS-specific sensible default, binary (for example, {@code JSONB} for PostgreSQL), or text.
+	 * Specifies how a {@link JsonParameter} should be bound: binary (for example, {@code JSONB} for PostgreSQL), or text.
 	 *
 	 * @author <a href="https://www.revetkn.com">Mark Allen</a>
 	 * @since 3.0.0
 	 */
 	enum BindingPreference {
 		/**
-		 * Prefer the most capable native type for the target DB (for example, {@code JSONB} for PostgreSQL), else text.
-		 */
-		AUTOMATIC,
-		/**
-		 * Prefer a binary/native JSON type when available (for example, {@code JSONB} for PostgreSQL), else text.
+		 * Prefer a binary/native JSON type when available (for example, {@code JSONB} for PostgreSQL), otherwise falls back to {@link #TEXT}.
 		 */
 		BINARY,
 		/**

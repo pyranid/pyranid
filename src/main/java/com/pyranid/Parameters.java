@@ -239,14 +239,14 @@ public final class Parameters {
 	}
 
 	/**
-	 * Acquires a JSON parameter for "stringified" JSON, using {@link BindingPreference#AUTOMATIC}.
+	 * Acquires a JSON parameter for "stringified" JSON, using {@link BindingPreference#BINARY}.
 	 *
 	 * @param json the stringified JSON for this parameter
 	 * @return the JSON parameter
 	 */
 	@Nonnull
 	public static JsonParameter json(@Nullable String json) {
-		return new DefaultJsonParameter(json, BindingPreference.AUTOMATIC);
+		return new DefaultJsonParameter(json, BindingPreference.BINARY);
 	}
 
 	/**
