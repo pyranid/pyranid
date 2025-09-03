@@ -847,6 +847,20 @@ If you need support for multidimensional array binding, implement a [`CustomPara
 
 TODO
 
+#### Arbitrary Types
+
+TODO
+
+#### Standard Collections
+
+TODO
+
+Supported methods:
+
+* [`Parameters::listOf(Class<E>, List<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#listOf(java.lang.Class,java.util.List))
+* [`Parameters::setOf(Class<E>, Set<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#setOf(java.lang.Class,java.util.List))
+* [`Parameters::mapOf(Class<K>, Class<V>, Map<K,V>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#mapOf(java.lang.Class,java.lang.Class,java.util.Map))
+
 ## Error Handling
 
 In general, a runtime [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) will be thrown when errors occur.  Often this will wrap the checked [`java.sql.SQLException`](https://docs.oracle.com/en/java/javase/21/docs/api/java.sql/java/sql/SQLException.html).
