@@ -1319,6 +1319,51 @@ public class DatabaseTests {
 		Assert.assertEquals("a=1,b=2", got);
 	}
 
+	@Test
+	public void testListOf_withoutBinder_failsFast() {
+		Database db = Database.withDataSource(createInMemoryDataSource("it_failfast_list")).build();
+		db.execute("CREATE TABLE t_dummy (id INT)");
+
+		try {
+			db.execute("INSERT INTO t_dummy(id) VALUES (?)",
+					Parameters.listOf(UUID.class, List.of(UUID.randomUUID())));
+			Assert.fail("Expected DatabaseException for TypedParameter without CustomParameterBinder");
+		} catch (DatabaseException e) {
+			Assert.assertTrue("Message should mention CustomParameterBinder",
+					e.getMessage() != null && e.getMessage().contains("CustomParameterBinder"));
+		}
+	}
+
+	@Test
+	public void testSetOf_withoutBinder_failsFast() {
+		Database db = Database.withDataSource(createInMemoryDataSource("it_failfast_set")).build();
+		db.execute("CREATE TABLE t_dummy (id INT)");
+
+		try {
+			db.execute("INSERT INTO t_dummy(id) VALUES (?)",
+					Parameters.setOf(UUID.class, Set.of(UUID.randomUUID())));
+			Assert.fail("Expected DatabaseException for TypedParameter without CustomParameterBinder");
+		} catch (DatabaseException e) {
+			Assert.assertTrue("Message should mention CustomParameterBinder",
+					e.getMessage() != null && e.getMessage().contains("CustomParameterBinder"));
+		}
+	}
+
+	@Test
+	public void testMapOf_withoutBinder_failsFast() {
+		Database db = Database.withDataSource(createInMemoryDataSource("it_failfast_map")).build();
+		db.execute("CREATE TABLE t_dummy (id INT)");
+
+		try {
+			db.execute("INSERT INTO t_dummy(id) VALUES (?)",
+					Parameters.mapOf(UUID.class, Integer.class, Map.of(UUID.randomUUID(), 1)));
+			Assert.fail("Expected DatabaseException for TypedParameter without CustomParameterBinder");
+		} catch (DatabaseException e) {
+			Assert.assertTrue("Message should mention CustomParameterBinder",
+					e.getMessage() != null && e.getMessage().contains("CustomParameterBinder"));
+		}
+	}
+
 	protected void createTestSchema(@Nonnull Database database) {
 		requireNonNull(database);
 		database.execute("""
