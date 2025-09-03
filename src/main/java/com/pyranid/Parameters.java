@@ -308,7 +308,7 @@ public final class Parameters {
 	 * {@link CustomParameterBinder#appliesTo(TargetType)} can match against the element type.
 	 * <p>
 	 * <strong>Note:</strong> this kind of parameter requires a corresponding {@link CustomParameterBinder}
-	 * to be registered; otherwise, binding will fall back or fail depending on configuration.
+	 * to be registered; otherwise, binding will fail-fast.
 	 *
 	 * @param elementType the {@link Class} representing the type of elements contained in the list;
 	 *                    used to preserve generic type information
@@ -335,7 +335,7 @@ public final class Parameters {
 	 * {@link CustomParameterBinder#appliesTo(TargetType)} can match against the element type.
 	 * <p>
 	 * <strong>Note:</strong> this kind of parameter requires a corresponding {@link CustomParameterBinder}
-	 * to be registered; otherwise, binding will fall back or fail depending on configuration.
+	 * to be registered; otherwise, binding will fail-fast.
 	 *
 	 * @param elementType the {@link Class} representing the type of elements contained in the set;
 	 *                    used to preserve generic type information
@@ -363,7 +363,7 @@ public final class Parameters {
 	 * {@link CustomParameterBinder#appliesTo(TargetType)} can match against the element type.
 	 * <p>
 	 * <strong>Note:</strong> this kind of parameter requires a corresponding {@link CustomParameterBinder}
-	 * to be registered; otherwise, binding will fall back or fail depending on configuration.
+	 * to be registered; otherwise, binding will fail-fast.
 	 *
 	 * @param keyType   the type of the map keys
 	 * @param valueType the type of the map values

@@ -803,7 +803,7 @@ database.execute("INSERT INTO vector_embedding (embedding, content) VALUES (?,?)
 
 #### SQL ARRAY
 
-Single-dimension array column binding is supported out-of-the-box.
+Single-dimension array binding is supported out-of-the-box.
 
 Supported methods:
 
