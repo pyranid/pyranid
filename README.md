@@ -805,6 +805,11 @@ database.execute("INSERT INTO vector_embedding (embedding, content) VALUES (?,?)
 
 Single-dimension array column binding is supported out-of-the-box.
 
+Supported methods:
+
+* [`Parameters::arrayOf(String, E[])`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#arrayOf(java.lang.String,E%5B%5D))
+* [`Parameters::arrayOf(String, List<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#arrayOf(java.lang.String,java.util.List))
+
 You might create a table with some array columns...
 
 ```sql
@@ -812,7 +817,7 @@ CREATE TABLE product (
   product_id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   name TEXT NOT NULL,
   vendor_flags INTEGER[] NOT NULL,
-  tags TEXT[]
+  tags VARCHAR[]
 );
 ```
 
@@ -836,7 +841,7 @@ database.execute("""
 );
 ```
 
-If you need support for multidimensional array storage, implement a [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) as outlined below. 
+If you need support for multidimensional array binding, implement a [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) as outlined below. 
 
 ### Custom Parameters
 
