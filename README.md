@@ -138,20 +138,6 @@ ResultSetMapper resultSetMapper = ResultSetMapper.withPlanCachingEnabled(false)
   }))
   .build();
 
-// You can also bring your own implementation for full customization.
-ResultSetMapper customResultSetMapper = new ResultSetMapper() {
-  @Nonnull
-  <T> Optional<T> map(
-    @Nonnull StatementContext<T> statementContext,
-    @Nonnull ResultSet resultSet,
-    @Nonnull Class<T> resultSetRowType,
-    @Nonnull InstanceProvider instanceProvider
-  ) throws SQLException {
-    // TODO: your own code mapping the current ResultSet row to an instance of T.
-    // Pyranid handles moving the ResultSet cursor for you
-  }
-};
-
 // Binds parameters to a SQL PreparedStatement.
 // You might use out-of-the-box defaults...
 PreparedStatementBinder basicPreparedStatementBinder = PreparedStatementBinder.withDefaultConfiguration();
@@ -188,19 +174,6 @@ PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCu
     }
   }  
 ));
-
-// You can also bring your own implementation for full customization.
-PreparedStatementBinder customPreparedStatementBinder = new PreparedStatementBinder() {
-  @Override
-  <T> void bindParameter(
-    @Nonnull StatementContext<T> statementContext,
-    @Nonnull PreparedStatement preparedStatement,
-    @Nonnull Integer parameterIndex,
-    @Nonnull Object parameter
-  ) throws SQLException {
-    // TODO: your own code that binds the parameter at the specified index to the PreparedStatement
-  }
-};
 
 // Optionally logs SQL statements
 StatementLogger statementLogger = new StatementLogger() {
