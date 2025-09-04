@@ -809,7 +809,7 @@ If you need support for multidimensional array binding, implement a [`CustomPara
 
 You may register instances of [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) to bind application-specific types to [`java.sql.PreparedStatement`](https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/PreparedStatement.html) however you like.
 
-This allows Pyranid to bind your Java objects as they are instead of sprinkling "convert X to database format" code throughout your system.
+This allows you to use your objects as-is with Pyranid instead of sprinkling "convert this object to database format" code throughout your system.
 
 #### Arbitrary Types
 
@@ -872,17 +872,15 @@ Database database = Database.withDataSource(dataSource)
   .build();
 ```
 
-TODO
-
 #### Standard Collections
 
-Runtime binding of generic types is made difficult by type erasure.  For convenience, Pyranid offers special parameters that perform type capture for standard [`List<E>)`](https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/List.html), [`Set<E>)`](https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/Set.html), and [`Map<K,V>)`](https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/Map.html) types:
+Runtime binding of generic types is made difficult by type erasure.  For convenience, Pyranid offers special parameters that perform type capture for standard [`List<E>`](https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/List.html), [`Set<E>)`](https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/Set.html), and [`Map<K,V>)`](https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/Map.html) types:
 
 * [`Parameters::listOf(Class<E>, List<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#listOf(java.lang.Class,java.util.List))
 * [`Parameters::setOf(Class<E>, Set<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#setOf(java.lang.Class,java.util.List))
 * [`Parameters::mapOf(Class<K>, Class<V>, Map<K,V>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#mapOf(java.lang.Class,java.lang.Class,java.util.Map))
 
-This enables 
+This makes it easy to create custom binders for common scenarios.
 
 For example, this code...
 
@@ -903,6 +901,8 @@ PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCu
     @Nonnull
     @Override
     public Boolean appliesTo(@Nonnull TargetType targetType) {
+      // For Parameters::mapOf(Class<K>, Class<V>, Map<K,V>), you'd say:
+      // matchesParameterizedType(Map.class, MyKey.class, MyValue.class)
       return targetType.matchesParameterizedType(List.class, UUID.class);
     }		
 			
@@ -956,8 +956,6 @@ For PostgreSQL, the following properties are also available:
 * `severity` (optional)
 * `table` (optional)
 * `where` (optional)
-
-Extended property support for Oracle and MySQL is planned.
 
 ### Practical Application
 
@@ -1043,6 +1041,8 @@ This is useful for tagging queries that should be handled specially. Some exampl
 * Marking a query as "hot" so we don't pollute logs with it
 * Marking a query as "known to be slow" so we don't flag slow query alerts for it
 * Your [`InstanceProvider`](https://javadoc.pyranid.com/com/pyranid/InstanceProvider.html) might provide custom instances based on resultset data
+* Your [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) might perform special mapping
+* Your [`PreparedStatementBinder`](https://javadoc.pyranid.com/com/pyranid/PreparedStatementBinder.html) might perform special binding
 
 ```java
 // Custom tagging system
