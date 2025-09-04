@@ -164,9 +164,7 @@ PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCu
     @Nonnull
     @Override
     public Boolean appliesTo(@Nonnull TargetType targetType) {
-      // Can also apply to non-parameterized types, e.g.
-      // targetType.matchesClass(MonthYear.class) for MonthYear
-      return targetType.matchesParameterizedType(List.class, UUID.class);
+      return targetType.matchesClass(Money.class);
     }		
 			
     @Nonnull
@@ -177,14 +175,12 @@ PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCu
       @Nonnull Integer parameterIndex,
       @Nonnull Object parameter
     ) throws SQLException {
-      // Convert UUIDs to a comma-delimited string, or null for the empty list 
-      List<UUID> uuids = (List<UUID>) param;
-      String uuidsAsString = uuids.isEmpty()
-        ? null
-        : uuids.stream().map(Object::toString).collect(Collectors.joining(","));
-
+      // Convert Money to a string representation for binding  
+      Money money = (Money) parameter;
+      String moneyAsString = money.format(Locale.forLanguageTag("pt-BR"));
+			
       // Bind to the PreparedStatement
-      preparedStatement.setString(parameterIndex, uuidsAsString);
+      preparedStatement.setString(parameterIndex, moneyAsString);
 
       // Or return BindingResult.FALLBACK to indicate "I don't want to do custom binding"
       // and Pyranid will fall back to the registered PreparedStatementBinder's binding behavior
@@ -845,27 +841,133 @@ If you need support for multidimensional array binding, implement a [`CustomPara
 
 ### Custom Parameters
 
-TODO
+You may register instances of [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) to bind application-specific types to [`java.sql.PreparedStatement`](https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/PreparedStatement.html) however you like.
+
+This allows Pyranid to bind your Java objects as they are instead of sprinkling "convert X to database format" code throughout your system.
 
 #### Arbitrary Types
+
+Let's define a simple type.
+
+```java
+class HexColor {
+  int r, g, b;
+
+  HexColor(int r, int g, int b) {
+    this.r = r; this.g = g; this.b = b;
+  }
+
+  String toHexString() {
+    return String.format("#%02X%02X%02X", r, g, b);
+  }
+
+  static HexColor fromHexString(String s) {
+    int r = Integer.parseInt(s.substring(1, 3), 16);
+    int g = Integer.parseInt(s.substring(3, 5), 16);
+    int b = Integer.parseInt(s.substring(5, 7), 16);
+    return new HexColor(r, g, b);
+  }
+}
+```
+
+Then, we'll register a [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) to handle binding it:
+
+```java
+PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCustomParameterBinders(List.of(
+  new CustomParameterBinder() {
+    @Nonnull
+    @Override
+    public Boolean appliesTo(@Nonnull TargetType targetType) {
+      return targetType.matchesClass(HexColor.class);
+    }		
+			
+    @Nonnull
+    @Override
+    public BindingResult bind(
+      @Nonnull StatementContext<?> statementContext, 
+      @Nonnull PreparedStatement preparedStatement,
+      @Nonnull Integer parameterIndex,
+      @Nonnull Object parameter
+    ) throws SQLException {
+      HexColor hexColor = (HexColor) parameter; 
+
+      // Bind to the PreparedStatement as a value like "6a5acd"
+      preparedStatement.setString(parameterIndex, hexColor.toHexString());
+
+      // Or return BindingResult.FALLBACK to indicate "I don't want to do custom binding"
+      // and Pyranid will fall back to the registered PreparedStatementBinder's binding behavior
+      return BindingResult.HANDLED;
+    }
+  }  
+));
+
+Database database = Database.withDataSource(dataSource)
+  .preparedStatementBinder(preparedStatementBinder)
+  .build();
+```
 
 TODO
 
 #### Standard Collections
 
-TODO
-
-Supported methods:
+Runtime binding of generic types is made difficult by type erasure.  For convenience, Pyranid offers special parameters that perform type capture for standard [`List<E>)`](https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/List.html), [`Set<E>)`](https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/Set.html), and [`Map<K,V>)`](https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/Map.html) types:
 
 * [`Parameters::listOf(Class<E>, List<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#listOf(java.lang.Class,java.util.List))
 * [`Parameters::setOf(Class<E>, Set<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#setOf(java.lang.Class,java.util.List))
 * [`Parameters::mapOf(Class<K>, Class<V>, Map<K,V>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#mapOf(java.lang.Class,java.lang.Class,java.util.Map))
 
+This enables 
+
+For example, this code...
+
+```java
+List<UUID> ids = List.of(
+  UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+  UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+);
+
+database.execute("INSERT INTO t(v) VALUES (?)", Parameters.listOf(UUID.class, ids));
+```
+
+...would be handled by this custom binder, because `targetType.matchesParameterizedType(List.class, UUID.class)` returns `true` thanks to runtime type capturing:
+
+```java
+PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCustomParameterBinders(List.of(
+  new CustomParameterBinder() {
+    @Nonnull
+    @Override
+    public Boolean appliesTo(@Nonnull TargetType targetType) {
+      return targetType.matchesParameterizedType(List.class, UUID.class);
+    }		
+			
+    @Nonnull
+    @Override
+    public BindingResult bind(
+      @Nonnull StatementContext<?> statementContext, 
+      @Nonnull PreparedStatement preparedStatement,
+      @Nonnull Integer parameterIndex,
+      @Nonnull Object parameter
+    ) throws SQLException {
+      // Convert UUIDs to a comma-delimited string, or null for the empty list 
+      List<UUID> uuids = (List<UUID>) param;
+      String uuidsAsString = uuids.isEmpty()
+        ? null
+        : uuids.stream().map(Object::toString).collect(Collectors.joining(","));
+
+      // Bind to the PreparedStatement
+      preparedStatement.setString(parameterIndex, uuidsAsString);
+			
+      return BindingResult.HANDLED;
+    }
+  }  
+));
+```
+
 ## Error Handling
 
-In general, a runtime [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) will be thrown when errors occur.  Often this will wrap the checked [`java.sql.SQLException`](https://docs.oracle.com/en/java/javase/21/docs/api/java.sql/java/sql/SQLException.html).
+In general, a runtime [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) will be thrown when errors occur.  Often this will wrap the checked [`java.sql.SQLException`](https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/SQLException.html).
 
-For convenience, [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) exposes additional properties, which are populated if provided by the underlying [`java.sql.SQLException`](https://docs.oracle.com/en/java/javase/21/docs/api/java.sql/java/sql/SQLException.html):
+For convenience, [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) exposes additional properties, which are populated if provided by the underlying [`java.sql.SQLException`](https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/SQLException.html):
 
 * `errorCode` (optional)
 * `sqlState` (optional)
@@ -931,7 +1033,7 @@ Examples of usage include:
 
 * Writing queries and timing information to your logging system
 * Picking out slow queries for special logging/reporting
-* Collecting a set of queries executed across a unit of work for bulk analysis (e.g. a [`ThreadLocal`](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/ThreadLocal.html) scoped to a single web request)
+* Collecting a set of queries executed across a unit of work for bulk analysis (e.g. a [`ThreadLocal`](https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/ThreadLocal.html) scoped to a single web request)
 
 ```java
 Database database = Database.withDataSource(dataSource)
