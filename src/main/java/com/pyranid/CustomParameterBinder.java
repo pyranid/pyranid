@@ -37,7 +37,7 @@ public interface CustomParameterBinder {
 	 * @param preparedStatement the prepared statement to bind to
 	 * @param parameterIndex    1-based parameter index at which to perform the binding
 	 * @param parameter         the parameter to bind at the specified index
-	 * @return {@link BindingResult#HANDLED} if the custom binding was performed, or {@link BindingResult#FALLBACK} to fall back to default {@link PreparedStatementBinder} behavior
+	 * @return {@link BindingResult#handled()} if the custom binding was performed, or {@link BindingResult#fallback()} to fall back to default {@link PreparedStatementBinder} behavior
 	 * @throws SQLException if an error occurs during binding
 	 */
 	@Nonnull
@@ -62,11 +62,44 @@ public interface CustomParameterBinder {
 	/**
 	 * Result of a custom parameter binding attempt.
 	 * <p>
-	 * Use {@link #HANDLED} to indicate a successfully-bound value or {@link #FALLBACK} to indicate "didn't bind; fall back to the registered {@link PreparedStatementBinder} behavior".</p>
+	 * Use {@link #handled()} to indicate a successfully-bound value or {@link #fallback()} to indicate "didn't bind; fall back to the registered {@link PreparedStatementBinder} behavior".</p>
 	 */
 	@ThreadSafe
-	enum BindingResult {
-		HANDLED,
-		FALLBACK
+	sealed abstract class BindingResult permits BindingResult.Handled, BindingResult.Fallback {
+		private BindingResult() {}
+
+		/**
+		 * Indicates that this mapper successfully bound a custom value.
+		 *
+		 * @return a result which indicates that this binder successfully bound a custom value
+		 */
+		@Nonnull
+		public static BindingResult handled() {
+			return Handled.INSTANCE;
+		}
+
+		/**
+		 * Indicates that this mapper did not bind a custom value and prefers to fall back to the behavior of the registered {@link PreparedStatementBinder}.
+		 *
+		 * @return a result which indicates that this binder did not bind a custom value
+		 */
+		@Nonnull
+		public static BindingResult fallback() {
+			return Fallback.INSTANCE;
+		}
+
+		@ThreadSafe
+		static final class Handled extends BindingResult {
+			static final Handled INSTANCE = new Handled();
+
+			private Handled() {}
+		}
+
+		@ThreadSafe
+		static final class Fallback extends BindingResult {
+			static final Fallback INSTANCE = new Fallback();
+
+			private Fallback() {}
+		}
 	}
 }

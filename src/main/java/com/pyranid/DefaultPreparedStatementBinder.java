@@ -336,7 +336,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		if (cached != null) {
 			BindingResult bindingResult = requireNonNull(cached.bind(statementContext, preparedStatement, parameterIndex, parameter));
 
-			if (bindingResult == BindingResult.HANDLED)
+			if (bindingResult instanceof BindingResult.Handled)
 				return true;
 
 			// If it no longer applies, fall through to the rest (keep the hint; may win next time)
@@ -346,7 +346,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		for (CustomParameterBinder customParameterBinder : candidates) {
 			BindingResult bindingResult = requireNonNull(customParameterBinder.bind(statementContext, preparedStatement, parameterIndex, parameter));
 
-			if (bindingResult == BindingResult.HANDLED) {
+			if (bindingResult instanceof BindingResult.Handled) {
 				getPreferredBinderByInboundKey().putIfAbsent(key, customParameterBinder);
 				return true;
 			}

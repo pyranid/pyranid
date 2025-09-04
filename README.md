@@ -161,9 +161,9 @@ PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCu
       // Bind to the PreparedStatement
       preparedStatement.setString(parameterIndex, moneyAsString);
 
-      // Or return BindingResult.FALLBACK to indicate "I don't want to do custom binding"
+      // Or return BindingResult.fallback() to indicate "I don't want to do custom binding"
       // and Pyranid will fall back to the registered PreparedStatementBinder's binding behavior
-      return BindingResult.HANDLED;
+      return BindingResult.handled();
     }
   }  
 ));
@@ -860,9 +860,9 @@ PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCu
       // Bind to the PreparedStatement as a value like "6a5acd"
       preparedStatement.setString(parameterIndex, hexColor.toHexString());
 
-      // Or return BindingResult.FALLBACK to indicate "I don't want to do custom binding"
+      // Or return BindingResult.fallback() to indicate "I don't want to do custom binding"
       // and Pyranid will fall back to the registered PreparedStatementBinder's binding behavior
-      return BindingResult.HANDLED;
+      return BindingResult.handled();
     }
   }  
 ));
@@ -923,7 +923,7 @@ PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCu
       // Bind to the PreparedStatement
       preparedStatement.setString(parameterIndex, uuidsAsString);
 			
-      return BindingResult.HANDLED;
+      return BindingResult.handled();
     }
   }  
 ));

@@ -794,10 +794,10 @@ public class DatabaseTests {
 		CustomParameterBinder localeBinder = new CustomParameterBinder() {
 			@Override
 			public BindingResult bind(StatementContext<?> ctx, java.sql.PreparedStatement ps, Integer index, Object param) throws java.sql.SQLException {
-				if (!(param instanceof Locale)) return BindingResult.FALLBACK;
+				if (!(param instanceof Locale)) return BindingResult.fallback();
 				calls.incrementAndGet();
 				ps.setString(index, "CUSTOM:" + ((Locale) param).toLanguageTag());
-				return BindingResult.HANDLED;
+				return BindingResult.handled();
 			}
 
 			@Override
@@ -916,7 +916,7 @@ public class DatabaseTests {
 				Assert.assertTrue("Expected Locale", param instanceof Locale);
 				calls.incrementAndGet();
 				ps.setString(idx, "CUSTOM:" + ((Locale) param).toLanguageTag());
-				return BindingResult.HANDLED;
+				return BindingResult.handled();
 			}
 
 			@Nonnull
@@ -972,7 +972,7 @@ public class DatabaseTests {
 			public BindingResult bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) throws SQLException {
 				called.incrementAndGet();
 				ps.setString(idx, "OK");
-				return BindingResult.HANDLED;
+				return BindingResult.handled();
 			}
 
 			@Nonnull
@@ -1012,7 +1012,7 @@ public class DatabaseTests {
 			public BindingResult bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) throws SQLException {
 				firstCalls.incrementAndGet();
 				ps.setString(idx, "FIRST");
-				return BindingResult.HANDLED;
+				return BindingResult.handled();
 			}
 
 			@Nonnull
@@ -1028,7 +1028,7 @@ public class DatabaseTests {
 			public BindingResult bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) throws SQLException {
 				secondCalls.incrementAndGet();
 				ps.setString(idx, "SECOND");
-				return BindingResult.HANDLED;
+				return BindingResult.handled();
 			}
 
 			@Nonnull
@@ -1069,11 +1069,11 @@ public class DatabaseTests {
 			@Nonnull
 			@Override
 			public BindingResult bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) throws SQLException {
-				if (!(param instanceof List<?> list)) return BindingResult.FALLBACK;
-				for (Object o : list) if (!(o instanceof UUID)) return BindingResult.FALLBACK;
+				if (!(param instanceof List<?> list)) return BindingResult.fallback();
+				for (Object o : list) if (!(o instanceof UUID)) return BindingResult.fallback();
 				String joined = list.stream().map(Object::toString).reduce((a, b) -> a + "," + b).orElse("");
 				ps.setString(idx, joined);
-				return BindingResult.HANDLED;
+				return BindingResult.handled();
 			}
 
 			@Nonnull
@@ -1113,7 +1113,7 @@ public class DatabaseTests {
 			@Override
 			public BindingResult bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) {
 				falseCalls.incrementAndGet();
-				return BindingResult.FALLBACK; // claim applicability but decide not to handle now
+				return BindingResult.fallback(); // claim applicability but decide not to handle now
 			}
 
 			@Nonnull
@@ -1184,9 +1184,9 @@ public class DatabaseTests {
 			@Nonnull
 			@Override
 			public BindingResult bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) throws SQLException {
-				if (!(param instanceof Locale l)) return BindingResult.FALLBACK;
+				if (!(param instanceof Locale l)) return BindingResult.fallback();
 				ps.setString(idx, l.toLanguageTag());
-				return BindingResult.HANDLED;
+				return BindingResult.handled();
 			}
 
 			@Nonnull
@@ -1222,8 +1222,8 @@ public class DatabaseTests {
 																@Nonnull PreparedStatement ps,
 																@Nonnull Integer idx,
 																@Nonnull Object param) throws SQLException {
-				if (!(param instanceof Set<?> set)) return BindingResult.FALLBACK;
-				for (Object o : set) if (!(o instanceof UUID)) return BindingResult.FALLBACK;
+				if (!(param instanceof Set<?> set)) return BindingResult.fallback();
+				for (Object o : set) if (!(o instanceof UUID)) return BindingResult.fallback();
 
 				// Stable serialization: sort lexicographically then join by comma
 				String joined = set.stream()
@@ -1232,7 +1232,7 @@ public class DatabaseTests {
 						.reduce((a, b) -> a + "," + b)
 						.orElse("");
 				ps.setString(idx, joined);
-				return BindingResult.HANDLED;
+				return BindingResult.handled();
 			}
 
 			@Nonnull
@@ -1273,12 +1273,12 @@ public class DatabaseTests {
 																@Nonnull PreparedStatement ps,
 																@Nonnull Integer idx,
 																@Nonnull Object param) throws SQLException {
-				if (!(param instanceof Map<?, ?> map)) return BindingResult.FALLBACK;
+				if (!(param instanceof Map<?, ?> map)) return BindingResult.fallback();
 
 				// Validate key/value types at runtime
 				for (Map.Entry<?, ?> e : map.entrySet()) {
-					if (!(e.getKey() instanceof String)) return BindingResult.FALLBACK;
-					if (!(e.getValue() instanceof Integer)) return BindingResult.FALLBACK;
+					if (!(e.getKey() instanceof String)) return BindingResult.fallback();
+					if (!(e.getValue() instanceof Integer)) return BindingResult.fallback();
 				}
 
 				// Stable serialization: sort by key, "k=v" pairs joined by comma
@@ -1290,7 +1290,7 @@ public class DatabaseTests {
 						.reduce((a, b) -> a + "," + b)
 						.orElse("");
 				ps.setString(idx, joined);
-				return BindingResult.HANDLED;
+				return BindingResult.handled();
 			}
 
 			@Nonnull
