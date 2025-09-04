@@ -97,10 +97,6 @@ InstanceProvider instanceProvider = new InstanceProvider() {
 };
 
 // Handles copying data from a ResultSet row to an instance of the specified type.
-// You might use out-of-the-box defaults...
-ResultSetMapper basicResultSetMapper = ResultSetMapper.withDefaultConfiguration();
-
-// ...or turn some knobs.
 // Plan caching trades memory for faster mapping of wide ResultSets.
 // Normalization locale should match the language of your database tables/column names.
 // CustomColumnMappers supply "surgical" overrides to handle custom types
@@ -139,12 +135,8 @@ ResultSetMapper resultSetMapper = ResultSetMapper.withPlanCachingEnabled(false)
   .build();
 
 // Binds parameters to a SQL PreparedStatement.
-// You might use out-of-the-box defaults...
-PreparedStatementBinder basicPreparedStatementBinder = PreparedStatementBinder.withDefaultConfiguration();
-
-// ...or turn some knobs.
 // CustomParameterBinders supply "surgical" overrides to handle custom types.
-// Here, we transform List<UUID> types into a comma-delimited string 
+// Here, we transform Money instances into a DB-friendly string representation 
 PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCustomParameterBinders(List.of(
   new CustomParameterBinder() {
     @Nonnull
@@ -161,9 +153,10 @@ PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCu
       @Nonnull Integer parameterIndex,
       @Nonnull Object parameter
     ) throws SQLException {
-      // Convert Money to a string representation for binding  
+      // Convert Money to a string representation for binding.
+      // Don't need null checks - this method is only invoked when the value is non-null
       Money money = (Money) parameter;
-      String moneyAsString = money.format(Locale.forLanguageTag("pt-BR"));
+      String moneyAsString = money.stringValue();
 			
       // Bind to the PreparedStatement
       preparedStatement.setString(parameterIndex, moneyAsString);
