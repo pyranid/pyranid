@@ -858,7 +858,7 @@ PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCu
     ) throws SQLException {
       HexColor hexColor = (HexColor) parameter; 
 
-      // Bind to the PreparedStatement as a value like "6a5acd"
+      // Bind to the PreparedStatement as a value like "#6a5acd"
       preparedStatement.setString(parameterIndex, hexColor.toHexString());
 
       // Or return BindingResult.fallback() to indicate "I don't want to do custom binding"
@@ -871,6 +871,21 @@ PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCu
 Database database = Database.withDataSource(dataSource)
   .preparedStatementBinder(preparedStatementBinder)
   .build();
+```
+
+With the custom binder in place, your application code might look like this:
+
+```java
+// Given a reference to a hex color...
+UUID themeId = ...;
+HexColor backgroundColor = HexColor.fromHexString("#6a5acd");
+
+// ...we use the reference as-is and Pyranid will apply the custom binder
+database.execute("""
+  UPDATE theme
+  SET background_color=?
+  WHERE theme_id=? 
+""", backgroundColor, themeId);
 ```
 
 #### Standard Collections
