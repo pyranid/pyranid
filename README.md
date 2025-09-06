@@ -929,6 +929,11 @@ PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCu
   }  
 ));
 ```
+##### Heads Up!
+
+If you use [`Parameters::listOf(Class<E>, List<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#listOf(java.lang.Class,java.util.List)), [`Parameters::setOf(Class<E>, Set<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#setOf(java.lang.Class,java.util.List)), or [`Parameters::mapOf(Class<K>, Class<V>, Map<K,V>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#mapOf(java.lang.Class,java.lang.Class,java.util.Map)), you must define a corresponding [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) to handle them.  These special parameter types do not automatically work out-of-the-box because Pyranid cannot reliably guess how you intend to bind them.
+
+Pyranid will detect this missing-binder scenario and throw an exception to indicate programmer error.
 
 ## Error Handling
 
