@@ -580,9 +580,12 @@ car = database.queryForObject("SELECT some_id AS car_id, some_color AS color FRO
 * `LocalDateTime` for `TIMESTAMP`
 * `OffsetTime` for `TIME WITH TIMEZONE`
 * `OffsetDateTime` for `TIMESTAMP WITH TIMEZONE`
+* `java.sql.Timestamp`
+* `java.sql.Date`
 * `ZoneId`
 * `TimeZone`
 * `Locale` (IETF BCP 47 "language tag" format)
+* `Currency`
 
 ### Custom Mapping
 

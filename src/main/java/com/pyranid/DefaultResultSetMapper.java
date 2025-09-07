@@ -88,12 +88,14 @@ import static java.util.stream.Collectors.toSet;
 @ThreadSafe
 class DefaultResultSetMapper implements ResultSetMapper {
 	@Nonnull
+	private static final Map<Class<?>, Class<?>> WRAPPER_CLASSES_BY_PRIMITIVE_CLASS;
+
+	@Nonnull
 	private final Locale normalizationLocale;
 	@Nonnull
 	private final List<CustomColumnMapper> customColumnMappers;
 	@Nonnull
 	private final Boolean planCachingEnabled;
-
 	// Enables faster lookup of CustomColumnMapper instances by remembering which TargetType they've been used with before.
 	@Nonnull
 	private final ConcurrentMap<TargetType, List<CustomColumnMapper>> customColumnMappersByTargetTypeCache;
@@ -106,6 +108,19 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	// Only used if row-planning is enabled
 	@Nonnull
 	private final ConcurrentMap<PlanKey, RowPlan<?>> rowPlanningCache = new ConcurrentHashMap<>();
+
+	static {
+		WRAPPER_CLASSES_BY_PRIMITIVE_CLASS = Map.of(
+				boolean.class, Boolean.class,
+				byte.class, Byte.class,
+				short.class, Short.class,
+				int.class, Integer.class,
+				long.class, Long.class,
+				float.class, Float.class,
+				double.class, Double.class,
+				char.class, Character.class
+		);
+	}
 
 	// Internal cache key for column mapper applicability cache
 	@ThreadSafe
@@ -172,6 +187,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			return u.getValue(); // Optional<Object> already
 
 		return Optional.empty();
+	}
+
+	@Nonnull
+	protected Class<?> boxedClass(@Nonnull Class<?> type) {
+		requireNonNull(type);
+		return type.isPrimitive() ? WRAPPER_CLASSES_BY_PRIMITIVE_CLASS.get(type) : type;
 	}
 
 	@Nonnull
@@ -593,6 +614,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 								.or(() -> convertResultSetValueToPropertyType(statementContext, rawValue, recordComponentType))
 								.orElse(null);
 
+				// It's considered programmer error to have a NULL value in the ResultSet and map it to a primitive (which does not support null)
+				if (value == null && recordComponentType.isPrimitive())
+					throw new DatabaseException(format("Column '%s' is NULL but record component '%s' of %s is primitive (%s). Use a non-primitive type or COALESCE/CAST in SQL.",
+							potentialPropertyName, recordComponent.getName(), resultSetRowType.getSimpleName(), recordComponentType.getSimpleName()));
+
 				if (value != null && !recordComponentType.isAssignableFrom(value.getClass())) {
 					String resultSetTypeDescription = value.getClass().toString();
 					throw new DatabaseException(
@@ -679,6 +705,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 						tryCustomColumnMappers(statementContext, resultSet, rawValue, targetType, null, propertyName, instanceProvider)
 								.or(() -> convertResultSetValueToPropertyType(statementContext, rawValue, writeMethodParameterType))
 								.orElse(null);
+
+				// It's considered programmer error to have a NULL value in the ResultSet and map it to a primitive (which does not support null)
+				if (value == null && writeMethodParameterType.isPrimitive())
+					throw new DatabaseException(format("Column '%s' is NULL but bean property '%s' of %s is primitive (%s). Use a non-primitive type or COALESCE/CAST in SQL.",
+							propertyName, propertyDescriptor.getName(), resultSetRowType.getSimpleName(), writeMethodParameterType.getSimpleName()));
 
 				if (value != null && !writeMethodParameterType.isAssignableFrom(value.getClass())) {
 					String resultSetTypeDescription = value.getClass().toString();
@@ -783,162 +814,202 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		if (resultSetValue == null)
 			return Optional.empty();
 
+		// Normalize primitives to wrappers
+		Class<?> targetType = boxedClass(propertyType);
+
 		// Numbers
 		if (resultSetValue instanceof BigDecimal bigDecimal) {
-			if (BigDecimal.class.isAssignableFrom(propertyType))
+			if (BigDecimal.class.isAssignableFrom(targetType))
 				return Optional.of(bigDecimal);
-			if (BigInteger.class.isAssignableFrom(propertyType))
+			if (BigInteger.class.isAssignableFrom(targetType))
 				return Optional.of(bigDecimal.toBigInteger());
 		}
 
 		if (resultSetValue instanceof BigInteger bigInteger) {
-			if (BigDecimal.class.isAssignableFrom(propertyType))
+			if (BigDecimal.class.isAssignableFrom(targetType))
 				return Optional.of(new BigDecimal(bigInteger));
-			if (BigInteger.class.isAssignableFrom(propertyType))
+			if (BigInteger.class.isAssignableFrom(targetType))
 				return Optional.of(bigInteger);
 		}
 
 		if (resultSetValue instanceof Number number) {
-			if (Byte.class.isAssignableFrom(propertyType))
+			if (Byte.class.isAssignableFrom(targetType))
 				return Optional.of(number.byteValue());
-			if (Short.class.isAssignableFrom(propertyType))
+			if (Short.class.isAssignableFrom(targetType))
 				return Optional.of(number.shortValue());
-			if (Integer.class.isAssignableFrom(propertyType))
+			if (Integer.class.isAssignableFrom(targetType))
 				return Optional.of(number.intValue());
-			if (Long.class.isAssignableFrom(propertyType))
+			if (Long.class.isAssignableFrom(targetType))
 				return Optional.of(number.longValue());
-			if (Float.class.isAssignableFrom(propertyType))
+			if (Float.class.isAssignableFrom(targetType))
 				return Optional.of(number.floatValue());
-			if (Double.class.isAssignableFrom(propertyType))
+			if (Double.class.isAssignableFrom(targetType))
 				return Optional.of(number.doubleValue());
-			if (BigDecimal.class.isAssignableFrom(propertyType))
+			if (BigDecimal.class.isAssignableFrom(targetType))
 				return Optional.of(BigDecimal.valueOf(number.doubleValue()));
-			if (BigInteger.class.isAssignableFrom(propertyType))
+			if (BigInteger.class.isAssignableFrom(targetType))
 				return Optional.of(BigDecimal.valueOf(number.doubleValue()).toBigInteger());
 		}
 
 		// Legacy java.sql.* coming from drivers
 		if (resultSetValue instanceof java.sql.Timestamp timestamp) {
-			if (Date.class.isAssignableFrom(propertyType))
+			if (Date.class.isAssignableFrom(targetType))
 				return Optional.of(timestamp);
-			if (Instant.class.isAssignableFrom(propertyType))
+			if (Instant.class.isAssignableFrom(targetType))
 				return Optional.of(timestamp.toInstant());
-			if (LocalDate.class.isAssignableFrom(propertyType))
+			if (LocalDate.class.isAssignableFrom(targetType))
 				return Optional.of(timestamp.toLocalDateTime().toLocalDate());
-			if (LocalDateTime.class.isAssignableFrom(propertyType))
+			if (LocalDateTime.class.isAssignableFrom(targetType))
 				return Optional.of(timestamp.toLocalDateTime());
-			if (OffsetDateTime.class.isAssignableFrom(propertyType))
+			if (OffsetDateTime.class.isAssignableFrom(targetType))
 				return Optional.of(timestamp.toInstant().atZone(statementContext.getTimeZone()).toOffsetDateTime());
 		}
 
 		if (resultSetValue instanceof java.sql.Date date) {
-			if (Date.class.isAssignableFrom(propertyType))
+			if (Date.class.isAssignableFrom(targetType))
 				return Optional.of(date);
-			if (Instant.class.isAssignableFrom(propertyType))
+			if (Instant.class.isAssignableFrom(targetType))
 				return Optional.of(date.toInstant());
-			if (LocalDate.class.isAssignableFrom(propertyType))
+			if (LocalDate.class.isAssignableFrom(targetType))
 				return Optional.of(date.toLocalDate());
-			if (LocalDateTime.class.isAssignableFrom(propertyType))
+			if (LocalDateTime.class.isAssignableFrom(targetType))
 				return Optional.of(LocalDateTime.ofInstant(date.toInstant(), statementContext.getTimeZone()));
 		}
 
 		if (resultSetValue instanceof java.sql.Time time) {
-			if (LocalTime.class.isAssignableFrom(propertyType))
+			if (LocalTime.class.isAssignableFrom(targetType))
 				return Optional.of(time.toLocalTime());
 		}
 
 		// New java.time values (preferred)
 		if (resultSetValue instanceof Instant instant) {
-			if (Instant.class.isAssignableFrom(propertyType))
+			if (Instant.class.isAssignableFrom(targetType))
 				return Optional.of(instant);
-			if (Date.class.isAssignableFrom(propertyType))
+			if (Date.class.isAssignableFrom(targetType))
 				return Optional.of(Date.from(instant));
-			if (LocalDateTime.class.isAssignableFrom(propertyType))
+			if (LocalDateTime.class.isAssignableFrom(targetType))
 				return Optional.of(instant.atZone(statementContext.getTimeZone()).toLocalDateTime());
-			if (LocalDate.class.isAssignableFrom(propertyType))
+			if (LocalDate.class.isAssignableFrom(targetType))
 				return Optional.of(instant.atZone(statementContext.getTimeZone()).toLocalDate());
-			if (OffsetDateTime.class.isAssignableFrom(propertyType))
+			if (OffsetDateTime.class.isAssignableFrom(targetType))
 				return Optional.of(instant.atZone(statementContext.getTimeZone()).toOffsetDateTime());
-			if (java.sql.Timestamp.class.isAssignableFrom(propertyType))
+			if (java.sql.Timestamp.class.isAssignableFrom(targetType))
 				return Optional.of(Timestamp.from(instant));
-			if (java.sql.Date.class.isAssignableFrom(propertyType))
+			if (java.sql.Date.class.isAssignableFrom(targetType))
 				return Optional.of(java.sql.Date.valueOf(instant.atZone(statementContext.getTimeZone()).toLocalDate()));
 		}
 
 		if (resultSetValue instanceof LocalDateTime localDateTime) {
-			if (LocalDateTime.class.isAssignableFrom(propertyType))
+			if (LocalDateTime.class.isAssignableFrom(targetType))
 				return Optional.of(localDateTime);
-			if (Instant.class.isAssignableFrom(propertyType))
+			if (Instant.class.isAssignableFrom(targetType))
 				return Optional.of(localDateTime.atZone(statementContext.getTimeZone()).toInstant());
-			if (Date.class.isAssignableFrom(propertyType))
+			if (Date.class.isAssignableFrom(targetType))
 				return Optional.of(Date.from(localDateTime.atZone(statementContext.getTimeZone()).toInstant()));
-			if (LocalDate.class.isAssignableFrom(propertyType))
+			if (LocalDate.class.isAssignableFrom(targetType))
 				return Optional.of(localDateTime.toLocalDate());
-			if (OffsetDateTime.class.isAssignableFrom(propertyType))
+			if (OffsetDateTime.class.isAssignableFrom(targetType))
 				return Optional.of(localDateTime.atZone(statementContext.getTimeZone()).toOffsetDateTime());
-			if (java.sql.Timestamp.class.isAssignableFrom(propertyType))
+			if (java.sql.Timestamp.class.isAssignableFrom(targetType))
 				return Optional.of(Timestamp.valueOf(localDateTime));
-			if (java.sql.Date.class.isAssignableFrom(propertyType))
+			if (java.sql.Date.class.isAssignableFrom(targetType))
 				return Optional.of(java.sql.Date.valueOf(localDateTime.toLocalDate()));
 		}
 
 		if (resultSetValue instanceof OffsetDateTime offsetDateTime) {
-			if (OffsetDateTime.class.isAssignableFrom(propertyType))
+			if (OffsetDateTime.class.isAssignableFrom(targetType))
 				return Optional.of(offsetDateTime);
-			if (Instant.class.isAssignableFrom(propertyType))
+			if (Instant.class.isAssignableFrom(targetType))
 				return Optional.of(offsetDateTime.toInstant());
-			if (LocalDateTime.class.isAssignableFrom(propertyType))
+			if (LocalDateTime.class.isAssignableFrom(targetType))
 				return Optional.of(offsetDateTime.atZoneSameInstant(statementContext.getTimeZone()).toLocalDateTime());
-			if (Date.class.isAssignableFrom(propertyType))
+			if (Date.class.isAssignableFrom(targetType))
 				return Optional.of(Date.from(offsetDateTime.toInstant()));
-			if (java.sql.Timestamp.class.isAssignableFrom(propertyType))
+			if (java.sql.Timestamp.class.isAssignableFrom(targetType))
 				return Optional.of(Timestamp.from(offsetDateTime.toInstant()));
 		}
 
 		if (resultSetValue instanceof LocalDate localDate) {
-			if (LocalDate.class.isAssignableFrom(propertyType))
+			if (LocalDate.class.isAssignableFrom(targetType))
 				return Optional.of(localDate);
-			if (LocalDateTime.class.isAssignableFrom(propertyType))
+			if (LocalDateTime.class.isAssignableFrom(targetType))
 				return Optional.of(localDate.atStartOfDay());
-			if (Instant.class.isAssignableFrom(propertyType))
+			if (Instant.class.isAssignableFrom(targetType))
 				return Optional.of(localDate.atStartOfDay(statementContext.getTimeZone()).toInstant());
-			if (java.sql.Date.class.isAssignableFrom(propertyType))
+			if (java.sql.Date.class.isAssignableFrom(targetType))
 				return Optional.of(java.sql.Date.valueOf(localDate));
-			if (Date.class.isAssignableFrom(propertyType))
+			if (Date.class.isAssignableFrom(targetType))
 				return Optional.of(Date.from(localDate.atStartOfDay(statementContext.getTimeZone()).toInstant()));
 		}
 
 		if (resultSetValue instanceof LocalTime localTime) {
-			if (LocalTime.class.isAssignableFrom(propertyType))
+			if (LocalTime.class.isAssignableFrom(targetType))
 				return Optional.of(localTime);
-			if (java.sql.Time.class.isAssignableFrom(propertyType))
+			if (java.sql.Time.class.isAssignableFrom(targetType))
 				return Optional.of(java.sql.Time.valueOf(localTime));
 		}
 
 		if (resultSetValue instanceof OffsetTime offsetTime) {
-			if (OffsetTime.class.isAssignableFrom(propertyType))
+			if (OffsetTime.class.isAssignableFrom(targetType))
 				return Optional.of(offsetTime);
-			if (LocalTime.class.isAssignableFrom(propertyType))
+			if (LocalTime.class.isAssignableFrom(targetType))
 				return Optional.of(offsetTime.toLocalTime());
-			if (java.sql.Time.class.isAssignableFrom(propertyType))
+			if (java.sql.Time.class.isAssignableFrom(targetType))
 				return Optional.of(java.sql.Time.valueOf(offsetTime.toLocalTime()));
 		}
 
-		if (UUID.class.isAssignableFrom(propertyType)) {
+		if (UUID.class.isAssignableFrom(targetType)) {
 			return Optional.ofNullable(UUID.fromString(resultSetValue.toString()));
-		} else if (ZoneId.class.isAssignableFrom(propertyType)) {
+		} else if (ZoneId.class.isAssignableFrom(targetType)) {
 			return Optional.ofNullable(ZoneId.of(resultSetValue.toString()));
-		} else if (TimeZone.class.isAssignableFrom(propertyType)) {
+		} else if (TimeZone.class.isAssignableFrom(targetType)) {
 			return Optional.ofNullable(TimeZone.getTimeZone(resultSetValue.toString()));
-		} else if (Locale.class.isAssignableFrom(propertyType)) {
+		} else if (Locale.class.isAssignableFrom(targetType)) {
 			return Optional.ofNullable(Locale.forLanguageTag(resultSetValue.toString()));
-		} else if (Currency.class.isAssignableFrom(propertyType)) {
+		} else if (Currency.class.isAssignableFrom(targetType)) {
 			return Optional.ofNullable(Currency.getInstance(resultSetValue.toString()));
-		} else if (propertyType.isEnum()) {
-			return Optional.ofNullable(extractEnumValue(propertyType, resultSetValue));
+		} else if (targetType.isEnum()) {
+			return Optional.ofNullable(extractEnumValue(targetType, resultSetValue));
 		} else if ("org.postgresql.util.PGobject".equals(resultSetValue.getClass().getName())) {
 			org.postgresql.util.PGobject pgObject = (org.postgresql.util.PGobject) resultSetValue;
 			return Optional.ofNullable(pgObject.getValue());
+		}
+
+		if (Boolean.class.isAssignableFrom(targetType)) {
+			// Native boolean
+			if (resultSetValue instanceof Boolean b)
+				return Optional.of(b);
+
+			// Numeric truthiness (0=false, nonzero=true)
+			if (resultSetValue instanceof Number number)
+				return Optional.of(number.intValue() != 0);
+
+			throw new DatabaseException(format("Cannot map value '%s' (%s) to boolean", resultSetValue, resultSetValue.getClass().getName()));
+		}
+
+		if (Character.class.isAssignableFrom(targetType)) {
+			// Native char
+			if (resultSetValue instanceof Character c) return Optional.of(c);
+
+			// Single-character string
+			if (resultSetValue instanceof String string) {
+				if (string.length() == 1)
+					return Optional.of(string.charAt(0));
+
+				throw new DatabaseException(format("Cannot map String value '%s' to %s; expected length 1", string, propertyType.getSimpleName()));
+			}
+
+			// Numeric -> Unicode code point (useful for some JDBC drivers / legacy schemas)
+			if (resultSetValue instanceof Number number) {
+				int code = number.intValue();
+				if (code >= Character.MIN_VALUE && code <= Character.MAX_VALUE)
+					return Optional.of((char) code);
+
+				throw new DatabaseException(format("Numeric value %d is outside valid char range", code));
+			}
+
+			throw new DatabaseException(format("Cannot map %s to %s",
+					resultSetValue.getClass().getName(), propertyType.getSimpleName()));
 		}
 
 		return Optional.ofNullable(resultSetValue);
