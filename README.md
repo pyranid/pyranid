@@ -603,6 +603,8 @@ ResultSetMapper resultSetMapper = ResultSetMapper.withCustomColumnMappers(List.o
   @Nonnull
   @Override
   public Boolean appliesTo(@Nonnull TargetType targetType) {
+    // Can also apply to parameterized types, e.g.
+    // targetType.matchesParameterizedType(List.class, UUID.class) for List<UUID>
     return targetType.matchesClass(MySpecialType.class);
   }
 
@@ -617,6 +619,7 @@ ResultSetMapper resultSetMapper = ResultSetMapper.withCustomColumnMappers(List.o
     @Nullable String columnLabel,
     @Nonnull InstanceProvider instanceProvider
   ) {
+    // Pull JSON String data from the ResultSet and inflate it
     String json = resultSetValue.toString();
     MySpecialType mySpecialType = GSON.fromJson(json, MySpecialType.class);
 
@@ -631,6 +634,25 @@ ResultSetMapper resultSetMapper = ResultSetMapper.withCustomColumnMappers(List.o
 Database database = Database.withDataSource(...)
   .resultSetMapper(resultSetMapper)
   .build();
+```
+
+With the custom mapper in place, your application code might look like this:
+
+```java
+// A ResultSet row with our special type as a column 
+record MyRow(UUID rowId, MySpecialType mySpecialType) {}
+
+// Query for data
+List<MyRow> rows = database.queryForList("SELECT * FROM row", MyRow.class);
+
+// Examine the first row of the ResultSet
+MyRow myRow = rows.getFirst();
+// Our custom mapper has instantiated this for us
+MySpecialType mySpecialType = myRow.mySpecialType();
+// Prints contents of List<UUID>, as expected
+out.println(mySpecialType.uuids);
+// e.g. "Real brasileiro" for Brazilian Real
+out.println(mySpecialType.currency.getDisplayName(Locale.forLanguageTag("pt-BR")));
 ```
 
 ### Kotlin Types
@@ -1061,7 +1083,7 @@ This is useful for tagging queries that should be handled specially. Some exampl
 
 * Marking a query as "hot" so we don't pollute logs with it
 * Marking a query as "known to be slow" so we don't flag slow query alerts for it
-* Your [`InstanceProvider`](https://javadoc.pyranid.com/com/pyranid/InstanceProvider.html) might provide custom instances based on resultset data
+* Your [`InstanceProvider`](https://javadoc.pyranid.com/com/pyranid/InstanceProvider.html) might provide custom instances based on ResultSet data
 * Your [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) might perform special mapping
 * Your [`PreparedStatementBinder`](https://javadoc.pyranid.com/com/pyranid/PreparedStatementBinder.html) might perform special binding
 
