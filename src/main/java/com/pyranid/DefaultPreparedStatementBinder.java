@@ -42,6 +42,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.TimeZone;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -460,6 +461,8 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			return ((Enum<?>) parameter).name();
 		if (parameter instanceof ZoneId)
 			return ((ZoneId) parameter).getId();
+		if (parameter instanceof TimeZone)
+			return ((TimeZone) parameter).getID();
 
 		// Special handling for Oracle
 		if (statementContext.getDatabaseType() == DatabaseType.ORACLE) {

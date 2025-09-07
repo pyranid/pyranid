@@ -98,7 +98,7 @@ InstanceProvider instanceProvider = new InstanceProvider() {
 
 // Handles copying data from a ResultSet row to an instance of the specified type.
 // Supports Java Beans, records, and standard JDK types out-of-the-box.
-// Plan caching trades memory for faster mapping of wide ResultSets.
+// Plan caching (on by default) trades memory for faster mapping of wide ResultSets.
 // Normalization locale should match the language of your database tables/column names.
 // CustomColumnMappers supply "surgical" overrides to handle custom types
 ResultSetMapper resultSetMapper = ResultSetMapper.withPlanCachingEnabled(false)
@@ -713,6 +713,40 @@ database.execute("""
   ) VALUES (?,?)
   """, accountId, AwardType.BIG);
 ```
+
+### Supported Primitives
+
+* `Byte`
+* `Short`
+* `Integer`
+* `Long`
+* `Float`
+* `Double`
+* `Boolean`
+* `Character`
+* `String`
+* `byte[]`
+
+### Supported JDK Types
+
+* `Enum<E>`
+* `UUID`
+* `BigDecimal`
+* `BigInteger`
+* `Date`
+* `Instant`
+* `LocalDate`
+* `LocalTime`
+* `LocalDateTime`
+* `OffsetTime`
+* `OffsetDateTime`
+* `java.sql.Timestamp`
+* `java.sql.Date`
+* `java.sql.Time`
+* `ZoneId`
+* `TimeZone`
+* `Locale` (IETF BCP 47 "language tag" format)
+* `Currency`
 
 ### Special Parameters
 
