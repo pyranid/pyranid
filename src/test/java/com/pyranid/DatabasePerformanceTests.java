@@ -17,7 +17,7 @@
 package com.pyranid;
 
 import org.hsqldb.jdbc.JDBCDataSource;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;

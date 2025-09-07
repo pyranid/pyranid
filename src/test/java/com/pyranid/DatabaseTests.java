@@ -19,8 +19,8 @@ package com.pyranid;
 import com.pyranid.JsonParameter.BindingPreference;
 import org.hsqldb.jdbc.JDBCDataSource;
 import org.jetbrains.annotations.Nullable;
-import org.junit.Assert;
-import org.junit.Test;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
 
 import javax.annotation.Nonnull;
 import javax.annotation.concurrent.ThreadSafe;
@@ -113,12 +113,12 @@ public class DatabaseTests {
 		database.execute("INSERT INTO employee VALUES (2, 'Employee Two', NULL, NULL)");
 
 		List<EmployeeRecord> employeeRecords = database.queryForList("SELECT * FROM employee ORDER BY name", EmployeeRecord.class);
-		Assert.assertEquals("Wrong number of employees", 2, employeeRecords.size());
-		Assert.assertEquals("Didn't detect DB column name override", "Employee One", employeeRecords.get(0).displayName());
+		Assertions.assertEquals(2, employeeRecords.size(), "Wrong number of employees");
+		Assertions.assertEquals("Employee One", employeeRecords.get(0).displayName(), "Didn't detect DB column name override");
 
 		List<EmployeeClass> employeeClasses = database.queryForList("SELECT * FROM employee ORDER BY name", EmployeeClass.class);
-		Assert.assertEquals("Wrong number of employees", 2, employeeClasses.size());
-		Assert.assertEquals("Didn't detect DB column name override", "Employee One", employeeClasses.get(0).getDisplayName());
+		Assertions.assertEquals(2, employeeClasses.size(), "Wrong number of employees");
+		Assertions.assertEquals("Employee One", employeeClasses.get(0).getDisplayName(), "Didn't detect DB column name override");
 	}
 
 	public record Product(Long productId, String name, BigDecimal price) {}
@@ -133,7 +133,7 @@ public class DatabaseTests {
 
 		database.transaction(() -> {
 			database.currentTransaction().get().addPostTransactionOperation((transactionResult -> {
-				Assert.assertEquals("Wrong transaction result", TransactionResult.COMMITTED, transactionResult);
+				Assertions.assertEquals(TransactionResult.COMMITTED, transactionResult, "Wrong transaction result");
 				ranPostTransactionOperation.set(true);
 			}));
 
@@ -145,7 +145,7 @@ public class DatabaseTests {
 					WHERE product_id=?
 					""", Product.class, 1L).orElse(null);
 
-			Assert.assertNotNull("Product failed to insert", product);
+			Assertions.assertNotNull(product, "Product failed to insert");
 
 			database.currentTransaction().get().rollback();
 
@@ -155,10 +155,10 @@ public class DatabaseTests {
 					WHERE product_id=?
 					""", Product.class, 1L).orElse(null);
 
-			Assert.assertNull("Product failed to roll back", product);
+			Assertions.assertNull(product, "Product failed to roll back");
 		});
 
-		Assert.assertTrue("Did not run post-transaction operation", ranPostTransactionOperation.get());
+		Assertions.assertTrue(ranPostTransactionOperation.get(), "Did not run post-transaction operation");
 	}
 
 	@Test
@@ -173,12 +173,12 @@ public class DatabaseTests {
 		// DATE <-> LocalDate
 		LocalDate ld = LocalDate.of(2020, 1, 2);
 		LocalDate ldRoundTrip = db.queryForObject("SELECT CAST(? AS DATE) FROM (VALUES (0)) AS t(x)", LocalDate.class, ld).get();
-		Assert.assertEquals(ld, ldRoundTrip);
+		Assertions.assertEquals(ld, ldRoundTrip);
 
 		// TIME <-> LocalTime (use second precision to avoid driver quirks)
 		LocalTime lt = LocalTime.of(3, 4, 5);
 		LocalTime ltRoundTrip = db.queryForObject("SELECT CAST(? AS TIME) FROM (VALUES (0)) AS t(x)", LocalTime.class, lt).get();
-		Assert.assertEquals(lt, ltRoundTrip);
+		Assertions.assertEquals(lt, ltRoundTrip);
 	}
 
 	@Test
@@ -194,30 +194,30 @@ public class DatabaseTests {
 		LocalDateTime ldt = LocalDateTime.of(2020, 1, 2, 3, 4, 5, 123_000_000); // 123ms for JDBC-friendly precision
 		// LocalDateTime -> TIMESTAMP -> LocalDateTime
 		LocalDateTime ldtRoundTrip = db.queryForObject("SELECT CAST(? AS TIMESTAMP) FROM (VALUES (0)) AS t(x)", LocalDateTime.class, ldt).get();
-		Assert.assertEquals("LocalDateTime round-trip mismatch", ldt, ldtRoundTrip);
+		Assertions.assertEquals(ldt, ldtRoundTrip, "LocalDateTime round-trip mismatch");
 		// LocalDateTime -> TIMESTAMP -> Instant (interpreted in DB zone)
 		Instant expectedFromLdt = ldt.atZone(zone).toInstant().truncatedTo(ChronoUnit.MILLIS);
 		Instant instFromLdt = db.queryForObject("SELECT CAST(? AS TIMESTAMP) FROM (VALUES (0)) AS t(x)", Instant.class, ldt).get().truncatedTo(ChronoUnit.MILLIS);
-		Assert.assertEquals("LocalDateTime→Instant mapping mismatch", expectedFromLdt, instFromLdt);
+		Assertions.assertEquals(expectedFromLdt, instFromLdt, "LocalDateTime→Instant mapping mismatch");
 
 		// 2) Instant param
 		Instant instant = Instant.parse("2020-01-02T08:09:10.123Z");
 		// Instant -> TIMESTAMP -> Instant (should be identity)
 		Instant instRoundTrip = db.queryForObject("SELECT CAST(? AS TIMESTAMP) FROM (VALUES (0)) AS t(x)", Instant.class, instant).get().truncatedTo(ChronoUnit.MILLIS);
-		Assert.assertEquals("Instant round-trip mismatch", instant.truncatedTo(ChronoUnit.MILLIS), instRoundTrip);
+		Assertions.assertEquals(instant.truncatedTo(ChronoUnit.MILLIS), instRoundTrip, "Instant round-trip mismatch");
 		// Instant -> TIMESTAMP -> LocalDateTime (in DB zone)
 		LocalDateTime expectedLdtFromInstant = LocalDateTime.ofInstant(instant, zone);
 		LocalDateTime ldtFromInstant = db.queryForObject("SELECT CAST(? AS TIMESTAMP) FROM (VALUES (0)) AS t(x)", LocalDateTime.class, instant).get();
-		Assert.assertEquals("Instant→LocalDateTime mapping mismatch", expectedLdtFromInstant, ldtFromInstant);
+		Assertions.assertEquals(expectedLdtFromInstant, ldtFromInstant, "Instant→LocalDateTime mapping mismatch");
 
 		// 3) OffsetDateTime param (use odd offset and nanos to ensure normalization)
 		OffsetDateTime odt = OffsetDateTime.parse("2020-01-02T08:09:10.123456789-03:00");
 		Instant expectedFromOdt = odt.toInstant().truncatedTo(ChronoUnit.MILLIS);
 		Instant instFromOdt = db.queryForObject("SELECT CAST(? AS TIMESTAMP) FROM (VALUES (0)) AS t(x)", Instant.class, odt).get().truncatedTo(ChronoUnit.MILLIS);
-		Assert.assertEquals("OffsetDateTime→Instant mapping mismatch", expectedFromOdt, instFromOdt);
+		Assertions.assertEquals(expectedFromOdt, instFromOdt, "OffsetDateTime→Instant mapping mismatch");
 		LocalDateTime expectedLdtFromOdt = LocalDateTime.ofInstant(odt.toInstant(), zone);
 		LocalDateTime ldtFromOdt = db.queryForObject("SELECT CAST(? AS TIMESTAMP) FROM (VALUES (0)) AS t(x)", LocalDateTime.class, odt).get();
-		Assert.assertEquals("OffsetDateTime→LocalDateTime mapping mismatch", truncate(expectedLdtFromOdt, ChronoUnit.MICROS), truncate(ldtFromOdt, ChronoUnit.MICROS));
+		Assertions.assertEquals(truncate(expectedLdtFromOdt, ChronoUnit.MICROS), truncate(ldtFromOdt, ChronoUnit.MICROS), "OffsetDateTime→LocalDateTime mapping mismatch");
 	}
 
 	@Test
@@ -232,11 +232,11 @@ public class DatabaseTests {
 		Instant expectedNY = ldt.atZone(ny).toInstant().truncatedTo(ChronoUnit.MILLIS);
 		Instant gotNY = dbNY.queryForObject("SELECT TIMESTAMP '2020-01-02 03:04:05.123' FROM (VALUES (0)) AS t(x)", Instant.class).get()
 				.truncatedTo(ChronoUnit.MILLIS);
-		Assert.assertEquals("NY literal TIMESTAMP→Instant mismatch", expectedNY, gotNY);
+		Assertions.assertEquals(expectedNY, gotNY, "NY literal TIMESTAMP→Instant mismatch");
 
 		// But LocalDateTime should be the literal value regardless of zone
 		LocalDateTime gotNYLdt = dbNY.queryForObject("SELECT TIMESTAMP '2020-01-02 03:04:05.123' FROM (VALUES (0)) AS t(x)", LocalDateTime.class).get();
-		Assert.assertEquals("NY literal TIMESTAMP→LocalDateTime mismatch", ldt, gotNYLdt);
+		Assertions.assertEquals(ldt, gotNYLdt, "NY literal TIMESTAMP→LocalDateTime mismatch");
 
 		// UTC DB
 		DataSource dsUTC = createInMemoryDataSource("ts_literal_utc");
@@ -246,9 +246,9 @@ public class DatabaseTests {
 		Instant gotUTC = dbUTC.queryForObject("SELECT TIMESTAMP '2020-01-02 03:04:05.123' FROM (VALUES (0)) AS t(x)", Instant.class).get()
 				.truncatedTo(ChronoUnit.MILLIS);
 
-		Assert.assertEquals("UTC literal TIMESTAMP→Instant mismatch", expectedUTC, gotUTC);
+		Assertions.assertEquals(expectedUTC, gotUTC, "UTC literal TIMESTAMP→Instant mismatch");
 		LocalDateTime gotUTCLdt = dbUTC.queryForObject("SELECT TIMESTAMP '2020-01-02 03:04:05.123' FROM (VALUES (0)) AS t(x)", LocalDateTime.class).get();
-		Assert.assertEquals("UTC literal TIMESTAMP→LocalDateTime mismatch", ldt, gotUTCLdt);
+		Assertions.assertEquals(ldt, gotUTCLdt, "UTC literal TIMESTAMP→LocalDateTime mismatch");
 	}
 
 	@Test
@@ -260,18 +260,17 @@ public class DatabaseTests {
 		// java.sql.Timestamp
 		java.sql.Timestamp ts = java.sql.Timestamp.valueOf("2020-01-02 03:04:05.123");
 		Instant instFromSqlTs = db.queryForObject("SELECT CAST(? AS TIMESTAMP) FROM (VALUES (0)) AS t(x)", Instant.class, ts).get().truncatedTo(ChronoUnit.MILLIS);
-		Assert.assertEquals("java.sql.Timestamp→Instant mismatch",
-				ts.toInstant().truncatedTo(ChronoUnit.MILLIS), instFromSqlTs);
+		Assertions.assertEquals(ts.toInstant().truncatedTo(ChronoUnit.MILLIS), instFromSqlTs, "java.sql.Timestamp→Instant mismatch");
 
 		// java.sql.Date
 		java.sql.Date sqlDate = java.sql.Date.valueOf("2020-01-02");
 		LocalDate ldFromSqlDate = db.queryForObject("SELECT CAST(? AS DATE) FROM (VALUES (0)) AS t(x)", LocalDate.class, sqlDate).get();
-		Assert.assertEquals("java.sql.Date→LocalDate mismatch", sqlDate.toLocalDate(), ldFromSqlDate);
+		Assertions.assertEquals(sqlDate.toLocalDate(), ldFromSqlDate, "java.sql.Date→LocalDate mismatch");
 
 		// java.sql.Time
 		java.sql.Time sqlTime = java.sql.Time.valueOf("03:04:05");
 		LocalTime ltFromSqlTime = db.queryForObject("SELECT CAST(? AS TIME) FROM (VALUES (0)) AS t(x)", LocalTime.class, sqlTime).get();
-		Assert.assertEquals("java.sql.Time→LocalTime mismatch", sqlTime.toLocalTime(), ltFromSqlTime);
+		Assertions.assertEquals(sqlTime.toLocalTime(), ltFromSqlTime, "java.sql.Time→LocalTime mismatch");
 	}
 
 	@Test
@@ -311,14 +310,14 @@ public class DatabaseTests {
 
 		// JavaBean target
 		EmployeeClass e1 = db.queryForObject("SELECT * FROM employee WHERE employee_id=1", EmployeeClass.class).orElse(null);
-		Assert.assertNotNull(e1);
-		Assert.assertEquals("Custom mapper did not override Locale for bean", Locale.CANADA, e1.getLocale());
-		Assert.assertEquals("Raw locale should remain the DB string", "en-US", e1.getRawLocale());
+		Assertions.assertNotNull(e1);
+		Assertions.assertEquals(Locale.CANADA, e1.getLocale(), "Custom mapper did not override Locale for bean");
+		Assertions.assertEquals("en-US", e1.getRawLocale(), "Raw locale should remain the DB string");
 
 		// Record target
 		EmployeeRecord r2 = db.queryForObject("SELECT * FROM employee WHERE employee_id=2", EmployeeRecord.class).orElse(null);
-		Assert.assertNotNull(r2);
-		Assert.assertEquals("Custom mapper did not override Locale for record", Locale.CANADA, r2.locale());
+		Assertions.assertNotNull(r2);
+		Assertions.assertEquals(Locale.CANADA, r2.locale(), "Custom mapper did not override Locale for record");
 	}
 
 	@Test
@@ -384,15 +383,15 @@ public class DatabaseTests {
 		db.execute("INSERT INTO employee VALUES (3, 'C', 'c@x.com', 'ja-JP')");
 
 		List<EmployeeClass> rows = db.queryForList("SELECT * FROM employee ORDER BY employee_id", EmployeeClass.class);
-		Assert.assertEquals(3, rows.size());
-		rows.forEach(e -> Assert.assertEquals("Winner mapper should set GERMANY", Locale.GERMANY, e.getLocale()));
+		Assertions.assertEquals(3, rows.size());
+		rows.forEach(e -> Assertions.assertEquals(Locale.GERMANY, e.getLocale(), "Winner mapper should set GERMANY"));
 
 		// Expected call pattern with positive winner cache:
 		// Row1: first called (empty), second called (handles) -> cache winner=(String, Locale) -> second
 		// Row2: second called only
 		// Row3: second called only
-		Assert.assertEquals("First mapper should be tried only on the first row", 1, firstCalls.get());
-		Assert.assertEquals("Second mapper should handle every row", 3, secondCalls.get());
+		Assertions.assertEquals(1, firstCalls.get(), "First mapper should be tried only on the first row");
+		Assertions.assertEquals(3, secondCalls.get(), "Second mapper should handle every row");
 	}
 
 	public record GroupRow(String groupName, List<UUID> ids) {}
@@ -451,9 +450,9 @@ public class DatabaseTests {
 		// Note: property "groupName" should match DB column "group_name" via normalization logic
 		GroupRow row = db.queryForObject("SELECT group_name, ids FROM group_data WHERE group_name=?", GroupRow.class, "alpha").orElse(null);
 
-		Assert.assertNotNull(row);
-		Assert.assertEquals("alpha", row.groupName());
-		Assert.assertEquals(List.of(u1, u2), row.ids());
+		Assertions.assertNotNull(row);
+		Assertions.assertEquals("alpha", row.groupName());
+		Assertions.assertEquals(List.of(u1, u2), row.ids());
 	}
 
 	@Test
@@ -465,11 +464,11 @@ public class DatabaseTests {
 
 		// Although executeForObject is meant for DML with RETURNING, it currently delegates to queryForObject.
 		Optional<String> name = db.executeForObject("SELECT name FROM prod WHERE id = ?", String.class, 1);
-		Assert.assertTrue(name.isPresent());
-		Assert.assertEquals("A", name.get());
+		Assertions.assertTrue(name.isPresent());
+		Assertions.assertEquals("A", name.get());
 
 		List<Integer> ids = db.executeForList("SELECT id FROM prod ORDER BY id", Integer.class);
-		Assert.assertEquals(List.of(1, 2), ids);
+		Assertions.assertEquals(List.of(1, 2), ids);
 	}
 
 	public static class Prefs {
@@ -502,9 +501,9 @@ public class DatabaseTests {
 		db.execute("INSERT INTO prefs (tz, locale, currency) VALUES (?, ?, ?)", zone, loc, cur);
 
 		Prefs prefs = db.queryForObject("SELECT * FROM prefs", Prefs.class).orElseThrow();
-		Assert.assertEquals(zone, prefs.getTz());
-		Assert.assertEquals(loc, prefs.getLocale());
-		Assert.assertEquals(cur, prefs.getCurrency());
+		Assertions.assertEquals(zone, prefs.getTz());
+		Assertions.assertEquals(loc, prefs.getLocale());
+		Assertions.assertEquals(cur, prefs.getCurrency());
 	}
 
 	// Should be able to read the NULL back into a Java bean
@@ -528,8 +527,8 @@ public class DatabaseTests {
 		db.execute("INSERT INTO foo (id, name) VALUES (?, ?)", 1, null);
 
 		Foo row = db.queryForObject("SELECT * FROM foo", Foo.class).orElseThrow();
-		Assert.assertEquals(Integer.valueOf(1), row.getId());
-		Assert.assertNull(row.getName());
+		Assertions.assertEquals(Integer.valueOf(1), row.getId());
+		Assertions.assertNull(row.getName());
 	}
 
 	@Test
@@ -537,17 +536,17 @@ public class DatabaseTests {
 		Database db = Database.withDataSource(createInMemoryDataSource("metadata")).build();
 		final AtomicInteger seen = new AtomicInteger(0);
 		db.readDatabaseMetaData(meta -> {
-			Assert.assertNotNull(meta.getDatabaseProductName());
+			Assertions.assertNotNull(meta.getDatabaseProductName());
 			seen.incrementAndGet();
 		});
-		Assert.assertEquals(1, seen.get());
+		Assertions.assertEquals(1, seen.get());
 	}
 
 	@Test
 	public void testStatementLoggerReceivesEvent() {
 		Database db = Database.withDataSource(createInMemoryDataSource("logger")).statementLogger((log) -> {
-			Assert.assertNotNull("StatementContext should be present", log.getStatementContext());
-			Assert.assertTrue("SQL should be present", log.getStatementContext().getStatement().getSql().length() > 0);
+			Assertions.assertNotNull(log.getStatementContext(), "StatementContext should be present");
+			Assertions.assertTrue(log.getStatementContext().getStatement().getSql().length() > 0, "SQL should be present");
 		}).build();
 
 		db.execute("CREATE TABLE z (id INT)");
@@ -567,17 +566,17 @@ public class DatabaseTests {
 
 		// Verify size via SQL function
 		Optional<Integer> size = db.executeForObject("SELECT CARDINALITY(tags) FROM t_array FETCH FIRST ROW ONLY", Integer.class);
-		Assert.assertTrue(size.isPresent());
-		Assert.assertEquals(Integer.valueOf(3), size.get());
+		Assertions.assertTrue(size.isPresent());
+		Assertions.assertEquals(Integer.valueOf(3), size.get());
 
 		// HSQLDB supports 1-based array element access with brackets
 		Optional<String> first = db.executeForObject("SELECT tags[1] FROM t_array FETCH FIRST ROW ONLY", String.class);
 		Optional<String> second = db.executeForObject("SELECT tags[2] FROM t_array FETCH FIRST ROW ONLY", String.class);
 		Optional<String> third = db.executeForObject("SELECT tags[3] FROM t_array FETCH FIRST ROW ONLY", String.class);
 
-		Assert.assertEquals("alpha", first.orElse(null));
-		Assert.assertEquals("beta", second.orElse(null));
-		Assert.assertEquals("gamma", third.orElse(null));
+		Assertions.assertEquals("alpha", first.orElse(null));
+		Assertions.assertEquals("beta", second.orElse(null));
+		Assertions.assertEquals("gamma", third.orElse(null));
 	}
 
 	@Test
@@ -589,8 +588,8 @@ public class DatabaseTests {
 				Parameters.arrayOf("VARCHAR", List.of())); // empty
 
 		Optional<Integer> size = db.executeForObject("SELECT CARDINALITY(tags) FROM t_array FETCH FIRST ROW ONLY", Integer.class);
-		Assert.assertTrue(size.isPresent());
-		Assert.assertEquals(Integer.valueOf(0), size.get());
+		Assertions.assertTrue(size.isPresent());
+		Assertions.assertEquals(Integer.valueOf(0), size.get());
 	}
 
 	@Test
@@ -604,14 +603,14 @@ public class DatabaseTests {
 		db.execute("INSERT INTO t_json(body) VALUES (?)", Parameters.json(json));
 
 		Optional<String> got = db.executeForObject("SELECT body FROM t_json FETCH FIRST ROW ONLY", String.class);
-		Assert.assertTrue(got.isPresent());
-		Assert.assertEquals(json, got.get());
+		Assertions.assertTrue(got.isPresent());
+		Assertions.assertEquals(json, got.get());
 
 		// TEXT is honored (also text on HSQLDB)
 		String json2 = "{\"k\":\"v\"}";
 		db.execute("INSERT INTO t_json(body) VALUES (?)", Parameters.json(json2, BindingPreference.TEXT));
 		List<String> bodies = db.executeForList("SELECT body FROM t_json ORDER BY id", String.class);
-		Assert.assertEquals(List.of(json, json2), bodies);
+		Assertions.assertEquals(List.of(json, json2), bodies);
 	}
 
 	@Test
@@ -621,7 +620,7 @@ public class DatabaseTests {
 
 		try {
 			db.execute("INSERT INTO t_vec(v) VALUES (?)", Parameters.vectorOfDoubles(new double[]{0.12, -0.5, 1.0}));
-			Assert.fail("Expected IllegalArgumentException for non-PostgreSQL DatabaseType when binding VectorParameter");
+			Assertions.fail("Expected IllegalArgumentException for non-PostgreSQL DatabaseType when binding VectorParameter");
 		} catch (DatabaseException expected) {
 			// pass
 		}
@@ -634,8 +633,8 @@ public class DatabaseTests {
 		db.transaction(TransactionIsolation.SERIALIZABLE, () -> {
 			db.performRawConnectionOperation(conn -> {
 				int level = conn.getTransactionIsolation();
-				Assert.assertEquals(Connection.TRANSACTION_SERIALIZABLE, level);
-				Assert.assertEquals(TransactionIsolation.SERIALIZABLE, db.currentTransaction().get().getTransactionIsolation());
+				Assertions.assertEquals(Connection.TRANSACTION_SERIALIZABLE, level);
+				Assertions.assertEquals(TransactionIsolation.SERIALIZABLE, db.currentTransaction().get().getTransactionIsolation());
 				return Optional.empty();
 			}, true);
 		});
@@ -644,8 +643,8 @@ public class DatabaseTests {
 		db.transaction(() -> {
 			db.performRawConnectionOperation(conn -> {
 				int level = conn.getTransactionIsolation();
-				Assert.assertEquals(Connection.TRANSACTION_READ_COMMITTED, level);
-				Assert.assertEquals(TransactionIsolation.DEFAULT, db.currentTransaction().get().getTransactionIsolation());
+				Assertions.assertEquals(Connection.TRANSACTION_READ_COMMITTED, level);
+				Assertions.assertEquals(TransactionIsolation.DEFAULT, db.currentTransaction().get().getTransactionIsolation());
 				return Optional.empty();
 			}, true);
 		});
@@ -654,8 +653,8 @@ public class DatabaseTests {
 		db.transaction(TransactionIsolation.REPEATABLE_READ, () -> {
 			db.performRawConnectionOperation(conn -> {
 				int level = conn.getTransactionIsolation();
-				Assert.assertEquals(Connection.TRANSACTION_REPEATABLE_READ, level);
-				Assert.assertEquals(TransactionIsolation.REPEATABLE_READ, db.currentTransaction().get().getTransactionIsolation());
+				Assertions.assertEquals(Connection.TRANSACTION_REPEATABLE_READ, level);
+				Assertions.assertEquals(TransactionIsolation.REPEATABLE_READ, db.currentTransaction().get().getTransactionIsolation());
 				return Optional.empty();
 			}, true);
 		});
@@ -664,7 +663,7 @@ public class DatabaseTests {
 		db.performRawConnectionOperation(conn -> {
 			int level = conn.getTransactionIsolation();
 			// compare to what HSQLDB default was before entering the txn
-			Assert.assertEquals(Connection.TRANSACTION_READ_COMMITTED, level); // example default
+			Assertions.assertEquals(Connection.TRANSACTION_READ_COMMITTED, level); // example default
 			return Optional.empty();
 		}, false);
 	}
@@ -682,7 +681,7 @@ public class DatabaseTests {
 		db.execute("INSERT INTO t_date(d) VALUES (?)", input);
 
 		LocalDate roundTripped = db.queryForObject("SELECT d FROM t_date", LocalDate.class).orElseThrow();
-		Assert.assertEquals("LocalDate round-trip mismatch", input, roundTripped);
+		Assertions.assertEquals(input, roundTripped, "LocalDate round-trip mismatch");
 	}
 
 	@Test
@@ -699,7 +698,7 @@ public class DatabaseTests {
 		db.execute("INSERT INTO t_time(t) VALUES (?)", input);
 
 		String stored = db.queryForObject("SELECT t FROM t_time", String.class).orElseThrow();
-		Assert.assertEquals("LocalTime should be stored as ISO-8601 string", input.toString(), stored);
+		Assertions.assertEquals(input.toString(), stored, "LocalTime should be stored as ISO-8601 string");
 	}
 
 	@Test
@@ -716,7 +715,7 @@ public class DatabaseTests {
 
 		// Let mapper do the conversion
 		LocalDateTime roundTripped = db.queryForObject("SELECT ts FROM t_ts", LocalDateTime.class).orElseThrow();
-		Assert.assertEquals("LocalDateTime round-trip mismatch", input, roundTripped);
+		Assertions.assertEquals(input, roundTripped, "LocalDateTime round-trip mismatch");
 	}
 
 	@Test
@@ -733,7 +732,7 @@ public class DatabaseTests {
 		db.execute("INSERT INTO t_odt_ts(ts) VALUES (?)", odt);
 
 		Integer count = db.queryForObject("SELECT COUNT(*) FROM t_odt_ts", Integer.class).orElseThrow();
-		Assert.assertEquals("Row should be inserted", Integer.valueOf(1), count);
+		Assertions.assertEquals(Integer.valueOf(1), count, "Row should be inserted");
 	}
 
 	@Test
@@ -750,8 +749,7 @@ public class DatabaseTests {
 
 		// Pull back as Timestamp just to ensure the write stuck
 		Timestamp ts = db.queryForObject("SELECT ts FROM t_instant", Timestamp.class).orElseThrow();
-		Assert.assertTrue("Stored timestamp should be close to input instant",
-				Math.abs(ts.toInstant().toEpochMilli() - instant.toEpochMilli()) <= 1); // tolerance for driver rounding
+		Assertions.assertTrue(Math.abs(ts.toInstant().toEpochMilli() - instant.toEpochMilli()) <= 1, "Stored timestamp should be close to input instant"); // tolerance for driver rounding
 	}
 
 	@Test
@@ -771,7 +769,7 @@ public class DatabaseTests {
 		db.execute("INSERT INTO t_json(j) VALUES (?)", Parameters.json(json));
 
 		String stored = db.queryForObject("SELECT j FROM t_json", String.class).orElseThrow();
-		Assert.assertEquals("JSON should be stored as text on non-Postgres", json.trim(), stored.trim());
+		Assertions.assertEquals(json.trim(), stored.trim(), "JSON should be stored as text on non-Postgres");
 	}
 
 	@Test
@@ -781,7 +779,7 @@ public class DatabaseTests {
 
 		try {
 			db.execute("INSERT INTO t_vec(v) VALUES (?)", Parameters.vectorOfDoubles(new double[]{0.12, -0.5, 1.0}));
-			Assert.fail("Expected exception for VectorParameter on non-PostgreSQL");
+			Assertions.fail("Expected exception for VectorParameter on non-PostgreSQL");
 		} catch (DatabaseException expected) {
 			// pass
 		}
@@ -818,10 +816,10 @@ public class DatabaseTests {
 		db.execute("INSERT INTO t_locale(lang) VALUES (?)", l); // hit again to exercise preferredBinderByInboundKey fast path
 
 		List<String> rows = db.queryForList("SELECT lang FROM t_locale ORDER BY id", String.class);
-		Assert.assertEquals(2, rows.size());
-		Assert.assertEquals("CUSTOM:en-US", rows.get(0));
-		Assert.assertEquals("CUSTOM:en-US", rows.get(1));
-		Assert.assertTrue("Custom binder should be invoked at least twice", calls.get() >= 2);
+		Assertions.assertEquals(2, rows.size());
+		Assertions.assertEquals("CUSTOM:en-US", rows.get(0));
+		Assertions.assertEquals("CUSTOM:en-US", rows.get(1));
+		Assertions.assertTrue(calls.get() >= 2, "Custom binder should be invoked at least twice");
 	}
 
 	@Test
@@ -836,7 +834,7 @@ public class DatabaseTests {
 		db.execute("INSERT INTO t_json_null(j) VALUES (?)", Parameters.json(null));
 
 		Integer nullCount = db.queryForObject("SELECT COUNT(*) FROM t_json_null WHERE j IS NULL", Integer.class).orElseThrow();
-		Assert.assertEquals(Integer.valueOf(1), nullCount);
+		Assertions.assertEquals(Integer.valueOf(1), nullCount);
 	}
 
 	@Test
@@ -853,7 +851,7 @@ public class DatabaseTests {
 		db.execute("INSERT INTO t_ot(t) VALUES (?)", ot);
 
 		String stored = db.queryForObject("SELECT t FROM t_ot", String.class).orElseThrow();
-		Assert.assertEquals("OffsetTime should be stored as ISO-8601 string when driver lacks TIMETZ", ot.toString(), stored);
+		Assertions.assertEquals(ot.toString(), stored, "OffsetTime should be stored as ISO-8601 string when driver lacks TIMETZ");
 	}
 
 	@Test
@@ -870,8 +868,8 @@ public class DatabaseTests {
 
 		EnumCurrencyRow enumCurrencyRow = db.queryForObject("SELECT e, c FROM t_misc", EnumCurrencyRow.class).get();
 
-		Assert.assertEquals(TestEnum.BLUE, enumCurrencyRow.getE());
-		Assert.assertEquals("USD", enumCurrencyRow.getC().getCurrencyCode());
+		Assertions.assertEquals(TestEnum.BLUE, enumCurrencyRow.getE());
+		Assertions.assertEquals("USD", enumCurrencyRow.getC().getCurrencyCode());
 	}
 
 	protected static class EnumCurrencyRow {
@@ -913,7 +911,7 @@ public class DatabaseTests {
 																@Nonnull PreparedStatement ps,
 																@Nonnull Integer idx,
 																@Nonnull Object param) throws SQLException {
-				Assert.assertTrue("Expected Locale", param instanceof Locale);
+				Assertions.assertTrue(param instanceof Locale, "Expected Locale");
 				calls.incrementAndGet();
 				ps.setString(idx, "CUSTOM:" + ((Locale) param).toLanguageTag());
 				return BindingResult.handled();
@@ -939,8 +937,8 @@ public class DatabaseTests {
 		db.execute("INSERT INTO t(lang) VALUES (?)", Locale.forLanguageTag("pt-BR"));
 
 		List<String> rows = db.queryForList("SELECT lang FROM t ORDER BY id", String.class);
-		Assert.assertEquals(List.of("CUSTOM:en-US", "CUSTOM:pt-BR"), rows);
-		Assert.assertTrue("Binder should have been called twice", calls.get() >= 2);
+		Assertions.assertEquals(List.of("CUSTOM:en-US", "CUSTOM:pt-BR"), rows);
+		Assertions.assertTrue(calls.get() >= 2, "Binder should have been called twice");
 	}
 
 	/**
@@ -991,9 +989,9 @@ public class DatabaseTests {
 		db.execute("INSERT INTO t(lang) VALUES (?)", Locale.US);
 
 		String stored = db.queryForObject("SELECT lang FROM t", String.class).orElseThrow();
-		Assert.assertEquals("OK", stored);
-		Assert.assertEquals("Non-applicable binder must not be called", 0, neverCalled.get());
-		Assert.assertEquals("Applicable binder called exactly once", 1, called.get());
+		Assertions.assertEquals("OK", stored);
+		Assertions.assertEquals(0, neverCalled.get(), "Non-applicable binder must not be called");
+		Assertions.assertEquals(1, called.get(), "Applicable binder called exactly once");
 	}
 
 	/**
@@ -1053,11 +1051,11 @@ public class DatabaseTests {
 		db.execute("INSERT INTO t(lang) VALUES (?)", Locale.FRANCE);
 
 		List<String> rows = db.queryForList("SELECT lang FROM t ORDER BY id", String.class);
-		Assert.assertEquals(List.of("FIRST", "FIRST"), rows);
+		Assertions.assertEquals(List.of("FIRST", "FIRST"), rows);
 
-		Assert.assertEquals("First binder should be used twice", 2, firstCalls.get());
+		Assertions.assertEquals(2, firstCalls.get(), "First binder should be used twice");
 		// If caching is working, second binder is never even attempted
-		Assert.assertEquals("Second binder should not be used", 0, secondCalls.get());
+		Assertions.assertEquals(0, secondCalls.get(), "Second binder should not be used");
 	}
 
 	/**
@@ -1098,7 +1096,7 @@ public class DatabaseTests {
 		db.execute("INSERT INTO t(v) VALUES (?)", Parameters.listOf(UUID.class, ids));
 
 		String got = db.queryForObject("SELECT v FROM t", String.class).orElseThrow();
-		Assert.assertEquals("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", got);
+		Assertions.assertEquals("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", got);
 	}
 
 	/**
@@ -1132,8 +1130,8 @@ public class DatabaseTests {
 		db.execute("INSERT INTO t(v) VALUES (?)", "hello");
 
 		String stored = db.queryForObject("SELECT v FROM t", String.class).orElseThrow();
-		Assert.assertEquals("hello", stored);
-		Assert.assertEquals("Binder should have been invoked once and returned false", 1, falseCalls.get());
+		Assertions.assertEquals("hello", stored);
+		Assertions.assertEquals(1, falseCalls.get(), "Binder should have been invoked once and returned false");
 	}
 
 	/**
@@ -1164,12 +1162,12 @@ public class DatabaseTests {
 
 		try {
 			db.execute("INSERT INTO t(v) VALUES (?)", Locale.US);
-			Assert.fail("Expected DatabaseException caused by SQLException from binder");
+			Assertions.fail("Expected DatabaseException caused by SQLException from binder");
 		} catch (DatabaseException e) {
 			// pass
-			Assert.assertNotNull(e.getCause());
-			Assert.assertTrue(e.getCause() instanceof SQLException);
-			Assert.assertEquals("boom", e.getCause().getMessage());
+			Assertions.assertNotNull(e.getCause());
+			Assertions.assertTrue(e.getCause() instanceof SQLException);
+			Assertions.assertEquals("boom", e.getCause().getMessage());
 		}
 	}
 
@@ -1209,8 +1207,8 @@ public class DatabaseTests {
 
 		List<String> a = db.queryForList("SELECT v FROM t1", String.class);
 		List<String> b = db.queryForList("SELECT v FROM t2", String.class);
-		Assert.assertEquals(List.of(Locale.CANADA.toLanguageTag()), a);
-		Assert.assertEquals(List.of(Locale.JAPAN.toLanguageTag()), b);
+		Assertions.assertEquals(List.of(Locale.CANADA.toLanguageTag()), a);
+		Assertions.assertEquals(List.of(Locale.JAPAN.toLanguageTag()), b);
 	}
 
 	@Test
@@ -1259,7 +1257,7 @@ public class DatabaseTests {
 		db.execute("INSERT INTO t(v) VALUES (?)", Parameters.setOf(UUID.class, ids));
 
 		String got = db.queryForObject("SELECT v FROM t", String.class).orElseThrow();
-		Assert.assertEquals(
+		Assertions.assertEquals(
 				"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
 				got);
 	}
@@ -1316,7 +1314,7 @@ public class DatabaseTests {
 		db.execute("INSERT INTO t(v) VALUES (?)", Parameters.mapOf(String.class, Integer.class, payload));
 
 		String got = db.queryForObject("SELECT v FROM t", String.class).orElseThrow();
-		Assert.assertEquals("a=1,b=2", got);
+		Assertions.assertEquals("a=1,b=2", got);
 	}
 
 	@Test
@@ -1327,10 +1325,9 @@ public class DatabaseTests {
 		try {
 			db.execute("INSERT INTO t_dummy(id) VALUES (?)",
 					Parameters.listOf(UUID.class, List.of(UUID.randomUUID())));
-			Assert.fail("Expected DatabaseException for TypedParameter without CustomParameterBinder");
+			Assertions.fail("Expected DatabaseException for TypedParameter without CustomParameterBinder");
 		} catch (DatabaseException e) {
-			Assert.assertTrue("Message should mention CustomParameterBinder",
-					e.getMessage() != null && e.getMessage().contains("CustomParameterBinder"));
+			Assertions.assertTrue(e.getMessage() != null && e.getMessage().contains("CustomParameterBinder"), "Message should mention CustomParameterBinder");
 		}
 	}
 
@@ -1342,10 +1339,9 @@ public class DatabaseTests {
 		try {
 			db.execute("INSERT INTO t_dummy(id) VALUES (?)",
 					Parameters.setOf(UUID.class, Set.of(UUID.randomUUID())));
-			Assert.fail("Expected DatabaseException for TypedParameter without CustomParameterBinder");
+			Assertions.fail("Expected DatabaseException for TypedParameter without CustomParameterBinder");
 		} catch (DatabaseException e) {
-			Assert.assertTrue("Message should mention CustomParameterBinder",
-					e.getMessage() != null && e.getMessage().contains("CustomParameterBinder"));
+			Assertions.assertTrue(e.getMessage() != null && e.getMessage().contains("CustomParameterBinder"), "Message should mention CustomParameterBinder");
 		}
 	}
 
@@ -1357,10 +1353,9 @@ public class DatabaseTests {
 		try {
 			db.execute("INSERT INTO t_dummy(id) VALUES (?)",
 					Parameters.mapOf(UUID.class, Integer.class, Map.of(UUID.randomUUID(), 1)));
-			Assert.fail("Expected DatabaseException for TypedParameter without CustomParameterBinder");
+			Assertions.fail("Expected DatabaseException for TypedParameter without CustomParameterBinder");
 		} catch (DatabaseException e) {
-			Assert.assertTrue("Message should mention CustomParameterBinder",
-					e.getMessage() != null && e.getMessage().contains("CustomParameterBinder"));
+			Assertions.assertTrue(e.getMessage() != null && e.getMessage().contains("CustomParameterBinder"), "Message should mention CustomParameterBinder");
 		}
 	}
 
