@@ -157,6 +157,7 @@ open class KotlinDefaultResultSetMapper(
             .toMap()
 
         try {
+            @Suppress("UNCHECKED_CAST")
             return ctor.callBy(callByArgs) as T
         } catch (e: Exception) {
             throw DatabaseException(
