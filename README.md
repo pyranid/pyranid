@@ -509,6 +509,23 @@ The out-of-the-box [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/R
 
 [`Record`](https://openjdk.org/jeps/395) types are also supported.
 
+### Standard Types
+
+When querying for a single column, e.g. a SQL `COUNT`, it's often useful to map to a standard type like `String` or `Integer` or `Boolean`.
+
+There's no need to create a custom "row" type to hold the result.
+
+```java
+// Returns Optional<Long>, which we immediately unwrap because COUNT(*) is never null
+Long count = database.queryForObject("SELECT COUNT(*) FROM car", Long.class).get();
+
+// Standard primitives and JDK types are supported by default
+Optional<UUID> id = database.queryForObject("SELECT id FROM employee LIMIT 1", UUID.class);
+
+// Lists work as you would expect
+List<String> names = database.queryForObject("SELECT name FROM employee", String.class);
+```
+
 ### User-defined Types
 
 In the case of user-defined types and Records, the standard [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) examines the names of columns in the [`ResultSet`](https://docs.oracle.com/en/java/javase/21/docs/api/java.sql/javax/sql/ResultSet.html) and matches them to corresponding fields via reflection.  The [`@DatabaseColumn`](https://javadoc.pyranid.com/com/pyranid/DatabaseColumn.html) annotation allows per-field customization of mapping behavior.
@@ -656,6 +673,18 @@ MySpecialType mySpecialType = myRow.mySpecialType();
 out.println(mySpecialType.uuids);
 // e.g. "Real brasileiro" for Brazilian Real
 out.println(mySpecialType.currency.getDisplayName(Locale.forLanguageTag("pt-BR")));
+```
+
+Your [`CustomColumnMapper`](https://javadoc.pyranid.com/com/pyranid/CustomColumnMapper.html) also works for the single-column "Standard Type" scenario.
+
+```java
+// Pull back the column for a single row
+Optional<MySpecialType> mySpecialType =
+  database.queryForObject("SELECT my_special_type FROM row LIMIT 1", MySpecialType.class);
+
+// Pull back a list of just the column values 
+List<MySpecialType> mySpecialTypes = 
+  database.queryForList("SELECT my_special_type FROM row", MySpecialType.class);
 ```
 
 ### Kotlin Types
