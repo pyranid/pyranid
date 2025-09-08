@@ -97,7 +97,7 @@ InstanceProvider instanceProvider = new InstanceProvider() {
 };
 
 // Handles copying data from a ResultSet row to an instance of the specified type.
-// Supports Java Beans, records, and standard JDK types out-of-the-box.
+// Supports JavaBeans, records, and standard JDK types out-of-the-box.
 // Plan caching (on by default) trades memory for faster mapping of wide ResultSets.
 // Normalization locale should match the language of your database tables/column names.
 // CustomColumnMappers supply "surgical" overrides to handle custom types
