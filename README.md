@@ -656,7 +656,16 @@ Database database = Database.withDataSource(...)
   .build();
 ```
 
-With the custom mapper in place, your application code might look like this:
+With the custom mapper in place, and a table like this...
+
+```sql
+CREATE TABLE row (
+  row_id UUID PRIMARY KEY,
+  my_special_type JSONB NOT NULL
+);
+```
+
+...your application code might look like this:
 
 ```java
 // A ResultSet row with our special type as a column 
