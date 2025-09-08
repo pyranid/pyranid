@@ -523,7 +523,7 @@ Long count = database.queryForObject("SELECT COUNT(*) FROM car", Long.class).get
 Optional<UUID> id = database.queryForObject("SELECT id FROM employee LIMIT 1", UUID.class);
 
 // Lists work as you would expect
-List<String> names = database.queryForObject("SELECT name FROM employee", String.class);
+List<String> names = database.queryForList("SELECT name FROM employee", String.class);
 ```
 
 ### User-defined Types
