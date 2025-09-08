@@ -663,6 +663,16 @@ CREATE TABLE row (
   row_id UUID PRIMARY KEY,
   my_special_type JSONB NOT NULL
 );
+
+INSERT INTO row (row_id, my_special_type) VALUES (
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  '
+    {
+      "uuids": ["bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"],
+      "currency": "BRL"
+    }
+  '::jsonb
+);
 ```
 
 ...your application code might look like this:
