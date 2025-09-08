@@ -647,8 +647,8 @@ ResultSetMapper resultSetMapper = ResultSetMapper.withCustomColumnMappers(List.o
     // and Pyranid will fall back to the registered ResultSetMapper's mapping behavior
     return MappingResult.of(mySpecialType);
   }
-  }))
-  .build();
+}))
+.build();
 
 // Construct your database with the custom mapper
 Database database = Database.withDataSource(...)
