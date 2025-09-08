@@ -11,6 +11,10 @@ A zero-dependency JDBC interface for modern Java applications, powering producti
 
 Pyranid takes care of boilerplate and lets you focus on writing and thinking in SQL.  It is not an ORM.
 
+Pyranid makes working with JDBC pleasant and puts your relational database first. Writing SQL "just works". Closure-based transactions are simple to reason about. Modern Java language features are supported.
+
+No new query languages to learn. No leaky object-relational abstractions. No kitchen-sink frameworks that come along for the ride. No magic.
+
 Full documentation is available at [https://www.pyranid.com](https://www.pyranid.com).
 
 ### Design Goals
@@ -29,18 +33,18 @@ Full documentation is available at [https://www.pyranid.com](https://www.pyranid
 
 Similarly-flavored commercially-friendly OSS libraries are available.
 
-* [Soklet](https://www.soklet.com) - DI-friendly HTTP 1.1 server that supports [JEP 444 Virtual Threads](https://openjdk.org/jeps/444)
+* [Soklet](https://www.soklet.com) - DI-friendly HTTP 1.1 (and SSE) server that supports [JEP 444 Virtual Threads](https://openjdk.org/jeps/444)
 * [Lokalized](https://www.lokalized.com) - natural-sounding translations (i18n) via expression language
 
 ### Maven Installation
 
-Java 16+
+Java 17+
 
 ```xml
 <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid</artifactId>
-  <version>2.0.1</version>
+  <version>3.0.0</version>
 </dependency>
 ```
 
@@ -56,7 +60,7 @@ Java 8+ (legacy; only critical fixes will be applied)
 
 ### Direct Download
 
-If you don't use Maven, you can drop [pyranid-2.0.1.jar](https://repo1.maven.org/maven2/com/pyranid/pyranid/2.0.1/pyranid-2.0.1.jar) directly into your project.  No other dependencies are required.
+If you don't use Maven, you can drop [pyranid-3.0.0.jar](https://repo1.maven.org/maven2/com/pyranid/pyranid/3.0.0/pyranid-3.0.0.jar) directly into your project.  No other dependencies are required.
 
 ## Configuration
 
@@ -64,18 +68,15 @@ If you don't use Maven, you can drop [pyranid-2.0.1.jar](https://repo1.maven.org
 
 ```java
 // Create a Database backed by a DataSource
-DataSource dataSource = obtainDataSource();
-Database database = Database.forDataSource(dataSource).build();
+DataSource dataSource = ...;
+Database database = Database.withDataSource(dataSource).build();
 ```
 
 ### Customized setup
 
 ```java
-// Useful if your JVM's default timezone doesn't match your Database's default timezone
-ZoneId timeZone = ZoneId.of("UTC");
-
 // Controls how Pyranid creates instances of objects that represent ResultSet rows
-InstanceProvider instanceProvider = new DefaultInstanceProvider() {
+InstanceProvider instanceProvider = new InstanceProvider() {
   @Override
   @Nonnull
   public <T> T provide(@Nonnull StatementContext<T> statementContext,
@@ -95,29 +96,78 @@ InstanceProvider instanceProvider = new DefaultInstanceProvider() {
   }
 };
 
-// Copies data from a ResultSet row to an instance of the specified type
-ResultSetMapper resultSetMapper = new DefaultResultSetMapper(timeZone) {
-  @Nonnull
-  @Override
-  public <T> Optional<T> map(@Nonnull StatementContext<T> statementContext,
-                             @Nonnull ResultSet resultSet,
-                             @Nonnull Class<T> resultSetRowType,
-                             @Nonnull InstanceProvider instanceProvider) {
-    // Customize mapping here if needed
-    return super.map(statementContext, resultSet, resultSetRowType, instanceProvider);
-  }
-};
+// Handles copying data from a ResultSet row to an instance of the specified type.
+// Supports JavaBeans, records, and standard JDK types out-of-the-box.
+// Plan caching (on by default) trades memory for faster mapping of wide ResultSets.
+// Normalization locale should match the language of your database tables/column names.
+// CustomColumnMappers supply "surgical" overrides to handle custom types
+ResultSetMapper resultSetMapper = ResultSetMapper.withPlanCachingEnabled(false)
+  .normalizationLocale(Locale.forLanguageTag("pt-BR"))
+  .customColumnMappers(List.of(new CustomColumnMapper() {
+    @Nonnull
+    @Override
+    public Boolean appliesTo(@Nonnull TargetType targetType) {
+      // Can also apply to parameterized types, e.g.
+      // targetType.matchesParameterizedType(List.class, UUID.class) for List<UUID>
+      return targetType.matchesClass(Money.class);
+    }
 
-// Binds parameters to a SQL PreparedStatement
-PreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder(timeZone) {
-  @Override
-  public <T> void bind(@Nonnull StatementContext<T> statementContext,
-                       @Nonnull PreparedStatement preparedStatement,
-                       @Nonnull List<Object> parameters) {
-    // Customize parameter binding here if needed
-    super.bind(statementContext, preparedStatement, parameters);
-  }
-};
+    @Nonnull
+    @Override
+    public MappingResult map(
+      @Nonnull StatementContext<?> statementContext,
+      @Nonnull ResultSet resultSet,
+      @Nonnull Object resultSetValue,
+      @Nonnull TargetType targetType,
+      @Nonnull Integer columnIndex,
+      @Nullable String columnLabel,
+      @Nonnull InstanceProvider instanceProvider
+    ) {
+      // Convert the ResultSet column's value to the "appliesTo" Java type.
+      // Don't need null checks - this method is only invoked when the value is non-null
+      String moneyAsString = resultSetValue.toString();
+      Money money = Money.parse(moneyAsString);
+
+      // Or return MappingResult.fallback() to indicate "I don't want to do custom mapping"
+      // and Pyranid will fall back to the registered ResultSetMapper's mapping behavior
+      return MappingResult.of(money);
+    }
+  }))
+  .build();
+
+// Binds parameters to a SQL PreparedStatement.
+// CustomParameterBinders supply "surgical" overrides to handle custom types.
+// Here, we transform Money instances into a DB-friendly string representation 
+PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCustomParameterBinders(List.of(
+  new CustomParameterBinder() {
+    @Nonnull
+    @Override
+    public Boolean appliesTo(@Nonnull TargetType targetType) {
+      return targetType.matchesClass(Money.class);
+    }		
+			
+    @Nonnull
+    @Override
+    public BindingResult bind(
+      @Nonnull StatementContext<?> statementContext, 
+      @Nonnull PreparedStatement preparedStatement,
+      @Nonnull Integer parameterIndex,
+      @Nonnull Object parameter
+    ) throws SQLException {
+      // Convert Money to a string representation for binding.
+      // Don't need null checks - this method is only invoked when the value is non-null
+      Money money = (Money) parameter;
+      String moneyAsString = money.stringValue();
+			
+      // Bind to the PreparedStatement
+      preparedStatement.setString(parameterIndex, moneyAsString);
+
+      // Or return BindingResult.fallback() to indicate "I don't want to do custom binding"
+      // and Pyranid will fall back to the registered PreparedStatementBinder's binding behavior
+      return BindingResult.handled();
+    }
+  }  
+));
 
 // Optionally logs SQL statements
 StatementLogger statementLogger = new StatementLogger() {
@@ -128,7 +178,10 @@ StatementLogger statementLogger = new StatementLogger() {
   }
 };
 
-Database customDatabase = Database.forDataSource(dataSource)
+// Useful if your JVM's default timezone doesn't match your Database's default timezone
+ZoneId timeZone = ZoneId.of("UTC");
+
+Database customDatabase = Database.withDataSource(dataSource)
   .timeZone(timeZone)
   .instanceProvider(instanceProvider)
   .resultSetMapper(resultSetMapper)
@@ -452,13 +505,30 @@ class DatabaseTransactionFilter implements Filter {
 
 ## ResultSet Mapping
 
-The [`DefaultResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/DefaultResultSetMapper.html) supports user-defined types that follow the JavaBean getter/setter conventions, primitives, and some additional common JDK types.
+The out-of-the-box [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) implementation supports user-defined types that follow the JavaBean getter/setter conventions, primitives, and some additional common JDK types.
 
 [`Record`](https://openjdk.org/jeps/395) types are also supported.
 
+### Standard Types
+
+When querying for a single column, e.g. a SQL `COUNT`, it's often useful to map to a standard type like `String` or `Integer` or `Boolean`.
+
+There's no need to create a custom "row" type to hold the result.
+
+```java
+// Returns Optional<Long>, which we immediately unwrap because COUNT(*) is never null
+Long count = database.queryForObject("SELECT COUNT(*) FROM car", Long.class).get();
+
+// Standard primitives and JDK types are supported by default
+Optional<UUID> id = database.queryForObject("SELECT id FROM employee LIMIT 1", UUID.class);
+
+// Lists work as you would expect
+List<String> names = database.queryForList("SELECT name FROM employee", String.class);
+```
+
 ### User-defined Types
 
-In the case of user-defined types and Records, [`DefaultResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/DefaultResultSetMapper.html) examines the names of columns in the [`ResultSet`](https://docs.oracle.com/en/java/javase/21/docs/api/java.sql/javax/sql/ResultSet.html) and matches them to corresponding fields via reflection.  The [`@DatabaseColumn`](https://javadoc.pyranid.com/com/pyranid/DatabaseColumn.html) annotation allows per-field customization of mapping behavior.
+In the case of user-defined types and Records, the standard [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) examines the names of columns in the [`ResultSet`](https://docs.oracle.com/en/java/javase/21/docs/api/java.sql/javax/sql/ResultSet.html) and matches them to corresponding fields via reflection.  The [`@DatabaseColumn`](https://javadoc.pyranid.com/com/pyranid/DatabaseColumn.html) annotation allows per-field customization of mapping behavior.
 
 By default, column names are assumed to be separated by `_` characters and are mapped to their camel-case equivalent.  For example:
 
@@ -510,7 +580,7 @@ car = database.queryForObject("SELECT some_id AS car_id, some_color AS color FRO
 * `Float`
 * `Double`
 * `Boolean`
-* `Char`
+* `Character`
 * `String`
 * `byte[]`
 
@@ -527,13 +597,114 @@ car = database.queryForObject("SELECT some_id AS car_id, some_color AS color FRO
 * `LocalDateTime` for `TIMESTAMP`
 * `OffsetTime` for `TIME WITH TIMEZONE`
 * `OffsetDateTime` for `TIMESTAMP WITH TIMEZONE`
+* `java.sql.Timestamp`
+* `java.sql.Date`
 * `ZoneId`
 * `TimeZone`
 * `Locale` (IETF BCP 47 "language tag" format)
+* `Currency`
 
-### Other Types
+### Custom Mapping
 
-* Store Postgres JSONB data using a SQL cast of `String`, e.g. `CAST(? AS JSONB)`. Retrieve JSONB data using `String`
+Fine-grained control of mapping is supported by registering [`CustomColumnMapper`](https://javadoc.pyranid.com/com/pyranid/CustomColumnMapper.html) instances.  For example, you might want to "inflate" a `JSONB` column into a Java type:
+
+```java
+// Your application-specific type
+class MySpecialType {
+  List<UUID> uuids;
+  Currency currency;	 
+}
+```
+
+Just add a [`CustomColumnMapper`](https://javadoc.pyranid.com/com/pyranid/CustomColumnMapper.html) that handles it:
+
+```java
+ResultSetMapper resultSetMapper = ResultSetMapper.withCustomColumnMappers(List.of(new CustomColumnMapper() {
+  @Nonnull
+  @Override
+  public Boolean appliesTo(@Nonnull TargetType targetType) {
+    // Can also apply to parameterized types, e.g.
+    // targetType.matchesParameterizedType(List.class, UUID.class) for List<UUID>
+    return targetType.matchesClass(MySpecialType.class);
+  }
+
+  @Nonnull
+  @Override
+  public MappingResult map(
+    @Nonnull StatementContext<?> statementContext,
+    @Nonnull ResultSet resultSet,
+    @Nonnull Object resultSetValue,
+    @Nonnull TargetType targetType,
+    @Nonnull Integer columnIndex,
+    @Nullable String columnLabel,
+    @Nonnull InstanceProvider instanceProvider
+  ) {
+    // Pull JSON String data from the ResultSet and inflate it
+    String json = resultSetValue.toString();
+    MySpecialType mySpecialType = GSON.fromJson(json, MySpecialType.class);
+
+    // Or return MappingResult.fallback() to indicate "I don't want to do custom mapping"
+    // and Pyranid will fall back to the registered ResultSetMapper's mapping behavior
+    return MappingResult.of(mySpecialType);
+  }
+}))
+.build();
+
+// Construct your database with the custom mapper
+Database database = Database.withDataSource(...)
+  .resultSetMapper(resultSetMapper)
+  .build();
+```
+
+With the custom mapper in place, and a table like this...
+
+```sql
+CREATE TABLE row (
+  row_id UUID PRIMARY KEY,
+  my_special_type JSONB NOT NULL
+);
+
+INSERT INTO row (row_id, my_special_type) VALUES (
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  '
+    {
+      "uuids": ["bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"],
+      "currency": "BRL"
+    }
+  '::jsonb
+);
+```
+
+...your application code might look like this:
+
+```java
+// A ResultSet row with our special type as a column 
+record MyRow(UUID rowId, MySpecialType mySpecialType) {}
+
+// Query for data
+List<MyRow> rows = database.queryForList("SELECT * FROM row", MyRow.class);
+
+// Examine the first row of the ResultSet
+MyRow myRow = rows.getFirst();
+// Our custom mapper has instantiated this for us
+MySpecialType mySpecialType = myRow.mySpecialType();
+// Prints contents of List<UUID>, as expected
+out.println(mySpecialType.uuids);
+// e.g. "Real brasileiro" for Brazilian Real
+out.println(mySpecialType.currency.getDisplayName(Locale.forLanguageTag("pt-BR")));
+```
+
+Your [`CustomColumnMapper`](https://javadoc.pyranid.com/com/pyranid/CustomColumnMapper.html) also works for the single-column "Standard Type" scenario.
+
+```java
+// Pull back the column for a single row
+Optional<MySpecialType> mySpecialType =
+  database.queryForObject("SELECT my_special_type FROM row LIMIT 1", MySpecialType.class);
+
+// Pull back a list of just the column values 
+List<MySpecialType> mySpecialTypes = 
+  database.queryForList("SELECT my_special_type FROM row", MySpecialType.class);
+```
 
 ### Kotlin Types
 
@@ -568,11 +739,330 @@ val cars = database.queryForList("SELECT * FROM cars WHERE car_id IN (?, ?) LIMI
                                  *listOf(car1Id, car2Id, 10).toTypedArray())
 ```
 
+## Parameter Binding
+
+The out-of-the-box [`PreparedStatementBinder`](https://javadoc.pyranid.com/com/pyranid/PreparedStatementBinder.html) implementation supports binding common JDK types to `?` placeholders and generally "just works" as you would expect.
+
+For example:
+
+```java
+UUID departmentId = ...;
+Long accountId = ...;
+
+List<Employee> = database.queryForList("""
+  SELECT *
+  FROM employee
+  WHERE department_id=?
+""", Employee.class, departmentId);
+
+database.execute("""
+  INSERT INTO account_award (
+    account_id, 
+    award_type
+  ) VALUES (?,?)
+  """, accountId, AwardType.BIG);
+```
+
+### Supported Primitives
+
+* `Byte`
+* `Short`
+* `Integer`
+* `Long`
+* `Float`
+* `Double`
+* `Boolean`
+* `Character`
+* `String`
+* `byte[]`
+
+### Supported JDK Types
+
+* `Enum<E>`
+* `UUID`
+* `BigDecimal`
+* `BigInteger`
+* `Date`
+* `Instant`
+* `LocalDate`
+* `LocalTime`
+* `LocalDateTime`
+* `OffsetTime`
+* `OffsetDateTime`
+* `java.sql.Timestamp`
+* `java.sql.Date`
+* `java.sql.Time`
+* `ZoneId`
+* `TimeZone`
+* `Locale` (IETF BCP 47 "language tag" format)
+* `Currency`
+
+### Special Parameters
+
+Special support is provided for JSON/JSONB, vector, and SQL ARRAY parameters.
+
+#### JSON/JSONB
+
+Useful for storing "stringified" JSON data by taking advantage of the DBMS' native JSON storage facilities, if available (e.g. PostgreSQL's `JSONB` type).
+
+Supported methods:
+
+* [`Parameters::json(String)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#json(java.lang.String))
+* [`Parameters::json(String, BindingPreference)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#json(java.lang.String,com.pyranid.JsonParameter.BindingPreference))
+
+You might create a JSONB storage table...
+
+```sql
+CREATE TABLE example (
+  example_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  data JSONB NOT NULL
+);
+```
+
+...and write JSON to it:
+
+```java
+String json = "{\"testing\": 123}";
+
+database.execute("INSERT INTO example (data) VALUES (?)",
+  Parameters.json(json)
+);
+```
+
+By default, Pyranid will use your database's binary JSON format if supported and fall back to a text representation otherwise.
+
+If you want to force text storage (e.g. if whitespace is important), specify a binding preference like this:
+
+```java
+database.execute("INSERT INTO example (data) VALUES (?)",
+  Parameters.json(json, BindingPreference.TEXT)
+);
+```
+
+#### Vector
+
+Useful for storing [`pgvector`](https://github.com/pgvector/pgvector) data, often used for Artificial Intelligence tasks. Currently only supported for PostgreSQL.
+
+Supported methods:
+
+* [`Parameters::vectorOfDoubles(double[])`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#vectorOfDoubles(double%5B%5D))
+* [`Parameters::vectorOfDoubles(List<Double>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#vectorOfDoubles(java.util.List))
+* [`Parameters::vectorOfFloats(float[])`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#vectorOfFloats(float%5B%5D))
+* [`Parameters::vectorOfFloats(List<Float>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#vectorOfFloats(java.util.List))
+* [`Parameters::vectorOfBigDecimals(List<BigDecimal>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#vectorOfBigDecimals(java.util.List))
+
+You might create a vector storage table...
+
+```sql
+CREATE TABLE vector_embedding (
+  vector_embedding_id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  embedding VECTOR(1536) NOT NULL,
+  content TEXT NOT NULL
+);
+```
+
+...and write vector data to it:
+
+```java
+double[] embedding = ...;
+String content = "...";
+
+database.execute("INSERT INTO vector_embedding (embedding, content) VALUES (?,?)",
+  Parameters.vectorOfDoubles(embedding), content
+);
+```
+
+#### SQL ARRAY
+
+Single-dimension array binding is supported out-of-the-box.
+
+Supported methods:
+
+* [`Parameters::arrayOf(String, E[])`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#arrayOf(java.lang.String,E%5B%5D))
+* [`Parameters::arrayOf(String, List<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#arrayOf(java.lang.String,java.util.List))
+
+You might create a table with some array columns...
+
+```sql
+CREATE TABLE product (
+  product_id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  name TEXT NOT NULL,
+  vendor_flags INTEGER[] NOT NULL,
+  tags VARCHAR[]
+);
+```
+
+...and write array data to it:
+
+```java
+String name = "...";
+int[] vendorFlags = { 1, 2, 3 };
+List<String> tags = List.of("alpha", "beta");
+
+database.execute("""
+  INSERT INTO product (
+    name,
+    vendor_flags,
+    tags
+  ) VALUES (?,?,?)
+""", 
+  name,
+  Parameters.arrayOf("INTEGER", vendorFlags),
+  Parameters.arrayOf("VARCHAR", tags)
+);
+```
+
+If you need support for multidimensional array binding, implement a [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) as outlined below. 
+
+### Custom Parameters
+
+You may register instances of [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) to bind application-specific types to [`java.sql.PreparedStatement`](https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/PreparedStatement.html) however you like.
+
+This allows you to use your objects as-is with Pyranid instead of sprinkling "convert this object to database format" code throughout your system.
+
+#### Arbitrary Types
+
+Let's define a simple type.
+
+```java
+class HexColor {
+  int r, g, b;
+
+  HexColor(int r, int g, int b) {
+    this.r = r; this.g = g; this.b = b;
+  }
+
+  String toHexString() {
+    return String.format("#%02X%02X%02X", r, g, b);
+  }
+
+  static HexColor fromHexString(String s) {
+    int r = Integer.parseInt(s.substring(1, 3), 16);
+    int g = Integer.parseInt(s.substring(3, 5), 16);
+    int b = Integer.parseInt(s.substring(5, 7), 16);
+    return new HexColor(r, g, b);
+  }
+}
+```
+
+Then, we'll register a [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) to handle binding it:
+
+```java
+PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCustomParameterBinders(List.of(
+  new CustomParameterBinder() {
+    @Nonnull
+    @Override
+    public Boolean appliesTo(@Nonnull TargetType targetType) {
+      return targetType.matchesClass(HexColor.class);
+    }		
+			
+    @Nonnull
+    @Override
+    public BindingResult bind(
+      @Nonnull StatementContext<?> statementContext, 
+      @Nonnull PreparedStatement preparedStatement,
+      @Nonnull Integer parameterIndex,
+      @Nonnull Object parameter
+    ) throws SQLException {
+      HexColor hexColor = (HexColor) parameter; 
+
+      // Bind to the PreparedStatement as a value like "#6a5acd"
+      preparedStatement.setString(parameterIndex, hexColor.toHexString());
+
+      // Or return BindingResult.fallback() to indicate "I don't want to do custom binding"
+      // and Pyranid will fall back to the registered PreparedStatementBinder's binding behavior
+      return BindingResult.handled();
+    }
+  }  
+));
+
+Database database = Database.withDataSource(dataSource)
+  .preparedStatementBinder(preparedStatementBinder)
+  .build();
+```
+
+With the custom binder in place, your application code might look like this:
+
+```java
+// Given a reference to a hex color...
+UUID themeId = ...;
+HexColor backgroundColor = HexColor.fromHexString("#6a5acd");
+
+// ...we use the reference as-is and Pyranid will apply the custom binder
+database.execute("""
+  UPDATE theme
+  SET background_color=?
+  WHERE theme_id=? 
+""", backgroundColor, themeId);
+```
+
+#### Standard Collections
+
+Runtime binding of generic types is made difficult by type erasure.  For convenience, Pyranid offers special parameters that perform type capture for standard [`List<E>`](https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/List.html), [`Set<E>)`](https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/Set.html), and [`Map<K,V>)`](https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/Map.html) types:
+
+* [`Parameters::listOf(Class<E>, List<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#listOf(java.lang.Class,java.util.List))
+* [`Parameters::setOf(Class<E>, Set<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#setOf(java.lang.Class,java.util.List))
+* [`Parameters::mapOf(Class<K>, Class<V>, Map<K,V>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#mapOf(java.lang.Class,java.lang.Class,java.util.Map))
+
+This makes it easy to create custom binders for common scenarios.
+
+For example, this code...
+
+```java
+List<UUID> ids = List.of(
+  UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+  UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+);
+
+database.execute("INSERT INTO t(v) VALUES (?)", Parameters.listOf(UUID.class, ids));
+```
+
+...would be handled by this custom binder, because `targetType.matchesParameterizedType(List.class, UUID.class)` returns `true` thanks to runtime type capturing:
+
+```java
+PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCustomParameterBinders(List.of(
+  new CustomParameterBinder() {
+    @Nonnull
+    @Override
+    public Boolean appliesTo(@Nonnull TargetType targetType) {
+      // For Parameters::mapOf(Class<K>, Class<V>, Map<K,V>), you'd say:
+      // matchesParameterizedType(Map.class, MyKey.class, MyValue.class)
+      return targetType.matchesParameterizedType(List.class, UUID.class);
+    }		
+			
+    @Nonnull
+    @Override
+    public BindingResult bind(
+      @Nonnull StatementContext<?> statementContext, 
+      @Nonnull PreparedStatement preparedStatement,
+      @Nonnull Integer parameterIndex,
+      @Nonnull Object parameter
+    ) throws SQLException {
+      // Convert UUIDs to a comma-delimited string, or null for the empty list 
+      List<UUID> uuids = (List<UUID>) param;
+      String uuidsAsString = uuids.isEmpty()
+        ? null
+        : uuids.stream().map(Object::toString).collect(Collectors.joining(","));
+
+      // Bind to the PreparedStatement
+      preparedStatement.setString(parameterIndex, uuidsAsString);
+			
+      return BindingResult.handled();
+    }
+  }  
+));
+```
+##### Heads Up!
+
+If you use [`Parameters::listOf(Class<E>, List<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#listOf(java.lang.Class,java.util.List)), [`Parameters::setOf(Class<E>, Set<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#setOf(java.lang.Class,java.util.List)), or [`Parameters::mapOf(Class<K>, Class<V>, Map<K,V>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#mapOf(java.lang.Class,java.lang.Class,java.util.Map)), you must define a corresponding [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) to handle them.  These special parameter types do not automatically work out-of-the-box because Pyranid cannot reliably guess how you intend to bind them.
+
+Pyranid will detect this missing-binder scenario and throw an exception to indicate programmer error.
+
 ## Error Handling
 
-In general, a runtime [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) will be thrown when errors occur.  Often this will wrap the checked [`java.sql.SQLException`](https://docs.oracle.com/en/java/javase/21/docs/api/java.sql/java/sql/SQLException.html).
+In general, a runtime [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) will be thrown when errors occur.  Often this will wrap the checked [`java.sql.SQLException`](https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/SQLException.html).
 
-For convenience, [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) exposes additional properties, which are populated if provided by the underlying [`java.sql.SQLException`](https://docs.oracle.com/en/java/javase/21/docs/api/java.sql/java/sql/SQLException.html):
+For convenience, [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) exposes additional properties, which are populated if provided by the underlying [`java.sql.SQLException`](https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/SQLException.html):
 
 * `errorCode` (optional)
 * `sqlState` (optional)
@@ -595,8 +1085,6 @@ For PostgreSQL, the following properties are also available:
 * `severity` (optional)
 * `table` (optional)
 * `where` (optional)
-
-Extended property support for Oracle and MySQL is planned.
 
 ### Practical Application
 
@@ -638,10 +1126,10 @@ Examples of usage include:
 
 * Writing queries and timing information to your logging system
 * Picking out slow queries for special logging/reporting
-* Collecting a set of queries executed across a unit of work for bulk analysis (e.g. a [`ThreadLocal`](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/ThreadLocal.html) scoped to a single web request)
+* Collecting a set of queries executed across a unit of work for bulk analysis (e.g. a [`ThreadLocal`](https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/ThreadLocal.html) scoped to a single web request)
 
 ```java
-Database database = Database.forDataSource(dataSource)
+Database database = Database.withDataSource(dataSource)
   .statementLogger(new StatementLogger() {
     Duration SLOW_QUERY_THRESHOLD = Duration.ofMillis(500);
 
@@ -681,7 +1169,9 @@ This is useful for tagging queries that should be handled specially. Some exampl
 
 * Marking a query as "hot" so we don't pollute logs with it
 * Marking a query as "known to be slow" so we don't flag slow query alerts for it
-* Your [`InstanceProvider`](https://javadoc.pyranid.com/com/pyranid/InstanceProvider.html) might provide custom instances based on resultset data
+* Your [`InstanceProvider`](https://javadoc.pyranid.com/com/pyranid/InstanceProvider.html) might provide custom instances based on ResultSet data
+* Your [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) might perform special mapping
+* Your [`PreparedStatementBinder`](https://javadoc.pyranid.com/com/pyranid/PreparedStatementBinder.html) might perform special binding
 
 ```java
 // Custom tagging system
@@ -712,7 +1202,7 @@ A corresponding [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.ht
 
 ```java
 // Ensure our StatementLogger implementation takes HOT_QUERY into account 
-Database database = Database.forDataSource(dataSource)
+Database database = Database.withDataSource(dataSource)
   .statementLogger(new StatementLogger() {
     @Override
     public void log(@Nonnull StatementLog statementLog) {
@@ -722,49 +1212,6 @@ Database database = Database.forDataSource(dataSource)
     }
   }).build();
 ```
-
-### Internal Logging
-
-Pyranid uses [`java.util.Logging`](https://docs.oracle.com/en/java/javase/21/docs/api/java.logging/java/util/logging/package-summary.html) internally for diagnostics.  This is not normally useful for Pyranid users, but the usual way to hook into this is with [SLF4J](http://slf4j.org), which can funnel all the different logging mechanisms in your app through a single one, normally [Logback](http://logback.qos.ch).  Your Maven configuration might look like this:
-
-```xml
-<dependency>
-  <groupId>ch.qos.logback</groupId>
-  <artifactId>logback-classic</artifactId>
-  <version>1.4.11</version>
-</dependency>
-
-<dependency>
-  <groupId>org.slf4j</groupId>
-  <artifactId>jul-to-slf4j</artifactId>
-  <version>2.0.7</version>
-</dependency>
-```
-
-You might have code like this which runs at startup:
-
-```java
-// Bridge all java.util.logging to SLF4J
-java.util.logging.Logger rootLogger = java.util.logging.LogManager.getLogManager().getLogger("");
-for (Handler handler : rootLogger.getHandlers())
-  rootLogger.removeHandler(handler);
-
-SLF4JBridgeHandler.install();
-```
-
-Don't forget to uninstall the bridge at shutdown time:
-
-```java
-// Sometime later
-SLF4JBridgeHandler.uninstall();
-```
-
-Note: [`SLF4JBridgeHandler`](https://www.slf4j.org/api/org/slf4j/bridge/SLF4JBridgeHandler.html) can impact performance.  You can mitigate that with Logback's [`LevelChangePropagator`](https://logback.qos.ch/apidocs/ch/qos/logback/classic/jul/LevelChangePropagator.html) configuration option [as described here](http://logback.qos.ch/manual/configuration.html#LevelChangePropagator).
-
-## TODOs
-
-* Formalize BLOB/CLOB handling
-* Work around more Oracle quirks
 
 ## About
 

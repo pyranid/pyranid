@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2022 Transmogrify LLC, 2022-2024 Revetware LLC.
+ * Copyright 2015-2022 Transmogrify LLC, 2022-2025 Revetware LLC.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ import static java.util.Objects.requireNonNull;
  * @since 2.0.0
  */
 @ThreadSafe
-public class Statement {
+public final class Statement {
 	@Nonnull
 	private final Object id;
 	@Nonnull

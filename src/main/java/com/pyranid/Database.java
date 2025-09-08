@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2022 Transmogrify LLC, 2022-2024 Revetware LLC.
+ * Copyright 2015-2022 Transmogrify LLC, 2022-2025 Revetware LLC.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -50,7 +51,7 @@ import static java.util.logging.Level.WARNING;
  * @since 1.0.0
  */
 @ThreadSafe
-public class Database {
+public final class Database {
 	@Nonnull
 	private static final ThreadLocal<Deque<Transaction>> TRANSACTION_STACK_HOLDER;
 
@@ -88,10 +89,10 @@ public class Database {
 		this.dataSource = requireNonNull(builder.dataSource);
 		this.databaseType = requireNonNull(builder.databaseType);
 		this.timeZone = builder.timeZone == null ? ZoneId.systemDefault() : builder.timeZone;
-		this.instanceProvider = builder.instanceProvider == null ? new DefaultInstanceProvider() : builder.instanceProvider;
-		this.preparedStatementBinder = builder.preparedStatementBinder == null ? new DefaultPreparedStatementBinder(this.databaseType, this.timeZone) : builder.preparedStatementBinder;
-		this.resultSetMapper = builder.resultSetMapper == null ? new DefaultResultSetMapper(this.databaseType, this.timeZone) : builder.resultSetMapper;
-		this.statementLogger = builder.statementLogger == null ? new DefaultStatementLogger() : builder.statementLogger;
+		this.instanceProvider = builder.instanceProvider == null ? new InstanceProvider() {} : builder.instanceProvider;
+		this.preparedStatementBinder = builder.preparedStatementBinder == null ? PreparedStatementBinder.withDefaultConfiguration() : builder.preparedStatementBinder;
+		this.resultSetMapper = builder.resultSetMapper == null ? ResultSetMapper.withDefaultConfiguration() : builder.resultSetMapper;
+		this.statementLogger = builder.statementLogger == null ? (statementLog) -> {} : builder.statementLogger;
 		this.defaultIdGenerator = new AtomicInteger();
 		this.logger = Logger.getLogger(getClass().getName());
 		this.executeLargeBatchSupported = DatabaseOperationSupportStatus.UNKNOWN;
@@ -105,7 +106,7 @@ public class Database {
 	 * @return a {@link Database} builder
 	 */
 	@Nonnull
-	public static Builder forDataSource(@Nonnull DataSource dataSource) {
+	public static Builder withDataSource(@Nonnull DataSource dataSource) {
 		requireNonNull(dataSource);
 		return new Builder(dataSource);
 	}
@@ -118,7 +119,7 @@ public class Database {
 	@Nonnull
 	public Optional<Transaction> currentTransaction() {
 		Deque<Transaction> transactionStack = TRANSACTION_STACK_HOLDER.get();
-		return Optional.ofNullable(transactionStack.size() == 0 ? null : transactionStack.peek());
+		return Optional.ofNullable(transactionStack.isEmpty() ? null : transactionStack.peek());
 	}
 
 	/**
@@ -223,10 +224,18 @@ public class Database {
 
 			throw new RuntimeException(t);
 		} finally {
-			TRANSACTION_STACK_HOLDER.get().pop();
+			Deque<Transaction> transactionStack = TRANSACTION_STACK_HOLDER.get();
+
+			transactionStack.pop();
+
+			// Ensure txn stack is fully cleaned up
+			if (transactionStack.isEmpty())
+				TRANSACTION_STACK_HOLDER.remove();
 
 			try {
 				try {
+					transaction.restoreTransactionIsolationIfNeeded();
+
 					if (transaction.getInitialAutoCommit().isPresent() && transaction.getInitialAutoCommit().get())
 						// Autocommit was true initially, so restoring to true now that transaction has completed
 						transaction.setAutoCommit(true);
@@ -348,7 +357,7 @@ public class Database {
 		if (list.size() > 1)
 			throw new DatabaseException(format("Expected 1 row in resultset but got %s instead", list.size()));
 
-		return Optional.ofNullable(list.size() == 0 ? null : list.get(0));
+		return Optional.ofNullable(list.isEmpty() ? null : list.get(0));
 	}
 
 	/**
@@ -387,7 +396,7 @@ public class Database {
 		requireNonNull(resultSetRowType);
 
 		List<T> list = new ArrayList<>();
-		StatementContext<T> statementContext = new StatementContext.Builder<T>(statement)
+		StatementContext<T> statementContext = StatementContext.<T>with(statement, this)
 				.resultSetRowType(resultSetRowType)
 				.parameters(parameters)
 				.build();
@@ -402,8 +411,12 @@ public class Database {
 				startTime = nanoTime();
 
 				while (resultSet.next()) {
-					T listElement = getResultSetMapper().map(statementContext, resultSet, statementContext.getResultSetRowType().get(), getInstanceProvider()).orElse(null);
-					list.add(listElement);
+					try {
+						T listElement = getResultSetMapper().map(statementContext, resultSet, statementContext.getResultSetRowType().get(), getInstanceProvider()).orElse(null);
+						list.add(listElement);
+					} catch (SQLException e) {
+						throw new DatabaseException(format("Unable to map JDBC %s row to %s", ResultSet.class.getSimpleName(), statementContext.getResultSetRowType().get()), e);
+					}
 				}
 
 				Duration resultSetMappingDuration = Duration.ofNanos(nanoTime() - startTime);
@@ -443,7 +456,7 @@ public class Database {
 		requireNonNull(statement);
 
 		ResultHolder<Long> resultHolder = new ResultHolder<>();
-		StatementContext<Void> statementContext = new StatementContext.Builder<>(statement)
+		StatementContext<Void> statementContext = StatementContext.with(statement, this)
 				.parameters(parameters)
 				.build();
 
@@ -603,7 +616,7 @@ public class Database {
 		requireNonNull(parameterGroups);
 
 		ResultHolder<List<Long>> resultHolder = new ResultHolder<>();
-		StatementContext<List<Long>> statementContext = new StatementContext.Builder<>(statement)
+		StatementContext<List<Long>> statementContext = StatementContext.with(statement, this)
 				.parameters((List) parameterGroups)
 				.resultSetRowType(List.class)
 				.build();
@@ -611,7 +624,7 @@ public class Database {
 		performDatabaseOperation(statementContext, (preparedStatement) -> {
 			for (List<Object> parameterGroup : parameterGroups) {
 				if (parameterGroup != null && parameterGroup.size() > 0)
-					getPreparedStatementBinder().bind(statementContext, preparedStatement, parameterGroup);
+					performPreparedStatementBinding(statementContext, preparedStatement, parameterGroup);
 
 				preparedStatement.addBatch();
 			}
@@ -650,6 +663,26 @@ public class Database {
 		return resultHolder.value;
 	}
 
+	/**
+	 * Exposes a temporary handle to JDBC {@link DatabaseMetaData}, which provides comprehensive vendor-specific information about this database as a whole.
+	 * <p>
+	 * This method acquires {@link DatabaseMetaData} on its own newly-borrowed connection, which it manages internally.
+	 * <p>
+	 * It does <strong>not</strong> participate in the active transaction, if one exists.
+	 * <p>
+	 * The connection is closed as soon as {@link DatabaseMetaDataReader#read(DatabaseMetaData)} completes.
+	 * <p>
+	 * See <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/DatabaseMetaData.html">{@code DatabaseMetaData} Javadoc</a> for details.
+	 */
+	public void readDatabaseMetaData(@Nonnull DatabaseMetaDataReader databaseMetaDataReader) {
+		requireNonNull(databaseMetaDataReader);
+
+		performRawConnectionOperation((connection -> {
+			databaseMetaDataReader.read(connection.getMetaData());
+			return Optional.empty();
+		}), false);
+	}
+
 	protected <T> void performDatabaseOperation(@Nonnull StatementContext<T> statementContext,
 																							@Nonnull List<Object> parameters,
 																							@Nonnull DatabaseOperation databaseOperation) {
@@ -659,8 +692,94 @@ public class Database {
 
 		performDatabaseOperation(statementContext, (preparedStatement) -> {
 			if (parameters.size() > 0)
-				getPreparedStatementBinder().bind(statementContext, preparedStatement, parameters);
+				performPreparedStatementBinding(statementContext, preparedStatement, parameters);
 		}, databaseOperation);
+	}
+
+	protected <T> void performPreparedStatementBinding(@Nonnull StatementContext<T> statementContext,
+																										 @Nonnull PreparedStatement preparedStatement,
+																										 @Nonnull List<Object> parameters) {
+		requireNonNull(statementContext);
+		requireNonNull(preparedStatement);
+		requireNonNull(parameters);
+
+		try {
+			for (int i = 0; i < parameters.size(); ++i) {
+				Object parameter = parameters.get(i);
+
+				if (parameter != null)
+					getPreparedStatementBinder().bindParameter(statementContext, preparedStatement, i + 1, parameter);
+				else
+					preparedStatement.setObject(i + 1, parameter);
+			}
+		} catch (Exception e) {
+			throw new DatabaseException(e);
+		}
+	}
+
+	@FunctionalInterface
+	protected interface RawConnectionOperation<R> {
+		@Nonnull
+		Optional<R> perform(@Nonnull Connection connection) throws Exception;
+	}
+
+	/**
+	 * @since 3.0.0
+	 */
+	@Nonnull
+	public DatabaseType getDatabaseType() {
+		return this.databaseType;
+	}
+
+	/**
+	 * @since 3.0.0
+	 */
+	@Nonnull
+	public ZoneId getTimeZone() {
+		return this.timeZone;
+	}
+
+	/**
+	 * Useful for single-shot "utility" calls that operate outside of normal query operations, e.g. pulling DB metadata.
+	 * <p>
+	 * Example: {@link #readDatabaseMetaData(DatabaseMetaDataReader)}.
+	 */
+	@Nonnull
+	protected <R> Optional<R> performRawConnectionOperation(@Nonnull RawConnectionOperation<R> rawConnectionOperation,
+																													@Nonnull Boolean shouldParticipateInExistingTransactionIfPossible) {
+		requireNonNull(rawConnectionOperation);
+		requireNonNull(shouldParticipateInExistingTransactionIfPossible);
+
+		if (shouldParticipateInExistingTransactionIfPossible) {
+			// Try to participate in txn if it's available
+			Connection connection = null;
+
+			try {
+				connection = acquireConnection();
+				return rawConnectionOperation.perform(connection);
+			} catch (DatabaseException e) {
+				throw e;
+			} catch (Exception e) {
+				throw new DatabaseException(e);
+			} finally {
+				// If this was a single-shot operation (not in a transaction), close the connection
+				if (connection != null && !currentTransaction().isPresent())
+					closeConnection(connection);
+			}
+		} else {
+			boolean acquiredConnection = false;
+
+			// Always get a fresh connection no matter what and close it afterwards
+			try (Connection connection = getDataSource().getConnection()) {
+				acquiredConnection = true;
+				return rawConnectionOperation.perform(connection);
+			} catch (Exception e) {
+				if (acquiredConnection)
+					throw new DatabaseException(e);
+				else
+					throw new DatabaseException("Unable to acquire database connection", e);
+			}
+		}
 	}
 
 	protected <T> void performDatabaseOperation(@Nonnull StatementContext<T> statementContext,
@@ -705,7 +824,7 @@ public class Database {
 					closeConnection(connection);
 			} finally {
 				StatementLog statementLog =
-						StatementLog.forStatementContext(statementContext)
+						StatementLog.withStatementContext(statementContext)
 								.connectionAcquisitionDuration(connectionAcquisitionDuration)
 								.preparationDuration(preparationDuration)
 								.executionDuration(executionDuration)

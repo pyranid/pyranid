@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2022 Transmogrify LLC, 2022-2024 Revetware LLC.
+ * Copyright 2015-2022 Transmogrify LLC, 2022-2025 Revetware LLC.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,10 +18,36 @@ package com.pyranid;
 
 import javax.annotation.Nonnull;
 import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.util.List;
+
+import static java.util.Objects.requireNonNull;
 
 /**
  * Contract for binding parameters to SQL prepared statements.
+ * <p>
+ * A production-ready concrete implementation is available via the following static methods:
+ * <ul>
+ *   <li>{@link #withDefaultConfiguration()}</li>
+ *   <li>{@link #withCustomParameterBinders(List)}</li>
+ * </ul>
+ * How to acquire an instance:
+ * <pre>{@code  // With out-of-the-box defaults
+ * PreparedStatementBinder default = PreparedStatementBinder.withDefaultConfiguration();
+ *
+ * // Customized
+ * PreparedStatementBinder custom = PreparedStatementBinder.withCustomParameterBinders(List.of(...));}</pre>
+ * Or, implement your own: <pre>{@code  PreparedStatementBinder myImpl = new PreparedStatementBinder() {
+ *   @Override
+ *   <T> void bindParameter(
+ *     @Nonnull StatementContext<T> statementContext,
+ *     @Nonnull PreparedStatement preparedStatement,
+ *     @Nonnull Integer parameterIndex,
+ *     @Nonnull Object parameter
+ *   ) throws SQLException {
+ *     // TODO: your own code that binds the parameter at the specified index to the PreparedStatement
+ *   }
+ * };}</pre>
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 1.0.0
@@ -29,14 +55,44 @@ import java.util.List;
 @FunctionalInterface
 public interface PreparedStatementBinder {
 	/**
-	 * Binds parameters to a SQL prepared statement.
+	 * Binds a single parameter to a SQL prepared statement.
+	 * <p>
+	 * This function is only invoked when {@code parameter} is non-null.
 	 *
 	 * @param preparedStatement the prepared statement to bind to
 	 * @param statementContext  current SQL context
-	 * @param parameters        the parameters to bind to the {@link PreparedStatement}, if any
-	 * @throws DatabaseException if an error occurs during binding
+	 * @param parameterIndex    the index of the parameter we are binding
+	 * @param parameter         the parameter we are binding to the {@link PreparedStatement}, if any
+	 * @throws SQLException if an error occurs during binding
 	 */
-	<T> void bind(@Nonnull StatementContext<T> statementContext,
-								@Nonnull PreparedStatement preparedStatement,
-								@Nonnull List<Object> parameters);
+	<T> void bindParameter(@Nonnull StatementContext<T> statementContext,
+												 @Nonnull PreparedStatement preparedStatement,
+												 @Nonnull Integer parameterIndex,
+												 @Nonnull Object parameter) throws SQLException;
+
+	/**
+	 * Acquires a concrete implementation of this interface with out-of-the-box defaults.
+	 * <p>
+	 * The returned instance is thread-safe.
+	 *
+	 * @return a concrete implementation of this interface with out-of-the-box defaults
+	 */
+	@Nonnull
+	static PreparedStatementBinder withDefaultConfiguration() {
+		return new DefaultPreparedStatementBinder();
+	}
+
+	/**
+	 * Acquires a concrete implementation of this interface, specifying "surgical" per-type custom parameter binders.
+	 * <p>
+	 * The returned instance is thread-safe.
+	 *
+	 * @param customParameterBinders the "surgical" per-type custom parameter binders
+	 * @return a concrete implementation of this interface
+	 */
+	@Nonnull
+	static PreparedStatementBinder withCustomParameterBinders(@Nonnull List<CustomParameterBinder> customParameterBinders) {
+		requireNonNull(customParameterBinders);
+		return new DefaultPreparedStatementBinder(customParameterBinders);
+	}
 }

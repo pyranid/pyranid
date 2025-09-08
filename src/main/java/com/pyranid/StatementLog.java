@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2022 Transmogrify LLC, 2022-2024 Revetware LLC.
+ * Copyright 2015-2022 Transmogrify LLC, 2022-2025 Revetware LLC.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ import static java.util.Objects.requireNonNull;
  * @since 1.0.0
  */
 @ThreadSafe
-public class StatementLog<T> {
+public final class StatementLog<T> {
 	@Nonnull
 	private final StatementContext<T> statementContext;
 	@Nonnull
@@ -95,7 +95,7 @@ public class StatementLog<T> {
 	 * @return a {@link StatementLog} builder
 	 */
 	@Nonnull
-	public static <T> Builder forStatementContext(@Nonnull StatementContext<T> statementContext) {
+	public static <T> Builder withStatementContext(@Nonnull StatementContext<T> statementContext) {
 		requireNonNull(statementContext);
 		return new Builder(statementContext);
 	}

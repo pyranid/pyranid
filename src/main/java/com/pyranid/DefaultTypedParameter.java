@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2022 Transmogrify LLC, 2022-2024 Revetware LLC.
+ * Copyright 2015-2022 Transmogrify LLC, 2022-2025 Revetware LLC.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,32 +17,43 @@
 package com.pyranid;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
+import java.lang.reflect.Type;
+import java.util.Optional;
 
-import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
 /**
- * Basic implementation of {@link InstanceProvider}.
+ * Package-private implementation of {@link TypedParameter}.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
- * @since 1.0.0
+ * @since 3.0.0
  */
 @ThreadSafe
-public class DefaultInstanceProvider implements InstanceProvider {
-	@Override
+class DefaultTypedParameter implements TypedParameter {
 	@Nonnull
-	public <T> T provide(@Nonnull StatementContext<T> statementContext,
-											 @Nonnull Class<T> instanceType) {
-		requireNonNull(statementContext);
-		requireNonNull(instanceType);
+	private final Type explicitType;
+	@Nullable
+	private final Object value;
 
-		try {
-			return instanceType.getDeclaredConstructor().newInstance();
-		} catch (Exception e) {
-			throw new RuntimeException(format(
-					"Unable to create an instance of %s. Please verify that %s has a public no-argument constructor",
-					instanceType, instanceType.getSimpleName()), e);
-		}
+	DefaultTypedParameter(@Nonnull Type explicitType,
+												@Nullable Object value) {
+		requireNonNull(explicitType);
+
+		this.explicitType = explicitType;
+		this.value = value;
+	}
+
+	@Nonnull
+	@Override
+	public Type getExplicitType() {
+		return this.explicitType;
+	}
+
+	@Nonnull
+	@Override
+	public Optional<Object> getValue() {
+		return Optional.ofNullable(this.value);
 	}
 }

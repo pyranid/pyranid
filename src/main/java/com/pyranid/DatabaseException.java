@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2022 Transmogrify LLC, 2022-2024 Revetware LLC.
+ * Copyright 2015-2022 Transmogrify LLC, 2022-2025 Revetware LLC.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -180,7 +180,7 @@ public class DatabaseException extends RuntimeException {
 		List<String> components = new ArrayList<>(20);
 
 		if (getMessage() != null && getMessage().trim().length() > 0)
-			components.add(format("message=%s", getMessage()));
+			components.add(format("message=%s", getMessage().trim()));
 
 		if (getErrorCode().isPresent())
 			components.add(format("errorCode=%s", getErrorCode().get()));
@@ -219,7 +219,7 @@ public class DatabaseException extends RuntimeException {
 		if (getWhere().isPresent())
 			components.add(format("where=%s", getWhere().get()));
 
-		return format("%s{%s}", getClass().getSimpleName(), components.stream().collect(Collectors.joining(", ")));
+		return format("%s: %s", getClass().getName(), components.stream().collect(Collectors.joining(", ")));
 	}
 
 	/**

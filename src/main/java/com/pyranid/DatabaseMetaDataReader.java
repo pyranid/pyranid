@@ -17,24 +17,22 @@
 package com.pyranid;
 
 import javax.annotation.Nonnull;
-import java.util.Optional;
+import java.sql.DatabaseMetaData;
+import java.sql.SQLException;
 
 /**
- * Represents a transactional operation capable of returning a value.
- * <p>
- * See {@link TransactionalOperation} for a variant with a {@code void} return type.
+ * Functional interface used by {@link Database#readDatabaseMetaData(DatabaseMetaDataReader)}, which permits callers to examine a transient {@link DatabaseMetaData} instance.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
- * @since 1.0.0
+ * @since 3.0.0
  */
 @FunctionalInterface
-public interface ReturningTransactionalOperation<T> {
+public interface DatabaseMetaDataReader {
 	/**
-	 * Executes a transactional operation.
+	 * Examines a JDBC {@link DatabaseMetaData}, which provides comprehensive vendor-specific information about this database as a whole.
 	 *
-	 * @return the result of operation execution
-	 * @throws Exception if an error occurs while executing the transactional operation
+	 * @param databaseMetaData JBDC metadata for this database
+	 * @throws SQLException if an error occurs while examining metadata
 	 */
-	@Nonnull
-	Optional<T> perform() throws Exception;
+	void read(@Nonnull DatabaseMetaData databaseMetaData) throws SQLException;
 }

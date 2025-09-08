@@ -18,25 +18,32 @@ package com.pyranid;
 
 import javax.annotation.Nonnull;
 import javax.annotation.concurrent.ThreadSafe;
+import java.util.List;
+import java.util.Optional;
 
 /**
- * Contract for handling database statement log events.
+ * Encapsulates {@link java.sql.PreparedStatement} parameter data meant to be bound to a vector type (for example, PostgreSQL's <a href="https://github.com/pgvector/pgvector" target="_blank">{@code pgvector}</a>), by {@link PreparedStatementBinder}.
  * <p>
+ * Stardard instances may be constructed via the following factory methods:
+ * <ul>
+ *   <li>{@link Parameters#vectorOfFloats(float[])}</li>
+ *   <li>{@link Parameters#vectorOfFloats(List)}</li>
+ *   <li>{@link Parameters#vectorOfDoubles(double[])}</li>
+ *   <li>{@link Parameters#vectorOfDoubles(List)}</li>
+ *   <li>{@link Parameters#vectorOfBigDecimals(List)}</li>
+ * </ul>
  * Implementations should be threadsafe.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
- * @since 1.0.0
+ * @since 3.0.0
  */
 @ThreadSafe
-@FunctionalInterface
-public interface StatementLogger {
+public interface VectorParameter {
 	/**
-	 * Performs a logging operation on the given {@code statementLog}.
-	 * <p>
-	 * Implementors might choose to no-op, write to stdout or a logging framework, send alerts about slow queries, and so
-	 * on.
+	 * Gets the elements of this vector.
 	 *
-	 * @param statementLog The event to log
+	 * @return the elements of this vector
 	 */
-	void log(@Nonnull StatementLog statementLog);
+	@Nonnull
+	Optional<double[]> getElements();
 }

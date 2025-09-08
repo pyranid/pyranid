@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2022 Transmogrify LLC, 2022-2024 Revetware LLC.
+ * Copyright 2015-2022 Transmogrify LLC, 2022-2025 Revetware LLC.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -157,6 +157,7 @@ open class KotlinDefaultResultSetMapper(
             .toMap()
 
         try {
+            @Suppress("UNCHECKED_CAST")
             return ctor.callBy(callByArgs) as T
         } catch (e: Exception) {
             throw DatabaseException(
