@@ -699,6 +699,7 @@ For example:
 
 ```java
 UUID departmentId = ...;
+Long accountId = ...;
 
 List<Employee> = database.queryForList("""
   SELECT *

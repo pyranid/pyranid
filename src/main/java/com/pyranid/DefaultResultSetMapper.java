@@ -462,19 +462,19 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		boolean standardType = true;
 
 		if (resultClass.isAssignableFrom(Byte.class) || resultClass.isAssignableFrom(byte.class)) {
-			value = resultSet.getByte(1);
+			value = getNullableByte(resultSet, 1);
 		} else if (resultClass.isAssignableFrom(Short.class) || resultClass.isAssignableFrom(short.class)) {
-			value = resultSet.getShort(1);
+			value = getNullableShort(resultSet, 1);
 		} else if (resultClass.isAssignableFrom(Integer.class) || resultClass.isAssignableFrom(int.class)) {
-			value = resultSet.getInt(1);
+			value = getNullableInt(resultSet, 1);
 		} else if (resultClass.isAssignableFrom(Long.class) || resultClass.isAssignableFrom(long.class)) {
-			value = resultSet.getLong(1);
+			value = getNullableLong(resultSet, 1);
 		} else if (resultClass.isAssignableFrom(Float.class) || resultClass.isAssignableFrom(float.class)) {
-			value = resultSet.getFloat(1);
+			value = getNullableFloat(resultSet, 1);
 		} else if (resultClass.isAssignableFrom(Double.class) || resultClass.isAssignableFrom(double.class)) {
-			value = resultSet.getDouble(1);
+			value = getNullableDouble(resultSet, 1);
 		} else if (resultClass.isAssignableFrom(Boolean.class) || resultClass.isAssignableFrom(boolean.class)) {
-			value = resultSet.getBoolean(1);
+			value = getNullableBoolean(resultSet, 1);
 		} else if (resultClass.isAssignableFrom(Character.class) || resultClass.isAssignableFrom(char.class)) {
 			String string = resultSet.getString(1);
 			if (string != null)
@@ -484,8 +484,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			value = resultSet.getString(1);
 		} else if (resultClass.isAssignableFrom(byte[].class)) {
 			value = resultSet.getBytes(1);
-		} else if (resultClass.isAssignableFrom(Enum.class)) {
-			value = Enum.valueOf((Class) resultClass, resultSet.getString(1));
+		} else if (resultClass.isEnum()) {
+			Object raw = resultSet.getObject(1);
+			if (raw == null)
+				value = null; // -> Optional.empty()
+			else
+				value = extractEnumValue(resultClass, raw);
 		} else if (resultClass.isAssignableFrom(UUID.class)) {
 			String string = resultSet.getString(1);
 			if (string != null) value = UUID.fromString(string);
@@ -535,8 +539,6 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		} else if (resultClass.isAssignableFrom(Currency.class)) {
 			String currency = resultSet.getString(1);
 			if (currency != null) value = Currency.getInstance(currency);
-		} else if (resultClass.isEnum()) {
-			value = extractEnumValue(resultClass, resultSet.getObject(1));
 		} else {
 			standardType = false;
 		}
@@ -1356,6 +1358,48 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			ZoneOffset off = ctx.getTimeZone().getRules().getOffset(now);
 			return lt.atOffset(off);
 		}
+	}
+
+	@Nullable
+	private Integer getNullableInt(@Nonnull ResultSet resultSet, int columnIndex) throws SQLException {
+		int v = resultSet.getInt(columnIndex);
+		return resultSet.wasNull() ? null : v;
+	}
+
+	@Nullable
+	private Long getNullableLong(@Nonnull ResultSet resultSet, int columnIndex) throws SQLException {
+		long v = resultSet.getLong(columnIndex);
+		return resultSet.wasNull() ? null : v;
+	}
+
+	@Nullable
+	private Short getNullableShort(@Nonnull ResultSet resultSet, int columnIndex) throws SQLException {
+		short v = resultSet.getShort(columnIndex);
+		return resultSet.wasNull() ? null : v;
+	}
+
+	@Nullable
+	private Byte getNullableByte(@Nonnull ResultSet resultSet, int columnIndex) throws SQLException {
+		byte v = resultSet.getByte(columnIndex);
+		return resultSet.wasNull() ? null : v;
+	}
+
+	@Nullable
+	private Float getNullableFloat(@Nonnull ResultSet resultSet, int columnIndex) throws SQLException {
+		float v = resultSet.getFloat(columnIndex);
+		return resultSet.wasNull() ? null : v;
+	}
+
+	@Nullable
+	private Double getNullableDouble(@Nonnull ResultSet resultSet, int columnIndex) throws SQLException {
+		double v = resultSet.getDouble(columnIndex);
+		return resultSet.wasNull() ? null : v;
+	}
+
+	@Nullable
+	private Boolean getNullableBoolean(@Nonnull ResultSet resultSet, int columnIndex) throws SQLException {
+		boolean v = resultSet.getBoolean(columnIndex);
+		return resultSet.wasNull() ? null : v;
 	}
 
 	@ThreadSafe
