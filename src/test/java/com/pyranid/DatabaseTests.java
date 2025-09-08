@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import javax.annotation.Nonnull;
+import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
 import java.math.BigDecimal;
@@ -453,6 +454,185 @@ public class DatabaseTests {
 		Assertions.assertNotNull(row);
 		Assertions.assertEquals("alpha", row.groupName());
 		Assertions.assertEquals(List.of(u1, u2), row.ids());
+	}
+
+	@Test
+	public void testCustomColumnMapper_AppliesToStandardType_SingleColumn() {
+		DataSource dataSource = createInMemoryDataSource("cm_standard");
+
+		// Mapper: for any Locale target, always return CANADA (proves custom path is used on standard fast path)
+		CustomColumnMapper localeOverride = new CustomColumnMapper() {
+			@Nonnull
+			@Override
+			public Boolean appliesTo(@Nonnull TargetType targetType) {
+				return targetType.matchesClass(Locale.class);
+			}
+
+			@Nonnull
+			@Override
+			public MappingResult map(@Nonnull StatementContext<?> statementContext,
+															 @Nonnull ResultSet resultSet,
+															 @Nonnull Object resultSetValue,
+															 @Nonnull TargetType targetType,
+															 @Nonnull Integer columnIndex,
+															 @Nullable String columnLabel,
+															 @Nonnull InstanceProvider instanceProvider) {
+				// Ignore DB value; force a deterministic value so we can assert override happened.
+				return MappingResult.of(Locale.CANADA);
+			}
+		};
+
+		ResultSetMapper.Builder rsmBuilder = ResultSetMapper
+				.withCustomColumnMappers(List.of(localeOverride));
+
+		Database db = Database.withDataSource(dataSource)
+				.resultSetMapper(rsmBuilder.build())
+				.build();
+
+		createTestSchema(db);
+
+		// id | name | email   | locale
+		db.execute("INSERT INTO employee VALUES (1, 'A', 'a@x.com', 'en-US')");
+		db.execute("INSERT INTO employee VALUES (2, 'B', 'b@x.com', 'ja-JP')");
+		db.execute("INSERT INTO employee VALUES (3, 'C', 'c@x.com', NULL)");
+
+		// --- PROOF: custom mapper applies for standard-type mapping (Locale.class) on a 1-column SELECT ---
+		Optional<Locale> l1 = db.queryForObject("SELECT locale FROM employee WHERE employee_id=1", Locale.class);
+		Assertions.assertTrue(l1.isPresent(), "Expected a Locale result");
+		Assertions.assertEquals(Locale.CANADA, l1.get(), "Custom mapper did not override Locale for standard-type mapping");
+
+		// Another row, same behavior (also exercises the (sourceClass, targetType) cache)
+		Optional<Locale> l2 = db.queryForObject("SELECT locale FROM employee WHERE employee_id=2", Locale.class);
+		Assertions.assertTrue(l2.isPresent(), "Expected a Locale result");
+		Assertions.assertEquals(Locale.CANADA, l2.get(), "Custom mapper did not override Locale for standard-type mapping (row 2)");
+
+		// --- NULL raw value: mapper is skipped (raw==null), standard fast path returns Optional.empty() ---
+		Optional<Locale> l3 = db.queryForObject("SELECT locale FROM employee WHERE employee_id=3", Locale.class);
+		Assertions.assertTrue(l3.isEmpty(), "NULL column should map to Optional.empty() for standard types");
+
+		// --- Single-column invariant still enforced even if a mapper exists ---
+		Assertions.assertThrows(DatabaseException.class, () ->
+						db.queryForObject("SELECT locale, email FROM employee WHERE employee_id=1", Locale.class),
+				"Mapping a standard type from multiple columns should throw");
+	}
+
+	@NotThreadSafe
+	protected static class TestPerson {
+		private String name;
+		private int age;
+
+		public TestPerson() {}
+
+		public TestPerson(String name, int age) {
+			this.name = name;
+			this.age = age;
+		}
+
+		public String getName() {return name;}
+
+		public void setName(String name) {this.name = name;}
+
+		public int getAge() {return age;}
+
+		public void setAge(int age) {this.age = age;}
+
+		@Override
+		public boolean equals(Object o) {
+			if (!(o instanceof TestPerson p)) return false;
+			return age == p.age && (name == null ? p.name == null : name.equals(p.name));
+		}
+
+		@Override
+		public int hashCode() {return name.hashCode() * 31 + age;}
+	}
+
+	@NotThreadSafe
+	protected record TestPersonRow(@DatabaseColumn("payload") TestPerson testPerson, Long id) {}
+
+	@Test
+	public void testCustomColumnMapper_InflatesJsonToPojo() {
+		DataSource dataSource = createInMemoryDataSource("cm_json");
+
+		// Mapper: if target is Person.class and source is a JSON string, inflate it.
+		CustomColumnMapper jsonToPerson = new CustomColumnMapper() {
+			@Nonnull
+			@Override
+			public Boolean appliesTo(@Nonnull TargetType targetType) {
+				return targetType.matchesClass(TestPerson.class);
+			}
+
+			@Nonnull
+			@Override
+			public MappingResult map(@Nonnull StatementContext<?> statementContext,
+															 @Nonnull ResultSet resultSet,
+															 @Nonnull Object resultSetValue,
+															 @Nonnull TargetType targetType,
+															 @Nonnull Integer columnIndex,
+															 @Nullable String columnLabel,
+															 @Nonnull InstanceProvider instanceProvider) {
+				if (!(resultSetValue instanceof String json)) return MappingResult.fallback();
+				// Very simple parser for test purposes (no external libs needed)
+				json = json.trim().replaceAll("[{}\"]", "");
+				String[] parts = json.split(",");
+				String name = null;
+				Integer age = null;
+				for (String part : parts) {
+					String[] kv = part.split(":");
+					if (kv.length != 2) continue;
+					String key = kv[0].trim();
+					String value = kv[1].trim();
+					if (key.equals("name")) name = value;
+					else if (key.equals("age")) age = Integer.parseInt(value);
+				}
+				return MappingResult.of(new TestPerson(name, age == null ? 0 : age));
+			}
+		};
+
+		ResultSetMapper.Builder rsmBuilder = ResultSetMapper
+				.withCustomColumnMappers(List.of(jsonToPerson));
+		// If feature is behind a toggle:
+		// rsmBuilder = rsmBuilder.applyCustomMappersForStandardTypes(true);
+
+		Database db = Database.withDataSource(dataSource)
+				.resultSetMapper(rsmBuilder.build())
+				.build();
+
+		// Simple schema with a TEXT column holding JSON
+		db.execute("CREATE TABLE people_json (id INT PRIMARY KEY, payload VARCHAR)");
+		db.execute("INSERT INTO people_json VALUES (1, '{\"name\":\"Alice\",\"age\":30}')");
+		db.execute("INSERT INTO people_json VALUES (2, '{\"name\":\"Bob\",\"age\":42}')");
+		db.execute("INSERT INTO people_json VALUES (3, NULL)");
+
+		// Mapper inflates JSON into Person object directly from single-column SELECT
+		Optional<TestPerson> p1 = db.queryForObject("SELECT payload FROM people_json WHERE id=1", TestPerson.class);
+		Assertions.assertEquals(new TestPerson("Alice", 30), p1.orElse(null));
+
+		Optional<TestPerson> p2 = db.queryForObject("SELECT payload FROM people_json WHERE id=2", TestPerson.class);
+		Assertions.assertEquals(new TestPerson("Bob", 42), p2.orElse(null));
+
+		// NULL → Optional.empty()
+		Optional<TestPerson> p3 = db.queryForObject("SELECT payload FROM people_json WHERE id=3", TestPerson.class);
+		Assertions.assertTrue(p3.isEmpty(), "Expected empty Optional for NULL JSON column");
+
+		Optional<TestPerson> p4 = db.queryForObject("SELECT payload FROM people_json WHERE id=4", TestPerson.class);
+		Assertions.assertTrue(p4.isEmpty(), "Expected empty Optional for no rows");
+
+		List<TestPerson> people = db.queryForList("SELECT payload FROM people_json ORDER BY id", TestPerson.class);
+		Assertions.assertEquals(3, people.size(), "Wrong number of people returned");
+		Assertions.assertEquals("Alice", people.get(0).name, "Wrong person name");
+		Assertions.assertEquals("Bob", people.get(1).name, "Wrong person name");
+		Assertions.assertNull(people.get(2), "Third person result should be null");
+
+		// Multi-column should still throw
+		Assertions.assertThrows(DatabaseException.class, () ->
+				db.queryForObject("SELECT payload, id FROM people_json WHERE id=1", TestPerson.class));
+
+		// Pull back the whole row and make sure the mapper still works
+		TestPersonRow row = db.queryForObject("SELECT * FROM people_json WHERE id=1", TestPersonRow.class).orElse(null);
+
+		Assertions.assertNotNull(row, "Unable to pull person record by ID");
+		Assertions.assertEquals("Alice", row.testPerson().name, "Wrong person name");
+		Assertions.assertEquals(1L, row.id(), "Wrong person ID");
 	}
 
 	@Test

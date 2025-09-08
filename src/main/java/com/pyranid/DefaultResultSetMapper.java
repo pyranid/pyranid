@@ -322,7 +322,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(instanceProvider);
 
 		try {
-			StandardTypeResult<T> standardTypeResult = mapResultSetToStandardType(statementContext, resultSet, resultSetRowType);
+			StandardTypeResult<T> standardTypeResult = mapResultSetToStandardType(statementContext, resultSet, resultSetRowType, instanceProvider);
 
 			if (standardTypeResult.isStandardType())
 				return standardTypeResult.getValue();
@@ -353,7 +353,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		try {
 			// Use "standard type" fast path
-			StandardTypeResult<T> standardTypeResult = mapResultSetToStandardType(statementContext, resultSet, resultSetRowType);
+			StandardTypeResult<T> standardTypeResult = mapResultSetToStandardType(statementContext, resultSet, resultSetRowType, instanceProvider);
 			if (standardTypeResult.isStandardType()) return standardTypeResult.getValue();
 
 			// Otherwise, use a per-schema row plan
@@ -443,9 +443,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	 * This does not attempt to map to a user-defined JavaBean - see {@link #mapResultSetToBean(StatementContext, ResultSet, InstanceProvider)} for
 	 * that functionality.
 	 *
-	 * @param <T>         result instance type token
-	 * @param resultSet   provides raw row data to pull from
-	 * @param resultClass the type of instance to map to
+	 * @param <T>              result instance type token
+	 * @param resultSet        provides raw row data to pull from
+	 * @param resultClass      the type of instance to map to
+	 * @param instanceProvider creates instances for a given type
 	 * @return the result of the mapping
 	 * @throws Exception if an error occurs during mapping
 	 */
@@ -453,13 +454,71 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	@Nonnull
 	protected <T> StandardTypeResult<T> mapResultSetToStandardType(@Nonnull StatementContext<T> statementContext,
 																																 @Nonnull ResultSet resultSet,
-																																 @Nonnull Class<T> resultClass) throws Exception {
+																																 @Nonnull Class<T> resultClass,
+																																 @Nonnull InstanceProvider instanceProvider) throws Exception {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(resultClass);
+		requireNonNull(instanceProvider);
 
 		Object value = null;
 		boolean standardType = true;
+
+		// See if custom mappers apply, e.g. user mapping a SQL ARRAY to a List<UUID>
+		TargetType targetType = TargetType.of(resultClass);
+		List<CustomColumnMapper> mappers = customColumnMappersFor(targetType);
+
+		if (!mappers.isEmpty()) {
+			Object resultSetValue = extractColumnValue(resultSet.getMetaData(), statementContext, resultSet, 1).orElse(null);
+
+			// If single-column AND value is NULL AND target has applicable custom mappers,
+			// treat this as a "standard" mapping that yields null => Optional.empty()
+			int columnCount = resultSet.getMetaData().getColumnCount();
+
+			if (resultSetValue == null) {
+				if (columnCount != 1) {
+					List<String> labels = new ArrayList<>(columnCount);
+					for (int i = 1; i <= columnCount; ++i)
+						labels.add(resultSet.getMetaData().getColumnLabel(i));
+					throw new DatabaseException(format(
+							"Expected 1 column to map to %s but encountered %s instead (%s)",
+							resultClass, columnCount, labels.stream().collect(joining(", "))));
+				}
+
+				return new StandardTypeResult<>(null, true); // Ensure Optional.empty() if null standard type
+			}
+
+			if (resultSetValue != null) {
+				Optional<Object> maybe =
+						tryCustomColumnMappers(statementContext,
+								resultSet,
+								resultSetValue,
+								targetType,
+								1,
+								resultSet.getMetaData().getColumnLabel(1),
+								instanceProvider);
+
+				if (maybe.isPresent()) {
+					// Enforce the single-column invariant, just like the normal fast path does
+					if (columnCount != 1) {
+						List<String> labels = new ArrayList<>(columnCount);
+
+						for (int i = 1; i <= columnCount; ++i)
+							labels.add(resultSet.getMetaData().getColumnLabel(i));
+
+						throw new DatabaseException(format("Expected 1 column to map to %s but encountered %s instead (%s)",
+								resultClass, columnCount, labels.stream().collect(joining(", "))));
+					}
+
+					// Return exactly like the fast path: Optional.ofNullable(value), standardType=true
+					@SuppressWarnings("unchecked")
+					T cast = (T) maybe.orElse(null);
+					return new StandardTypeResult<>(cast, true);
+				}
+
+				// If no mapper applied (Fallback), we proceed to built-ins below.
+			}
+		}
 
 		if (resultClass.isAssignableFrom(Byte.class) || resultClass.isAssignableFrom(byte.class)) {
 			value = getNullableByte(resultSet, 1);
@@ -768,31 +827,41 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		for (int i = 1; i <= columnCount; i++) {
 			String label = normalizeColumnLabel(resultSetMetaData.getColumnLabel(i));
-			int jdbcType = resultSetMetaData.getColumnType(i);
-
-			Object resultSetValue;
-			boolean tsTz = TemporalReaders.isTimestampWithTimeZone(resultSetMetaData, i, statementContext.getDatabaseType());
-			boolean timeTz = TemporalReaders.isTimeWithTimeZone(resultSetMetaData, i);
-
-			if (tsTz) {
-				resultSetValue = TemporalReaders.asOffsetDateTime(resultSet, i, statementContext);
-			} else if (jdbcType == Types.TIMESTAMP) {
-				resultSetValue = TemporalReaders.asLocalDateTime(resultSet, i, statementContext);
-			} else if (jdbcType == Types.DATE) {
-				resultSetValue = TemporalReaders.asLocalDate(resultSet, i);
-			} else if (timeTz) {
-				resultSetValue = TemporalReaders.asOffsetTime(resultSet, i, statementContext);
-			} else if (jdbcType == Types.TIME) {
-				resultSetValue = TemporalReaders.asLocalTime(resultSet, i);
-			} else {
-				// Non-temporal or unknown: take the driver’s native object (PGobject, BigDecimal, etc.)
-				resultSetValue = resultSet.getObject(i);
-			}
+			Object resultSetValue = extractColumnValue(resultSetMetaData, statementContext, resultSet, i).orElse(null);
 
 			columnLabelsToValues.put(label, resultSetValue);
 		}
 
 		return columnLabelsToValues;
+	}
+
+	@Nonnull
+	protected <T> Optional<Object> extractColumnValue(@Nonnull ResultSetMetaData resultSetMetaData,
+																										@Nonnull StatementContext<T> statementContext,
+																										@Nonnull ResultSet resultSet,
+																										int columnIndex) throws SQLException {
+		Object resultSetValue;
+
+		int jdbcType = resultSetMetaData.getColumnType(columnIndex);
+		boolean tsTz = TemporalReaders.isTimestampWithTimeZone(resultSetMetaData, columnIndex, statementContext.getDatabaseType());
+		boolean timeTz = TemporalReaders.isTimeWithTimeZone(resultSetMetaData, columnIndex);
+
+		if (tsTz) {
+			resultSetValue = TemporalReaders.asOffsetDateTime(resultSet, columnIndex, statementContext);
+		} else if (jdbcType == Types.TIMESTAMP) {
+			resultSetValue = TemporalReaders.asLocalDateTime(resultSet, columnIndex, statementContext);
+		} else if (jdbcType == Types.DATE) {
+			resultSetValue = TemporalReaders.asLocalDate(resultSet, columnIndex);
+		} else if (timeTz) {
+			resultSetValue = TemporalReaders.asOffsetTime(resultSet, columnIndex, statementContext);
+		} else if (jdbcType == Types.TIME) {
+			resultSetValue = TemporalReaders.asLocalTime(resultSet, columnIndex);
+		} else {
+			// Non-temporal or unknown: take the driver’s native object (PGobject, BigDecimal, etc.)
+			resultSetValue = resultSet.getObject(columnIndex);
+		}
+
+		return Optional.ofNullable(resultSetValue);
 	}
 
 	/**
