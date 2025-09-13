@@ -15,36 +15,7 @@
  */
 
 /**
- * <a target="_blank" href="https://www.pyranid.com">Pyranid</a> is a zero-dependency JDBC interface for modern Java applications.
- * <p>
- * See <a target="_blank" href="https://www.pyranid.com">https://www.pyranid.com</a> for more detailed documentation and code samples.
- *
- * <pre>
- * // Minimal setup, uses defaults
- * DataSource dataSource = ...
- * Database database = Database.withDataSource(dataSource).build();
- *
- * // Queries
- * Optional&lt;Car&gt; specificCar = database.queryForObject("SELECT * FROM car WHERE id = ?", Car.class, 123);
- * List&lt;Car&gt; blueCars = database.queryForList("SELECT * FROM car WHERE color = ?", Car.class, Color.BLUE);
- * Optional&lt;UUID&gt; id = database.queryForObject("SELECT id FROM widget LIMIT 1", UUID.class);
- * List&lt;BigDecimal&gt; balances = database.queryForList("SELECT balance FROM account", BigDecimal.class);
- *
- * // Statements
- * long updateCount = database.execute("UPDATE car SET color = ?", Color.RED);
- * Optional&lt;UUID&gt; id = database.executeForObject("INSERT INTO book VALUES (?) RETURNING id", UUID.class, "The Stranger");
- *
- * // Transactions
- * database.transaction(() -&gt; {
- *   BigDecimal balance1 = database.queryForObject("SELECT balance FROM account WHERE id = 1", BigDecimal.class).get();
- *   BigDecimal balance2 = database.queryForObject("SELECT balance FROM account WHERE id = 2", BigDecimal.class).get();
- *
- *   balance1 = balance1.subtract(amount);
- *   balance2 = balance2.add(amount);
- *
- *   database.execute("UPDATE account SET balance = ? WHERE id = 1", balance1);
- *   database.execute("UPDATE account SET balance = ? WHERE id = 2", balance2);
- * });</pre>
+ * This package contains the set of all Pyranid types.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 1.0.0

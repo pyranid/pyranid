@@ -93,7 +93,7 @@
 					<linksource>true</linksource>
 					<show>public</show>
 					<bottom><![CDATA[Copyright 2015-2022 <a href="https://www.xmog.com" target="_blank">Transmogrify LLC<a>, 2022-2025 <a href="https://www.revetware.com" target="_blank">Revetware LLC<a>.]]></bottom>
-					<source>19</source>
+					<source>17</source>
 				</configuration>
 				<executions>
 					<execution>
