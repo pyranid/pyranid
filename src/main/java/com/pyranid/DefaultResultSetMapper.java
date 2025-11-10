@@ -305,32 +305,36 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(resultSetRowType);
 		requireNonNull(instanceProvider);
 
-		if (getPlanCachingEnabled())
-			return mapWithRowPlanning(statementContext, resultSet, resultSetRowType, instanceProvider);
+		ResultSetMetaData resultSetMetaData = resultSet.getMetaData();
 
-		return mapWithoutRowPlanning(statementContext, resultSet, resultSetRowType, instanceProvider);
+		if (getPlanCachingEnabled())
+			return mapWithRowPlanning(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData);
+
+		return mapWithoutRowPlanning(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData);
 	}
 
 	@Nonnull
 	protected <T> Optional<T> mapWithoutRowPlanning(@Nonnull StatementContext<T> statementContext,
 																									@Nonnull ResultSet resultSet,
 																									@Nonnull Class<T> resultSetRowType,
-																									@Nonnull InstanceProvider instanceProvider) throws SQLException {
+																									@Nonnull InstanceProvider instanceProvider,
+																									@Nonnull ResultSetMetaData resultSetMetaData) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(resultSetRowType);
 		requireNonNull(instanceProvider);
+		requireNonNull(resultSetMetaData);
 
 		try {
-			StandardTypeResult<T> standardTypeResult = mapResultSetToStandardType(statementContext, resultSet, resultSetRowType, instanceProvider);
+			StandardTypeResult<T> standardTypeResult = mapResultSetToStandardType(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData);
 
 			if (standardTypeResult.isStandardType())
 				return standardTypeResult.getValue();
 
 			if (resultSetRowType.isRecord())
-				return Optional.ofNullable((T) mapResultSetToRecord((StatementContext<? extends Record>) statementContext, resultSet, instanceProvider));
+				return Optional.ofNullable((T) mapResultSetToRecord((StatementContext<? extends Record>) statementContext, resultSet, instanceProvider, resultSetMetaData));
 
-			return Optional.ofNullable(mapResultSetToBean(statementContext, resultSet, instanceProvider));
+			return Optional.ofNullable(mapResultSetToBean(statementContext, resultSet, instanceProvider, resultSetMetaData));
 		} catch (DatabaseException e) {
 			throw e;
 		} catch (SQLException e) {
@@ -345,19 +349,21 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	protected <T> Optional<T> mapWithRowPlanning(@Nonnull StatementContext<T> statementContext,
 																							 @Nonnull ResultSet resultSet,
 																							 @Nonnull Class<T> resultSetRowType,
-																							 @Nonnull InstanceProvider instanceProvider) throws SQLException {
+																							 @Nonnull InstanceProvider instanceProvider,
+																							 @Nonnull ResultSetMetaData resultSetMetaData) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(resultSetRowType);
 		requireNonNull(instanceProvider);
+		requireNonNull(resultSetMetaData);
 
 		try {
 			// Use "standard type" fast path
-			StandardTypeResult<T> standardTypeResult = mapResultSetToStandardType(statementContext, resultSet, resultSetRowType, instanceProvider);
+			StandardTypeResult<T> standardTypeResult = mapResultSetToStandardType(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData);
 			if (standardTypeResult.isStandardType()) return standardTypeResult.getValue();
 
 			// Otherwise, use a per-schema row plan
-			RowPlan<T> plan = buildPlan(statementContext, resultSet, resultSetRowType, instanceProvider);
+			RowPlan<T> plan = buildPlan(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData);
 			// Per-row raw cache: 1-based, size = columnCount + 1
 			final Object[] rawByCol = new Object[plan.columnCount + 1];
 			final boolean[] rawLoaded = new boolean[plan.columnCount + 1];
@@ -488,11 +494,13 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	protected <T> StandardTypeResult<T> mapResultSetToStandardType(@Nonnull StatementContext<T> statementContext,
 																																 @Nonnull ResultSet resultSet,
 																																 @Nonnull Class<T> resultClass,
-																																 @Nonnull InstanceProvider instanceProvider) throws Exception {
+																																 @Nonnull InstanceProvider instanceProvider,
+																																 @Nonnull ResultSetMetaData resultSetMetaData) throws Exception {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(resultClass);
 		requireNonNull(instanceProvider);
+		requireNonNull(resultSetMetaData);
 
 		Object value = null;
 		boolean standardType = true;
@@ -502,17 +510,17 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		List<CustomColumnMapper> mappers = customColumnMappersFor(targetType);
 
 		if (!mappers.isEmpty()) {
-			Object resultSetValue = extractColumnValue(resultSet.getMetaData(), statementContext, resultSet, 1).orElse(null);
+			Object resultSetValue = extractColumnValue(resultSetMetaData, statementContext, resultSet, 1).orElse(null);
 
 			// If single-column AND value is NULL AND target has applicable custom mappers,
 			// treat this as a "standard" mapping that yields null => Optional.empty()
-			int columnCount = resultSet.getMetaData().getColumnCount();
+			int columnCount = resultSetMetaData.getColumnCount();
 
 			if (resultSetValue == null) {
 				if (columnCount != 1) {
 					List<String> labels = new ArrayList<>(columnCount);
 					for (int i = 1; i <= columnCount; ++i)
-						labels.add(resultSet.getMetaData().getColumnLabel(i));
+						labels.add(resultSetMetaData.getColumnLabel(i));
 					throw new DatabaseException(format(
 							"Expected 1 column to map to %s but encountered %s instead (%s)",
 							resultClass, columnCount, labels.stream().collect(joining(", "))));
@@ -528,7 +536,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 								resultSetValue,
 								targetType,
 								1,
-								resultSet.getMetaData().getColumnLabel(1),
+								resultSetMetaData.getColumnLabel(1),
 								instanceProvider);
 
 				if (maybe.isPresent()) {
@@ -537,7 +545,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 						List<String> labels = new ArrayList<>(columnCount);
 
 						for (int i = 1; i <= columnCount; ++i)
-							labels.add(resultSet.getMetaData().getColumnLabel(i));
+							labels.add(resultSetMetaData.getColumnLabel(i));
 
 						throw new DatabaseException(format("Expected 1 column to map to %s but encountered %s instead (%s)",
 								resultClass, columnCount, labels.stream().collect(joining(", "))));
@@ -595,29 +603,28 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			BigDecimal bd = resultSet.getBigDecimal(1);
 			if (bd != null) value = bd.toBigInteger();
 		} else if (resultClass.isAssignableFrom(Date.class)) {
-			Instant inst = TemporalReaders.asInstant(resultSet, 1, statementContext);
+			Instant inst = TemporalReaders.asInstant(resultSet, 1, statementContext, resultSetMetaData);
 			value = (inst == null) ? null : Date.from(inst);
 		} else if (resultClass.isAssignableFrom(Instant.class)) {
-			value = TemporalReaders.asInstant(resultSet, 1, statementContext);
+			value = TemporalReaders.asInstant(resultSet, 1, statementContext, resultSetMetaData);
 		} else if (resultClass.isAssignableFrom(LocalDate.class)) {
 			value = TemporalReaders.asLocalDate(resultSet, 1);
 		} else if (resultClass.isAssignableFrom(LocalTime.class)) {
 			value = TemporalReaders.asLocalTime(resultSet, 1);
 		} else if (resultClass.isAssignableFrom(LocalDateTime.class)) {
-			value = TemporalReaders.asLocalDateTime(resultSet, 1, statementContext);
+			value = TemporalReaders.asLocalDateTime(resultSet, 1, statementContext, resultSetMetaData);
 		} else if (resultClass.isAssignableFrom(OffsetTime.class)) {
-			value = TemporalReaders.asOffsetTime(resultSet, 1, statementContext);
+			value = TemporalReaders.asOffsetTime(resultSet, 1, statementContext, resultSetMetaData);
 		} else if (resultClass.isAssignableFrom(OffsetDateTime.class)) {
-			value = TemporalReaders.asOffsetDateTime(resultSet, 1, statementContext);
+			value = TemporalReaders.asOffsetDateTime(resultSet, 1, statementContext, resultSetMetaData);
 		} else if (resultClass.isAssignableFrom(java.sql.Timestamp.class)) {
-			ResultSetMetaData md = resultSet.getMetaData();
-			boolean withTz = TemporalReaders.isTimestampWithTimeZone(md, 1, statementContext.getDatabaseType());
+			boolean withTz = TemporalReaders.isTimestampWithTimeZone(resultSetMetaData, 1, statementContext.getDatabaseType());
 
 			if (withTz) {
-				Instant inst = TemporalReaders.asInstant(resultSet, 1, statementContext);
+				Instant inst = TemporalReaders.asInstant(resultSet, 1, statementContext, resultSetMetaData);
 				value = (inst == null) ? null : Timestamp.from(inst);
 			} else {
-				LocalDateTime ldt = TemporalReaders.asLocalDateTime(resultSet, 1, statementContext);
+				LocalDateTime ldt = TemporalReaders.asLocalDateTime(resultSet, 1, statementContext, resultSetMetaData);
 				value = (ldt == null) ? null : Timestamp.valueOf(ldt);
 			}
 		} else if (resultClass.isAssignableFrom(java.sql.Date.class)) {
@@ -640,10 +647,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		if (standardType) {
-			int columnCount = resultSet.getMetaData().getColumnCount();
+			int columnCount = resultSetMetaData.getColumnCount();
 			if (columnCount != 1) {
 				List<String> labels = new ArrayList<>(columnCount);
-				for (int i = 1; i <= columnCount; ++i) labels.add(resultSet.getMetaData().getColumnLabel(i));
+				for (int i = 1; i <= columnCount; ++i) labels.add(resultSetMetaData.getColumnLabel(i));
 				throw new DatabaseException(format("Expected 1 column to map to %s but encountered %s instead (%s)",
 						resultClass, columnCount, labels.stream().collect(joining(", "))));
 			}
@@ -666,16 +673,18 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	@Nonnull
 	protected <T extends Record> T mapResultSetToRecord(@Nonnull StatementContext<T> statementContext,
 																											@Nonnull ResultSet resultSet,
-																											@Nonnull InstanceProvider instanceProvider) throws Exception {
+																											@Nonnull InstanceProvider instanceProvider,
+																											@Nonnull ResultSetMetaData resultSetMetaData) throws Exception {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(instanceProvider);
+		requireNonNull(resultSetMetaData);
 
 		Class<T> resultSetRowType = statementContext.getResultSetRowType().get();
 
 		RecordComponent[] recordComponents = resultSetRowType.getRecordComponents();
 		Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(resultSetRowType);
-		Map<String, Object> columnLabelsToValues = extractColumnLabelsToValues(statementContext, resultSet);
+		Map<String, Object> columnLabelsToValues = extractColumnLabelsToValues(statementContext, resultSet, resultSetMetaData);
 
 		Map<String, TargetType> propertyTargetTypes = determinePropertyTargetTypes(resultSetRowType);
 
@@ -752,16 +761,18 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	@Nonnull
 	protected <T> T mapResultSetToBean(@Nonnull StatementContext<T> statementContext,
 																		 @Nonnull ResultSet resultSet,
-																		 @Nonnull InstanceProvider instanceProvider) throws Exception {
+																		 @Nonnull InstanceProvider instanceProvider,
+																		 @Nonnull ResultSetMetaData resultSetMetaData) throws Exception {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(instanceProvider);
+		requireNonNull(resultSetMetaData);
 
 		Class<T> resultSetRowType = statementContext.getResultSetRowType().get();
 
 		T object = instanceProvider.provide(statementContext, resultSetRowType);
 		BeanInfo beanInfo = Introspector.getBeanInfo(resultSetRowType);
-		Map<String, Object> columnLabelsToValues = extractColumnLabelsToValues(statementContext, resultSet);
+		Map<String, Object> columnLabelsToValues = extractColumnLabelsToValues(statementContext, resultSet, resultSetMetaData);
 		Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(resultSetRowType);
 
 		// Compute once per class (generic-aware)
@@ -856,14 +867,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 	@Nonnull
 	protected <T> Map<String, Object> extractColumnLabelsToValues(@Nonnull StatementContext<T> statementContext,
-																																@Nonnull ResultSet resultSet) throws SQLException {
+																																@Nonnull ResultSet resultSet,
+																																@Nonnull ResultSetMetaData resultSetMetaData) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
+		requireNonNull(resultSetMetaData);
 
-		requireNonNull(statementContext);
-		requireNonNull(resultSet);
-
-		ResultSetMetaData resultSetMetaData = resultSet.getMetaData();
 		int columnCount = resultSetMetaData.getColumnCount();
 		Map<String, Object> columnLabelsToValues = new HashMap<>(columnCount);
 
@@ -889,13 +898,13 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		boolean timeTz = TemporalReaders.isTimeWithTimeZone(resultSetMetaData, columnIndex);
 
 		if (tsTz) {
-			resultSetValue = TemporalReaders.asOffsetDateTime(resultSet, columnIndex, statementContext);
+			resultSetValue = TemporalReaders.asOffsetDateTime(resultSet, columnIndex, statementContext, resultSetMetaData);
 		} else if (jdbcType == Types.TIMESTAMP) {
-			resultSetValue = TemporalReaders.asLocalDateTime(resultSet, columnIndex, statementContext);
+			resultSetValue = TemporalReaders.asLocalDateTime(resultSet, columnIndex, statementContext, resultSetMetaData);
 		} else if (jdbcType == Types.DATE) {
 			resultSetValue = TemporalReaders.asLocalDate(resultSet, columnIndex);
 		} else if (timeTz) {
-			resultSetValue = TemporalReaders.asOffsetTime(resultSet, columnIndex, statementContext);
+			resultSetValue = TemporalReaders.asOffsetTime(resultSet, columnIndex, statementContext, resultSetMetaData);
 		} else if (jdbcType == Types.TIME) {
 			resultSetValue = TemporalReaders.asLocalTime(resultSet, columnIndex);
 		} else {
@@ -1321,9 +1330,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		// ==== Targeted readers =====================================================
 
-		public static Instant asInstant(ResultSet rs, int col, StatementContext<?> ctx) throws SQLException {
-			ResultSetMetaData md = rs.getMetaData();
-			boolean withTz = isTimestampWithTimeZone(md, col, ctx.getDatabaseType());
+		public static Instant asInstant(ResultSet rs, int col, StatementContext<?> ctx, ResultSetMetaData resultSetMetaData) throws SQLException {
+			boolean withTz = isTimestampWithTimeZone(resultSetMetaData, col, ctx.getDatabaseType());
 
 			// Modern fast-path
 			if (withTz) {
@@ -1366,16 +1374,15 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			return null;
 		}
 
-		public static OffsetDateTime asOffsetDateTime(ResultSet rs, int col, StatementContext<?> ctx) throws SQLException {
-			ResultSetMetaData md = rs.getMetaData();
-			boolean withTz = isTimestampWithTimeZone(md, col, ctx.getDatabaseType());
+		public static OffsetDateTime asOffsetDateTime(ResultSet rs, int col, StatementContext<?> ctx, ResultSetMetaData resultSetMetaData) throws SQLException {
+			boolean withTz = isTimestampWithTimeZone(resultSetMetaData, col, ctx.getDatabaseType());
 
 			OffsetDateTime got = tryGet(rs, col, OffsetDateTime.class);
 			if (got != null) return got;
 
 			if (withTz) {
 				// Try via Instant if driver only gives us Timestamp
-				Instant inst = asInstant(rs, col, ctx);
+				Instant inst = asInstant(rs, col, ctx, resultSetMetaData);
 				return inst == null ? null : inst.atOffset(ctx.getTimeZone().getRules().getOffset(inst));
 			} else {
 				LocalDateTime ldt = tryGet(rs, col, LocalDateTime.class);
@@ -1389,14 +1396,13 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			}
 		}
 
-		public static ZonedDateTime asZonedDateTime(ResultSet rs, int col, StatementContext<?> ctx) throws SQLException {
-			Instant inst = asInstant(rs, col, ctx);
+		public static ZonedDateTime asZonedDateTime(ResultSet rs, int col, StatementContext<?> ctx, ResultSetMetaData resultSetMetaData) throws SQLException {
+			Instant inst = asInstant(rs, col, ctx, resultSetMetaData);
 			return inst == null ? null : inst.atZone(ctx.getTimeZone());
 		}
 
-		public static LocalDateTime asLocalDateTime(ResultSet rs, int col, StatementContext<?> ctx) throws SQLException {
-			ResultSetMetaData md = rs.getMetaData();
-			boolean withTz = isTimestampWithTimeZone(md, col, ctx.getDatabaseType());
+		public static LocalDateTime asLocalDateTime(ResultSet rs, int col, StatementContext<?> ctx, ResultSetMetaData resultSetMetaData) throws SQLException {
+			boolean withTz = isTimestampWithTimeZone(resultSetMetaData, col, ctx.getDatabaseType());
 
 			LocalDateTime ldt = tryGet(rs, col, LocalDateTime.class);
 			if (ldt != null) return ldt;
@@ -1462,8 +1468,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			return t2 == null ? null : t2.toLocalTime();
 		}
 
-		public static OffsetTime asOffsetTime(ResultSet rs, int col, StatementContext<?> ctx) throws SQLException {
-			if (isTimeWithTimeZone(rs.getMetaData(), col)) {
+		public static OffsetTime asOffsetTime(ResultSet rs, int col, StatementContext<?> ctx, ResultSetMetaData resultSetMetaData) throws SQLException {
+			if (isTimeWithTimeZone(resultSetMetaData, col)) {
 				OffsetTime ot = tryGet(rs, col, OffsetTime.class);
 				if (ot != null) return ot;
 			}
@@ -1616,23 +1622,24 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	protected <T> RowPlan<T> buildPlan(@Nonnull StatementContext<T> ctx,
 																		 @Nonnull ResultSet rs,
 																		 @Nonnull Class<T> resultClass,
-																		 @Nonnull InstanceProvider instanceProvider) throws Exception {
+																		 @Nonnull InstanceProvider instanceProvider,
+																		 @Nonnull ResultSetMetaData resultSetMetaData) throws Exception {
 		requireNonNull(ctx);
 		requireNonNull(rs);
 		requireNonNull(resultClass);
 		requireNonNull(instanceProvider);
+		requireNonNull(resultSetMetaData);
 
-		ResultSetMetaData md = rs.getMetaData();
-		int cols = md.getColumnCount();
+		int cols = resultSetMetaData.getColumnCount();
 
 		// Build a stable schema signature (normalized label + JDBC/vendortype + tz flags)
 		StringBuilder sig = new StringBuilder(64 + cols * 48).append(cols);
 		for (int i = 1; i <= cols; i++) {
-			String labelNorm = normalizeColumnLabel(md.getColumnLabel(i));
-			int jdbcType = md.getColumnType(i);
-			boolean tsTz = TemporalReaders.isTimestampWithTimeZone(md, i, ctx.getDatabaseType());
-			boolean timeTz = TemporalReaders.isTimeWithTimeZone(md, i);
-			String typeName = Objects.toString(md.getColumnTypeName(i), "").toUpperCase(Locale.ROOT);
+			String labelNorm = normalizeColumnLabel(resultSetMetaData.getColumnLabel(i));
+			int jdbcType = resultSetMetaData.getColumnType(i);
+			boolean tsTz = TemporalReaders.isTimestampWithTimeZone(resultSetMetaData, i, ctx.getDatabaseType());
+			boolean timeTz = TemporalReaders.isTimeWithTimeZone(resultSetMetaData, i);
+			String typeName = Objects.toString(resultSetMetaData.getColumnTypeName(i), "").toUpperCase(Locale.ROOT);
 			sig.append('|').append(labelNorm)
 					.append(':').append(jdbcType)
 					.append(':').append(tsTz ? 'T' : 't')
@@ -1693,17 +1700,17 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		// Build per-column readers (decided once)
 		final ColumnReader[] readers = new ColumnReader[cols + 1]; // 1-based indexing
 		for (int i = 1; i <= cols; i++) {
-			int jdbcType = md.getColumnType(i);
-			boolean tsTz = TemporalReaders.isTimestampWithTimeZone(md, i, ctx.getDatabaseType());
-			boolean timeTz = TemporalReaders.isTimeWithTimeZone(md, i);
+			int jdbcType = resultSetMetaData.getColumnType(i);
+			boolean tsTz = TemporalReaders.isTimestampWithTimeZone(resultSetMetaData, i, ctx.getDatabaseType());
+			boolean timeTz = TemporalReaders.isTimeWithTimeZone(resultSetMetaData, i);
 			if (tsTz) {
-				readers[i] = (r, c, col) -> TemporalReaders.asOffsetDateTime(r, col, c);
+				readers[i] = (r, c, col) -> TemporalReaders.asOffsetDateTime(r, col, c, resultSetMetaData);
 			} else if (jdbcType == Types.TIMESTAMP) {
-				readers[i] = (r, c, col) -> TemporalReaders.asLocalDateTime(r, col, c);
+				readers[i] = (r, c, col) -> TemporalReaders.asLocalDateTime(r, col, c, resultSetMetaData);
 			} else if (jdbcType == Types.DATE) {
 				readers[i] = (r, c, col) -> TemporalReaders.asLocalDate(r, col);
 			} else if (timeTz) {
-				readers[i] = (r, c, col) -> TemporalReaders.asOffsetTime(r, col, c);
+				readers[i] = (r, c, col) -> TemporalReaders.asOffsetTime(r, col, c, resultSetMetaData);
 			} else if (jdbcType == Types.TIME) {
 				readers[i] = (r, c, col) -> TemporalReaders.asLocalTime(r, col);
 			} else {
@@ -1714,7 +1721,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		// For each column, bind ALL matching properties (fan-out)
 		List<ColumnBinding> bindings = new ArrayList<>();
 		for (int i = 1; i <= cols; i++) {
-			String labelNorm = normalizeColumnLabel(md.getColumnLabel(i));
+			String labelNorm = normalizeColumnLabel(resultSetMetaData.getColumnLabel(i));
 			ColumnReader reader = readers[i];
 
 			// Find all properties that claim this label
