@@ -376,9 +376,20 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					} else {
 						raw = rawByCol[b.columnIndex];
 					}
-					Object val = b.converter.convert(raw, resultSet, statementContext);
+					Object val = b.converter.convert(raw, resultSet, statementContext, instanceProvider);
 
-					if (val != null && !b.targetRawClass.isInstance(val)) {
+					if (val == null) {
+						if (b.targetIsPrimitive) {
+							throw new DatabaseException(format(
+									"Column for record component '%s' of %s is NULL but the component is primitive (%s). "
+											+ "Use a non-primitive type or COALESCE/CAST in SQL.",
+									b.propertyName, resultSetRowType.getSimpleName(), b.targetRawClass.getSimpleName()));
+						}
+						args[b.recordArgIndexOrMinusOne] = null;
+						continue;
+					}
+
+					if (!b.targetRawClass.isInstance(val)) {
 						String resultSetTypeDescription = val.getClass().toString();
 						throw new DatabaseException(format(
 								"Property '%s' of %s expects type %s, but the ResultSet produced %s. "
@@ -391,8 +402,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					args[b.recordArgIndexOrMinusOne] = val;
 				}
 
+				// Construct via InstanceProvider to keep semantics consistent with non-planned path
 				@SuppressWarnings("unchecked")
-				T rec = (T) plan.recordCtor.invokeWithArguments(args);
+				T rec = (T) provideRecordVia(instanceProvider, statementContext, resultSetRowType, args);
 				return Optional.of(rec);
 			} else {
 				// Bean
@@ -408,9 +420,21 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					} else {
 						raw = rawByCol[b.columnIndex];
 					}
-					Object val = b.converter.convert(raw, resultSet, statementContext);
+					Object val = b.converter.convert(raw, resultSet, statementContext, instanceProvider);
 
-					if (val != null && !b.targetRawClass.isInstance(val)) {
+					if (val == null) {
+						if (b.targetIsPrimitive) {
+							throw new DatabaseException(format(
+									"Column for bean property '%s' of %s is NULL but the property is primitive (%s). "
+											+ "Use a non-primitive type or COALESCE/CAST in SQL.",
+									b.propertyName, resultSetRowType.getSimpleName(), b.targetRawClass.getSimpleName()));
+						}
+						// Mirror non-planned path: call setter with null
+						b.setterOrNull.invoke(object, (Object) null);
+						continue;
+					}
+
+					if (!b.targetRawClass.isInstance(val)) {
 						String resultSetTypeDescription = val.getClass().toString();
 						throw new DatabaseException(format(
 								"Property '%s' of %s has a write method of type %s, but the ResultSet type %s does not match. "
@@ -420,9 +444,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 								resultSetTypeDescription, b.targetRawClass));
 					}
 
-					if (val != null) {
-						b.setterOrNull.invoke(object, val);
-					}
+					b.setterOrNull.invoke(object, val);
 				}
 
 				return Optional.of(object);
@@ -434,6 +456,17 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		} catch (Throwable t) {
 			throw new DatabaseException(format("Unable to map JDBC %s row to %s", ResultSet.class.getSimpleName(), resultSetRowType), t);
 		}
+	}
+
+	@SuppressWarnings("unchecked")
+	private static <R extends Record> R provideRecordVia(
+			InstanceProvider ip,
+			StatementContext<?> ctx,
+			Class<?> recordClass,
+			Object[] args
+	) {
+		// Safe by construction: caller only uses this when resultSetRowType.isRecord() is true
+		return ip.provideRecord((StatementContext<R>) ctx, (Class<R>) recordClass, args);
 	}
 
 	/**
@@ -536,9 +569,13 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			value = getNullableBoolean(resultSet, 1);
 		} else if (resultClass.isAssignableFrom(Character.class) || resultClass.isAssignableFrom(char.class)) {
 			String string = resultSet.getString(1);
-			if (string != null)
-				if (string.length() == 1) value = string.charAt(0);
-				else throw new DatabaseException(format("Cannot map String value '%s' to %s", resultClass.getSimpleName()));
+
+			if (string != null) {
+				if (string.length() == 1)
+					value = string.charAt(0);
+				else
+					throw new DatabaseException(format("Cannot map String value '%s' to %s", string, resultClass.getSimpleName()));
+			}
 		} else if (resultClass.isAssignableFrom(String.class)) {
 			value = resultSet.getString(1);
 		} else if (resultClass.isAssignableFrom(byte[].class)) {
@@ -680,8 +717,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					throw new DatabaseException(format("Column '%s' is NULL but record component '%s' of %s is primitive (%s). Use a non-primitive type or COALESCE/CAST in SQL.",
 							potentialPropertyName, recordComponent.getName(), resultSetRowType.getSimpleName(), recordComponentType.getSimpleName()));
 
-				if (value != null && !recordComponentType.isAssignableFrom(value.getClass())) {
+				Class<?> checkedType = boxedClass(recordComponentType);
+
+				if (value != null && !checkedType.isInstance(value)) {
 					String resultSetTypeDescription = value.getClass().toString();
+
 					throw new DatabaseException(
 							format(
 									"Property '%s' of %s has a write method of type %s, but the ResultSet type %s does not match. "
@@ -772,7 +812,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					throw new DatabaseException(format("Column '%s' is NULL but bean property '%s' of %s is primitive (%s). Use a non-primitive type or COALESCE/CAST in SQL.",
 							propertyName, propertyDescriptor.getName(), resultSetRowType.getSimpleName(), writeMethodParameterType.getSimpleName()));
 
-				if (value != null && !writeMethodParameterType.isAssignableFrom(value.getClass())) {
+				Class<?> checkedType = boxedClass(writeMethodParameterType);
+
+				if (value != null && !checkedType.isInstance(value)) {
 					String resultSetTypeDescription = value.getClass().toString();
 					throw new DatabaseException(
 							format(
@@ -1016,6 +1058,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		if (resultSetValue instanceof LocalTime localTime) {
 			if (LocalTime.class.isAssignableFrom(targetType))
 				return Optional.of(localTime);
+
+			if (OffsetTime.class.isAssignableFrom(targetType)) {
+				ZoneOffset off = statementContext.getTimeZone().getRules().getOffset(Instant.EPOCH);
+				return Optional.of(localTime.atOffset(off));
+			}
+
 			if (java.sql.Time.class.isAssignableFrom(targetType))
 				return Optional.of(java.sql.Time.valueOf(localTime));
 		}
@@ -1422,9 +1470,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			// If DB has plain TIME, attach DB zone offset at an arbitrary date (offset depends on date!)
 			LocalTime lt = asLocalTime(rs, col);
 			if (lt == null) return null;
-			// Choose an arbitrary date with consistent offset, e.g., epoch day 0 in DB zone
-			Instant now = Instant.now();
-			ZoneOffset off = ctx.getTimeZone().getRules().getOffset(now);
+			// Choose a stable anchor instant to avoid DST-dependent offsets (use epoch)
+			Instant anchor = Instant.EPOCH;
+			ZoneOffset off = ctx.getTimeZone().getRules().getOffset(anchor);
 			return lt.atOffset(off);
 		}
 	}
@@ -1512,7 +1560,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	@FunctionalInterface
 	protected interface Converter {
 		@Nullable
-		Object convert(@Nullable Object raw, @Nonnull ResultSet rs, @Nonnull StatementContext<?> ctx);
+		Object convert(@Nullable Object raw,
+									 @Nonnull ResultSet rs,
+									 @Nonnull StatementContext<?> ctx,
+									 @Nonnull InstanceProvider ip);
 	}
 
 	@ThreadSafe
@@ -1522,14 +1573,16 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		final @Nullable MethodHandle setterOrNull; // for bean properties; type: (Declaring, Param)void or (Declaring, Param)Object
 		final @Nonnull ColumnReader reader; // chosen at plan time
 		final @Nonnull Converter converter; // chosen at plan time
-		final @Nonnull Class<?> targetRawClass; // for type checks / helpful errors
-		final @Nonnull String propertyName; // for helpful errors; empty if SKIP
+		final boolean targetIsPrimitive;        // original target declared as primitive?
+		final @Nonnull Class<?> targetRawClass; // BOXED class for type checks
+		final @Nonnull String propertyName;     // for helpful errors; empty if SKIP
 
 		ColumnBinding(int columnIndex,
 									int recordArgIndexOrMinusOne,
 									@Nullable MethodHandle setterOrNull,
 									@Nonnull ColumnReader reader,
 									@Nonnull Converter converter,
+									boolean targetIsPrimitive,
 									@Nonnull Class<?> targetRawClass,
 									@Nonnull String propertyName) {
 			this.columnIndex = columnIndex;
@@ -1537,6 +1590,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			this.setterOrNull = setterOrNull;
 			this.reader = requireNonNull(reader);
 			this.converter = requireNonNull(converter);
+			this.targetIsPrimitive = targetIsPrimitive;
 			this.targetRawClass = requireNonNull(targetRawClass);
 			this.propertyName = requireNonNull(propertyName);
 		}
@@ -1578,7 +1632,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			int jdbcType = md.getColumnType(i);
 			boolean tsTz = TemporalReaders.isTimestampWithTimeZone(md, i, ctx.getDatabaseType());
 			boolean timeTz = TemporalReaders.isTimeWithTimeZone(md, i);
-			String typeName = Objects.toString(md.getColumnTypeName(i), "");
+			String typeName = Objects.toString(md.getColumnTypeName(i), "").toUpperCase(Locale.ROOT);
 			sig.append('|').append(labelNorm)
 					.append(':').append(jdbcType)
 					.append(':').append(tsTz ? 'T' : 't')
@@ -1671,7 +1725,18 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 			if (matchedProps.isEmpty()) {
 				// No property claims this column — add a SKIP binding to keep behavior explicit
-				bindings.add(new ColumnBinding(i, -1, null, reader, (raw, rrs, cctx) -> raw, Object.class, ""));
+				bindings.add(
+						new ColumnBinding(
+								i,                            // columnIndex
+								-1,                           // recordArgIndexOrMinusOne (SKIP)
+								null,                         // setterOrNull
+								reader,                       // reader
+								(raw, rrs, cctx, ip) -> raw,  // converter: 4-arg form now
+								false,                        // targetIsPrimitive (SKIP => false)
+								Object.class,                 // targetRawClass (boxed)
+								""                            // propertyName (empty for SKIP)
+						)
+				);
 				continue;
 			}
 
@@ -1692,27 +1757,32 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 				final int recordArgIndex = isRecord ? requireNonNull(recordIndexByProp.get(prop)) : -1;
 				final MethodHandle setterMH = isRecord ? null : setterByProp.get(prop);
-				final Class<?> rawTargetClass = isRecord
+
+				// Unboxed + boxed target, and primitive flag
+				final Class<?> rawTargetClassUnboxed = isRecord
 						? resultClass.getRecordComponents()[recordArgIndex].getType()
 						: setterMH.type().parameterType(1);
+				final Class<?> rawTargetClassBoxed = boxedClass(rawTargetClassUnboxed);
+				final boolean targetIsPrimitive = rawTargetClassUnboxed.isPrimitive();
 
 				final TargetType targetTypeFinal = ttype;
 				final String propertyNameFinal = prop;
 				final int colIndexFinal = i;
 				final String labelFinal = labelNorm;
 
-				Converter converter = (raw, rrs, cctx) -> {
+				Converter converter = (raw, rrs, cctx, ip) -> {
 					if (raw == null) return null;
 					try {
-						return tryCustomColumnMappers(cctx, rrs, raw, targetTypeFinal, colIndexFinal, labelFinal, instanceProvider)
-								.or(() -> convertResultSetValueToPropertyType(cctx, raw, rawTargetClass))
+						return tryCustomColumnMappers(cctx, rrs, raw, targetTypeFinal, colIndexFinal, labelFinal, ip)
+								.or(() -> convertResultSetValueToPropertyType(cctx, raw, rawTargetClassBoxed))
 								.orElse(raw);
 					} catch (SQLException e) {
 						throw new DatabaseException(e);
 					}
 				};
 
-				bindings.add(new ColumnBinding(i, recordArgIndex, setterMH, reader, converter, rawTargetClass, propertyNameFinal));
+				bindings.add(new ColumnBinding(i, recordArgIndex, setterMH, reader, converter,
+						targetIsPrimitive, rawTargetClassBoxed, propertyNameFinal));
 			}
 		}
 
