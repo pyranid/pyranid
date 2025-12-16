@@ -3,7 +3,7 @@
 	<modelVersion>4.0.0</modelVersion>
 	<groupId>com.pyranid</groupId>
 	<artifactId>pyranid</artifactId>
-	<version>3.0.1-SNAPSHOT</version>
+	<version>3.1.0-SNAPSHOT</version>
 	<packaging>jar</packaging>
 	<name>Pyranid</name>
 	<description>Pyranid is a zero-dependency JDBC interface for modern Java applications.</description>

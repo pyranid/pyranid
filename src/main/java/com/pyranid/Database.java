@@ -317,6 +317,29 @@ public final class Database {
 	}
 
 	/**
+	 * Creates a fluent builder for executing SQL.
+	 * <p>
+	 * Named parameters use the {@code :paramName} syntax and are bound via
+	 * {@link Query#bind(String, Object)}.
+	 * <p>
+	 * Example:
+	 * <pre>{@code
+	 * Optional<Employee> employee = database.namedQuery("SELECT * FROM employee WHERE id = :id")
+	 *   .bind("id", 42)
+	 *   .fetchOne(Employee.class);
+	 * }</pre>
+	 *
+	 * @param sql SQL containing {@code :paramName} placeholders
+	 * @return a fluent builder for binding parameters and executing
+	 * @since 3.1.0
+	 */
+	@Nonnull
+	public Query query(@Nonnull String sql) {
+		requireNonNull(sql);
+		throw new UnsupportedOperationException("TODO");
+	}
+
+	/**
 	 * Performs a SQL query that is expected to return 0 or 1 result rows.
 	 *
 	 * @param sql              the SQL query to execute
