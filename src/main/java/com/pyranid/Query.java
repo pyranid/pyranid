@@ -79,7 +79,7 @@ public interface Query {
 	 * @return this builder, for chaining
 	 */
 	@Nonnull
-	Query bind(@Nonnull Map<String, Object> parameters);
+	Query bindAll(@Nonnull Map<String, Object> parameters);
 
 	/**
 	 * Associates an identifier with this query for logging/diagnostics.
