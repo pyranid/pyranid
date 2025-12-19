@@ -146,8 +146,8 @@ public class DatabaseTests {
 
 		createTestSchema(database);
 
-		database.execute("INSERT INTO employee VALUES (1, 'Employee One', 'employee-one@company.com', NULL)");
-		database.execute("INSERT INTO employee VALUES (2, 'Employee Two', NULL, NULL)");
+		TestQueries.execute(database, "INSERT INTO employee VALUES (1, 'Employee One', 'employee-one@company.com', NULL)");
+		TestQueries.execute(database, "INSERT INTO employee VALUES (2, 'Employee Two', NULL, NULL)");
 
 		List<EmployeeRecord> employeeRecords = database.query("SELECT * FROM employee ORDER BY name")
 				.fetchList(EmployeeRecord.class);
@@ -193,7 +193,7 @@ public class DatabaseTests {
 	public void testTransactions() {
 		Database database = Database.withDataSource(createInMemoryDataSource("testTransactions")).build();
 
-		database.execute("CREATE TABLE product (product_id BIGINT, name VARCHAR(255) NOT NULL, price DECIMAL)");
+		TestQueries.execute(database, "CREATE TABLE product (product_id BIGINT, name VARCHAR(255) NOT NULL, price DECIMAL)");
 
 		AtomicBoolean ranPostTransactionOperation = new AtomicBoolean(false);
 
@@ -203,7 +203,7 @@ public class DatabaseTests {
 				ranPostTransactionOperation.set(true);
 			}));
 
-			database.execute("INSERT INTO product VALUES (1, 'VR Goggles', 3500.99)");
+			TestQueries.execute(database, "INSERT INTO product VALUES (1, 'VR Goggles', 3500.99)");
 
 			Product product = database.query("""
 					SELECT * 
@@ -422,8 +422,8 @@ public class DatabaseTests {
 
 		createTestSchema(db);
 
-		db.execute("INSERT INTO employee VALUES (1, 'A', 'a@x.com', 'en-US')");
-		db.execute("INSERT INTO employee VALUES (2, 'B', 'b@x.com', 'ja-JP')");
+		TestQueries.execute(db, "INSERT INTO employee VALUES (1, 'A', 'a@x.com', 'en-US')");
+		TestQueries.execute(db, "INSERT INTO employee VALUES (2, 'B', 'b@x.com', 'ja-JP')");
 
 		// JavaBean target
 		EmployeeClass e1 = db.query("SELECT * FROM employee WHERE employee_id=1")
@@ -499,9 +499,9 @@ public class DatabaseTests {
 		createTestSchema(db);
 
 		// Insert multiple rows so the winner cache has a chance to kick in
-		db.execute("INSERT INTO employee VALUES (1, 'A', 'a@x.com', 'en-US')");
-		db.execute("INSERT INTO employee VALUES (2, 'B', 'b@x.com', 'fr-FR')");
-		db.execute("INSERT INTO employee VALUES (3, 'C', 'c@x.com', 'ja-JP')");
+		TestQueries.execute(db, "INSERT INTO employee VALUES (1, 'A', 'a@x.com', 'en-US')");
+		TestQueries.execute(db, "INSERT INTO employee VALUES (2, 'B', 'b@x.com', 'fr-FR')");
+		TestQueries.execute(db, "INSERT INTO employee VALUES (3, 'C', 'c@x.com', 'ja-JP')");
 
 		List<EmployeeClass> rows = db.query("SELECT * FROM employee ORDER BY employee_id")
 				.fetchList(EmployeeClass.class);
@@ -556,14 +556,14 @@ public class DatabaseTests {
 				.resultSetMapper(resultSetMapper)
 				.build();
 
-		db.execute("""
+		TestQueries.execute(db, """
 				CREATE TABLE cache_types (
 				  locale VARCHAR(255),
 				  currency VARCHAR(255),
 				  zone_id VARCHAR(255)
 				)
 				""");
-		db.execute("INSERT INTO cache_types VALUES ('en-US', 'USD', 'UTC')");
+		TestQueries.execute(db, "INSERT INTO cache_types VALUES ('en-US', 'USD', 'UTC')");
 
 		db.query("SELECT locale FROM cache_types").fetchObject(LocaleHolder.class);
 		db.query("SELECT currency FROM cache_types").fetchObject(CurrencyHolder.class);
@@ -591,8 +591,8 @@ public class DatabaseTests {
 
 		createTestSchema(db);
 
-		db.execute("INSERT INTO employee VALUES (1, 'A', 'a@x.com', 'en-US')");
-		db.execute("INSERT INTO employee VALUES (2, 'B', 'b@x.com', 'ja-JP')");
+		TestQueries.execute(db, "INSERT INTO employee VALUES (1, 'A', 'a@x.com', 'en-US')");
+		TestQueries.execute(db, "INSERT INTO employee VALUES (2, 'B', 'b@x.com', 'ja-JP')");
 
 		db.query("SELECT name, email_address, locale FROM employee").fetchList(EmployeeClass.class);
 		db.query("SELECT name, email_address FROM employee").fetchList(EmployeeClass.class);
@@ -648,7 +648,7 @@ public class DatabaseTests {
 				.build();
 
 		// Simple schema for the test
-		db.execute("""
+		TestQueries.execute(db, """
 				CREATE TABLE group_data (
 				  group_name VARCHAR(255),
 				  ids VARCHAR(2000)
@@ -657,7 +657,7 @@ public class DatabaseTests {
 
 		UUID u1 = UUID.fromString("11111111-1111-1111-1111-111111111111");
 		UUID u2 = UUID.fromString("22222222-2222-2222-2222-222222222222");
-		db.execute("INSERT INTO group_data VALUES (?, ?)", "alpha", u1 + "," + u2);
+		TestQueries.execute(db, "INSERT INTO group_data VALUES (?, ?)", "alpha", u1 + "," + u2);
 
 		// Note: property "groupName" should match DB column "group_name" via normalization logic
 		GroupRow row = db.query("SELECT group_name, ids FROM group_data WHERE group_name=:groupName")
@@ -706,9 +706,9 @@ public class DatabaseTests {
 		createTestSchema(db);
 
 		// id | name | email   | locale
-		db.execute("INSERT INTO employee VALUES (1, 'A', 'a@x.com', 'en-US')");
-		db.execute("INSERT INTO employee VALUES (2, 'B', 'b@x.com', 'ja-JP')");
-		db.execute("INSERT INTO employee VALUES (3, 'C', 'c@x.com', NULL)");
+		TestQueries.execute(db, "INSERT INTO employee VALUES (1, 'A', 'a@x.com', 'en-US')");
+		TestQueries.execute(db, "INSERT INTO employee VALUES (2, 'B', 'b@x.com', 'ja-JP')");
+		TestQueries.execute(db, "INSERT INTO employee VALUES (3, 'C', 'c@x.com', NULL)");
 
 		// --- PROOF: custom mapper applies for standard-type mapping (Locale.class) on a 1-column SELECT ---
 		Optional<Locale> l1 = db.query("SELECT locale FROM employee WHERE employee_id=1")
@@ -816,10 +816,10 @@ public class DatabaseTests {
 				.build();
 
 		// Simple schema with a TEXT column holding JSON
-		db.execute("CREATE TABLE people_json (id INT PRIMARY KEY, payload VARCHAR)");
-		db.execute("INSERT INTO people_json VALUES (1, '{\"name\":\"Alice\",\"age\":30}')");
-		db.execute("INSERT INTO people_json VALUES (2, '{\"name\":\"Bob\",\"age\":42}')");
-		db.execute("INSERT INTO people_json VALUES (3, NULL)");
+		TestQueries.execute(db, "CREATE TABLE people_json (id INT PRIMARY KEY, payload VARCHAR)");
+		TestQueries.execute(db, "INSERT INTO people_json VALUES (1, '{\"name\":\"Alice\",\"age\":30}')");
+		TestQueries.execute(db, "INSERT INTO people_json VALUES (2, '{\"name\":\"Bob\",\"age\":42}')");
+		TestQueries.execute(db, "INSERT INTO people_json VALUES (3, NULL)");
 
 		// Mapper inflates JSON into Person object directly from single-column SELECT
 		Optional<TestPerson> p1 = db.query("SELECT payload FROM people_json WHERE id=1")
@@ -864,9 +864,9 @@ public class DatabaseTests {
 	@Test
 	public void testExecuteForObjectAndListUsingSelect() {
 		Database db = Database.withDataSource(createInMemoryDataSource("exec_select")).build();
-		db.execute("CREATE TABLE prod (id INT, name VARCHAR(64))");
-		db.execute("INSERT INTO prod VALUES (1, 'A')");
-		db.execute("INSERT INTO prod VALUES (2, 'B')");
+		TestQueries.execute(db, "CREATE TABLE prod (id INT, name VARCHAR(64))");
+		TestQueries.execute(db, "INSERT INTO prod VALUES (1, 'A')");
+		TestQueries.execute(db, "INSERT INTO prod VALUES (2, 'B')");
 
 		Optional<String> name = db.query("SELECT name FROM prod WHERE id=:id")
 				.bind("id", 1)
@@ -900,13 +900,13 @@ public class DatabaseTests {
 	@Test
 	public void testZoneIdLocaleCurrencyRoundTrip() {
 		Database db = Database.withDataSource(createInMemoryDataSource("prefs")).build();
-		db.execute("CREATE TABLE prefs (tz VARCHAR(64), locale VARCHAR(32), currency VARCHAR(3))");
+		TestQueries.execute(db, "CREATE TABLE prefs (tz VARCHAR(64), locale VARCHAR(32), currency VARCHAR(3))");
 
 		ZoneId zone = ZoneId.of("America/New_York");
 		Locale loc = Locale.CANADA;
 		Currency cur = Currency.getInstance("USD");
 
-		db.execute("INSERT INTO prefs (tz, locale, currency) VALUES (?, ?, ?)", zone, loc, cur);
+		TestQueries.execute(db, "INSERT INTO prefs (tz, locale, currency) VALUES (?, ?, ?)", zone, loc, cur);
 
 		Prefs prefs = db.query("SELECT * FROM prefs")
 				.fetchObject(Prefs.class)
@@ -933,8 +933,8 @@ public class DatabaseTests {
 	@Test
 	public void testNullParameterBinding() {
 		Database db = Database.withDataSource(createInMemoryDataSource("nulls")).build();
-		db.execute("CREATE TABLE foo (id INT, name VARCHAR(64))");
-		db.execute("INSERT INTO foo (id, name) VALUES (?, ?)", 1, null);
+		TestQueries.execute(db, "CREATE TABLE foo (id INT, name VARCHAR(64))");
+		TestQueries.execute(db, "INSERT INTO foo (id, name) VALUES (?, ?)", 1, null);
 
 		Foo row = db.query("SELECT * FROM foo")
 				.fetchObject(Foo.class)
@@ -961,8 +961,8 @@ public class DatabaseTests {
 			Assertions.assertTrue(log.getStatementContext().getStatement().getSql().length() > 0, "SQL should be present");
 		}).build();
 
-		db.execute("CREATE TABLE z (id INT)");
-		db.execute("INSERT INTO z VALUES (1)");
+		TestQueries.execute(db, "CREATE TABLE z (id INT)");
+		TestQueries.execute(db, "INSERT INTO z VALUES (1)");
 	}
 
 	@Test
@@ -970,10 +970,10 @@ public class DatabaseTests {
 		Database db = Database.withDataSource(createInMemoryDataSource("it_array_param")).build();
 
 		// HSQLDB array column syntax: VARCHAR(100) ARRAY
-		db.execute("CREATE TABLE t_array (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, tags VARCHAR(100) ARRAY)");
+		TestQueries.execute(db, "CREATE TABLE t_array (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, tags VARCHAR(100) ARRAY)");
 
 		// Insert using ArrayParameter (defensive copy internally)
-		db.execute("INSERT INTO t_array(tags) VALUES (?)",
+		TestQueries.execute(db, "INSERT INTO t_array(tags) VALUES (?)",
 				Parameters.arrayOf("VARCHAR", List.of("alpha", "beta", "gamma")));
 
 		// Verify size via SQL function
@@ -998,9 +998,9 @@ public class DatabaseTests {
 	@Test
 	public void testArrayParameter_emptyArray() {
 		Database db = Database.withDataSource(createInMemoryDataSource("it_array_param_empty")).build();
-		db.execute("CREATE TABLE t_array (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, tags VARCHAR(100) ARRAY)");
+		TestQueries.execute(db, "CREATE TABLE t_array (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, tags VARCHAR(100) ARRAY)");
 
-		db.execute("INSERT INTO t_array(tags) VALUES (?)",
+		TestQueries.execute(db, "INSERT INTO t_array(tags) VALUES (?)",
 				Parameters.arrayOf("VARCHAR", List.of())); // empty
 
 		Optional<Integer> size = db.query("SELECT CARDINALITY(tags) FROM t_array FETCH FIRST ROW ONLY")
@@ -1012,12 +1012,12 @@ public class DatabaseTests {
 	@Test
 	public void testJsonParameter_roundTrip_textOnHsqldb() {
 		Database db = Database.withDataSource(createInMemoryDataSource("it_json_param")).build();
-		db.execute("CREATE TABLE t_json (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, body LONGVARCHAR)");
+		TestQueries.execute(db, "CREATE TABLE t_json (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, body LONGVARCHAR)");
 
 		String json = "{\"a\":1,\"b\":[true,false],\"s\":\"x\"}";
 
 		// AUTOMATIC mode should fall back to text on HSQLDB and insert successfully
-		db.execute("INSERT INTO t_json(body) VALUES (?)", Parameters.json(json));
+		TestQueries.execute(db, "INSERT INTO t_json(body) VALUES (?)", Parameters.json(json));
 
 		Optional<String> got = db.query("SELECT body FROM t_json FETCH FIRST ROW ONLY")
 				.fetchObject(String.class);
@@ -1026,7 +1026,7 @@ public class DatabaseTests {
 
 		// TEXT is honored (also text on HSQLDB)
 		String json2 = "{\"k\":\"v\"}";
-		db.execute("INSERT INTO t_json(body) VALUES (?)", Parameters.json(json2, BindingPreference.TEXT));
+		TestQueries.execute(db, "INSERT INTO t_json(body) VALUES (?)", Parameters.json(json2, BindingPreference.TEXT));
 		List<String> bodies = db.query("SELECT body FROM t_json ORDER BY id")
 				.fetchList(String.class);
 		Assertions.assertEquals(List.of(json, json2), bodies);
@@ -1035,10 +1035,10 @@ public class DatabaseTests {
 	@Test
 	public void testVectorParameter_throwsOnNonPostgres() {
 		Database db = Database.withDataSource(createInMemoryDataSource("it_vector_param")).build();
-		db.execute("CREATE TABLE t_vec (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, v LONGVARCHAR)");
+		TestQueries.execute(db, "CREATE TABLE t_vec (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, v LONGVARCHAR)");
 
 		try {
-			db.execute("INSERT INTO t_vec(v) VALUES (?)", Parameters.vectorOfDoubles(new double[]{0.12, -0.5, 1.0}));
+			TestQueries.execute(db, "INSERT INTO t_vec(v) VALUES (?)", Parameters.vectorOfDoubles(new double[]{0.12, -0.5, 1.0}));
 			Assertions.fail("Expected IllegalArgumentException for non-PostgreSQL DatabaseType when binding VectorParameter");
 		} catch (DatabaseException expected) {
 			// pass
@@ -1094,10 +1094,10 @@ public class DatabaseTests {
 				.preparedStatementBinder(PreparedStatementBinder.withDefaultConfiguration())
 				.build();
 
-		db.execute("CREATE TABLE t_date (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, d DATE)");
+		TestQueries.execute(db, "CREATE TABLE t_date (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, d DATE)");
 
 		LocalDate input = LocalDate.of(2020, 6, 7);
-		db.execute("INSERT INTO t_date(d) VALUES (?)", input);
+		TestQueries.execute(db, "INSERT INTO t_date(d) VALUES (?)", input);
 
 		LocalDate roundTripped = db.query("SELECT d FROM t_date")
 				.fetchObject(LocalDate.class)
@@ -1113,10 +1113,10 @@ public class DatabaseTests {
 				.preparedStatementBinder(PreparedStatementBinder.withDefaultConfiguration())
 				.build();
 
-		db.execute("CREATE TABLE t_time (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, t LONGVARCHAR)");
+		TestQueries.execute(db, "CREATE TABLE t_time (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, t LONGVARCHAR)");
 
 		LocalTime input = LocalTime.of(8, 9, 10, 123_456_789);
-		db.execute("INSERT INTO t_time(t) VALUES (?)", input);
+		TestQueries.execute(db, "INSERT INTO t_time(t) VALUES (?)", input);
 
 		String stored = db.query("SELECT t FROM t_time")
 				.fetchObject(String.class)
@@ -1131,10 +1131,10 @@ public class DatabaseTests {
 				.preparedStatementBinder(PreparedStatementBinder.withDefaultConfiguration())
 				.build();
 
-		db.execute("CREATE TABLE t_ts (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, ts TIMESTAMP)");
+		TestQueries.execute(db, "CREATE TABLE t_ts (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, ts TIMESTAMP)");
 
 		LocalDateTime input = LocalDateTime.of(2020, 1, 2, 3, 4, 5, 123_000_000);
-		db.execute("INSERT INTO t_ts(ts) VALUES (?)", input);
+		TestQueries.execute(db, "INSERT INTO t_ts(ts) VALUES (?)", input);
 
 		// Let mapper do the conversion
 		LocalDateTime roundTripped = db.query("SELECT ts FROM t_ts")
@@ -1151,10 +1151,10 @@ public class DatabaseTests {
 				// default tz is fine; binder will coerce ODT -> LDT when target is TIMESTAMP
 				.build();
 
-		db.execute("CREATE TABLE t_odt_ts (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, ts TIMESTAMP)");
+		TestQueries.execute(db, "CREATE TABLE t_odt_ts (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, ts TIMESTAMP)");
 
 		OffsetDateTime odt = OffsetDateTime.parse("2023-05-10T12:34:56.789+02:00");
-		db.execute("INSERT INTO t_odt_ts(ts) VALUES (?)", odt);
+		TestQueries.execute(db, "INSERT INTO t_odt_ts(ts) VALUES (?)", odt);
 
 		Integer count = db.query("SELECT COUNT(*) FROM t_odt_ts")
 				.fetchObject(Integer.class)
@@ -1169,10 +1169,10 @@ public class DatabaseTests {
 				.preparedStatementBinder(PreparedStatementBinder.withDefaultConfiguration())
 				.build();
 
-		db.execute("CREATE TABLE t_instant (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, ts TIMESTAMP)");
+		TestQueries.execute(db, "CREATE TABLE t_instant (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, ts TIMESTAMP)");
 
 		Instant instant = Instant.parse("2020-01-02T03:04:05.123Z");
-		db.execute("INSERT INTO t_instant(ts) VALUES (?)", instant);
+		TestQueries.execute(db, "INSERT INTO t_instant(ts) VALUES (?)", instant);
 
 		// Pull back as Timestamp just to ensure the write stuck
 		Timestamp ts = db.query("SELECT ts FROM t_instant")
@@ -1188,14 +1188,14 @@ public class DatabaseTests {
 				.preparedStatementBinder(PreparedStatementBinder.withDefaultConfiguration())
 				.build();
 
-		db.execute("CREATE TABLE t_json (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, j LONGVARCHAR)");
+		TestQueries.execute(db, "CREATE TABLE t_json (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, j LONGVARCHAR)");
 
 		String json = """
 					{"a":1,"b":[2,3],"ok":true}
 				""";
 
 		// On non-Postgres, DefaultPreparedStatementBinder falls back to setString(json)
-		db.execute("INSERT INTO t_json(j) VALUES (?)", Parameters.json(json));
+		TestQueries.execute(db, "INSERT INTO t_json(j) VALUES (?)", Parameters.json(json));
 
 		String stored = db.query("SELECT j FROM t_json")
 				.fetchObject(String.class)
@@ -1206,10 +1206,10 @@ public class DatabaseTests {
 	@Test
 	public void testVectorParameter_throwsOnNonPostgres_matchesExample() {
 		Database db = Database.withDataSource(createInMemoryDataSource("it_vector_param_dup")).build();
-		db.execute("CREATE TABLE t_vec (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, v LONGVARCHAR)");
+		TestQueries.execute(db, "CREATE TABLE t_vec (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, v LONGVARCHAR)");
 
 		try {
-			db.execute("INSERT INTO t_vec(v) VALUES (?)", Parameters.vectorOfDoubles(new double[]{0.12, -0.5, 1.0}));
+			TestQueries.execute(db, "INSERT INTO t_vec(v) VALUES (?)", Parameters.vectorOfDoubles(new double[]{0.12, -0.5, 1.0}));
 			Assertions.fail("Expected exception for VectorParameter on non-PostgreSQL");
 		} catch (DatabaseException expected) {
 			// pass
@@ -1240,11 +1240,11 @@ public class DatabaseTests {
 				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(localeBinder)))
 				.build();
 
-		db.execute("CREATE TABLE t_locale (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, lang LONGVARCHAR)");
+		TestQueries.execute(db, "CREATE TABLE t_locale (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, lang LONGVARCHAR)");
 
 		Locale l = Locale.forLanguageTag("en-US");
-		db.execute("INSERT INTO t_locale(lang) VALUES (?)", l);
-		db.execute("INSERT INTO t_locale(lang) VALUES (?)", l); // hit again to exercise preferredBinderByInboundKey fast path
+		TestQueries.execute(db, "INSERT INTO t_locale(lang) VALUES (?)", l);
+		TestQueries.execute(db, "INSERT INTO t_locale(lang) VALUES (?)", l); // hit again to exercise preferredBinderByInboundKey fast path
 
 		List<String> rows = db.query("SELECT lang FROM t_locale ORDER BY id")
 				.fetchList(String.class);
@@ -1261,9 +1261,9 @@ public class DatabaseTests {
 				.preparedStatementBinder(PreparedStatementBinder.withDefaultConfiguration())
 				.build();
 
-		db.execute("CREATE TABLE t_json_null (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, j LONGVARCHAR)");
+		TestQueries.execute(db, "CREATE TABLE t_json_null (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, j LONGVARCHAR)");
 
-		db.execute("INSERT INTO t_json_null(j) VALUES (?)", Parameters.json(null));
+		TestQueries.execute(db, "INSERT INTO t_json_null(j) VALUES (?)", Parameters.json(null));
 
 		Integer nullCount = db.query("SELECT COUNT(*) FROM t_json_null WHERE j IS NULL")
 				.fetchObject(Integer.class)
@@ -1278,11 +1278,11 @@ public class DatabaseTests {
 				.preparedStatementBinder(PreparedStatementBinder.withDefaultConfiguration())
 				.build();
 
-		db.execute("CREATE TABLE t_ot (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, t LONGVARCHAR)");
+		TestQueries.execute(db, "CREATE TABLE t_ot (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, t LONGVARCHAR)");
 
 		OffsetTime ot = OffsetTime.parse("08:09:10.123456789-03:00");
 		// Binder will try TIME WITH TIME ZONE; if unsupported it falls back to string, so our column is VARCHAR.
-		db.execute("INSERT INTO t_ot(t) VALUES (?)", ot);
+		TestQueries.execute(db, "INSERT INTO t_ot(t) VALUES (?)", ot);
 
 		String stored = db.query("SELECT t FROM t_ot")
 				.fetchObject(String.class)
@@ -1297,10 +1297,10 @@ public class DatabaseTests {
 				.preparedStatementBinder(PreparedStatementBinder.withDefaultConfiguration())
 				.build();
 
-		db.execute("CREATE TABLE t_misc (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, e LONGVARCHAR, c LONGVARCHAR)");
+		TestQueries.execute(db, "CREATE TABLE t_misc (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, e LONGVARCHAR, c LONGVARCHAR)");
 
 		// Enum is normalized to name(); Currency normalized to currency code
-		db.execute("INSERT INTO t_misc(e, c) VALUES (?, ?)", TestEnum.BLUE, java.util.Currency.getInstance("USD"));
+		TestQueries.execute(db, "INSERT INTO t_misc(e, c) VALUES (?, ?)", TestEnum.BLUE, java.util.Currency.getInstance("USD"));
 
 		EnumCurrencyRow enumCurrencyRow = db.query("SELECT e, c FROM t_misc")
 				.fetchObject(EnumCurrencyRow.class)
@@ -1369,10 +1369,10 @@ public class DatabaseTests {
 				.timeZone(ZoneId.of("UTC"))
 				.build();
 
-		db.execute("CREATE TABLE t (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, lang LONGVARCHAR)");
+		TestQueries.execute(db, "CREATE TABLE t (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, lang LONGVARCHAR)");
 
-		db.execute("INSERT INTO t(lang) VALUES (?)", Locale.forLanguageTag("en-US"));
-		db.execute("INSERT INTO t(lang) VALUES (?)", Locale.forLanguageTag("pt-BR"));
+		TestQueries.execute(db, "INSERT INTO t(lang) VALUES (?)", Locale.forLanguageTag("en-US"));
+		TestQueries.execute(db, "INSERT INTO t(lang) VALUES (?)", Locale.forLanguageTag("pt-BR"));
 
 		List<String> rows = db.query("SELECT lang FROM t ORDER BY id")
 				.fetchList(String.class);
@@ -1424,8 +1424,8 @@ public class DatabaseTests {
 				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(intOnly, localeBinder)))
 				.build();
 
-		db.execute("CREATE TABLE t (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, lang LONGVARCHAR)");
-		db.execute("INSERT INTO t(lang) VALUES (?)", Locale.US);
+		TestQueries.execute(db, "CREATE TABLE t (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, lang LONGVARCHAR)");
+		TestQueries.execute(db, "INSERT INTO t(lang) VALUES (?)", Locale.US);
 
 		String stored = db.query("SELECT lang FROM t")
 				.fetchObject(String.class)
@@ -1483,13 +1483,13 @@ public class DatabaseTests {
 				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(first, second)))
 				.build();
 
-		db.execute("CREATE TABLE t (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, lang LONGVARCHAR)");
+		TestQueries.execute(db, "CREATE TABLE t (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, lang LONGVARCHAR)");
 
 		// First call: cache will be populated (first binder wins)
-		db.execute("INSERT INTO t(lang) VALUES (?)", Locale.CANADA); // preferred selected here
+		TestQueries.execute(db, "INSERT INTO t(lang) VALUES (?)", Locale.CANADA); // preferred selected here
 
 		// Second call: should hit cached binder directly
-		db.execute("INSERT INTO t(lang) VALUES (?)", Locale.FRANCE);
+		TestQueries.execute(db, "INSERT INTO t(lang) VALUES (?)", Locale.FRANCE);
 
 		List<String> rows = db.query("SELECT lang FROM t ORDER BY id")
 				.fetchList(String.class);
@@ -1528,14 +1528,14 @@ public class DatabaseTests {
 				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(listUuidBinder)))
 				.build();
 
-		db.execute("CREATE TABLE t (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, v LONGVARCHAR)");
+		TestQueries.execute(db, "CREATE TABLE t (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, v LONGVARCHAR)");
 
 		List<UUID> ids = List.of(
 				UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
 				UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 		);
 
-		db.execute("INSERT INTO t(v) VALUES (?)", Parameters.listOf(UUID.class, ids));
+		TestQueries.execute(db, "INSERT INTO t(v) VALUES (?)", Parameters.listOf(UUID.class, ids));
 
 		String got = db.query("SELECT v FROM t")
 				.fetchObject(String.class)
@@ -1570,8 +1570,8 @@ public class DatabaseTests {
 				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(alwaysFalseForString)))
 				.build();
 
-		db.execute("CREATE TABLE t (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, v LONGVARCHAR)");
-		db.execute("INSERT INTO t(v) VALUES (?)", "hello");
+		TestQueries.execute(db, "CREATE TABLE t (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, v LONGVARCHAR)");
+		TestQueries.execute(db, "INSERT INTO t(v) VALUES (?)", "hello");
 
 		String stored = db.query("SELECT v FROM t")
 				.fetchObject(String.class)
@@ -1581,7 +1581,7 @@ public class DatabaseTests {
 	}
 
 	/**
-	 * Binder throws SQLException -> DatabaseException should surface from db.execute().
+	 * Binder throws SQLException -> DatabaseException should surface from Query.execute().
 	 */
 	@Test
 	public void testBinder_throwsSQLException_propagates() {
@@ -1604,10 +1604,10 @@ public class DatabaseTests {
 				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(throwingBinder)))
 				.build();
 
-		db.execute("CREATE TABLE t (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, v LONGVARCHAR)");
+		TestQueries.execute(db, "CREATE TABLE t (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, v LONGVARCHAR)");
 
 		try {
-			db.execute("INSERT INTO t(v) VALUES (?)", Locale.US);
+			TestQueries.execute(db, "INSERT INTO t(v) VALUES (?)", Locale.US);
 			Assertions.fail("Expected DatabaseException caused by SQLException from binder");
 		} catch (DatabaseException e) {
 			// pass
@@ -1645,11 +1645,11 @@ public class DatabaseTests {
 				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(localeBinder)))
 				.build();
 
-		db.execute("CREATE TABLE t1 (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, v LONGVARCHAR)");
-		db.execute("CREATE TABLE t2 (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, v LONGVARCHAR)"); // using same SQL type here still exercises cache hits
+		TestQueries.execute(db, "CREATE TABLE t1 (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, v LONGVARCHAR)");
+		TestQueries.execute(db, "CREATE TABLE t2 (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, v LONGVARCHAR)"); // using same SQL type here still exercises cache hits
 
-		db.execute("INSERT INTO t1(v) VALUES (?)", Locale.CANADA);
-		db.execute("INSERT INTO t2(v) VALUES (?)", Locale.JAPAN);
+		TestQueries.execute(db, "INSERT INTO t1(v) VALUES (?)", Locale.CANADA);
+		TestQueries.execute(db, "INSERT INTO t2(v) VALUES (?)", Locale.JAPAN);
 
 		List<String> a = db.query("SELECT v FROM t1")
 				.fetchList(String.class);
@@ -1694,7 +1694,7 @@ public class DatabaseTests {
 				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(setUuidBinder)))
 				.build();
 
-		db.execute("CREATE TABLE t (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, v LONGVARCHAR)");
+		TestQueries.execute(db, "CREATE TABLE t (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, v LONGVARCHAR)");
 
 		Set<UUID> ids = new LinkedHashSet<>(List.of(
 				UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
@@ -1702,7 +1702,7 @@ public class DatabaseTests {
 		));
 
 		// Uses TypedParameter with explicit Set<UUID> type
-		db.execute("INSERT INTO t(v) VALUES (?)", Parameters.setOf(UUID.class, ids));
+		TestQueries.execute(db, "INSERT INTO t(v) VALUES (?)", Parameters.setOf(UUID.class, ids));
 
 		String got = db.query("SELECT v FROM t")
 				.fetchObject(String.class)
@@ -1754,14 +1754,14 @@ public class DatabaseTests {
 				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(mapBinder)))
 				.build();
 
-		db.execute("CREATE TABLE t (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, v LONGVARCHAR)");
+		TestQueries.execute(db, "CREATE TABLE t (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, v LONGVARCHAR)");
 
 		Map<String, Integer> payload = new LinkedHashMap<>();
 		payload.put("b", 2);
 		payload.put("a", 1);
 
 		// Uses TypedParameter with explicit Map<String,Integer> type
-		db.execute("INSERT INTO t(v) VALUES (?)", Parameters.mapOf(String.class, Integer.class, payload));
+		TestQueries.execute(db, "INSERT INTO t(v) VALUES (?)", Parameters.mapOf(String.class, Integer.class, payload));
 
 		String got = db.query("SELECT v FROM t")
 				.fetchObject(String.class)
@@ -1772,10 +1772,10 @@ public class DatabaseTests {
 	@Test
 	public void testListOf_withoutBinder_failsFast() {
 		Database db = Database.withDataSource(createInMemoryDataSource("it_failfast_list")).build();
-		db.execute("CREATE TABLE t_dummy (id INT)");
+		TestQueries.execute(db, "CREATE TABLE t_dummy (id INT)");
 
 		try {
-			db.execute("INSERT INTO t_dummy(id) VALUES (?)",
+			TestQueries.execute(db, "INSERT INTO t_dummy(id) VALUES (?)",
 					Parameters.listOf(UUID.class, List.of(UUID.randomUUID())));
 			Assertions.fail("Expected DatabaseException for TypedParameter without CustomParameterBinder");
 		} catch (DatabaseException e) {
@@ -1786,10 +1786,10 @@ public class DatabaseTests {
 	@Test
 	public void testSetOf_withoutBinder_failsFast() {
 		Database db = Database.withDataSource(createInMemoryDataSource("it_failfast_set")).build();
-		db.execute("CREATE TABLE t_dummy (id INT)");
+		TestQueries.execute(db, "CREATE TABLE t_dummy (id INT)");
 
 		try {
-			db.execute("INSERT INTO t_dummy(id) VALUES (?)",
+			TestQueries.execute(db, "INSERT INTO t_dummy(id) VALUES (?)",
 					Parameters.setOf(UUID.class, Set.of(UUID.randomUUID())));
 			Assertions.fail("Expected DatabaseException for TypedParameter without CustomParameterBinder");
 		} catch (DatabaseException e) {
@@ -1800,10 +1800,10 @@ public class DatabaseTests {
 	@Test
 	public void testMapOf_withoutBinder_failsFast() {
 		Database db = Database.withDataSource(createInMemoryDataSource("it_failfast_map")).build();
-		db.execute("CREATE TABLE t_dummy (id INT)");
+		TestQueries.execute(db, "CREATE TABLE t_dummy (id INT)");
 
 		try {
-			db.execute("INSERT INTO t_dummy(id) VALUES (?)",
+			TestQueries.execute(db, "INSERT INTO t_dummy(id) VALUES (?)",
 					Parameters.mapOf(UUID.class, Integer.class, Map.of(UUID.randomUUID(), 1)));
 			Assertions.fail("Expected DatabaseException for TypedParameter without CustomParameterBinder");
 		} catch (DatabaseException e) {
@@ -1813,7 +1813,7 @@ public class DatabaseTests {
 
 	protected void createTestSchema(@Nonnull Database database) {
 		requireNonNull(database);
-		database.execute("""
+		TestQueries.execute(database, """
 				CREATE TABLE employee (
 				  employee_id BIGINT,
 				  name VARCHAR(255) NOT NULL,

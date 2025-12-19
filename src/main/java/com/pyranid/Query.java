@@ -123,6 +123,17 @@ public interface Query {
 	Long execute();
 
 	/**
+	 * Executes a DML statement in batch over groups of named parameters.
+	 * <p>
+	 * Any parameters already bound on this {@code Query} apply to all groups; group values override them.
+	 *
+	 * @param parameterGroups groups of named parameter values (without the leading {@code :})
+	 * @return the number of rows affected by the SQL statement per-group
+	 */
+	@Nonnull
+	List<Long> executeBatch(@Nonnull List<Map<String, Object>> parameterGroups);
+
+	/**
 	 * Executes a DML statement that returns a single row (e.g., with {@code RETURNING} clause).
 	 *
 	 * @param resultType the type to marshal the row to

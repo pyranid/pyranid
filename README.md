@@ -303,13 +303,14 @@ List<Car> repaintedCars = database.query("""
 
 // Batch operations can be more efficient than execution of discrete statements.
 // Useful for inserting a lot of data at once
-List<List<Object>> parameterGroups = List.of(
-  List.of(123, Color.BLUE),
-  List.of(456, Color.RED)
+List<Map<String, Object>> parameterGroups = List.of(
+  Map.of("id", 123, "color", Color.BLUE),
+  Map.of("id", 456, "color", Color.RED)
 );
 
 // Insert both cars
-List<Long> updateCounts = database.executeBatch("INSERT INTO car VALUES (?,?)", parameterGroups);
+List<Long> updateCounts = database.query("INSERT INTO car VALUES (:id, :color)")
+  .executeBatch(parameterGroups);
 ```
 
 Pyranid will automatically determine if your JDBC driver supports "large" updates and batch operations
@@ -343,7 +344,7 @@ database.transaction(() -> {
   balance2 = balance2.add(amount);
 
   // Persist changes.
-  // Extra credit: this is a good candidate for database.executeBatch()
+  // Extra credit: this is a good candidate for query.executeBatch()
   database.query("UPDATE account SET balance=:balance WHERE id=:id")
     .bind("balance", balance1)
     .bind("id", 1)
@@ -357,8 +358,10 @@ database.transaction(() -> {
 // For convenience, transactional operations may return values
 Optional<BigDecimal> newBalance = database.transaction(() -> {
   // Make some changes
-  database.execute("UPDATE account SET balance=balance - 10 WHERE id=1");
-  database.execute("UPDATE account SET balance=balance + 10 WHERE id=2");
+  database.query("UPDATE account SET balance=balance - 10 WHERE id=1")
+    .execute();
+  database.query("UPDATE account SET balance=balance + 10 WHERE id=2")
+    .execute();
 
   // Return the new value
   return database.query("SELECT balance FROM account WHERE id=:id")
@@ -392,7 +395,8 @@ Internally, Database manages a threadlocal stack of [`Transaction`](https://java
 
 ```java
 database.transaction(() -> {
-  database.execute("UPDATE account SET balance=balance - 10 WHERE id=1");
+  database.query("UPDATE account SET balance=balance - 10 WHERE id=1")
+    .execute();
 
   // Get a handle to the current transaction
   Transaction transaction = database.currentTransaction().get();
@@ -402,7 +406,8 @@ database.transaction(() -> {
     // No commit or rollback will occur when the closure completes, but if an 
     // exception bubbles out the transaction will be marked as rollback-only
     database.participate(transaction, () -> {
-      database.execute("UPDATE account SET balance=balance + 10 WHERE id=2");
+      database.query("UPDATE account SET balance=balance + 10 WHERE id=2")
+        .execute();
     });
   }).run();
 
@@ -417,14 +422,16 @@ database.transaction(() -> {
 ```java
 // Any exception that bubbles out will cause a rollback
 database.transaction(() -> {
-  database.execute("UPDATE account SET balance=balance - 10 WHERE id=1");
+  database.query("UPDATE account SET balance=balance - 10 WHERE id=1")
+    .execute();
   throw new IllegalStateException("Something's wrong!");
 });
 
 // You may mark a transaction as rollback-only, and it will roll back after the 
 // closure execution has completed
 database.transaction(() -> {
-  database.execute("UPDATE account SET balance=balance - 10 WHERE id=1");
+  database.query("UPDATE account SET balance=balance - 10 WHERE id=1")
+    .execute();
 
   // Hmm...I changed my mind
   Transaction transaction = database.currentTransaction().get();
@@ -436,7 +443,8 @@ database.transaction(() -> {
   Transaction transaction = database.currentTransaction().get();
   Savepoint savepoint = transaction.createSavepoint();
 
-  database.execute("UPDATE account SET balance=balance - 10 WHERE id=1");
+  database.query("UPDATE account SET balance=balance - 10 WHERE id=1")
+    .execute();
 
   // Hmm...I changed my mind
   transaction.rollback(savepoint);
@@ -448,11 +456,13 @@ database.transaction(() -> {
 ```java
 // Each nested transaction is independent. There is no parent-child relationship
 database.transaction(() -> {
-  database.execute("UPDATE account SET balance=balance - 10 WHERE id=1");
+  database.query("UPDATE account SET balance=balance - 10 WHERE id=1")
+    .execute();
 
   // This transaction will commit
   database.transaction(() -> {
-    database.execute("UPDATE account SET balance=balance + 10 WHERE id=2");
+    database.query("UPDATE account SET balance=balance + 10 WHERE id=2")
+      .execute();
   });
 
   // This transaction will not!
@@ -467,8 +477,10 @@ database.transaction(() -> {
 // READ_COMMITTED, READ_UNCOMMITTED, REPEATABLE_READ, and SERIALIZABLE.
 // If not specified, DEFAULT is assumed (whatever your DBMS prefers)
 database.transaction(TransactionIsolation.SERIALIZABLE, () -> {
-  database.execute("UPDATE account SET balance=balance - 10 WHERE id=1");
-  database.execute("UPDATE account SET balance=balance + 10 WHERE id=2");
+  database.query("UPDATE account SET balance=balance - 10 WHERE id=1")
+    .execute();
+  database.query("UPDATE account SET balance=balance + 10 WHERE id=2")
+    .execute();
 });
 ```
 
@@ -487,7 +499,8 @@ Without this, you might run into subtle bugs like
 // Business logic
 class EmployeeService {
   public void giveEveryoneRaises() {
-    database.execute("UPDATE employee SET salary=salary * 2");
+    database.query("UPDATE employee SET salary=salary * 2")
+      .execute();
     payrollSystem.startLengthyWarmupProcess();
 
     // Only send emails after the current transaction ends
@@ -855,9 +868,9 @@ CREATE TABLE example (
 ```java
 String json = "{\"testing\": 123}";
 
-database.execute("INSERT INTO example (data) VALUES (?)",
-  Parameters.json(json)
-);
+database.query("INSERT INTO example (data) VALUES (:data)")
+  .bind("data", Parameters.json(json))
+  .execute();
 ```
 
 By default, Pyranid will use your database's binary JSON format if supported and fall back to a text representation otherwise.
@@ -865,9 +878,9 @@ By default, Pyranid will use your database's binary JSON format if supported and
 If you want to force text storage (e.g. if whitespace is important), specify a binding preference like this:
 
 ```java
-database.execute("INSERT INTO example (data) VALUES (?)",
-  Parameters.json(json, BindingPreference.TEXT)
-);
+database.query("INSERT INTO example (data) VALUES (:data)")
+  .bind("data", Parameters.json(json, BindingPreference.TEXT))
+  .execute();
 ```
 
 #### Vector
@@ -898,9 +911,10 @@ CREATE TABLE vector_embedding (
 double[] embedding = ...;
 String content = "...";
 
-database.execute("INSERT INTO vector_embedding (embedding, content) VALUES (?,?)",
-  Parameters.vectorOfDoubles(embedding), content
-);
+database.query("INSERT INTO vector_embedding (embedding, content) VALUES (:embedding, :content)")
+  .bind("embedding", Parameters.vectorOfDoubles(embedding))
+  .bind("content", content)
+  .execute();
 ```
 
 #### SQL ARRAY
@@ -930,17 +944,17 @@ String name = "...";
 int[] vendorFlags = { 1, 2, 3 };
 List<String> tags = List.of("alpha", "beta");
 
-database.execute("""
+database.query("""
   INSERT INTO product (
     name,
     vendor_flags,
     tags
-  ) VALUES (?,?,?)
-""", 
-  name,
-  Parameters.arrayOf("INTEGER", vendorFlags),
-  Parameters.arrayOf("VARCHAR", tags)
-);
+  ) VALUES (:name, :vendorFlags, :tags)
+""")
+  .bind("name", name)
+  .bind("vendorFlags", Parameters.arrayOf("INTEGER", vendorFlags))
+  .bind("tags", Parameters.arrayOf("VARCHAR", tags))
+  .execute();
 ```
 
 If you need support for multidimensional array binding, implement a [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) as outlined below. 
@@ -1020,11 +1034,14 @@ UUID themeId = ...;
 HexColor backgroundColor = HexColor.fromHexString("#6a5acd");
 
 // ...we use the reference as-is and Pyranid will apply the custom binder
-database.execute("""
+database.query("""
   UPDATE theme
-  SET background_color=?
-  WHERE theme_id=? 
-""", backgroundColor, themeId);
+  SET background_color=:backgroundColor
+  WHERE theme_id=:themeId 
+""")
+  .bind("backgroundColor", backgroundColor)
+  .bind("themeId", themeId)
+  .execute();
 ```
 
 #### Standard Collections
@@ -1045,7 +1062,9 @@ List<UUID> ids = List.of(
   UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 );
 
-database.execute("INSERT INTO t(v) VALUES (?)", Parameters.listOf(UUID.class, ids));
+database.query("INSERT INTO t(v) VALUES (:v)")
+  .bind("v", Parameters.listOf(UUID.class, ids))
+  .execute();
 ```
 
 ...would be handled by this custom binder, because `targetType.matchesParameterizedType(List.class, UUID.class)` returns `true` thanks to runtime type capturing:
@@ -1131,8 +1150,10 @@ database.transaction(() -> {
   try {
     // We don't want to give someone the same award twice!
     // Let the DBMS worry about constraint checking to avoid race conditions
-    database.execute("INSERT INTO account_award (account_id, award_type) VALUES (?,?)",
-                     accountId, AwardType.BIG);
+    database.query("INSERT INTO account_award (account_id, award_type) VALUES (:accountId, :awardType)")
+      .bind("accountId", accountId)
+      .bind("awardType", AwardType.BIG)
+      .execute();
   } catch(DatabaseException e) {
     // Detect a unique constraint violation and gracefully continue on.
     if("account_award_unique_idx".equals(e.getConstraint().orElse(null)) {

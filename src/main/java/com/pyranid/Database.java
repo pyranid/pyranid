@@ -435,6 +435,38 @@ public final class Database {
 
 		@Nonnull
 		@Override
+		public List<Long> executeBatch(@Nonnull List<Map<String, Object>> parameterGroups) {
+			requireNonNull(parameterGroups);
+
+			List<List<Object>> parametersAsList = new ArrayList<>(parameterGroups.size());
+
+			for (Map<String, Object> parameterGroup : parameterGroups) {
+				requireNonNull(parameterGroup);
+
+				for (String parameterName : parameterGroup.keySet())
+					if (!this.distinctParameterNames.contains(parameterName))
+						throw new IllegalArgumentException(format("Unknown named parameter '%s' for SQL: %s", parameterName, this.originalSql));
+
+				Map<String, Object> mergedBindings;
+				if (this.bindings.isEmpty()) {
+					mergedBindings = parameterGroup;
+				} else if (parameterGroup.isEmpty()) {
+					mergedBindings = this.bindings;
+				} else {
+					Map<String, Object> combinedBindings = new LinkedHashMap<>(this.bindings);
+					combinedBindings.putAll(parameterGroup);
+					mergedBindings = combinedBindings;
+				}
+
+				Object[] parameters = parameters(mergedBindings);
+				parametersAsList.add(Arrays.asList(parameters));
+			}
+
+			return this.database.executeBatch(statement(), parametersAsList);
+		}
+
+		@Nonnull
+		@Override
 		public <T> Optional<T> executeForObject(@Nonnull Class<T> resultType) {
 			requireNonNull(resultType);
 			return this.database.executeForObject(statement(), resultType, parameters());
@@ -455,6 +487,13 @@ public final class Database {
 
 		@Nonnull
 		private Object[] parameters() {
+			return parameters(this.bindings);
+		}
+
+		@Nonnull
+		private Object[] parameters(@Nonnull Map<String, Object> bindings) {
+			requireNonNull(bindings);
+
 			if (this.parameterNames.isEmpty())
 				return new Object[0];
 
@@ -464,14 +503,14 @@ public final class Database {
 			for (int i = 0; i < this.parameterNames.size(); ++i) {
 				String parameterName = this.parameterNames.get(i);
 
-				if (!this.bindings.containsKey(parameterName)) {
+				if (!bindings.containsKey(parameterName)) {
 					if (missingParameterNames == null)
 						missingParameterNames = new ArrayList<>();
 
 					missingParameterNames.add(parameterName);
 				}
 
-				parameters[i] = this.bindings.get(parameterName);
+				parameters[i] = bindings.get(parameterName);
 			}
 
 			if (missingParameterNames != null)
@@ -851,8 +890,8 @@ public final class Database {
 	 * @return the number of rows affected by the SQL statement
 	 */
 	@Nonnull
-	public Long execute(@Nonnull String sql,
-											@Nullable Object... parameters) {
+	private Long execute(@Nonnull String sql,
+											 @Nullable Object... parameters) {
 		requireNonNull(sql);
 		return execute(Statement.of(generateId(), sql), parameters);
 	}
@@ -866,8 +905,8 @@ public final class Database {
 	 * @return the number of rows affected by the SQL statement
 	 */
 	@Nonnull
-	public Long execute(@Nonnull Statement statement,
-											@Nullable Object... parameters) {
+	private Long execute(@Nonnull Statement statement,
+											 @Nullable Object... parameters) {
 		requireNonNull(statement);
 
 		ResultHolder<Long> resultHolder = new ResultHolder<>();
@@ -918,9 +957,9 @@ public final class Database {
 	 * @throws DatabaseException if > 1 row is returned
 	 */
 	@Nonnull
-	public <T> Optional<T> executeForObject(@Nonnull String sql,
-																					@Nonnull Class<T> resultSetRowType,
-																					@Nullable Object... parameters) {
+	private <T> Optional<T> executeForObject(@Nonnull String sql,
+																					 @Nonnull Class<T> resultSetRowType,
+																					 @Nullable Object... parameters) {
 		requireNonNull(sql);
 		requireNonNull(resultSetRowType);
 
@@ -938,9 +977,9 @@ public final class Database {
 	 * @return a single result (or no result)
 	 * @throws DatabaseException if > 1 row is returned
 	 */
-	public <T> Optional<T> executeForObject(@Nonnull Statement statement,
-																					@Nonnull Class<T> resultSetRowType,
-																					@Nullable Object... parameters) {
+	private <T> Optional<T> executeForObject(@Nonnull Statement statement,
+																					 @Nonnull Class<T> resultSetRowType,
+																					 @Nullable Object... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
@@ -962,9 +1001,9 @@ public final class Database {
 	 * @return a list of results
 	 */
 	@Nonnull
-	public <T> List<T> executeForList(@Nonnull String sql,
-																		@Nonnull Class<T> resultSetRowType,
-																		@Nullable Object... parameters) {
+	private <T> List<T> executeForList(@Nonnull String sql,
+																		 @Nonnull Class<T> resultSetRowType,
+																		 @Nullable Object... parameters) {
 		requireNonNull(sql);
 		requireNonNull(resultSetRowType);
 
@@ -982,9 +1021,9 @@ public final class Database {
 	 * @return a list of results
 	 */
 	@Nonnull
-	public <T> List<T> executeForList(@Nonnull Statement statement,
-																		@Nonnull Class<T> resultSetRowType,
-																		@Nullable Object... parameters) {
+	private <T> List<T> executeForList(@Nonnull Statement statement,
+																		 @Nonnull Class<T> resultSetRowType,
+																		 @Nullable Object... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
@@ -1006,8 +1045,8 @@ public final class Database {
 	 * @return the number of rows affected by the SQL statement per-group
 	 */
 	@Nonnull
-	public List<Long> executeBatch(@Nonnull String sql,
-																 @Nonnull List<List<Object>> parameterGroups) {
+	private List<Long> executeBatch(@Nonnull String sql,
+																	@Nonnull List<List<Object>> parameterGroups) {
 		requireNonNull(sql);
 		requireNonNull(parameterGroups);
 
@@ -1025,8 +1064,8 @@ public final class Database {
 	 * @return the number of rows affected by the SQL statement per-group
 	 */
 	@Nonnull
-	public List<Long> executeBatch(@Nonnull Statement statement,
-																 @Nonnull List<List<Object>> parameterGroups) {
+	private List<Long> executeBatch(@Nonnull Statement statement,
+																	@Nonnull List<List<Object>> parameterGroups) {
 		requireNonNull(statement);
 		requireNonNull(parameterGroups);
 

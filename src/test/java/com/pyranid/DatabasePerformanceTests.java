@@ -595,7 +595,7 @@ public class DatabasePerformanceTests {
 	}
 
 	private void createWideSchema(@Nonnull Database db) {
-		db.execute("""
+		TestQueries.execute(db, """
 				CREATE TABLE wide_table (
 				  id BIGINT PRIMARY KEY,
 				  c_varchar_1 VARCHAR(128),
@@ -684,7 +684,7 @@ public class DatabasePerformanceTests {
 
 				int i6 = i + 1, i7 = i + 2, i8 = i + 3, i9 = i + 4, i10 = i + 5;
 
-				db.execute("""
+				TestQueries.execute(db, """
 								INSERT INTO wide_table (
 								  id,
 								  c_varchar_1, c_varchar_2, c_varchar_3, c_varchar_4, c_varchar_5,
