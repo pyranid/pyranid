@@ -58,7 +58,7 @@ import java.util.Optional;
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @see Database#query(String)
- * @since 3.1.0
+ * @since 4.0.0
  */
 @NotThreadSafe
 public interface Query {
