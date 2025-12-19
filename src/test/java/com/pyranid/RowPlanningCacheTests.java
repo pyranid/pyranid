@@ -33,7 +33,7 @@ import static java.util.Objects.requireNonNull;
 
 /**
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
- * @since 3.0.1
+ * @since 4.0.0
  */
 @ThreadSafe
 public class RowPlanningCacheTests {
