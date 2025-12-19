@@ -101,14 +101,22 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	@Nonnull
 	private final ConcurrentMap<TargetType, List<CustomColumnMapper>> customColumnMappersByTargetTypeCache;
 	@Nonnull
-	private final ConcurrentMap<SourceTargetKey, CustomColumnMapper> preferredColumnMapperBySourceTargetKey;
+	private final Map<SourceTargetKey, CustomColumnMapper> preferredColumnMapperBySourceTargetKey;
 	@Nonnull
 	private final ConcurrentMap<Class<?>, Map<String, TargetType>> propertyTargetTypeCache = new ConcurrentHashMap<>();
 	@Nonnull
 	private final ConcurrentMap<Class<?>, Map<String, Set<String>>> columnLabelAliasesByPropertyNameCache;
+	@Nonnull
+	private final ConcurrentMap<Class<?>, PropertyDescriptor[]> propertyDescriptorsCache = new ConcurrentHashMap<>();
+	@Nonnull
+	private final ConcurrentMap<Class<?>, Map<String, Set<String>>> normalizedColumnLabelsByPropertyNameCache = new ConcurrentHashMap<>();
+	@Nonnull
+	private final ConcurrentMap<Class<?>, Map<String, Set<String>>> columnLabelsByRecordComponentNameCache = new ConcurrentHashMap<>();
+	@Nonnull
+	private final ConcurrentMap<Class<?>, RecordComponent[]> recordComponentsCache = new ConcurrentHashMap<>();
 	// Only used if row-planning is enabled
 	@Nonnull
-	private final ConcurrentMap<PlanKey, RowPlan<?>> rowPlanningCache = new ConcurrentHashMap<>();
+	private final Map<PlanKey, RowPlan<?>> rowPlanningCache;
 	@Nonnull
 	private final Map<ResultSetMetaData, String> schemaSignatureByResultSetMetaData;
 
@@ -304,6 +312,80 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		});
 	}
 
+	@Nonnull
+	protected PropertyDescriptor[] determinePropertyDescriptors(@Nonnull Class<?> resultClass) {
+		requireNonNull(resultClass);
+
+		return getPropertyDescriptorsCache().computeIfAbsent(resultClass, rc -> {
+			try {
+				BeanInfo beanInfo = Introspector.getBeanInfo(rc);
+				PropertyDescriptor[] descriptors = beanInfo.getPropertyDescriptors();
+				return descriptors == null ? new PropertyDescriptor[0] : descriptors;
+			} catch (IntrospectionException e) {
+				throw new RuntimeException(format("Unable to introspect properties for %s", rc.getName()), e);
+			}
+		});
+	}
+
+	@Nonnull
+	protected RecordComponent[] determineRecordComponents(@Nonnull Class<?> resultClass) {
+		requireNonNull(resultClass);
+
+		return getRecordComponentsCache().computeIfAbsent(resultClass, rc -> {
+			RecordComponent[] components = rc.getRecordComponents();
+			return components == null ? new RecordComponent[0] : components;
+		});
+	}
+
+	@Nonnull
+	protected Map<String, Set<String>> determineNormalizedColumnLabelsByPropertyName(@Nonnull Class<?> resultClass) {
+		requireNonNull(resultClass);
+
+		return getNormalizedColumnLabelsByPropertyNameCache().computeIfAbsent(resultClass, rc -> {
+			Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(rc);
+			Map<String, Set<String>> normalizedLabelsByPropertyName = new HashMap<>();
+
+			for (PropertyDescriptor propertyDescriptor : determinePropertyDescriptors(rc)) {
+				if (propertyDescriptor.getWriteMethod() == null)
+					continue;
+
+				String propertyName = propertyDescriptor.getName();
+				Set<String> baseNames = columnLabelAliasesByPropertyName.get(propertyName);
+				if (baseNames == null || baseNames.isEmpty())
+					baseNames = Set.of(propertyName);
+
+				Set<String> normalized = new HashSet<>();
+				for (String baseName : baseNames)
+					normalized.addAll(databaseColumnNamesForPropertyName(baseName));
+
+				normalizedLabelsByPropertyName.put(propertyName, Collections.unmodifiableSet(normalized));
+			}
+
+			return Collections.unmodifiableMap(normalizedLabelsByPropertyName);
+		});
+	}
+
+	@Nonnull
+	protected Map<String, Set<String>> determineColumnLabelsByRecordComponentName(@Nonnull Class<?> resultClass) {
+		requireNonNull(resultClass);
+
+		return getColumnLabelsByRecordComponentNameCache().computeIfAbsent(resultClass, rc -> {
+			Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(rc);
+			Map<String, Set<String>> labelsByComponentName = new HashMap<>();
+
+			for (RecordComponent recordComponent : determineRecordComponents(rc)) {
+				String propertyName = recordComponent.getName();
+				Set<String> labels = columnLabelAliasesByPropertyName.get(propertyName);
+				if (labels == null || labels.isEmpty())
+					labels = databaseColumnNamesForPropertyName(propertyName);
+
+				labelsByComponentName.put(propertyName, Collections.unmodifiableSet(labels));
+			}
+
+			return Collections.unmodifiableMap(labelsByComponentName);
+		});
+	}
+
 	DefaultResultSetMapper(@Nonnull Builder builder) {
 		requireNonNull(builder);
 
@@ -312,9 +394,18 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		this.planCachingEnabled = requireNonNull(builder.planCachingEnabled);
 
 		this.customColumnMappersByTargetTypeCache = new ConcurrentHashMap<>();
-		this.preferredColumnMapperBySourceTargetKey = new ConcurrentHashMap<>();
+		this.preferredColumnMapperBySourceTargetKey = createCache(builder.preferredColumnMapperCacheCapacity);
 		this.columnLabelAliasesByPropertyNameCache = new ConcurrentHashMap<>();
+		this.rowPlanningCache = createCache(builder.planCacheCapacity);
 		this.schemaSignatureByResultSetMetaData = Collections.synchronizedMap(new WeakHashMap<>());
+	}
+
+	@Nonnull
+	private static <K, V> Map<K, V> createCache(@Nonnull Integer capacity) {
+		requireNonNull(capacity);
+		if (capacity <= 0)
+			return new ConcurrentHashMap<>();
+		return new ConcurrentLruMap<>(capacity);
 	}
 
 	@Override
@@ -394,7 +485,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			final boolean[] rawLoaded = hasFanOut ? new boolean[plan.columnCount + 1] : null;
 
 			if (plan.isRecord) {
-				RecordComponent[] rc = resultSetRowType.getRecordComponents();
+				RecordComponent[] rc = determineRecordComponents(resultSetRowType);
 				Object[] args = new Object[rc.length];
 
 				for (ColumnBinding b : plan.bindings) {
@@ -552,7 +643,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	 * Attempts to map the current {@code resultSet} row to an instance of {@code resultClass} using one of the
 	 * "out-of-the-box" types (primitives, common types like {@link UUID}, etc.)
 	 * <p>
-	 * This does not attempt to map to a user-defined JavaBean - see {@link #mapResultSetToBean(StatementContext, ResultSet, InstanceProvider)} for
+	 * This does not attempt to map to a user-defined JavaBean - see {@link #mapResultSetToBean(StatementContext, ResultSet, InstanceProvider, ResultSetMetaData)} for
 	 * that functionality.
 	 *
 	 * @param <T>              result instance type token
@@ -755,8 +846,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		Class<T> resultSetRowType = statementContext.getResultSetRowType().get();
 
-		RecordComponent[] recordComponents = resultSetRowType.getRecordComponents();
-		Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(resultSetRowType);
+		RecordComponent[] recordComponents = determineRecordComponents(resultSetRowType);
+		Map<String, Set<String>> columnLabelsByRecordComponentName = determineColumnLabelsByRecordComponentName(resultSetRowType);
 		Map<String, Object> columnLabelsToValues = extractColumnLabelsToValues(statementContext, resultSet, resultSetMetaData);
 
 		Map<String, TargetType> propertyTargetTypes = determinePropertyTargetTypes(resultSetRowType);
@@ -768,7 +859,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			String propertyName = recordComponent.getName();
 
 			// If there are any @DatabaseColumn annotations on this field, respect them
-			Set<String> potentialPropertyNames = columnLabelAliasesByPropertyName.get(propertyName);
+			Set<String> potentialPropertyNames = columnLabelsByRecordComponentName.get(propertyName);
 
 			// There were no @DatabaseColumn annotations, use the default naming strategy
 			if (potentialPropertyNames == null || potentialPropertyNames.isEmpty())
@@ -844,14 +935,14 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		Class<T> resultSetRowType = statementContext.getResultSetRowType().get();
 
 		T object = instanceProvider.provide(statementContext, resultSetRowType);
-		BeanInfo beanInfo = Introspector.getBeanInfo(resultSetRowType);
+		PropertyDescriptor[] propertyDescriptors = determinePropertyDescriptors(resultSetRowType);
 		Map<String, Object> columnLabelsToValues = extractColumnLabelsToValues(statementContext, resultSet, resultSetMetaData);
-		Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(resultSetRowType);
+		Map<String, Set<String>> normalizedColumnLabelsByPropertyName = determineNormalizedColumnLabelsByPropertyName(resultSetRowType);
 
 		// Compute once per class (generic-aware)
 		Map<String, TargetType> propertyTargetTypes = determinePropertyTargetTypes(resultSetRowType);
 
-		for (PropertyDescriptor propertyDescriptor : beanInfo.getPropertyDescriptors()) {
+		for (PropertyDescriptor propertyDescriptor : propertyDescriptors) {
 			Method writeMethod = propertyDescriptor.getWriteMethod();
 			if (writeMethod == null) continue;
 
@@ -859,20 +950,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			Class<?> writeMethodParameterType = writeMethod.getParameterTypes()[0];
 
 			// Pull in property names, taking into account any aliases defined by @DatabaseColumn
-			Set<String> propertyNames = columnLabelAliasesByPropertyName.get(propertyDescriptor.getName());
-			if (propertyNames == null) propertyNames = new HashSet<>();
-			else propertyNames = new HashSet<>(propertyNames);
-
-			// If no @DatabaseColumn annotation, then use the field name itself
-			if (propertyNames.isEmpty())
-				propertyNames.add(propertyDescriptor.getName());
-
-			// Normalize property names to database column names.
-			propertyNames =
-					propertyNames.stream()
-							.map(this::databaseColumnNamesForPropertyName)
-							.flatMap(Set::stream)
-							.collect(toSet());
+			Set<String> propertyNames = normalizedColumnLabelsByPropertyName.get(propertyDescriptor.getName());
+			if (propertyNames == null || propertyNames.isEmpty())
+				propertyNames = databaseColumnNamesForPropertyName(propertyDescriptor.getName());
 
 			// Precise TargetType for this property (generic-aware)
 			TargetType targetType = propertyTargetTypes.get(propertyDescriptor.getName());
@@ -1405,7 +1485,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		public static Instant asInstant(ResultSet rs, int col, StatementContext<?> ctx, ResultSetMetaData resultSetMetaData) throws SQLException {
 			boolean withTz = isTimestampWithTimeZone(resultSetMetaData, col, ctx.getDatabaseType());
+			return asInstant(rs, col, ctx, withTz);
+		}
 
+		public static Instant asInstant(ResultSet rs, int col, StatementContext<?> ctx, boolean withTz) throws SQLException {
 			// Modern fast-path
 			if (withTz) {
 				OffsetDateTime odt = tryGet(rs, col, OffsetDateTime.class);
@@ -1449,13 +1532,16 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		public static OffsetDateTime asOffsetDateTime(ResultSet rs, int col, StatementContext<?> ctx, ResultSetMetaData resultSetMetaData) throws SQLException {
 			boolean withTz = isTimestampWithTimeZone(resultSetMetaData, col, ctx.getDatabaseType());
+			return asOffsetDateTime(rs, col, ctx, withTz);
+		}
 
+		public static OffsetDateTime asOffsetDateTime(ResultSet rs, int col, StatementContext<?> ctx, boolean withTz) throws SQLException {
 			OffsetDateTime got = tryGet(rs, col, OffsetDateTime.class);
 			if (got != null) return got;
 
 			if (withTz) {
 				// Try via Instant if driver only gives us Timestamp
-				Instant inst = asInstant(rs, col, ctx, resultSetMetaData);
+				Instant inst = asInstant(rs, col, ctx, true);
 				return inst == null ? null : inst.atOffset(ctx.getTimeZone().getRules().getOffset(inst));
 			} else {
 				LocalDateTime ldt = tryGet(rs, col, LocalDateTime.class);
@@ -1476,7 +1562,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		public static LocalDateTime asLocalDateTime(ResultSet rs, int col, StatementContext<?> ctx, ResultSetMetaData resultSetMetaData) throws SQLException {
 			boolean withTz = isTimestampWithTimeZone(resultSetMetaData, col, ctx.getDatabaseType());
+			return asLocalDateTime(rs, col, ctx, withTz);
+		}
 
+		public static LocalDateTime asLocalDateTime(ResultSet rs, int col, StatementContext<?> ctx, boolean withTz) throws SQLException {
 			LocalDateTime ldt = tryGet(rs, col, LocalDateTime.class);
 			if (ldt != null) return ldt;
 
@@ -1542,7 +1631,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		public static OffsetTime asOffsetTime(ResultSet rs, int col, StatementContext<?> ctx, ResultSetMetaData resultSetMetaData) throws SQLException {
-			if (isTimeWithTimeZone(resultSetMetaData, col)) {
+			boolean withTz = isTimeWithTimeZone(resultSetMetaData, col);
+			return asOffsetTime(rs, col, ctx, withTz);
+		}
+
+		public static OffsetTime asOffsetTime(ResultSet rs, int col, StatementContext<?> ctx, boolean withTz) throws SQLException {
+			if (withTz) {
 				OffsetTime ot = tryGet(rs, col, OffsetTime.class);
 				if (ot != null) return ot;
 			}
@@ -1727,12 +1821,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		// record: ctor + name->index map
 		final MethodHandle recordCtor;
 		final Map<String, Integer> recordIndexByProp = new HashMap<>();
+		final RecordComponent[] recordComponents = isRecord ? determineRecordComponents(resultClass) : null;
 		if (isRecord) {
-			RecordComponent[] rc = resultClass.getRecordComponents();
-			Class<?>[] argTypes = new Class<?>[rc.length];
-			for (int i = 0; i < rc.length; i++) {
-				argTypes[i] = rc[i].getType();
-				recordIndexByProp.put(rc[i].getName(), i);
+			Class<?>[] argTypes = new Class<?>[recordComponents.length];
+			for (int i = 0; i < recordComponents.length; i++) {
+				argTypes[i] = recordComponents[i].getType();
+				recordIndexByProp.put(recordComponents[i].getName(), i);
 			}
 			recordCtor = lookup.findConstructor(resultClass, MethodType.methodType(void.class, argTypes));
 		} else {
@@ -1754,14 +1848,16 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		allProps.addAll(setterByProp.keySet());
 		allProps.addAll(recordIndexByProp.keySet());
 
-		// For each property, compute all acceptable normalized labels (aliases + default strategy)
-		Map<String, Set<String>> acceptableLabels = new HashMap<>(allProps.size() * 2);
+		// Precompute label -> properties to avoid scanning all properties per column
+		Map<String, List<String>> propertiesByLabel = new HashMap<>(allProps.size() * 2);
 		for (String prop : allProps) {
 			Set<String> labels = new HashSet<>();
 			Set<String> anno = aliasByProp.get(prop);
 			if (anno != null) labels.addAll(anno);
 			labels.addAll(databaseColumnNamesForPropertyName(prop));
-			acceptableLabels.put(prop, labels);
+
+			for (String label : labels)
+				propertiesByLabel.computeIfAbsent(label, labelKey -> new ArrayList<>(1)).add(prop);
 		}
 
 		// Build per-column readers (decided once)
@@ -1771,13 +1867,13 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			boolean tsTz = TemporalReaders.isTimestampWithTimeZone(resultSetMetaData, i, ctx.getDatabaseType());
 			boolean timeTz = TemporalReaders.isTimeWithTimeZone(resultSetMetaData, i);
 			if (tsTz) {
-				readers[i] = (r, c, col) -> TemporalReaders.asOffsetDateTime(r, col, c, resultSetMetaData);
+				readers[i] = (r, c, col) -> TemporalReaders.asOffsetDateTime(r, col, c, true);
 			} else if (jdbcType == Types.TIMESTAMP) {
-				readers[i] = (r, c, col) -> TemporalReaders.asLocalDateTime(r, col, c, resultSetMetaData);
+				readers[i] = (r, c, col) -> TemporalReaders.asLocalDateTime(r, col, c, false);
 			} else if (jdbcType == Types.DATE) {
 				readers[i] = (r, c, col) -> TemporalReaders.asLocalDate(r, col);
 			} else if (timeTz) {
-				readers[i] = (r, c, col) -> TemporalReaders.asOffsetTime(r, col, c, resultSetMetaData);
+				readers[i] = (r, c, col) -> TemporalReaders.asOffsetTime(r, col, c, true);
 			} else if (jdbcType == Types.TIME) {
 				readers[i] = (r, c, col) -> TemporalReaders.asLocalTime(r, col);
 			} else {
@@ -1793,12 +1889,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			ColumnReader reader = readers[i];
 
 			// Find all properties that claim this label
-			List<String> matchedProps = new ArrayList<>(2);
-			for (Map.Entry<String, Set<String>> e : acceptableLabels.entrySet()) {
-				if (e.getValue().contains(labelNorm)) matchedProps.add(e.getKey());
-			}
+			List<String> matchedProps = propertiesByLabel.get(labelNorm);
 
-			if (matchedProps.isEmpty()) {
+			if (matchedProps == null || matchedProps.isEmpty()) {
 				// No property claims this column — add a SKIP binding to keep behavior explicit
 				bindings.add(
 						new ColumnBinding(
@@ -1825,7 +1918,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				if (ttype == null) {
 					if (isRecord) {
 						int argIndex = requireNonNull(recordIndexByProp.get(prop));
-						ttype = TargetType.of(resultClass.getRecordComponents()[argIndex].getGenericType());
+						ttype = TargetType.of(recordComponents[argIndex].getGenericType());
 					} else {
 						MethodHandle setter = setterByProp.get(prop);
 						Class<?> param = setter.type().parameterType(1); // (Declaring, Param)
@@ -1838,7 +1931,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 				// Unboxed + boxed target, and primitive flag
 				final Class<?> rawTargetClassUnboxed = isRecord
-						? resultClass.getRecordComponents()[recordArgIndex].getType()
+						? recordComponents[recordArgIndex].getType()
 						: setterMH.type().parameterType(1);
 				final Class<?> rawTargetClassBoxed = boxedClass(rawTargetClassUnboxed);
 				final boolean targetIsPrimitive = rawTargetClassUnboxed.isPrimitive();
@@ -1894,7 +1987,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@Nonnull
-	protected ConcurrentMap<SourceTargetKey, CustomColumnMapper> getPreferredColumnMapperBySourceTargetKey() {
+	protected Map<SourceTargetKey, CustomColumnMapper> getPreferredColumnMapperBySourceTargetKey() {
 		return this.preferredColumnMapperBySourceTargetKey;
 	}
 
@@ -1909,7 +2002,27 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@Nonnull
-	protected ConcurrentMap<PlanKey, RowPlan<?>> getRowPlanningCache() {
+	protected ConcurrentMap<Class<?>, PropertyDescriptor[]> getPropertyDescriptorsCache() {
+		return this.propertyDescriptorsCache;
+	}
+
+	@Nonnull
+	protected ConcurrentMap<Class<?>, Map<String, Set<String>>> getNormalizedColumnLabelsByPropertyNameCache() {
+		return this.normalizedColumnLabelsByPropertyNameCache;
+	}
+
+	@Nonnull
+	protected ConcurrentMap<Class<?>, Map<String, Set<String>>> getColumnLabelsByRecordComponentNameCache() {
+		return this.columnLabelsByRecordComponentNameCache;
+	}
+
+	@Nonnull
+	protected ConcurrentMap<Class<?>, RecordComponent[]> getRecordComponentsCache() {
+		return this.recordComponentsCache;
+	}
+
+	@Nonnull
+	protected Map<PlanKey, RowPlan<?>> getRowPlanningCache() {
 		return this.rowPlanningCache;
 	}
 

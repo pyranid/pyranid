@@ -158,11 +158,17 @@ public interface ResultSetMapper {
 		List<CustomColumnMapper> customColumnMappers;
 		@Nonnull
 		Boolean planCachingEnabled;
+		@Nonnull
+		Integer planCacheCapacity;
+		@Nonnull
+		Integer preferredColumnMapperCacheCapacity;
 
 		private Builder() {
 			this.normalizationLocale = Locale.getDefault();
 			this.customColumnMappers = List.of();
 			this.planCachingEnabled = true;
+			this.planCacheCapacity = 0;
+			this.preferredColumnMapperCacheCapacity = 0;
 		}
 
 		/**
@@ -201,6 +207,40 @@ public interface ResultSetMapper {
 		public Builder planCachingEnabled(@Nonnull Boolean planCachingEnabled) {
 			requireNonNull(planCachingEnabled);
 			this.planCachingEnabled = planCachingEnabled;
+			return this;
+		}
+
+		/**
+		 * Specifies the maximum number of row-mapping plans to cache when plan caching is enabled.
+		 * <p>
+		 * Use {@code 0} for an unbounded cache.
+		 *
+		 * @param planCacheCapacity maximum number of cached plans, or {@code 0} for unbounded
+		 * @return this {@code Builder}, for chaining
+		 */
+		@Nonnull
+		public Builder planCacheCapacity(@Nonnull Integer planCacheCapacity) {
+			requireNonNull(planCacheCapacity);
+			if (planCacheCapacity < 0)
+				throw new IllegalArgumentException("Plan cache capacity must be >= 0");
+			this.planCacheCapacity = planCacheCapacity;
+			return this;
+		}
+
+		/**
+		 * Specifies the maximum number of cached preferred custom column mappers.
+		 * <p>
+		 * Use {@code 0} for an unbounded cache.
+		 *
+		 * @param preferredColumnMapperCacheCapacity maximum number of cached preferred custom column mappers, or {@code 0} for unbounded
+		 * @return this {@code Builder}, for chaining
+		 */
+		@Nonnull
+		public Builder preferredColumnMapperCacheCapacity(@Nonnull Integer preferredColumnMapperCacheCapacity) {
+			requireNonNull(preferredColumnMapperCacheCapacity);
+			if (preferredColumnMapperCacheCapacity < 0)
+				throw new IllegalArgumentException("Preferred column mapper cache capacity must be >= 0");
+			this.preferredColumnMapperCacheCapacity = preferredColumnMapperCacheCapacity;
 			return this;
 		}
 

@@ -28,10 +28,13 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Currency;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
@@ -396,23 +399,27 @@ public class DatabasePerformanceTests {
 
 	@Test
 	public void wideMappingManyRows_plannedMapper_onlyTimings() {
-		int rows = 20_000; // adjust if needed
+		int rows = perfRows();
 		PerfRunResult r = runOnceWithMapper("wide_planned_only", rows, createPlannedMapper());
 		System.out.println(format("[PLANNED] rows=%d warmup(ms)=%d run1(ms)=%d run2(ms)=%d run3(ms)=%d median(ms)=%d",
 				rows, r.warmupMs, r.measuredMs[0], r.measuredMs[1], r.measuredMs[2], median(r.measuredMs)));
+		System.out.println(format("[PLANNED-MAP] warmup(ms)=%d run1(ms)=%d run2(ms)=%d run3(ms)=%d median(ms)=%d",
+				r.warmupMappingMs, r.measuredMappingMs[0], r.measuredMappingMs[1], r.measuredMappingMs[2], median(r.measuredMappingMs)));
 	}
 
 	@Test
 	public void wideMappingManyRows_standardMapper_onlyTimings() {
-		int rows = 20_000; // adjust if needed
+		int rows = perfRows();
 		PerfRunResult r = runOnceWithMapper("wide_standard_only", rows, createStandardMapper());
 		System.out.println(format("[STANDARD] rows=%d warmup(ms)=%d run1(ms)=%d run2(ms)=%d run3(ms)=%d median(ms)=%d",
 				rows, r.warmupMs, r.measuredMs[0], r.measuredMs[1], r.measuredMs[2], median(r.measuredMs)));
+		System.out.println(format("[STANDARD-MAP] warmup(ms)=%d run1(ms)=%d run2(ms)=%d run3(ms)=%d median(ms)=%d",
+				r.warmupMappingMs, r.measuredMappingMs[0], r.measuredMappingMs[1], r.measuredMappingMs[2], median(r.measuredMappingMs)));
 	}
 
 	@Test
 	public void wideMappingManyRows_comparePlannedVsBaseline_ifAvailable() {
-		int rows = 20_000;
+		int rows = perfRows();
 
 		ResultSetMapper planned = createPlannedMapper();
 		ResultSetMapper baseline = createStandardMapper();
@@ -423,18 +430,74 @@ public class DatabasePerformanceTests {
 		long medPlan = median(rPlan.measuredMs);
 		long medBase = median(rBase.measuredMs);
 		double speedup = (double) medBase / (double) medPlan;
+		long medPlanMap = median(rPlan.measuredMappingMs);
+		long medBaseMap = median(rBase.measuredMappingMs);
+		double speedupMap = (double) medBaseMap / (double) medPlanMap;
 
 		System.out.println(format("[COMPARE] rows=%d baselineMed(ms)=%d plannedMed(ms)=%d speedup=%.2fx",
 				rows, medBase, medPlan, speedup));
+		System.out.println(format("[COMPARE-MAP] baselineMed(ms)=%d plannedMed(ms)=%d speedup=%.2fx",
+				medBaseMap, medPlanMap, speedupMap));
 	}
 
 	private static final class PerfRunResult {
 		final long warmupMs;
+		final long warmupMappingMs;
 		final long[] measuredMs;
+		final long[] measuredMappingMs;
 
-		PerfRunResult(long warmupMs, long[] measuredMs) {
+		PerfRunResult(long warmupMs, long warmupMappingMs, long[] measuredMs, long[] measuredMappingMs) {
 			this.warmupMs = warmupMs;
+			this.warmupMappingMs = warmupMappingMs;
 			this.measuredMs = measuredMs;
+			this.measuredMappingMs = measuredMappingMs;
+		}
+	}
+
+	private static final class QueryRun {
+		final long totalMs;
+		final long mappingMs;
+
+		QueryRun(long totalMs, long mappingMs) {
+			this.totalMs = totalMs;
+			this.mappingMs = mappingMs;
+		}
+	}
+
+	private static final class MappingCollector {
+		private final AtomicBoolean enabled = new AtomicBoolean(false);
+		private final List<Long> mappingNanos = Collections.synchronizedList(new ArrayList<>());
+
+		void enable() {
+			this.mappingNanos.clear();
+			this.enabled.set(true);
+		}
+
+		void record(@Nonnull StatementLog<?> log) {
+			requireNonNull(log);
+
+			if (!this.enabled.get())
+				return;
+
+			String sql = log.getStatementContext().getStatement().getSql();
+			if (!sql.contains("FROM wide_table"))
+				return;
+
+			log.getResultSetMappingDuration()
+					.ifPresent(duration -> this.mappingNanos.add(duration.toNanos()));
+		}
+
+		int size() {
+			return this.mappingNanos.size();
+		}
+
+		long lastDeltaMs(int sizeBefore) {
+			int sizeAfter = this.mappingNanos.size();
+			if (sizeAfter <= sizeBefore)
+				return 0L;
+
+			long nanos = this.mappingNanos.get(sizeAfter - 1);
+			return nanos / 1_000_000L;
 		}
 	}
 
@@ -445,39 +508,80 @@ public class DatabasePerformanceTests {
 		requireNonNull(mapper);
 
 		DataSource ds = createInMemoryDataSource(dbName);
+		MappingCollector mappingCollector = new MappingCollector();
 		Database db = Database.withDataSource(ds)
 				.timeZone(ZoneId.of("America/New_York"))
 				.resultSetMapper(mapper)
+				.statementLogger(mappingCollector::record)
 				.build();
 
 		createWideSchema(db);
 		insertWideRows(db, rowCount);
 
-		// Warm up caches and JIT once with a smaller read
-		long t0 = System.nanoTime();
-		db.query("SELECT * FROM wide_table ORDER BY id LIMIT 1000")
-				.fetchList(WideRow.class);
-		long warmupMs = (System.nanoTime() - t0) / 1_000_000L;
+		mappingCollector.enable();
+
+		int warmupRuns = perfWarmups();
+		long warmupTotalMs = 0L;
+		long warmupMappingTotalMs = 0L;
+
+		for (int i = 0; i < warmupRuns; i++) {
+			QueryRun run = runQueryWithTimings(db, mappingCollector,
+					"SELECT * FROM wide_table ORDER BY id LIMIT 1000", -1);
+			warmupTotalMs += run.totalMs;
+			warmupMappingTotalMs += run.mappingMs;
+		}
+
+		long warmupMs = warmupRuns == 0 ? 0L : warmupTotalMs / warmupRuns;
+		long warmupMappingMs = warmupRuns == 0 ? 0L : warmupMappingTotalMs / warmupRuns;
 
 		// Three measured full scans (ORDER BY to stabilize plan path)
 		long[] ms = new long[3];
+		long[] mapMs = new long[3];
 		for (int i = 0; i < 3; i++) {
-			long s = System.nanoTime();
-			List<WideRow> rows = db.query("SELECT * FROM wide_table ORDER BY id")
-					.fetchList(WideRow.class);
-			// sanity check so the optimizer can't elide the work
-			if (rows.size() != rowCount) {
-				throw new AssertionError("Expected " + rowCount + " rows, got " + rows.size());
-			}
-			ms[i] = (System.nanoTime() - s) / 1_000_000L;
+			QueryRun run = runQueryWithTimings(db, mappingCollector,
+					"SELECT * FROM wide_table ORDER BY id", rowCount);
+			ms[i] = run.totalMs;
+			mapMs[i] = run.mappingMs;
 		}
-		return new PerfRunResult(warmupMs, ms);
+		return new PerfRunResult(warmupMs, warmupMappingMs, ms, mapMs);
+	}
+
+	private QueryRun runQueryWithTimings(@Nonnull Database db,
+																			 @Nonnull MappingCollector mappingCollector,
+																			 @Nonnull String sql,
+																			 int expectedRows) {
+		requireNonNull(db);
+		requireNonNull(mappingCollector);
+		requireNonNull(sql);
+
+		int mappingStartSize = mappingCollector.size();
+		long start = System.nanoTime();
+		List<WideRow> rows = db.query(sql).fetchList(WideRow.class);
+		long totalMs = (System.nanoTime() - start) / 1_000_000L;
+
+		if (expectedRows >= 0 && rows.size() != expectedRows)
+			throw new AssertionError("Expected " + expectedRows + " rows, got " + rows.size());
+
+		long mappingMs = mappingCollector.lastDeltaMs(mappingStartSize);
+		return new QueryRun(totalMs, mappingMs);
 	}
 
 	private static long median(long[] a) {
 		long x = Math.min(a[0], Math.min(a[1], a[2]));
 		long y = Math.max(a[0], Math.max(a[1], a[2]));
 		return (long) (a[0] + a[1] + a[2] - x - y);
+	}
+
+	private static int perfRows() {
+		return Integer.getInteger("pyranid.perf.rows", 50_000);
+	}
+
+	private static int perfWarmups() {
+		return Integer.getInteger("pyranid.perf.warmups", 2);
+	}
+
+	private static boolean runDetailedPerfTests() {
+		return Boolean.getBoolean("pyranid.perf.detailed");
 	}
 
 	@Nonnull

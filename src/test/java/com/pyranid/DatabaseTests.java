@@ -104,6 +104,42 @@ public class DatabaseTests {
 		}
 	}
 
+	public static class LocaleHolder {
+		private Locale locale;
+
+		public Locale getLocale() {
+			return this.locale;
+		}
+
+		public void setLocale(Locale locale) {
+			this.locale = locale;
+		}
+	}
+
+	public static class CurrencyHolder {
+		private Currency currency;
+
+		public Currency getCurrency() {
+			return this.currency;
+		}
+
+		public void setCurrency(Currency currency) {
+			this.currency = currency;
+		}
+	}
+
+	public static class ZoneIdHolder {
+		private ZoneId zoneId;
+
+		public ZoneId getZoneId() {
+			return this.zoneId;
+		}
+
+		public void setZoneId(ZoneId zoneId) {
+			this.zoneId = zoneId;
+		}
+	}
+
 	@Test
 	public void testBasicQueries() {
 		Database database = Database.withDataSource(createInMemoryDataSource("testBasicQueries")).build();
@@ -478,6 +514,96 @@ public class DatabaseTests {
 		// Row3: second called only
 		Assertions.assertEquals(1, firstCalls.get(), "First mapper should be tried only on the first row");
 		Assertions.assertEquals(3, secondCalls.get(), "Second mapper should handle every row");
+	}
+
+	@Test
+	public void testPreferredColumnMapperCacheCapacity() {
+		DataSource dataSource = createInMemoryDataSource("cm_cache_cap");
+
+		CustomColumnMapper mapper = new CustomColumnMapper() {
+			@Nonnull
+			@Override
+			public Boolean appliesTo(@Nonnull TargetType targetType) {
+				return targetType.matchesClass(Locale.class)
+						|| targetType.matchesClass(Currency.class)
+						|| targetType.matchesClass(ZoneId.class);
+			}
+
+			@Nonnull
+			@Override
+			public MappingResult map(@Nonnull StatementContext<?> statementContext,
+															 @Nonnull ResultSet resultSet,
+															 @Nonnull Object resultSetValue,
+															 @Nonnull TargetType targetType,
+															 @Nonnull Integer columnIndex,
+															 @Nullable String columnLabel,
+															 @Nonnull InstanceProvider instanceProvider) {
+				if (targetType.matchesClass(Locale.class))
+					return MappingResult.of(Locale.CANADA);
+				if (targetType.matchesClass(Currency.class))
+					return MappingResult.of(Currency.getInstance("USD"));
+				if (targetType.matchesClass(ZoneId.class))
+					return MappingResult.of(ZoneId.of("UTC"));
+				return MappingResult.fallback();
+			}
+		};
+
+		DefaultResultSetMapper resultSetMapper = (DefaultResultSetMapper) ResultSetMapper.withCustomColumnMappers(List.of(mapper))
+				.preferredColumnMapperCacheCapacity(2)
+				.build();
+
+		Database db = Database.withDataSource(dataSource)
+				.resultSetMapper(resultSetMapper)
+				.build();
+
+		db.execute("""
+				CREATE TABLE cache_types (
+				  locale VARCHAR(255),
+				  currency VARCHAR(255),
+				  zone_id VARCHAR(255)
+				)
+				""");
+		db.execute("INSERT INTO cache_types VALUES ('en-US', 'USD', 'UTC')");
+
+		db.query("SELECT locale FROM cache_types").fetchObject(LocaleHolder.class);
+		db.query("SELECT currency FROM cache_types").fetchObject(CurrencyHolder.class);
+		db.query("SELECT zone_id FROM cache_types").fetchObject(ZoneIdHolder.class);
+
+		Map<?, ?> cache = resultSetMapper.getPreferredColumnMapperBySourceTargetKey();
+		if (cache instanceof ConcurrentLruMap<?, ?> lru)
+			lru.drain();
+
+		Assertions.assertTrue(cache instanceof ConcurrentLruMap, "Preferred mapper cache should use LRU when capacity is set");
+		Assertions.assertTrue(cache.size() <= 2, "Preferred mapper cache should honor configured capacity");
+	}
+
+	@Test
+	public void testPlanCacheCapacity() {
+		DataSource dataSource = createInMemoryDataSource("plan_cache_cap");
+
+		DefaultResultSetMapper resultSetMapper = (DefaultResultSetMapper) ResultSetMapper.withPlanCachingEnabled(true)
+				.planCacheCapacity(2)
+				.build();
+
+		Database db = Database.withDataSource(dataSource)
+				.resultSetMapper(resultSetMapper)
+				.build();
+
+		createTestSchema(db);
+
+		db.execute("INSERT INTO employee VALUES (1, 'A', 'a@x.com', 'en-US')");
+		db.execute("INSERT INTO employee VALUES (2, 'B', 'b@x.com', 'ja-JP')");
+
+		db.query("SELECT name, email_address, locale FROM employee").fetchList(EmployeeClass.class);
+		db.query("SELECT name, email_address FROM employee").fetchList(EmployeeClass.class);
+		db.query("SELECT name, locale FROM employee").fetchList(EmployeeClass.class);
+
+		Map<?, ?> cache = resultSetMapper.getRowPlanningCache();
+		if (cache instanceof ConcurrentLruMap<?, ?> lru)
+			lru.drain();
+
+		Assertions.assertTrue(cache instanceof ConcurrentLruMap, "Row-plan cache should use LRU when capacity is set");
+		Assertions.assertTrue(cache.size() <= 2, "Row-plan cache should honor configured capacity");
 	}
 
 	public record GroupRow(String groupName, List<UUID> ids) {}
