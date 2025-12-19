@@ -32,8 +32,12 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Deque;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.logging.Logger;
@@ -319,14 +323,14 @@ public final class Database {
 	/**
 	 * Creates a fluent builder for executing SQL.
 	 * <p>
-	 * Named parameters use the {@code :paramName} syntax and are bound via
-	 * {@link Query#bind(String, Object)}.
+	 * Named parameters use the {@code :paramName} syntax and are bound via {@link Query#bind(String, Object)}.
+	 * Positional parameters via {@code ?} are not supported.
 	 * <p>
 	 * Example:
 	 * <pre>{@code
-	 * Optional<Employee> employee = database.namedQuery("SELECT * FROM employee WHERE id = :id")
+	 * Optional<Employee> employee = database.query("SELECT * FROM employee WHERE id = :id")
 	 *   .bind("id", 42)
-	 *   .fetchOne(Employee.class);
+	 *   .fetchObject(Employee.class);
 	 * }</pre>
 	 *
 	 * @param sql SQL containing {@code :paramName} placeholders
@@ -336,7 +340,394 @@ public final class Database {
 	@Nonnull
 	public Query query(@Nonnull String sql) {
 		requireNonNull(sql);
-		throw new UnsupportedOperationException("TODO");
+		return new DefaultQuery(this, sql);
+	}
+
+	/**
+	 * Default internal implementation of {@link Query}.
+	 * <p>
+	 * This class is intended for use by a single thread.
+	 */
+	@NotThreadSafe
+	private static final class DefaultQuery implements Query {
+		@Nonnull
+		private final Database database;
+		@Nonnull
+		private final String originalSql;
+		@Nonnull
+		private final String preparedSql;
+		@Nonnull
+		private final List<String> parameterNames;
+		@Nonnull
+		private final Set<String> distinctParameterNames;
+		@Nonnull
+		private final Map<String, Object> bindings;
+		@Nullable
+		private Object id;
+
+		private DefaultQuery(@Nonnull Database database,
+												 @Nonnull String sql) {
+			requireNonNull(database);
+			requireNonNull(sql);
+
+			this.database = database;
+			this.originalSql = sql;
+
+			ParsedSql parsedSql = parseNamedParameterSql(sql);
+			this.preparedSql = parsedSql.sql;
+			this.parameterNames = parsedSql.parameterNames;
+			this.distinctParameterNames = parsedSql.distinctParameterNames;
+
+			this.bindings = new LinkedHashMap<>(Math.max(8, this.distinctParameterNames.size()));
+		}
+
+		@Nonnull
+		@Override
+		public Query bind(@Nonnull String name,
+											@Nullable Object value) {
+			requireNonNull(name);
+
+			if (!this.distinctParameterNames.contains(name))
+				throw new IllegalArgumentException(format("Unknown named parameter '%s' for SQL: %s", name, this.originalSql));
+
+			this.bindings.put(name, value);
+			return this;
+		}
+
+		@Nonnull
+		@Override
+		public Query bindAll(@Nonnull Map<String, Object> parameters) {
+			requireNonNull(parameters);
+
+			for (Map.Entry<String, Object> entry : parameters.entrySet())
+				bind(entry.getKey(), entry.getValue());
+
+			return this;
+		}
+
+		@Nonnull
+		@Override
+		public Query id(@Nullable Object id) {
+			this.id = id;
+			return this;
+		}
+
+		@Nonnull
+		@Override
+		public <T> Optional<T> fetchObject(@Nonnull Class<T> resultType) {
+			requireNonNull(resultType);
+			return this.database.queryForObject(statement(), resultType, parameters());
+		}
+
+		@Nonnull
+		@Override
+		public <T> List<T> fetchList(@Nonnull Class<T> resultType) {
+			requireNonNull(resultType);
+			return this.database.queryForList(statement(), resultType, parameters());
+		}
+
+		@Nonnull
+		@Override
+		public Long execute() {
+			return this.database.execute(statement(), parameters());
+		}
+
+		@Nonnull
+		@Override
+		public <T> Optional<T> executeForObject(@Nonnull Class<T> resultType) {
+			requireNonNull(resultType);
+			return this.database.executeForObject(statement(), resultType, parameters());
+		}
+
+		@Nonnull
+		@Override
+		public <T> List<T> executeForList(@Nonnull Class<T> resultType) {
+			requireNonNull(resultType);
+			return this.database.executeForList(statement(), resultType, parameters());
+		}
+
+		@Nonnull
+		private Statement statement() {
+			Object statementId = this.id == null ? this.database.generateId() : this.id;
+			return Statement.of(statementId, this.preparedSql);
+		}
+
+		@Nonnull
+		private Object[] parameters() {
+			if (this.parameterNames.isEmpty())
+				return new Object[0];
+
+			List<String> missingParameterNames = null;
+			Object[] parameters = new Object[this.parameterNames.size()];
+
+			for (int i = 0; i < this.parameterNames.size(); ++i) {
+				String parameterName = this.parameterNames.get(i);
+
+				if (!this.bindings.containsKey(parameterName)) {
+					if (missingParameterNames == null)
+						missingParameterNames = new ArrayList<>();
+
+					missingParameterNames.add(parameterName);
+				}
+
+				parameters[i] = this.bindings.get(parameterName);
+			}
+
+			if (missingParameterNames != null)
+				throw new IllegalArgumentException(format("Missing required named parameters %s for SQL: %s", missingParameterNames, this.originalSql));
+
+			return parameters;
+		}
+
+		private static final class ParsedSql {
+			@Nonnull
+			private final String sql;
+			@Nonnull
+			private final List<String> parameterNames;
+			@Nonnull
+			private final Set<String> distinctParameterNames;
+
+			private ParsedSql(@Nonnull String sql,
+												@Nonnull List<String> parameterNames,
+												@Nonnull Set<String> distinctParameterNames) {
+				requireNonNull(sql);
+				requireNonNull(parameterNames);
+				requireNonNull(distinctParameterNames);
+
+				this.sql = sql;
+				this.parameterNames = parameterNames;
+				this.distinctParameterNames = distinctParameterNames;
+			}
+		}
+
+		@Nonnull
+		private static ParsedSql parseNamedParameterSql(@Nonnull String sql) {
+			requireNonNull(sql);
+
+			StringBuilder parsedSql = new StringBuilder(sql.length());
+			List<String> parameterNames = new ArrayList<>();
+			Set<String> distinctParameterNames = new HashSet<>();
+
+			boolean inSingleQuote = false;
+			boolean inDoubleQuote = false;
+			boolean inBacktickQuote = false;
+			boolean inBracketQuote = false;
+			boolean inLineComment = false;
+			boolean inBlockComment = false;
+			String dollarQuoteDelimiter = null;
+
+			for (int i = 0; i < sql.length(); ) {
+				if (dollarQuoteDelimiter != null) {
+					if (sql.startsWith(dollarQuoteDelimiter, i)) {
+						parsedSql.append(dollarQuoteDelimiter);
+						i += dollarQuoteDelimiter.length();
+						dollarQuoteDelimiter = null;
+					} else {
+						parsedSql.append(sql.charAt(i));
+						++i;
+					}
+
+					continue;
+				}
+
+				char c = sql.charAt(i);
+
+				if (inLineComment) {
+					parsedSql.append(c);
+					++i;
+
+					if (c == '\n' || c == '\r')
+						inLineComment = false;
+
+					continue;
+				}
+
+				if (inBlockComment) {
+					parsedSql.append(c);
+
+					if (c == '*' && i + 1 < sql.length() && sql.charAt(i + 1) == '/') {
+						parsedSql.append('/');
+						i += 2;
+						inBlockComment = false;
+					} else {
+						++i;
+					}
+
+					continue;
+				}
+
+				if (inSingleQuote) {
+					parsedSql.append(c);
+
+					if (c == '\'') {
+						// Escaped quote: ''
+						if (i + 1 < sql.length() && sql.charAt(i + 1) == '\'') {
+							parsedSql.append('\'');
+							i += 2;
+							continue;
+						}
+
+						inSingleQuote = false;
+					}
+
+					++i;
+					continue;
+				}
+
+				if (inDoubleQuote) {
+					parsedSql.append(c);
+
+					if (c == '"') {
+						// Escaped quote: ""
+						if (i + 1 < sql.length() && sql.charAt(i + 1) == '"') {
+							parsedSql.append('"');
+							i += 2;
+							continue;
+						}
+
+						inDoubleQuote = false;
+					}
+
+					++i;
+					continue;
+				}
+
+				if (inBacktickQuote) {
+					parsedSql.append(c);
+
+					if (c == '`')
+						inBacktickQuote = false;
+
+					++i;
+					continue;
+				}
+
+				if (inBracketQuote) {
+					parsedSql.append(c);
+
+					if (c == ']')
+						inBracketQuote = false;
+
+					++i;
+					continue;
+				}
+
+				// Not inside string/comment
+				if (c == '-' && i + 1 < sql.length() && sql.charAt(i + 1) == '-') {
+					parsedSql.append("--");
+					i += 2;
+					inLineComment = true;
+					continue;
+				}
+
+				if (c == '/' && i + 1 < sql.length() && sql.charAt(i + 1) == '*') {
+					parsedSql.append("/*");
+					i += 2;
+					inBlockComment = true;
+					continue;
+				}
+
+				if (c == '\'') {
+					inSingleQuote = true;
+					parsedSql.append(c);
+					++i;
+					continue;
+				}
+
+				if (c == '"') {
+					inDoubleQuote = true;
+					parsedSql.append(c);
+					++i;
+					continue;
+				}
+
+				if (c == '`') {
+					inBacktickQuote = true;
+					parsedSql.append(c);
+					++i;
+					continue;
+				}
+
+				if (c == '[') {
+					inBracketQuote = true;
+					parsedSql.append(c);
+					++i;
+					continue;
+				}
+
+				if (c == '$') {
+					String delimiter = parseDollarQuoteDelimiter(sql, i);
+
+					if (delimiter != null) {
+						parsedSql.append(delimiter);
+						i += delimiter.length();
+						dollarQuoteDelimiter = delimiter;
+						continue;
+					}
+				}
+
+				if (c == '?')
+					throw new IllegalArgumentException(format("Positional parameters ('?') are not supported. Use named parameters (e.g. ':id') and %s#bind. SQL: %s",
+							Query.class.getSimpleName(), sql));
+
+				if (c == ':' && i + 1 < sql.length() && sql.charAt(i + 1) == ':') {
+					// Postgres type-cast operator (::), do not treat second ':' as a parameter prefix.
+					parsedSql.append("::");
+					i += 2;
+					continue;
+				}
+
+				if (c == ':' && i + 1 < sql.length() && Character.isJavaIdentifierStart(sql.charAt(i + 1))) {
+					int nameStartIndex = i + 1;
+					int nameEndIndex = nameStartIndex + 1;
+
+					while (nameEndIndex < sql.length() && Character.isJavaIdentifierPart(sql.charAt(nameEndIndex)))
+						++nameEndIndex;
+
+					String parameterName = sql.substring(nameStartIndex, nameEndIndex);
+					parameterNames.add(parameterName);
+					distinctParameterNames.add(parameterName);
+					parsedSql.append('?');
+					i = nameEndIndex;
+					continue;
+				}
+
+				parsedSql.append(c);
+				++i;
+			}
+
+			return new ParsedSql(parsedSql.toString(), List.copyOf(parameterNames), Set.copyOf(distinctParameterNames));
+		}
+
+		@Nullable
+		private static String parseDollarQuoteDelimiter(@Nonnull String sql,
+																									 int startIndex) {
+			requireNonNull(sql);
+
+			if (startIndex < 0 || startIndex >= sql.length())
+				return null;
+
+			if (sql.charAt(startIndex) != '$')
+				return null;
+
+			int i = startIndex + 1;
+
+			while (i < sql.length()) {
+				char c = sql.charAt(i);
+
+				if (c == '$')
+					return sql.substring(startIndex, i + 1);
+
+				if (Character.isLetterOrDigit(c) || c == '_') {
+					++i;
+					continue;
+				}
+
+				return null;
+			}
+
+			return null;
+		}
 	}
 
 	/**
@@ -350,7 +741,7 @@ public final class Database {
 	 * @throws DatabaseException if > 1 row is returned
 	 */
 	@Nonnull
-	public <T> Optional<T> queryForObject(@Nonnull String sql,
+	private <T> Optional<T> queryForObject(@Nonnull String sql,
 																				@Nonnull Class<T> resultSetRowType,
 																				@Nullable Object... parameters) {
 		requireNonNull(sql);
@@ -369,7 +760,7 @@ public final class Database {
 	 * @return a single result (or no result)
 	 * @throws DatabaseException if > 1 row is returned
 	 */
-	public <T> Optional<T> queryForObject(@Nonnull Statement statement,
+	private <T> Optional<T> queryForObject(@Nonnull Statement statement,
 																				@Nonnull Class<T> resultSetRowType,
 																				@Nullable Object... parameters) {
 		requireNonNull(statement);
@@ -393,7 +784,7 @@ public final class Database {
 	 * @return a list of results
 	 */
 	@Nonnull
-	public <T> List<T> queryForList(@Nonnull String sql,
+	private <T> List<T> queryForList(@Nonnull String sql,
 																	@Nonnull Class<T> resultSetRowType,
 																	@Nullable Object... parameters) {
 		requireNonNull(sql);
@@ -412,7 +803,7 @@ public final class Database {
 	 * @return a list of results
 	 */
 	@Nonnull
-	public <T> List<T> queryForList(@Nonnull Statement statement,
+	private <T> List<T> queryForList(@Nonnull Statement statement,
 																	@Nonnull Class<T> resultSetRowType,
 																	@Nullable Object... parameters) {
 		requireNonNull(statement);

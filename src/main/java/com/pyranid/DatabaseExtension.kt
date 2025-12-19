@@ -3,29 +3,18 @@ package com.pyranid
 import kotlin.reflect.KClass
 
 
-fun <T : Any> Database.queryForObject(
-    sql: String,
-    klass: KClass<T>,
-    vararg parameters: Any
-): T? {
-    return queryForObject(sql, klass.java, *parameters).orElse(null)
-}
-
-
-fun <T : Any> Database.queryForList(
-    sql: String,
-    klass: KClass<T>,
-    vararg parameters: Any
-): List<T> {
-    val dbResults = queryForList(sql, klass.java, *parameters)
-    return dbResults
-}
-
-fun <T : Any> Database.queryForList(
-    sql: String,
+fun <T : Any> Query.fetchObject(
     klass: KClass<T>
-): List<T> {
-    val dbResults = queryForList(sql, klass.java)
-    return dbResults
-}
+): T? = fetchObject(klass.java).orElse(null)
 
+fun <T : Any> Query.fetchList(
+    klass: KClass<T>
+): List<T> = fetchList(klass.java)
+
+fun <T : Any> Query.executeForObject(
+    klass: KClass<T>
+): T? = executeForObject(klass.java).orElse(null)
+
+fun <T : Any> Query.executeForList(
+    klass: KClass<T>
+): List<T> = executeForList(klass.java)

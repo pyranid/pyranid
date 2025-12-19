@@ -455,14 +455,16 @@ public class DatabasePerformanceTests {
 
 		// Warm up caches and JIT once with a smaller read
 		long t0 = System.nanoTime();
-		db.queryForList("SELECT * FROM wide_table ORDER BY id LIMIT 1000", WideRow.class);
+		db.query("SELECT * FROM wide_table ORDER BY id LIMIT 1000")
+				.fetchList(WideRow.class);
 		long warmupMs = (System.nanoTime() - t0) / 1_000_000L;
 
 		// Three measured full scans (ORDER BY to stabilize plan path)
 		long[] ms = new long[3];
 		for (int i = 0; i < 3; i++) {
 			long s = System.nanoTime();
-			List<WideRow> rows = db.queryForList("SELECT * FROM wide_table ORDER BY id", WideRow.class);
+			List<WideRow> rows = db.query("SELECT * FROM wide_table ORDER BY id")
+					.fetchList(WideRow.class);
 			// sanity check so the optimizer can't elide the work
 			if (rows.size() != rowCount) {
 				throw new AssertionError("Expected " + rowCount + " rows, got " + rows.size());

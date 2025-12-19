@@ -16,25 +16,43 @@ DataSource dataSource = ...
 Database database = Database.withDataSource(dataSource).build();
 
 // Queries
-Optional&lt;Car&gt; specificCar = database.queryForObject("SELECTFROM car WHERE id = ?", Car.class, 123);
-List&lt;Car&gt; blueCars = database.queryForList("SELECTFROM car WHERE color = ?", Car.class, Color.BLUE);
-Optional&lt;UUID&gt; id = database.queryForObject("SELECT id FROM widget LIMIT 1", UUID.class);
-List&lt;BigDecimal&gt; balances = database.queryForList("SELECT balance FROM account", BigDecimal.class);
+Optional&lt;Car&gt; specificCar = database.query("SELECT * FROM car WHERE id = :id")
+  .bind("id", 123)
+  .fetchObject(Car.class);
+List&lt;Car&gt; blueCars = database.query("SELECT * FROM car WHERE color = :color")
+  .bind("color", Color.BLUE)
+  .fetchList(Car.class);
+Optional&lt;UUID&gt; id = database.query("SELECT id FROM widget LIMIT 1").fetchObject(UUID.class);
+List&lt;BigDecimal&gt; balances = database.query("SELECT balance FROM account").fetchList(BigDecimal.class);
 
 // Statements
-long updateCount = database.execute("UPDATE car SET color = ?", Color.RED);
-Optional&lt;UUID&gt; id = database.executeForObject("INSERT INTO book VALUES (?) RETURNING id", UUID.class, "The Stranger");
+long updateCount = database.query("UPDATE car SET color = :color")
+  .bind("color", Color.RED)
+  .execute();
+Optional&lt;UUID&gt; insertedId = database.query("INSERT INTO book VALUES (:title) RETURNING id")
+  .bind("title", "The Stranger")
+  .executeForObject(UUID.class);
 
 // Transactions
 database.transaction(() -&gt; {
-  BigDecimal balance1 = database.queryForObject("SELECT balance FROM account WHERE id = 1", BigDecimal.class).get();
-  BigDecimal balance2 = database.queryForObject("SELECT balance FROM account WHERE id = 2", BigDecimal.class).get();
+  BigDecimal balance1 = database.query("SELECT balance FROM account WHERE id = :id")
+    .bind("id", 1)
+    .fetchObject(BigDecimal.class).get();
+  BigDecimal balance2 = database.query("SELECT balance FROM account WHERE id = :id")
+    .bind("id", 2)
+    .fetchObject(BigDecimal.class).get();
 
   balance1 = balance1.subtract(amount);
   balance2 = balance2.add(amount);
 
-  database.execute("UPDATE account SET balance = ? WHERE id = 1", balance1);
-  database.execute("UPDATE account SET balance = ? WHERE id = 2", balance2);
+  database.query("UPDATE account SET balance = :balance WHERE id = :id")
+    .bind("balance", balance1)
+    .bind("id", 1)
+    .execute();
+  database.query("UPDATE account SET balance = :balance WHERE id = :id")
+    .bind("balance", balance2)
+    .bind("id", 2)
+    .execute();
 });</pre>
 
 </body>

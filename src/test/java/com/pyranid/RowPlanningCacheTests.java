@@ -92,7 +92,9 @@ public class RowPlanningCacheTests {
 		db.execute("CREATE TABLE t (n INT)");
 		db.execute("INSERT INTO t (n) VALUES (1)");
 
-		BeanWithPrimitive row = db.queryForObject("SELECT n FROM t", BeanWithPrimitive.class).orElseThrow();
+		BeanWithPrimitive row = db.query("SELECT n FROM t")
+				.fetchObject(BeanWithPrimitive.class)
+				.orElseThrow();
 		Assertions.assertEquals(1, row.getN(), "INTEGER should map to int without error (non-planned path).");
 	}
 
@@ -102,7 +104,9 @@ public class RowPlanningCacheTests {
 		db.execute("CREATE TABLE t (n INT)");
 		db.execute("INSERT INTO t (n) VALUES (1)");
 
-		BeanWithPrimitive row = db.queryForObject("SELECT n FROM t", BeanWithPrimitive.class).orElseThrow();
+		BeanWithPrimitive row = db.query("SELECT n FROM t")
+				.fetchObject(BeanWithPrimitive.class)
+				.orElseThrow();
 		Assertions.assertEquals(1, row.getN(), "INTEGER should map to int without error (planned path).");
 	}
 
@@ -114,7 +118,9 @@ public class RowPlanningCacheTests {
 
 		DatabaseException ex = Assertions.assertThrows(
 				DatabaseException.class,
-				() -> db.queryForObject("SELECT n FROM t", BeanWithPrimitive.class).orElseThrow(),
+				() -> db.query("SELECT n FROM t")
+						.fetchObject(BeanWithPrimitive.class)
+						.orElseThrow(),
 				"NULL → primitive should throw in non-planned path"
 		);
 		// Optional: check message for clarity
@@ -130,7 +136,9 @@ public class RowPlanningCacheTests {
 
 		DatabaseException ex = Assertions.assertThrows(
 				DatabaseException.class,
-				() -> db.queryForObject("SELECT n FROM t", BeanWithPrimitive.class).orElseThrow(),
+				() -> db.query("SELECT n FROM t")
+						.fetchObject(BeanWithPrimitive.class)
+						.orElseThrow(),
 				"NULL → primitive should throw in planned path (currently silent default 0)"
 		);
 		Assertions.assertTrue(ex.getMessage().toLowerCase(Locale.ROOT).contains("primitive"),
@@ -143,7 +151,9 @@ public class RowPlanningCacheTests {
 		db.execute("CREATE TABLE t (name VARCHAR(64))");
 		db.execute("INSERT INTO t (name) VALUES (NULL)");
 
-		BeanWithPreinit row = db.queryForObject("SELECT name FROM t", BeanWithPreinit.class).orElseThrow();
+		BeanWithPreinit row = db.query("SELECT name FROM t")
+				.fetchObject(BeanWithPreinit.class)
+				.orElseThrow();
 		// Non-planned already calls setter(null), so default "INIT" must be cleared.
 		Assertions.assertNull(row.getName(), "Setter should be called with null to clear preinitialized value (non-planned)");
 	}
@@ -154,7 +164,9 @@ public class RowPlanningCacheTests {
 		db.execute("CREATE TABLE t (name VARCHAR(64))");
 		db.execute("INSERT INTO t (name) VALUES (NULL)");
 
-		BeanWithPreinit row = db.queryForObject("SELECT name FROM t", BeanWithPreinit.class).orElseThrow();
+		BeanWithPreinit row = db.query("SELECT name FROM t")
+				.fetchObject(BeanWithPreinit.class)
+				.orElseThrow();
 		// Planned path should behave the same (currently it skips the setter, leaving "INIT").
 		Assertions.assertNull(row.getName(), "Setter should be called with null to clear preinitialized value (planned)");
 	}
@@ -169,7 +181,9 @@ public class RowPlanningCacheTests {
 
 		Assertions.assertThrows(
 				DatabaseException.class,
-				() -> db.queryForObject("SELECT n FROM t", RecWithPrimitive.class).orElseThrow(),
+				() -> db.query("SELECT n FROM t")
+						.fetchObject(RecWithPrimitive.class)
+						.orElseThrow(),
 				"NULL → primitive record component should throw a clear DatabaseException (planned path)"
 		);
 	}
@@ -210,7 +224,9 @@ public class RowPlanningCacheTests {
 		db.execute("CREATE TABLE t (n INT)");
 		db.execute("INSERT INTO t (n) VALUES (5)");
 
-		RecWithPrimitive row = db.queryForObject("SELECT n FROM t", RecWithPrimitive.class).orElseThrow();
+		RecWithPrimitive row = db.query("SELECT n FROM t")
+				.fetchObject(RecWithPrimitive.class)
+				.orElseThrow();
 		Assertions.assertEquals(5, row.n());
 		// Planned path should still route record construction through the InstanceProvider:
 		Assertions.assertEquals(1, provideRecordCalls.get(),
@@ -227,7 +243,9 @@ public class RowPlanningCacheTests {
 
 		Assertions.assertThrows(
 				DatabaseException.class,
-				() -> db.queryForObject("SELECT c FROM t", Character.class).orElseThrow(),
+				() -> db.query("SELECT c FROM t")
+						.fetchObject(Character.class)
+						.orElseThrow(),
 				"Mapping a multi-character string to Character should raise DatabaseException with a clear message"
 		);
 	}
@@ -240,7 +258,9 @@ public class RowPlanningCacheTests {
 		db.execute("CREATE TABLE t (clock TIME)");
 		db.execute("INSERT INTO t (clock) VALUES (TIME '12:34:56')");
 		// Expect a deterministic offset choice; exact value depends on DB zone but should be stable across runs
-		OffsetTime ot = db.queryForObject("SELECT clock FROM t", OffsetTime.class).orElseThrow();
+		OffsetTime ot = db.query("SELECT clock FROM t")
+				.fetchObject(OffsetTime.class)
+				.orElseThrow();
 		Assertions.assertNotNull(ot);
 	}
 }

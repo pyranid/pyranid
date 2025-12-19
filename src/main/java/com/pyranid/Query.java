@@ -27,6 +27,7 @@ import java.util.Optional;
  * Fluent builder for SQL statements.
  * <p>
  * Obtain instances via {@link Database#query(String)}.
+ * Positional parameters via {@code ?} are not supported; use named parameters (e.g. {@code :id}) and {@link #bind(String, Object)}.
  * <p>
  * Example usage:
  * <pre>{@code

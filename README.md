@@ -238,18 +238,23 @@ We might query for it like this:
 
 ```java
 // A single car
-Optional<Car> car = database.queryForObject("SELECT * FROM car LIMIT 1", Car.class);
+Optional<Car> car = database.query("SELECT * FROM car LIMIT 1")
+  .fetchObject(Car.class);
 
-// A single car, passing prepared statement parameters via varargs
-Optional<Car> specificCar = database.queryForObject("SELECT * FROM car WHERE id=?", Car.class, 123);
+// A single car, binding named parameters
+Optional<Car> specificCar = database.query("SELECT * FROM car WHERE id=:id")
+  .bind("id", 123)
+  .fetchObject(Car.class);
 
 // Multiple cars
-List<Car> blueCars = database.queryForList("SELECT * FROM car WHERE color=?", Car.class, Color.BLUE);
+List<Car> blueCars = database.query("SELECT * FROM car WHERE color=:color")
+  .bind("color", Color.BLUE)
+  .fetchList(Car.class);
 
 // In addition to custom types, you can map to primitives and many JDK builtins out of the box.
 // See 'ResultSet Mapping' section for details
-Optional<UUID> id = database.queryForObject("SELECT id FROM widget LIMIT 1", UUID.class);
-List<BigDecimal> balances = database.queryForList("SELECT balance FROM account", BigDecimal.class);
+Optional<UUID> id = database.query("SELECT id FROM widget LIMIT 1").fetchObject(UUID.class);
+List<BigDecimal> balances = database.query("SELECT balance FROM account").fetchList(BigDecimal.class);
 ```
 
 [`Record`](https://openjdk.org/jeps/395) types are also supported:
@@ -257,11 +262,13 @@ List<BigDecimal> balances = database.queryForList("SELECT balance FROM account",
 ```java
 record Employee(String name, @DatabaseColumn("email") String emailAddress) {}
 
-Optional<Employee> employee = database.queryForObject("""
+Optional<Employee> employee = database.query("""
   SELECT *
   FROM employee
-  WHERE email=?
-  """, Employee.class, "name@example.com");
+  WHERE email=:email
+  """)
+  .bind("email", "name@example.com")
+  .fetchObject(Employee.class);
 ```
 
 By default, Pyranid will invoke the canonical constructor for `Record` types. 
@@ -270,22 +277,29 @@ By default, Pyranid will invoke the canonical constructor for `Record` types.
 
 ```java
 // General-purpose DML statement execution (INSERTs, UPDATEs, DELETEs, functions...)
-long updateCount = database.execute("UPDATE car SET color=?", Color.RED);
+long updateCount = database.query("UPDATE car SET color=:color")
+  .bind("color", Color.RED)
+  .execute();
 
 // Return single or multiple objects via the SQL RETURNING clause for DML statements.
 // Applicable for Postgres and Oracle.  SQL Sever uses an OUTPUT clause
-Optional<BigInteger> insertedCarId = database.executeForObject("""
+Optional<BigInteger> insertedCarId = database.query("""
   INSERT INTO car (id, color)
-  VALUES (nextval('car_seq'), ?)
+  VALUES (nextval('car_seq'), :color)
   RETURNING id
-  """, BigInteger.class, Color.GREEN);
+  """)
+  .bind("color", Color.GREEN)
+  .executeForObject(BigInteger.class);
 
-List<Car> repaintedCars = database.executeForList("""
+List<Car> repaintedCars = database.query("""
   UPDATE car
-  SET color=?
-  WHERE color=?
+  SET color=:newColor
+  WHERE color=:oldColor
   RETURNING *
-  """, Car.class, Color.GREEN, Color.BLUE);
+  """)
+  .bind("newColor", Color.GREEN)
+  .bind("oldColor", Color.BLUE)
+  .executeForList(Car.class);
 
 // Batch operations can be more efficient than execution of discrete statements.
 // Useful for inserting a lot of data at once
@@ -306,7 +320,7 @@ and uses them if available.
 ### Design goals
 
 * Closure-based API: rollback if exception bubbles out, commit at end of closure otherwise
-* Data access APIs (e.g. [`Database::queryForObject`](https://javadoc.pyranid.com/com/pyranid/Database.html#queryForObject(java.lang.String,java.lang.Class,java.lang.Object...)) and friends) automatically participate in transactions
+* Data access APIs (e.g. [`Database::query`](https://javadoc.pyranid.com/com/pyranid/Database.html#query(java.lang.String))) automatically participate in transactions
 * No [`Connection`](https://docs.oracle.com/en/java/javase/21/docs/api/java.sql/java/sql/Connection.html) is fetched from the [`DataSource`](https://docs.oracle.com/en/java/javase/21/docs/api/java.sql/javax/sql/DataSource.html) until the first data access operation occurs
 * Must be able to share a transaction across multiple threads
 
@@ -317,10 +331,12 @@ and uses them if available.
 // Pyranid will set autocommit=false for the duration of the transaction if necessary
 database.transaction(() -> {
   // Pull initial account balances
-  BigDecimal balance1 = database.queryForObject("SELECT balance FROM account WHERE id=1", 
-                                                BigDecimal.class).get();
-  BigDecimal balance2 = database.queryForObject("SELECT balance FROM account WHERE id=2", 
-                                                BigDecimal.class).get();
+  BigDecimal balance1 = database.query("SELECT balance FROM account WHERE id=:id")
+    .bind("id", 1)
+    .fetchObject(BigDecimal.class).get();
+  BigDecimal balance2 = database.query("SELECT balance FROM account WHERE id=:id")
+    .bind("id", 2)
+    .fetchObject(BigDecimal.class).get();
   
   // Debit one and credit the other 
   balance1 = balance1.subtract(amount);
@@ -328,8 +344,14 @@ database.transaction(() -> {
 
   // Persist changes.
   // Extra credit: this is a good candidate for database.executeBatch()
-  database.execute("UPDATE account SET balance=? WHERE id=1", balance1);
-  database.execute("UPDATE account SET balance=? WHERE id=2", balance2);
+  database.query("UPDATE account SET balance=:balance WHERE id=:id")
+    .bind("balance", balance1)
+    .bind("id", 1)
+    .execute();
+  database.query("UPDATE account SET balance=:balance WHERE id=:id")
+    .bind("balance", balance2)
+    .bind("id", 2)
+    .execute();
 });
 
 // For convenience, transactional operations may return values
@@ -339,7 +361,9 @@ Optional<BigDecimal> newBalance = database.transaction(() -> {
   database.execute("UPDATE account SET balance=balance + 10 WHERE id=2");
 
   // Return the new value
-  return database.queryForObject("SELECT balance FROM account WHERE id=2", BigDecimal.class);
+  return database.query("SELECT balance FROM account WHERE id=:id")
+    .bind("id", 2)
+    .fetchObject(BigDecimal.class);
 });
 ```
 
@@ -517,13 +541,16 @@ There's no need to create a custom "row" type to hold the result.
 
 ```java
 // Returns Optional<Long>, which we immediately unwrap because COUNT(*) is never null
-Long count = database.queryForObject("SELECT COUNT(*) FROM car", Long.class).get();
+Long count = database.query("SELECT COUNT(*) FROM car")
+  .fetchObject(Long.class).get();
 
 // Standard primitives and JDK types are supported by default
-Optional<UUID> id = database.queryForObject("SELECT id FROM employee LIMIT 1", UUID.class);
+Optional<UUID> id = database.query("SELECT id FROM employee LIMIT 1")
+  .fetchObject(UUID.class);
 
 // Lists work as you would expect
-List<String> names = database.queryForList("SELECT name FROM employee", String.class);
+List<String> names = database.query("SELECT name FROM employee")
+  .fetchList(String.class);
 ```
 
 ### User-defined Types
@@ -557,18 +584,20 @@ class Car {
   void setSystemToken(UUID systemToken) { this.systemToken = systemToken; }
 }
 
-Car car = database.queryForObject("SELECT car_id, color, systok FROM car LIMIT 1", Car.class).get();
+Car car = database.query("SELECT car_id, color, systok FROM car LIMIT 1")
+  .fetchObject(Car.class).get();
 
 // Output might be "Car ID is 123 and color is BLUE. Token is d73c523a-8344-44ef-819c-40467662d619"
 out.printf("Car ID is %s and color is %s. Token is %s\n",
                    car.getCarId(), car.getColor(), car.getSystemToken());
 
 // Column names will work with wildcard queries as well
-car = database.queryForObject("SELECT * FROM car LIMIT 1", Car.class).get();
+car = database.query("SELECT * FROM car LIMIT 1")
+  .fetchObject(Car.class).get();
 
 // Column aliases work too
-car = database.queryForObject("SELECT some_id AS car_id, some_color AS color FROM car LIMIT 1",
-                              Car.class).get();
+car = database.query("SELECT some_id AS car_id, some_color AS color FROM car LIMIT 1")
+  .fetchObject(Car.class).get();
 ```
 
 ### Supported Primitives
@@ -682,7 +711,8 @@ INSERT INTO row (row_id, my_special_type) VALUES (
 record MyRow(UUID rowId, MySpecialType mySpecialType) {}
 
 // Query for data
-List<MyRow> rows = database.queryForList("SELECT * FROM row", MyRow.class);
+List<MyRow> rows = database.query("SELECT * FROM row")
+  .fetchList(MyRow.class);
 
 // Examine the first row of the ResultSet
 MyRow myRow = rows.getFirst();
@@ -699,11 +729,13 @@ Your [`CustomColumnMapper`](https://javadoc.pyranid.com/com/pyranid/CustomColumn
 ```java
 // Pull back the column for a single row
 Optional<MySpecialType> mySpecialType =
-  database.queryForObject("SELECT my_special_type FROM row LIMIT 1", MySpecialType.class);
+  database.query("SELECT my_special_type FROM row LIMIT 1")
+    .fetchObject(MySpecialType.class);
 
 // Pull back a list of just the column values 
 List<MySpecialType> mySpecialTypes = 
-  database.queryForList("SELECT my_special_type FROM row", MySpecialType.class);
+  database.query("SELECT my_special_type FROM row")
+    .fetchList(MySpecialType.class);
 ```
 
 ### Kotlin Types
@@ -720,28 +752,22 @@ Kotlin data class result set mapping is possible through the primary constructor
 ```kotlin
 data class Car(carId: UUID, color: Color = Color.BLUE, ownerId: String?)
 
-val cars = database.queryForList("SELECT * FROM cars", Car::class)
+val cars = database.query("SELECT * FROM cars").fetchList(Car::class)
 ```
 
-When query parameters are supplied as a list they must be flattened first, either as separate lists or one big list:
+To bind multiple values to an `IN (...)` clause, give each placeholder its own name:
 
 ```kotlin
-val cars = database.queryForList("SELECT * FROM cars WHERE car_id IN (?, ?) LIMIT ?",
-                                 Car::class,
-                                 car1Id, car2Id, 10)
-
-val cars = database.queryForList("SELECT * FROM cars WHERE car_id IN (?, ?) LIMIT ?",
-                                 Car::class,
-                                 *listOf(car1Id, car2Id).toTypedArray(), 10)
-
-val cars = database.queryForList("SELECT * FROM cars WHERE car_id IN (?, ?) LIMIT ?",
-                                 Car::class,
-                                 *listOf(car1Id, car2Id, 10).toTypedArray())
+val cars = database.query("SELECT * FROM cars WHERE car_id IN (:car1Id, :car2Id) LIMIT :limit")
+  .bind("car1Id", car1Id)
+  .bind("car2Id", car2Id)
+  .bind("limit", 10)
+  .fetchList(Car::class)
 ```
 
 ## Parameter Binding
 
-The out-of-the-box [`PreparedStatementBinder`](https://javadoc.pyranid.com/com/pyranid/PreparedStatementBinder.html) implementation supports binding common JDK types to `?` placeholders and generally "just works" as you would expect.
+The out-of-the-box [`PreparedStatementBinder`](https://javadoc.pyranid.com/com/pyranid/PreparedStatementBinder.html) implementation supports binding common JDK types and generally "just works" as you would expect.
 
 For example:
 
@@ -749,18 +775,23 @@ For example:
 UUID departmentId = ...;
 Long accountId = ...;
 
-List<Employee> = database.queryForList("""
+List<Employee> employees = database.query("""
   SELECT *
   FROM employee
-  WHERE department_id=?
-""", Employee.class, departmentId);
+  WHERE department_id=:departmentId
+""")
+  .bind("departmentId", departmentId)
+  .fetchList(Employee.class);
 
-database.execute("""
+database.query("""
   INSERT INTO account_award (
     account_id, 
     award_type
-  ) VALUES (?,?)
-  """, accountId, AwardType.BIG);
+  ) VALUES (:accountId, :awardType)
+  """)
+  .bind("accountId", accountId)
+  .bind("awardType", AwardType.BIG)
+  .execute();
 ```
 
 ### Supported Primitives
@@ -1159,10 +1190,12 @@ If you do not explicitly provide a [`Statement`](https://javadoc.pyranid.com/com
 
 ```java
 // Regular SQL
-database.queryForObject("SELECT * FROM car LIMIT 1", Car.class);
+database.query("SELECT * FROM car LIMIT 1").fetchObject(Car.class);
 
-// SQL in a Statement
-database.queryForObject(Statement.of("random-car", "SELECT * FROM car LIMIT 1"), Car.class);
+// Regular SQL with an explicit identifier
+database.query("SELECT * FROM car LIMIT 1")
+  .id("random-car")
+  .fetchObject(Car.class);
 ```
 
 This is useful for tagging queries that should be handled specially. Some examples are:
@@ -1183,14 +1216,18 @@ enum QueryTag {
 // This query fires every 3 seconds - let's mark it HOT_QUERY so we know not to log it.
 Executors.newScheduledThreadPool(1).scheduleAtFixedRate(() -> {
   database.transaction(() -> {
-    List<Message> messages = database.queryForList(Statement.of(QueryTag.HOT_QUERY, """
+    List<Message> messages = database.query("""
       SELECT *
       FROM message_queue
-      WHERE message_status_id=?
-      LIMIT ?
+      WHERE message_status_id=:messageStatusId
+      LIMIT :batchSize
       FOR UPDATE
       SKIP LOCKED
-    """), Message.class, MessageStatusId.UNPROCESSED, BATCH_SIZE);
+    """)
+      .id(QueryTag.HOT_QUERY)
+      .bind("messageStatusId", MessageStatusId.UNPROCESSED)
+      .bind("batchSize", BATCH_SIZE)
+      .fetchList(Message.class);
 
     // Implementation not shown
     processMessages(messages);

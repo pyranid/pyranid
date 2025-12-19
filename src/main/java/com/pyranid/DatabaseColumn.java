@@ -43,7 +43,7 @@ import java.lang.annotation.Target;
  *   }
  * }
  *
- * database.queryForObject(&quot;SELECT systok FROM example&quot;, Example.class);
+ * database.query(&quot;SELECT systok FROM example&quot;).fetchObject(Example.class);
  * </pre>
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
