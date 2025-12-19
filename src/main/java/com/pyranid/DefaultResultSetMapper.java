@@ -66,6 +66,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TimeZone;
 import java.util.UUID;
+import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
@@ -108,6 +109,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	// Only used if row-planning is enabled
 	@Nonnull
 	private final ConcurrentMap<PlanKey, RowPlan<?>> rowPlanningCache = new ConcurrentHashMap<>();
+	@Nonnull
+	private final Map<ResultSetMetaData, String> schemaSignatureByResultSetMetaData;
 
 	static {
 		WRAPPER_CLASSES_BY_PRIMITIVE_CLASS = Map.of(
@@ -210,6 +213,25 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(instanceProvider);
 
 		List<CustomColumnMapper> mappers = customColumnMappersFor(targetType);
+		return tryCustomColumnMappers(statementContext, resultSet, resultSetValue, targetType, mappers, columnIndex, columnLabel, instanceProvider);
+	}
+
+	@Nonnull
+	protected <T> Optional<Object> tryCustomColumnMappers(@Nonnull StatementContext<T> statementContext,
+																												@Nonnull ResultSet resultSet,
+																												@Nonnull Object resultSetValue,
+																												@Nonnull TargetType targetType,
+																												@Nonnull List<CustomColumnMapper> mappers,
+																												@Nonnull Integer columnIndex,
+																												@Nullable String columnLabel,
+																												@Nonnull InstanceProvider instanceProvider) throws SQLException {
+		requireNonNull(statementContext);
+		requireNonNull(resultSet);
+		requireNonNull(resultSetValue);
+		requireNonNull(targetType);
+		requireNonNull(mappers);
+		requireNonNull(instanceProvider);
+
 		if (mappers.isEmpty()) return Optional.empty();
 
 		Class<?> sourceClass = resultSetValue.getClass();
@@ -292,6 +314,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		this.customColumnMappersByTargetTypeCache = new ConcurrentHashMap<>();
 		this.preferredColumnMapperBySourceTargetKey = new ConcurrentHashMap<>();
 		this.columnLabelAliasesByPropertyNameCache = new ConcurrentHashMap<>();
+		this.schemaSignatureByResultSetMetaData = Collections.synchronizedMap(new WeakHashMap<>());
 	}
 
 	@Override
@@ -363,10 +386,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			if (standardTypeResult.isStandardType()) return standardTypeResult.getValue();
 
 			// Otherwise, use a per-schema row plan
-			RowPlan<T> plan = buildPlan(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData);
-			// Per-row raw cache: 1-based, size = columnCount + 1
-			final Object[] rawByCol = new Object[plan.columnCount + 1];
-			final boolean[] rawLoaded = new boolean[plan.columnCount + 1];
+			String schemaSignature = schemaSignatureFor(statementContext, resultSetMetaData);
+			RowPlan<T> plan = buildPlan(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData, schemaSignature);
+			final boolean hasFanOut = plan.hasFanOut;
+			// Per-row raw cache: 1-based, size = columnCount + 1 (only when we have fan-out)
+			final Object[] rawByCol = hasFanOut ? new Object[plan.columnCount + 1] : null;
+			final boolean[] rawLoaded = hasFanOut ? new boolean[plan.columnCount + 1] : null;
 
 			if (plan.isRecord) {
 				RecordComponent[] rc = resultSetRowType.getRecordComponents();
@@ -375,12 +400,16 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				for (ColumnBinding b : plan.bindings) {
 					if (b.recordArgIndexOrMinusOne < 0) continue; // bean binding or SKIP
 					Object raw;
-					if (!rawLoaded[b.columnIndex]) {
-						raw = b.reader.read(resultSet, statementContext, b.columnIndex);
-						rawByCol[b.columnIndex] = raw;
-						rawLoaded[b.columnIndex] = true;
+					if (hasFanOut) {
+						if (!rawLoaded[b.columnIndex]) {
+							raw = b.reader.read(resultSet, statementContext, b.columnIndex);
+							rawByCol[b.columnIndex] = raw;
+							rawLoaded[b.columnIndex] = true;
+						} else {
+							raw = rawByCol[b.columnIndex];
+						}
 					} else {
-						raw = rawByCol[b.columnIndex];
+						raw = b.reader.read(resultSet, statementContext, b.columnIndex);
 					}
 					Object val = b.converter.convert(raw, resultSet, statementContext, instanceProvider);
 
@@ -419,12 +448,16 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				for (ColumnBinding b : plan.bindings) {
 					if (b.setterOrNull == null) continue; // record-only or SKIP
 					Object raw;
-					if (!rawLoaded[b.columnIndex]) {
-						raw = b.reader.read(resultSet, statementContext, b.columnIndex);
-						rawByCol[b.columnIndex] = raw;
-						rawLoaded[b.columnIndex] = true;
+					if (hasFanOut) {
+						if (!rawLoaded[b.columnIndex]) {
+							raw = b.reader.read(resultSet, statementContext, b.columnIndex);
+							rawByCol[b.columnIndex] = raw;
+							rawLoaded[b.columnIndex] = true;
+						} else {
+							raw = rawByCol[b.columnIndex];
+						}
 					} else {
-						raw = rawByCol[b.columnIndex];
+						raw = b.reader.read(resultSet, statementContext, b.columnIndex);
 					}
 					Object val = b.converter.convert(raw, resultSet, statementContext, instanceProvider);
 
@@ -462,6 +495,46 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		} catch (Throwable t) {
 			throw new DatabaseException(format("Unable to map JDBC %s row to %s", ResultSet.class.getSimpleName(), resultSetRowType), t);
 		}
+	}
+
+	@Nonnull
+	protected String schemaSignatureFor(@Nonnull StatementContext<?> statementContext,
+																			@Nonnull ResultSetMetaData resultSetMetaData) throws SQLException {
+		requireNonNull(statementContext);
+		requireNonNull(resultSetMetaData);
+
+		String signature = getSchemaSignatureByResultSetMetaData().get(resultSetMetaData);
+		if (signature != null)
+			return signature;
+
+		signature = buildSchemaSignature(statementContext, resultSetMetaData);
+		getSchemaSignatureByResultSetMetaData().put(resultSetMetaData, signature);
+		return signature;
+	}
+
+	@Nonnull
+	private String buildSchemaSignature(@Nonnull StatementContext<?> statementContext,
+																			@Nonnull ResultSetMetaData resultSetMetaData) throws SQLException {
+		requireNonNull(statementContext);
+		requireNonNull(resultSetMetaData);
+
+		int cols = resultSetMetaData.getColumnCount();
+		StringBuilder sig = new StringBuilder(64 + cols * 48).append(cols);
+
+		for (int i = 1; i <= cols; i++) {
+			String labelNorm = normalizeColumnLabel(resultSetMetaData.getColumnLabel(i));
+			int jdbcType = resultSetMetaData.getColumnType(i);
+			boolean tsTz = TemporalReaders.isTimestampWithTimeZone(resultSetMetaData, i, statementContext.getDatabaseType());
+			boolean timeTz = TemporalReaders.isTimeWithTimeZone(resultSetMetaData, i);
+			String typeName = Objects.toString(resultSetMetaData.getColumnTypeName(i), "").toUpperCase(Locale.ROOT);
+			sig.append('|').append(labelNorm)
+					.append(':').append(jdbcType)
+					.append(':').append(tsTz ? 'T' : 't')
+					.append(':').append(timeTz ? 'Z' : 'z')
+					.append(':').append(typeName);
+		}
+
+		return sig.toString();
 	}
 
 	@SuppressWarnings("unchecked")
@@ -1607,12 +1680,18 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		final boolean isRecord;
 		final @Nullable MethodHandle recordCtor; // canonical ctor for records; null for beans
 		final int columnCount;                   // for per-row raw caching
+		final boolean hasFanOut;                 // any column maps to multiple properties?
 		final @Nonnull List<ColumnBinding> bindings; // may contain multiple entries per column (fan-out)
 
-		RowPlan(boolean isRecord, @Nullable MethodHandle recordCtor, int columnCount, @Nonnull List<ColumnBinding> bindings) {
+		RowPlan(boolean isRecord,
+						@Nullable MethodHandle recordCtor,
+						int columnCount,
+						boolean hasFanOut,
+						@Nonnull List<ColumnBinding> bindings) {
 			this.isRecord = isRecord;
 			this.recordCtor = recordCtor;
 			this.columnCount = columnCount;
+			this.hasFanOut = hasFanOut;
 			this.bindings = requireNonNull(bindings);
 		}
 	}
@@ -1623,30 +1702,18 @@ class DefaultResultSetMapper implements ResultSetMapper {
 																		 @Nonnull ResultSet rs,
 																		 @Nonnull Class<T> resultClass,
 																		 @Nonnull InstanceProvider instanceProvider,
-																		 @Nonnull ResultSetMetaData resultSetMetaData) throws Exception {
+																		 @Nonnull ResultSetMetaData resultSetMetaData,
+																		 @Nonnull String schemaSignature) throws Exception {
 		requireNonNull(ctx);
 		requireNonNull(rs);
 		requireNonNull(resultClass);
 		requireNonNull(instanceProvider);
 		requireNonNull(resultSetMetaData);
+		requireNonNull(schemaSignature);
 
 		int cols = resultSetMetaData.getColumnCount();
 
-		// Build a stable schema signature (normalized label + JDBC/vendortype + tz flags)
-		StringBuilder sig = new StringBuilder(64 + cols * 48).append(cols);
-		for (int i = 1; i <= cols; i++) {
-			String labelNorm = normalizeColumnLabel(resultSetMetaData.getColumnLabel(i));
-			int jdbcType = resultSetMetaData.getColumnType(i);
-			boolean tsTz = TemporalReaders.isTimestampWithTimeZone(resultSetMetaData, i, ctx.getDatabaseType());
-			boolean timeTz = TemporalReaders.isTimeWithTimeZone(resultSetMetaData, i);
-			String typeName = Objects.toString(resultSetMetaData.getColumnTypeName(i), "").toUpperCase(Locale.ROOT);
-			sig.append('|').append(labelNorm)
-					.append(':').append(jdbcType)
-					.append(':').append(tsTz ? 'T' : 't')
-					.append(':').append(timeTz ? 'Z' : 'z')
-					.append(':').append(typeName);
-		}
-		PlanKey key = new PlanKey(resultClass, sig.toString());
+		PlanKey key = new PlanKey(resultClass, schemaSignature);
 		RowPlan<?> cached = getRowPlanningCache().get(key);
 		if (cached != null) return (RowPlan<T>) cached;
 
@@ -1720,6 +1787,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		// For each column, bind ALL matching properties (fan-out)
 		List<ColumnBinding> bindings = new ArrayList<>();
+		boolean hasFanOut = false;
 		for (int i = 1; i <= cols; i++) {
 			String labelNorm = normalizeColumnLabel(resultSetMetaData.getColumnLabel(i));
 			ColumnReader reader = readers[i];
@@ -1746,6 +1814,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				);
 				continue;
 			}
+
+			if (matchedProps.size() > 1)
+				hasFanOut = true;
 
 			// Create one binding per matched property
 			for (String prop : matchedProps) {
@@ -1777,11 +1848,20 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				final int colIndexFinal = i;
 				final String labelFinal = labelNorm;
 
+				List<CustomColumnMapper> customMappers = customColumnMappersFor(targetTypeFinal);
 				Converter converter = (raw, rrs, cctx, ip) -> {
 					if (raw == null) return null;
 					try {
-						return tryCustomColumnMappers(cctx, rrs, raw, targetTypeFinal, colIndexFinal, labelFinal, ip)
-								.or(() -> convertResultSetValueToPropertyType(cctx, raw, rawTargetClassBoxed))
+						if (!customMappers.isEmpty()) {
+							Optional<Object> mapped = tryCustomColumnMappers(cctx, rrs, raw, targetTypeFinal, customMappers, colIndexFinal, labelFinal, ip);
+							if (mapped.isPresent())
+								return mapped.get();
+						}
+
+						if (rawTargetClassBoxed.isInstance(raw))
+							return raw;
+
+						return convertResultSetValueToPropertyType(cctx, raw, rawTargetClassBoxed)
 								.orElse(raw);
 					} catch (SQLException e) {
 						throw new DatabaseException(e);
@@ -1793,7 +1873,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			}
 		}
 
-		RowPlan<T> plan = new RowPlan<>(isRecord, recordCtor, cols, bindings);
+		RowPlan<T> plan = new RowPlan<>(isRecord, recordCtor, cols, hasFanOut, bindings);
 		getRowPlanningCache().putIfAbsent(key, plan);
 		return plan;
 	}
@@ -1831,5 +1911,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	@Nonnull
 	protected ConcurrentMap<PlanKey, RowPlan<?>> getRowPlanningCache() {
 		return this.rowPlanningCache;
+	}
+
+	@Nonnull
+	protected Map<ResultSetMetaData, String> getSchemaSignatureByResultSetMetaData() {
+		return this.schemaSignatureByResultSetMetaData;
 	}
 }
