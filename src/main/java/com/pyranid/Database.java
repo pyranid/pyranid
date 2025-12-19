@@ -39,6 +39,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
@@ -335,7 +336,7 @@ public final class Database {
 	 *
 	 * @param sql SQL containing {@code :paramName} placeholders
 	 * @return a fluent builder for binding parameters and executing
-	 * @since 3.1.0
+	 * @since 4.0.0
 	 */
 	@Nonnull
 	public Query query(@Nonnull String sql) {
@@ -701,7 +702,7 @@ public final class Database {
 
 		@Nullable
 		private static String parseDollarQuoteDelimiter(@Nonnull String sql,
-																									 int startIndex) {
+																										int startIndex) {
 			requireNonNull(sql);
 
 			if (startIndex < 0 || startIndex >= sql.length())
@@ -742,8 +743,8 @@ public final class Database {
 	 */
 	@Nonnull
 	private <T> Optional<T> queryForObject(@Nonnull String sql,
-																				@Nonnull Class<T> resultSetRowType,
-																				@Nullable Object... parameters) {
+																				 @Nonnull Class<T> resultSetRowType,
+																				 @Nullable Object... parameters) {
 		requireNonNull(sql);
 		requireNonNull(resultSetRowType);
 
@@ -761,8 +762,8 @@ public final class Database {
 	 * @throws DatabaseException if > 1 row is returned
 	 */
 	private <T> Optional<T> queryForObject(@Nonnull Statement statement,
-																				@Nonnull Class<T> resultSetRowType,
-																				@Nullable Object... parameters) {
+																				 @Nonnull Class<T> resultSetRowType,
+																				 @Nullable Object... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
@@ -785,8 +786,8 @@ public final class Database {
 	 */
 	@Nonnull
 	private <T> List<T> queryForList(@Nonnull String sql,
-																	@Nonnull Class<T> resultSetRowType,
-																	@Nullable Object... parameters) {
+																	 @Nonnull Class<T> resultSetRowType,
+																	 @Nullable Object... parameters) {
 		requireNonNull(sql);
 		requireNonNull(resultSetRowType);
 
@@ -804,8 +805,8 @@ public final class Database {
 	 */
 	@Nonnull
 	private <T> List<T> queryForList(@Nonnull Statement statement,
-																	@Nonnull Class<T> resultSetRowType,
-																	@Nullable Object... parameters) {
+																	 @Nonnull Class<T> resultSetRowType,
+																	 @Nullable Object... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
@@ -1165,20 +1166,30 @@ public final class Database {
 		requireNonNull(shouldParticipateInExistingTransactionIfPossible);
 
 		if (shouldParticipateInExistingTransactionIfPossible) {
+			Optional<Transaction> transaction = currentTransaction();
+			ReentrantLock connectionLock = transaction.isPresent() ? transaction.get().getConnectionLock() : null;
 			// Try to participate in txn if it's available
 			Connection connection = null;
 
+			if (connectionLock != null)
+				connectionLock.lock();
+
 			try {
-				connection = acquireConnection();
+				connection = transaction.isPresent() ? transaction.get().getConnection() : acquireConnection();
 				return rawConnectionOperation.perform(connection);
 			} catch (DatabaseException e) {
 				throw e;
 			} catch (Exception e) {
 				throw new DatabaseException(e);
 			} finally {
-				// If this was a single-shot operation (not in a transaction), close the connection
-				if (connection != null && !currentTransaction().isPresent())
-					closeConnection(connection);
+				try {
+					// If this was a single-shot operation (not in a transaction), close the connection
+					if (connection != null && !transaction.isPresent())
+						closeConnection(connection);
+				} finally {
+					if (connectionLock != null)
+						connectionLock.unlock();
+				}
 			}
 		} else {
 			boolean acquiredConnection = false;
@@ -1210,10 +1221,15 @@ public final class Database {
 		Duration resultSetMappingDuration = null;
 		Exception exception = null;
 		Connection connection = null;
+		Optional<Transaction> transaction = currentTransaction();
+		ReentrantLock connectionLock = transaction.isPresent() ? transaction.get().getConnectionLock() : null;
+
+		if (connectionLock != null)
+			connectionLock.lock();
 
 		try {
-			boolean alreadyHasConnection = currentTransaction().isPresent() && currentTransaction().get().hasConnection();
-			connection = acquireConnection();
+			boolean alreadyHasConnection = transaction.isPresent() && transaction.get().hasConnection();
+			connection = transaction.isPresent() ? transaction.get().getConnection() : acquireConnection();
 			connectionAcquisitionDuration = alreadyHasConnection ? null : Duration.ofNanos(nanoTime() - startTime);
 			startTime = nanoTime();
 
@@ -1234,9 +1250,12 @@ public final class Database {
 		} finally {
 			try {
 				// If this was a single-shot operation (not in a transaction), close the connection
-				if (connection != null && !currentTransaction().isPresent())
+				if (connection != null && !transaction.isPresent())
 					closeConnection(connection);
 			} finally {
+				if (connectionLock != null)
+					connectionLock.unlock();
+
 				StatementLog statementLog =
 						StatementLog.withStatementContext(statementContext)
 								.connectionAcquisitionDuration(connectionAcquisitionDuration)

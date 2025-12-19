@@ -27,6 +27,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
@@ -68,13 +69,13 @@ public final class Transaction {
 	@Nullable
 	private Connection connection;
 	@Nonnull
-	private Boolean rollbackOnly;
+	private final AtomicBoolean rollbackOnly;
 	@Nullable
-	private Boolean initialAutoCommit;
+	private volatile Boolean initialAutoCommit;
 	@Nullable
-	private Integer initialTransactionIsolationJdbcLevel;
+	private volatile Integer initialTransactionIsolationJdbcLevel;
 	@Nonnull
-	private Boolean transactionIsolationWasChanged;
+	private final AtomicBoolean transactionIsolationWasChanged;
 
 	Transaction(@Nonnull DataSource dataSource,
 							@Nonnull TransactionIsolation transactionIsolation) {
@@ -85,9 +86,9 @@ public final class Transaction {
 		this.dataSource = dataSource;
 		this.transactionIsolation = transactionIsolation;
 		this.connection = null;
-		this.rollbackOnly = false;
+		this.rollbackOnly = new AtomicBoolean(false);
 		this.initialAutoCommit = null;
-		this.transactionIsolationWasChanged = false;
+		this.transactionIsolationWasChanged = new AtomicBoolean(false);
 		this.postTransactionOperations = new CopyOnWriteArrayList();
 		this.connectionLock = new ReentrantLock();
 		this.logger = Logger.getLogger(Transaction.class.getName());
@@ -138,7 +139,7 @@ public final class Transaction {
 	 */
 	@Nonnull
 	public Boolean isRollbackOnly() {
-		return this.rollbackOnly;
+		return this.rollbackOnly.get();
 	}
 
 	/**
@@ -148,7 +149,7 @@ public final class Transaction {
 	 */
 	public void setRollbackOnly(@Nonnull Boolean rollbackOnly) {
 		requireNonNull(rollbackOnly);
-		this.rollbackOnly = rollbackOnly;
+		this.rollbackOnly.set(rollbackOnly);
 	}
 
 	/**
@@ -310,7 +311,7 @@ public final class Transaction {
 						// In the future, we might check supportsTransactionIsolationLevel via DatabaseMetaData first.
 						// Probably want to calculate that at Database init time and cache it off
 						this.connection.setTransactionIsolation(desiredJdbcLevel);
-						this.transactionIsolationWasChanged = true;
+						this.transactionIsolationWasChanged.set(true);
 					} catch (SQLException e) {
 						throw new DatabaseException(format("Unable to set transaction isolation to %s", desiredTransactionIsolation.name()), e);
 					}
@@ -326,10 +327,16 @@ public final class Transaction {
 	void setAutoCommit(@Nonnull Boolean autoCommit) {
 		requireNonNull(autoCommit);
 
+		getConnectionLock().lock();
+
 		try {
-			getConnection().setAutoCommit(autoCommit);
-		} catch (SQLException e) {
-			throw new DatabaseException(format("Unable to set database connection autocommit value to '%s'", autoCommit), e);
+			try {
+				getConnection().setAutoCommit(autoCommit);
+			} catch (SQLException e) {
+				throw new DatabaseException(format("Unable to set database connection autocommit value to '%s'", autoCommit), e);
+			}
+		} finally {
+			getConnectionLock().unlock();
 		}
 	}
 
@@ -348,7 +355,7 @@ public final class Transaction {
 				} catch (SQLException e) {
 					throw new DatabaseException("Unable to restore original transaction isolation", e);
 				} finally {
-					this.transactionIsolationWasChanged = false;
+					this.transactionIsolationWasChanged.set(false);
 				}
 			}
 		} finally {
@@ -378,7 +385,7 @@ public final class Transaction {
 
 	@Nonnull
 	protected Boolean getTransactionIsolationWasChanged() {
-		return this.transactionIsolationWasChanged;
+		return this.transactionIsolationWasChanged.get();
 	}
 
 	@Nonnull
