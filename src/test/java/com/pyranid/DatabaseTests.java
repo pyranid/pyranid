@@ -214,8 +214,8 @@ public class DatabaseTests {
 	}
 
 	@Test
-	public void testQueryInListExpandsCollection() {
-		Database db = Database.withDataSource(createInMemoryDataSource("testQueryInListExpandsCollection")).build();
+	public void testQueryInListExpandsParameter() {
+		Database db = Database.withDataSource(createInMemoryDataSource("testQueryInListExpandsParameter")).build();
 
 		TestQueries.execute(db, "CREATE TABLE t (id INT, email VARCHAR(255))");
 		TestQueries.execute(db, "INSERT INTO t VALUES (1, 'a@example.com')");
@@ -223,7 +223,7 @@ public class DatabaseTests {
 		TestQueries.execute(db, "INSERT INTO t VALUES (3, 'c@example.com')");
 
 		List<Integer> ids = db.query("SELECT id FROM t WHERE email IN (:emails) ORDER BY id")
-				.bind("emails", List.of("a@example.com", "c@example.com"))
+				.bind("emails", Parameters.inList(List.of("a@example.com", "c@example.com")))
 				.fetchList(Integer.class);
 
 		Assertions.assertEquals(List.of(1, 3), ids);
@@ -239,7 +239,7 @@ public class DatabaseTests {
 		TestQueries.execute(db, "INSERT INTO t VALUES (3, 'c@example.com')");
 
 		List<Integer> ids = db.query("SELECT id FROM t WHERE email IN (:emails) OR email IN (:emails) ORDER BY id")
-				.bind("emails", List.of("a@example.com", "c@example.com"))
+				.bind("emails", Parameters.inList(List.of("a@example.com", "c@example.com")))
 				.fetchList(Integer.class);
 
 		Assertions.assertEquals(List.of(1, 3), ids);
@@ -253,7 +253,7 @@ public class DatabaseTests {
 
 		Assertions.assertThrows(IllegalArgumentException.class, () ->
 				db.query("SELECT id FROM t WHERE email IN (:emails)")
-						.bind("emails", List.of())
+						.bind("emails", Parameters.inList(List.of()))
 						.fetchList(Integer.class));
 	}
 
@@ -269,8 +269,8 @@ public class DatabaseTests {
 		Query query = db.query("UPDATE t SET flag = 1 WHERE id IN (:ids)");
 
 		List<Map<String, Object>> parameterGroups = List.of(
-				Map.of("ids", List.of(1, 2)),
-				Map.of("ids", List.of(1, 2, 3))
+				Map.of("ids", Parameters.inList(List.of(1, 2))),
+				Map.of("ids", Parameters.inList(List.of(1, 2, 3)))
 		);
 
 		Assertions.assertThrows(IllegalArgumentException.class, () -> query.executeBatch(parameterGroups));

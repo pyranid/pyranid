@@ -780,9 +780,9 @@ database.query("""
   .execute();
 ```
 
-### IN-list expansion
+### IN-list parameters
 
-If you bind a `Collection` or `Object[]` to a named parameter, Pyranid expands it into multiple `?` placeholders.
+Use `Parameters.inList(...)` to expand values into multiple `?` placeholders.
 This is useful for SQL `IN` lists:
 
 ```java
@@ -793,14 +793,15 @@ List<Employee> employees = database.query("""
   FROM employee
   WHERE email IN (:emails)
 """)
-  .bind("emails", emails)
+  .bind("emails", Parameters.inList(emails))
   .fetchList(Employee.class);
 ```
 
 Notes:
 * Empty collections/arrays throw `IllegalArgumentException`.
 * Expansion is context-agnostic; using it outside of `IN (...)` is allowed but may produce invalid SQL.
-* If you want SQL ARRAY binding, use `Parameters.arrayOf(...)` instead of a raw `Collection`.
+* Raw `Collection`/array values are bound as scalars and are not expanded; use `Parameters.inList(...)`.
+* If you want SQL ARRAY binding, use `Parameters.arrayOf(...)`.
 * If you want to bind a typed collection via a custom binder, use `Parameters.listOf(...)`/`Parameters.setOf(...)`.
 
 ### Supported Primitives

@@ -34,7 +34,6 @@ import java.time.ZoneId;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -577,18 +576,16 @@ public final class Database {
 
 				Object value = bindings.get(parameterName);
 
-				if (value instanceof Collection<?> collection) {
-					if (collection.isEmpty())
-						throw new IllegalArgumentException(format("Collection parameter '%s' for SQL: %s is empty", parameterName, this.originalSql));
+				if (value instanceof InListParameter inListParameter) {
+					Object[] elements = inListParameter.getElements().orElse(null);
 
-					appendPlaceholders(sql, collection.size());
-					parameters.addAll(collection);
-				} else if (value instanceof Object[] array) {
-					if (array.length == 0)
-						throw new IllegalArgumentException(format("Array parameter '%s' for SQL: %s is empty", parameterName, this.originalSql));
+					if (elements == null)
+						throw new IllegalArgumentException(format("IN-list parameter '%s' for SQL: %s is null", parameterName, this.originalSql));
+					if (elements.length == 0)
+						throw new IllegalArgumentException(format("IN-list parameter '%s' for SQL: %s is empty", parameterName, this.originalSql));
 
-					appendPlaceholders(sql, array.length);
-					parameters.addAll(Arrays.asList(array));
+					appendPlaceholders(sql, elements.length);
+					parameters.addAll(Arrays.asList(elements));
 				} else {
 					sql.append('?');
 					parameters.add(value);

@@ -23,6 +23,7 @@ import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import java.lang.reflect.Type;
 import java.math.BigDecimal;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -119,6 +120,56 @@ public final class Parameters {
 		public Optional<Object[]> getElements() {
 			// Defensive copy
 			return this.elements == null ? Optional.empty() : Optional.of(this.elements.clone());
+		}
+	}
+
+	/**
+	 * Acquires a parameter for SQL {@code IN} list expansion using a {@link Collection}.
+	 *
+	 * @param elements the elements to expand into {@code ?} placeholders
+	 * @param <E>      the element type
+	 * @return an IN-list parameter for the given elements
+	 */
+	@Nonnull
+	public static <E> InListParameter inList(@Nonnull Collection<E> elements) {
+		requireNonNull(elements);
+		return new DefaultInListParameter(elements.toArray());
+	}
+
+	/**
+	 * Acquires a parameter for SQL {@code IN} list expansion using a Java array.
+	 *
+	 * @param elements the elements to expand into {@code ?} placeholders
+	 * @param <E>      the element type
+	 * @return an IN-list parameter for the given elements
+	 */
+	@Nonnull
+	public static <E> InListParameter inList(@Nonnull E[] elements) {
+		requireNonNull(elements);
+		return new DefaultInListParameter(elements);
+	}
+
+	/**
+	 * Default package-private implementation of {@link InListParameter}.
+	 *
+	 * @author <a href="https://www.revetkn.com">Mark Allen</a>
+	 * @since 4.0.0
+	 */
+	@ThreadSafe
+	static class DefaultInListParameter implements InListParameter {
+		@Nonnull
+		private final Object[] elements;
+
+		DefaultInListParameter(@Nonnull Object[] elements) {
+			requireNonNull(elements);
+			this.elements = elements.clone(); // Always perform a defensive copy
+		}
+
+		@Nonnull
+		@Override
+		public Optional<Object[]> getElements() {
+			// Defensive copy
+			return Optional.of(this.elements.clone());
 		}
 	}
 
