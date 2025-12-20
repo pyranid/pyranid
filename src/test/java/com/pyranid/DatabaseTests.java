@@ -213,6 +213,69 @@ public class DatabaseTests {
 						.bind("nope", 1));
 	}
 
+	@Test
+	public void testQueryInListExpandsCollection() {
+		Database db = Database.withDataSource(createInMemoryDataSource("testQueryInListExpandsCollection")).build();
+
+		TestQueries.execute(db, "CREATE TABLE t (id INT, email VARCHAR(255))");
+		TestQueries.execute(db, "INSERT INTO t VALUES (1, 'a@example.com')");
+		TestQueries.execute(db, "INSERT INTO t VALUES (2, 'b@example.com')");
+		TestQueries.execute(db, "INSERT INTO t VALUES (3, 'c@example.com')");
+
+		List<Integer> ids = db.query("SELECT id FROM t WHERE email IN (:emails) ORDER BY id")
+				.bind("emails", List.of("a@example.com", "c@example.com"))
+				.fetchList(Integer.class);
+
+		Assertions.assertEquals(List.of(1, 3), ids);
+	}
+
+	@Test
+	public void testQueryInListExpandsRepeatedParameterName() {
+		Database db = Database.withDataSource(createInMemoryDataSource("testQueryInListExpandsRepeatedParameterName")).build();
+
+		TestQueries.execute(db, "CREATE TABLE t (id INT, email VARCHAR(255))");
+		TestQueries.execute(db, "INSERT INTO t VALUES (1, 'a@example.com')");
+		TestQueries.execute(db, "INSERT INTO t VALUES (2, 'b@example.com')");
+		TestQueries.execute(db, "INSERT INTO t VALUES (3, 'c@example.com')");
+
+		List<Integer> ids = db.query("SELECT id FROM t WHERE email IN (:emails) OR email IN (:emails) ORDER BY id")
+				.bind("emails", List.of("a@example.com", "c@example.com"))
+				.fetchList(Integer.class);
+
+		Assertions.assertEquals(List.of(1, 3), ids);
+	}
+
+	@Test
+	public void testQueryInListRejectsEmptyCollection() {
+		Database db = Database.withDataSource(createInMemoryDataSource("testQueryInListRejectsEmptyCollection")).build();
+
+		TestQueries.execute(db, "CREATE TABLE t (id INT, email VARCHAR(255))");
+
+		Assertions.assertThrows(IllegalArgumentException.class, () ->
+				db.query("SELECT id FROM t WHERE email IN (:emails)")
+						.bind("emails", List.of())
+						.fetchList(Integer.class));
+	}
+
+	@Test
+	public void testExecuteBatchRejectsMismatchedInListSizes() {
+		Database db = Database.withDataSource(createInMemoryDataSource("testExecuteBatchRejectsMismatchedInListSizes")).build();
+
+		TestQueries.execute(db, "CREATE TABLE t (id INT, flag INT)");
+		TestQueries.execute(db, "INSERT INTO t VALUES (1, 0)");
+		TestQueries.execute(db, "INSERT INTO t VALUES (2, 0)");
+		TestQueries.execute(db, "INSERT INTO t VALUES (3, 0)");
+
+		Query query = db.query("UPDATE t SET flag = 1 WHERE id IN (:ids)");
+
+		List<Map<String, Object>> parameterGroups = List.of(
+				Map.of("ids", List.of(1, 2)),
+				Map.of("ids", List.of(1, 2, 3))
+		);
+
+		Assertions.assertThrows(IllegalArgumentException.class, () -> query.executeBatch(parameterGroups));
+	}
+
 	public record Product(Long productId, String name, BigDecimal price) {}
 
 	@Test

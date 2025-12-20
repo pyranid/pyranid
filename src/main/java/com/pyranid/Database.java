@@ -34,6 +34,7 @@ import java.time.ZoneId;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -398,7 +399,7 @@ public final class Database {
 		@Nonnull
 		private final String originalSql;
 		@Nonnull
-		private final String preparedSql;
+		private final List<String> sqlFragments;
 		@Nonnull
 		private final List<String> parameterNames;
 		@Nonnull
@@ -417,7 +418,7 @@ public final class Database {
 			this.originalSql = sql;
 
 			ParsedSql parsedSql = parseNamedParameterSql(sql);
-			this.preparedSql = parsedSql.sql;
+			this.sqlFragments = parsedSql.sqlFragments;
 			this.parameterNames = parsedSql.parameterNames;
 			this.distinctParameterNames = parsedSql.distinctParameterNames;
 
@@ -459,20 +460,23 @@ public final class Database {
 		@Override
 		public <T> Optional<T> fetchObject(@Nonnull Class<T> resultType) {
 			requireNonNull(resultType);
-			return this.database.queryForObject(statement(), resultType, parameters());
+			PreparedQuery preparedQuery = prepare(this.bindings);
+			return this.database.queryForObject(preparedQuery.statement, resultType, preparedQuery.parameters);
 		}
 
 		@Nonnull
 		@Override
 		public <T> List<T> fetchList(@Nonnull Class<T> resultType) {
 			requireNonNull(resultType);
-			return this.database.queryForList(statement(), resultType, parameters());
+			PreparedQuery preparedQuery = prepare(this.bindings);
+			return this.database.queryForList(preparedQuery.statement, resultType, preparedQuery.parameters);
 		}
 
 		@Nonnull
 		@Override
 		public Long execute() {
-			return this.database.execute(statement(), parameters());
+			PreparedQuery preparedQuery = prepare(this.bindings);
+			return this.database.execute(preparedQuery.statement, preparedQuery.parameters);
 		}
 
 		@Nonnull
@@ -481,6 +485,9 @@ public final class Database {
 			requireNonNull(parameterGroups);
 
 			List<List<Object>> parametersAsList = new ArrayList<>(parameterGroups.size());
+			Object statementId = this.id == null ? this.database.generateId() : this.id;
+			Statement statement = null;
+			String expandedSql = null;
 
 			for (Map<String, Object> parameterGroup : parameterGroups) {
 				requireNonNull(parameterGroup);
@@ -500,83 +507,156 @@ public final class Database {
 					mergedBindings = combinedBindings;
 				}
 
-				Object[] parameters = parameters(mergedBindings);
-				parametersAsList.add(Arrays.asList(parameters));
+				PreparedQuery preparedQuery = prepare(mergedBindings, statementId);
+
+				if (expandedSql == null) {
+					expandedSql = preparedQuery.statement.getSql();
+					statement = preparedQuery.statement;
+				} else if (!expandedSql.equals(preparedQuery.statement.getSql())) {
+					throw new IllegalArgumentException(format(
+							"Inconsistent SQL after expanding parameters for batch execution; ensure collection sizes are consistent. SQL: %s",
+							this.originalSql));
+				}
+
+				parametersAsList.add(Arrays.asList(preparedQuery.parameters));
 			}
 
-			return this.database.executeBatch(statement(), parametersAsList);
+			if (statement == null)
+				statement = Statement.of(statementId, buildPlaceholderSql());
+
+			return this.database.executeBatch(statement, parametersAsList);
 		}
 
 		@Nonnull
 		@Override
 		public <T> Optional<T> executeForObject(@Nonnull Class<T> resultType) {
 			requireNonNull(resultType);
-			return this.database.executeForObject(statement(), resultType, parameters());
+			PreparedQuery preparedQuery = prepare(this.bindings);
+			return this.database.executeForObject(preparedQuery.statement, resultType, preparedQuery.parameters);
 		}
 
 		@Nonnull
 		@Override
 		public <T> List<T> executeForList(@Nonnull Class<T> resultType) {
 			requireNonNull(resultType);
-			return this.database.executeForList(statement(), resultType, parameters());
+			PreparedQuery preparedQuery = prepare(this.bindings);
+			return this.database.executeForList(preparedQuery.statement, resultType, preparedQuery.parameters);
 		}
 
 		@Nonnull
-		private Statement statement() {
+		private PreparedQuery prepare(@Nonnull Map<String, Object> bindings) {
 			Object statementId = this.id == null ? this.database.generateId() : this.id;
-			return Statement.of(statementId, this.preparedSql);
+			return prepare(bindings, statementId);
 		}
 
 		@Nonnull
-		private Object[] parameters() {
-			return parameters(this.bindings);
-		}
-
-		@Nonnull
-		private Object[] parameters(@Nonnull Map<String, Object> bindings) {
+		private PreparedQuery prepare(@Nonnull Map<String, Object> bindings,
+																	@Nonnull Object statementId) {
 			requireNonNull(bindings);
+			requireNonNull(statementId);
 
 			if (this.parameterNames.isEmpty())
-				return new Object[0];
+				return new PreparedQuery(Statement.of(statementId, this.originalSql), new Object[0]);
 
+			StringBuilder sql = new StringBuilder(this.originalSql.length() + this.parameterNames.size() * 2);
 			List<String> missingParameterNames = null;
-			Object[] parameters = new Object[this.parameterNames.size()];
+			List<Object> parameters = new ArrayList<>(this.parameterNames.size());
 
 			for (int i = 0; i < this.parameterNames.size(); ++i) {
 				String parameterName = this.parameterNames.get(i);
+				sql.append(this.sqlFragments.get(i));
 
 				if (!bindings.containsKey(parameterName)) {
 					if (missingParameterNames == null)
 						missingParameterNames = new ArrayList<>();
 
 					missingParameterNames.add(parameterName);
+					sql.append('?');
+					continue;
 				}
 
-				parameters[i] = bindings.get(parameterName);
+				Object value = bindings.get(parameterName);
+
+				if (value instanceof Collection<?> collection) {
+					if (collection.isEmpty())
+						throw new IllegalArgumentException(format("Collection parameter '%s' for SQL: %s is empty", parameterName, this.originalSql));
+
+					appendPlaceholders(sql, collection.size());
+					parameters.addAll(collection);
+				} else if (value instanceof Object[] array) {
+					if (array.length == 0)
+						throw new IllegalArgumentException(format("Array parameter '%s' for SQL: %s is empty", parameterName, this.originalSql));
+
+					appendPlaceholders(sql, array.length);
+					parameters.addAll(Arrays.asList(array));
+				} else {
+					sql.append('?');
+					parameters.add(value);
+				}
 			}
+
+			sql.append(this.sqlFragments.get(this.sqlFragments.size() - 1));
 
 			if (missingParameterNames != null)
 				throw new IllegalArgumentException(format("Missing required named parameters %s for SQL: %s", missingParameterNames, this.originalSql));
 
-			return parameters;
+			return new PreparedQuery(Statement.of(statementId, sql.toString()), parameters.toArray());
+		}
+
+		@Nonnull
+		private String buildPlaceholderSql() {
+			if (this.parameterNames.isEmpty())
+				return this.originalSql;
+
+			StringBuilder sql = new StringBuilder(this.originalSql.length() + this.parameterNames.size() * 2);
+
+			for (int i = 0; i < this.parameterNames.size(); ++i)
+				sql.append(this.sqlFragments.get(i)).append('?');
+
+			sql.append(this.sqlFragments.get(this.sqlFragments.size() - 1));
+			return sql.toString();
+		}
+
+		private void appendPlaceholders(@Nonnull StringBuilder sql,
+																		int count) {
+			requireNonNull(sql);
+
+			for (int i = 0; i < count; ++i) {
+				if (i > 0)
+					sql.append(", ");
+				sql.append('?');
+			}
+		}
+
+		private static final class PreparedQuery {
+			@Nonnull
+			private final Statement statement;
+			@Nonnull
+			private final Object[] parameters;
+
+			private PreparedQuery(@Nonnull Statement statement,
+														@Nonnull Object[] parameters) {
+				this.statement = requireNonNull(statement);
+				this.parameters = requireNonNull(parameters);
+			}
 		}
 
 		private static final class ParsedSql {
 			@Nonnull
-			private final String sql;
+			private final List<String> sqlFragments;
 			@Nonnull
 			private final List<String> parameterNames;
 			@Nonnull
 			private final Set<String> distinctParameterNames;
 
-			private ParsedSql(@Nonnull String sql,
+			private ParsedSql(@Nonnull List<String> sqlFragments,
 												@Nonnull List<String> parameterNames,
 												@Nonnull Set<String> distinctParameterNames) {
-				requireNonNull(sql);
+				requireNonNull(sqlFragments);
 				requireNonNull(parameterNames);
 				requireNonNull(distinctParameterNames);
 
-				this.sql = sql;
+				this.sqlFragments = sqlFragments;
 				this.parameterNames = parameterNames;
 				this.distinctParameterNames = distinctParameterNames;
 			}
@@ -586,7 +666,8 @@ public final class Database {
 		private static ParsedSql parseNamedParameterSql(@Nonnull String sql) {
 			requireNonNull(sql);
 
-			StringBuilder parsedSql = new StringBuilder(sql.length());
+			List<String> sqlFragments = new ArrayList<>();
+			StringBuilder sqlFragment = new StringBuilder(sql.length());
 			List<String> parameterNames = new ArrayList<>();
 			Set<String> distinctParameterNames = new HashSet<>();
 
@@ -601,11 +682,11 @@ public final class Database {
 			for (int i = 0; i < sql.length(); ) {
 				if (dollarQuoteDelimiter != null) {
 					if (sql.startsWith(dollarQuoteDelimiter, i)) {
-						parsedSql.append(dollarQuoteDelimiter);
+						sqlFragment.append(dollarQuoteDelimiter);
 						i += dollarQuoteDelimiter.length();
 						dollarQuoteDelimiter = null;
 					} else {
-						parsedSql.append(sql.charAt(i));
+						sqlFragment.append(sql.charAt(i));
 						++i;
 					}
 
@@ -615,7 +696,7 @@ public final class Database {
 				char c = sql.charAt(i);
 
 				if (inLineComment) {
-					parsedSql.append(c);
+					sqlFragment.append(c);
 					++i;
 
 					if (c == '\n' || c == '\r')
@@ -625,10 +706,10 @@ public final class Database {
 				}
 
 				if (inBlockComment) {
-					parsedSql.append(c);
+					sqlFragment.append(c);
 
 					if (c == '*' && i + 1 < sql.length() && sql.charAt(i + 1) == '/') {
-						parsedSql.append('/');
+						sqlFragment.append('/');
 						i += 2;
 						inBlockComment = false;
 					} else {
@@ -639,12 +720,12 @@ public final class Database {
 				}
 
 				if (inSingleQuote) {
-					parsedSql.append(c);
+					sqlFragment.append(c);
 
 					if (c == '\'') {
 						// Escaped quote: ''
 						if (i + 1 < sql.length() && sql.charAt(i + 1) == '\'') {
-							parsedSql.append('\'');
+							sqlFragment.append('\'');
 							i += 2;
 							continue;
 						}
@@ -657,12 +738,12 @@ public final class Database {
 				}
 
 				if (inDoubleQuote) {
-					parsedSql.append(c);
+					sqlFragment.append(c);
 
 					if (c == '"') {
 						// Escaped quote: ""
 						if (i + 1 < sql.length() && sql.charAt(i + 1) == '"') {
-							parsedSql.append('"');
+							sqlFragment.append('"');
 							i += 2;
 							continue;
 						}
@@ -675,7 +756,7 @@ public final class Database {
 				}
 
 				if (inBacktickQuote) {
-					parsedSql.append(c);
+					sqlFragment.append(c);
 
 					if (c == '`')
 						inBacktickQuote = false;
@@ -685,7 +766,7 @@ public final class Database {
 				}
 
 				if (inBracketQuote) {
-					parsedSql.append(c);
+					sqlFragment.append(c);
 
 					if (c == ']')
 						inBracketQuote = false;
@@ -696,14 +777,14 @@ public final class Database {
 
 				// Not inside string/comment
 				if (c == '-' && i + 1 < sql.length() && sql.charAt(i + 1) == '-') {
-					parsedSql.append("--");
+					sqlFragment.append("--");
 					i += 2;
 					inLineComment = true;
 					continue;
 				}
 
 				if (c == '/' && i + 1 < sql.length() && sql.charAt(i + 1) == '*') {
-					parsedSql.append("/*");
+					sqlFragment.append("/*");
 					i += 2;
 					inBlockComment = true;
 					continue;
@@ -711,28 +792,28 @@ public final class Database {
 
 				if (c == '\'') {
 					inSingleQuote = true;
-					parsedSql.append(c);
+					sqlFragment.append(c);
 					++i;
 					continue;
 				}
 
 				if (c == '"') {
 					inDoubleQuote = true;
-					parsedSql.append(c);
+					sqlFragment.append(c);
 					++i;
 					continue;
 				}
 
 				if (c == '`') {
 					inBacktickQuote = true;
-					parsedSql.append(c);
+					sqlFragment.append(c);
 					++i;
 					continue;
 				}
 
 				if (c == '[') {
 					inBracketQuote = true;
-					parsedSql.append(c);
+					sqlFragment.append(c);
 					++i;
 					continue;
 				}
@@ -741,7 +822,7 @@ public final class Database {
 					String delimiter = parseDollarQuoteDelimiter(sql, i);
 
 					if (delimiter != null) {
-						parsedSql.append(delimiter);
+						sqlFragment.append(delimiter);
 						i += delimiter.length();
 						dollarQuoteDelimiter = delimiter;
 						continue;
@@ -754,7 +835,7 @@ public final class Database {
 
 				if (c == ':' && i + 1 < sql.length() && sql.charAt(i + 1) == ':') {
 					// Postgres type-cast operator (::), do not treat second ':' as a parameter prefix.
-					parsedSql.append("::");
+					sqlFragment.append("::");
 					i += 2;
 					continue;
 				}
@@ -769,16 +850,19 @@ public final class Database {
 					String parameterName = sql.substring(nameStartIndex, nameEndIndex);
 					parameterNames.add(parameterName);
 					distinctParameterNames.add(parameterName);
-					parsedSql.append('?');
+					sqlFragments.add(sqlFragment.toString());
+					sqlFragment.setLength(0);
 					i = nameEndIndex;
 					continue;
 				}
 
-				parsedSql.append(c);
+				sqlFragment.append(c);
 				++i;
 			}
 
-			return new ParsedSql(parsedSql.toString(), List.copyOf(parameterNames), Set.copyOf(distinctParameterNames));
+			sqlFragments.add(sqlFragment.toString());
+
+			return new ParsedSql(List.copyOf(sqlFragments), List.copyOf(parameterNames), Set.copyOf(distinctParameterNames));
 		}
 
 		@Nullable
