@@ -262,8 +262,10 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 		Object[] normalizedElements = new Object[elements.length];
 
-		for (int j = 0; j < elements.length; j++)
-			normalizedElements[j] = normalizeParameter(statementContext, elements[j]);
+		for (int j = 0; j < elements.length; j++) {
+			Object element = elements[j];
+			normalizedElements[j] = element == null ? null : normalizeParameter(statementContext, element);
+		}
 
 		return normalizedElements;
 	}
