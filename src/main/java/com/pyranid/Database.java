@@ -23,9 +23,12 @@ import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
+import java.sql.ParameterMetaData;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
+import java.sql.Types;
 import java.time.Duration;
 import java.time.ZoneId;
 import java.util.ArrayDeque;
@@ -341,7 +344,8 @@ public final class Database {
 		requireNonNull(transaction);
 		requireNonNull(transactionalOperation);
 
-		TRANSACTION_STACK_HOLDER.get().push(transaction);
+		Deque<Transaction> transactionStack = TRANSACTION_STACK_HOLDER.get();
+		transactionStack.push(transaction);
 
 		try {
 			Optional<T> returnValue = transactionalOperation.perform();
@@ -353,7 +357,9 @@ public final class Database {
 			transaction.setRollbackOnly(true);
 			throw new RuntimeException(t);
 		} finally {
-			TRANSACTION_STACK_HOLDER.get().pop();
+			transactionStack.pop();
+			if (transactionStack.isEmpty())
+				TRANSACTION_STACK_HOLDER.remove();
 		}
 	}
 
@@ -842,12 +848,42 @@ public final class Database {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
-		List<T> list = queryForList(statement, resultSetRowType, parameters);
+		ResultHolder<Optional<T>> resultHolder = new ResultHolder<>();
+		StatementContext<T> statementContext = StatementContext.<T>with(statement, this)
+				.resultSetRowType(resultSetRowType)
+				.parameters(parameters)
+				.build();
 
-		if (list.size() > 1)
-			throw new DatabaseException(format("Expected 1 row in resultset but got %s instead", list.size()));
+		List<Object> parametersAsList = parameters == null ? List.of() : Arrays.asList(parameters);
 
-		return Optional.ofNullable(list.isEmpty() ? null : list.get(0));
+		performDatabaseOperation(statementContext, parametersAsList, (PreparedStatement preparedStatement) -> {
+			long startTime = nanoTime();
+
+			try (ResultSet resultSet = preparedStatement.executeQuery()) {
+				Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);
+				startTime = nanoTime();
+
+				Optional<T> result = Optional.empty();
+
+				if (resultSet.next()) {
+					try {
+						T value = getResultSetMapper().map(statementContext, resultSet, statementContext.getResultSetRowType().get(), getInstanceProvider()).orElse(null);
+						result = Optional.ofNullable(value);
+					} catch (SQLException e) {
+						throw new DatabaseException(format("Unable to map JDBC %s row to %s", ResultSet.class.getSimpleName(), statementContext.getResultSetRowType().get()), e);
+					}
+
+					if (resultSet.next())
+						throw new DatabaseException("Expected 1 row in resultset but got more than 1 instead");
+				}
+
+				resultHolder.value = result;
+				Duration resultSetMappingDuration = Duration.ofNanos(nanoTime() - startTime);
+				return new DatabaseOperationResult(executionDuration, resultSetMappingDuration);
+			}
+		});
+
+		return resultHolder.value;
 	}
 
 	/**
@@ -1197,10 +1233,21 @@ public final class Database {
 			for (int i = 0; i < parameters.size(); ++i) {
 				Object parameter = parameters.get(i);
 
-				if (parameter != null)
+				if (parameter != null) {
 					getPreparedStatementBinder().bindParameter(statementContext, preparedStatement, i + 1, parameter);
-				else
-					preparedStatement.setObject(i + 1, parameter);
+				} else {
+					try {
+						ParameterMetaData parameterMetaData = preparedStatement.getParameterMetaData();
+
+						if (parameterMetaData != null) {
+							preparedStatement.setNull(i + 1, parameterMetaData.getParameterType(i + 1));
+						} else {
+							preparedStatement.setNull(i + 1, Types.NULL);
+						}
+					} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
+						preparedStatement.setNull(i + 1, Types.NULL);
+					}
+				}
 			}
 		} catch (Exception e) {
 			throw new DatabaseException(e);

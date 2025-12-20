@@ -1107,30 +1107,30 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				return Optional.of(bigInteger);
 		}
 
-		if (resultSetValue instanceof Number number) {
-			if (Byte.class.isAssignableFrom(targetType))
-				return Optional.of(number.byteValue());
-			if (Short.class.isAssignableFrom(targetType))
-				return Optional.of(number.shortValue());
+			if (resultSetValue instanceof Number number) {
+				if (Byte.class.isAssignableFrom(targetType))
+					return Optional.of(number.byteValue());
+				if (Short.class.isAssignableFrom(targetType))
+					return Optional.of(number.shortValue());
 			if (Integer.class.isAssignableFrom(targetType))
 				return Optional.of(number.intValue());
 			if (Long.class.isAssignableFrom(targetType))
 				return Optional.of(number.longValue());
 			if (Float.class.isAssignableFrom(targetType))
 				return Optional.of(number.floatValue());
-			if (Double.class.isAssignableFrom(targetType))
-				return Optional.of(number.doubleValue());
-			if (BigDecimal.class.isAssignableFrom(targetType)) {
-				if (number instanceof Byte || number instanceof Short || number instanceof Integer || number instanceof Long)
-					return Optional.of(BigDecimal.valueOf(number.longValue()));
-				return Optional.of(BigDecimal.valueOf(number.doubleValue()));
+				if (Double.class.isAssignableFrom(targetType))
+					return Optional.of(number.doubleValue());
+				if (BigDecimal.class.isAssignableFrom(targetType)) {
+					if (number instanceof Byte || number instanceof Short || number instanceof Integer || number instanceof Long)
+						return Optional.of(BigDecimal.valueOf(number.longValue()));
+					return Optional.of(new BigDecimal(number.toString()));
+				}
+				if (BigInteger.class.isAssignableFrom(targetType)) {
+					if (number instanceof Byte || number instanceof Short || number instanceof Integer || number instanceof Long)
+						return Optional.of(BigInteger.valueOf(number.longValue()));
+					return Optional.of(new BigDecimal(number.toString()).toBigInteger());
+				}
 			}
-			if (BigInteger.class.isAssignableFrom(targetType)) {
-				if (number instanceof Byte || number instanceof Short || number instanceof Integer || number instanceof Long)
-					return Optional.of(BigInteger.valueOf(number.longValue()));
-				return Optional.of(BigDecimal.valueOf(number.doubleValue()).toBigInteger());
-			}
-		}
 
 		// Legacy java.sql.* coming from drivers
 		if (resultSetValue instanceof java.sql.Timestamp timestamp) {

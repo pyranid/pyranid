@@ -100,14 +100,14 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 		Optional<Integer> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
 
-		if (rawParameter == null) {
-			if (sqlTypeOptional.isPresent())
-				preparedStatement.setNull(parameterIndex, sqlTypeOptional.get());
-			else
-				preparedStatement.setObject(parameterIndex, null);
+			if (rawParameter == null) {
+				if (sqlTypeOptional.isPresent())
+					preparedStatement.setNull(parameterIndex, sqlTypeOptional.get());
+				else
+					preparedStatement.setNull(parameterIndex, Types.NULL);
 
-			return;
-		}
+				return;
+			}
 
 		Integer sqlType = sqlTypeOptional.orElse(Types.OTHER);
 
