@@ -34,6 +34,7 @@ import java.time.ZoneId;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -586,6 +587,17 @@ public final class Database {
 
 					appendPlaceholders(sql, elements.length);
 					parameters.addAll(Arrays.asList(elements));
+				} else if (value instanceof Collection<?>) {
+					throw new IllegalArgumentException(format(
+							"Collection parameter '%s' for SQL: %s must be wrapped with %s.inList(...) or %s.listOf/%s.setOf(...)",
+							parameterName, this.originalSql,
+							Parameters.class.getSimpleName(),
+							Parameters.class.getSimpleName(), Parameters.class.getSimpleName()));
+				} else if (value != null && value.getClass().isArray() && !(value instanceof byte[])) {
+					throw new IllegalArgumentException(format(
+							"Array parameter '%s' for SQL: %s must be wrapped with %s.inList(...) or %s.arrayOf(...)",
+							parameterName, this.originalSql,
+							Parameters.class.getSimpleName(), Parameters.class.getSimpleName()));
 				} else {
 					sql.append('?');
 					parameters.add(value);

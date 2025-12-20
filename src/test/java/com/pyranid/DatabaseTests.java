@@ -214,6 +214,26 @@ public class DatabaseTests {
 	}
 
 	@Test
+	public void testQueryBindRejectsRawCollection() {
+		Database db = Database.withDataSource(createInMemoryDataSource("testQueryBindRejectsRawCollection")).build();
+
+		Assertions.assertThrows(IllegalArgumentException.class, () ->
+				db.query("SELECT :ids FROM (VALUES (0)) AS t(x)")
+						.bind("ids", List.of(1, 2))
+						.fetchList(Integer.class));
+	}
+
+	@Test
+	public void testQueryBindRejectsRawArray() {
+		Database db = Database.withDataSource(createInMemoryDataSource("testQueryBindRejectsRawArray")).build();
+
+		Assertions.assertThrows(IllegalArgumentException.class, () ->
+				db.query("SELECT :names FROM (VALUES (0)) AS t(x)")
+						.bind("names", new String[]{"alpha", "beta"})
+						.fetchList(String.class));
+	}
+
+	@Test
 	public void testQueryInListExpandsParameter() {
 		Database db = Database.withDataSource(createInMemoryDataSource("testQueryInListExpandsParameter")).build();
 

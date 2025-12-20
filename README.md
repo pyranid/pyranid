@@ -800,7 +800,7 @@ List<Employee> employees = database.query("""
 Notes:
 * Empty collections/arrays throw `IllegalArgumentException`.
 * Expansion is context-agnostic; using it outside of `IN (...)` is allowed but may produce invalid SQL.
-* Raw `Collection`/array values are bound as scalars and are not expanded; use `Parameters.inList(...)`.
+* Raw `Collection`/array values are rejected; use `Parameters.inList(...)`.
 * If you want SQL ARRAY binding, use `Parameters.arrayOf(...)`.
 * If you want to bind a typed collection via a custom binder, use `Parameters.listOf(...)`/`Parameters.setOf(...)`.
 
@@ -840,7 +840,7 @@ Notes:
 
 ### Special Parameters
 
-Special support is provided for JSON/JSONB, vector, and SQL ARRAY parameters.
+Special support is provided for IN-list, JSON/JSONB, vector, and SQL ARRAY parameters.
 
 #### JSON/JSONB
 

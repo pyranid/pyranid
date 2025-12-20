@@ -66,7 +66,9 @@ public interface Query {
 	 * Binds a named parameter to a value.
 	 *
 	 * @param name  the parameter name (without the leading {@code :})
-	 * @param value the value to bind (may be {@code null})
+	 * @param value the value to bind (may be {@code null}). Raw {@link java.util.Collection} and array
+	 *              values are not expanded; use {@link Parameters#inList(java.util.Collection)} or
+	 *              {@link Parameters#arrayOf(String, Object[])} as appropriate.
 	 * @return this builder, for chaining
 	 */
 	@Nonnull
