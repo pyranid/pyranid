@@ -341,7 +341,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		if (candidates.isEmpty())
 			return false;
 
-		InboundKey key = new InboundKey(parameter.getClass(), sqlType);
+		InboundKey key = new InboundKey(parameter.getClass(), sqlType, targetType);
 		CustomParameterBinder cached = getPreferredBinderByInboundKey().get(key);
 
 		// Fast path: try cached binder first
@@ -392,14 +392,19 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		private final Class<?> valueClass;
 		@Nonnull
 		private final Integer sqlType;
+		@Nonnull
+		private final TargetType targetType;
 
 		InboundKey(@Nonnull Class<?> valueClass,
-							 @Nonnull Integer sqlType) {
+							 @Nonnull Integer sqlType,
+							 @Nonnull TargetType targetType) {
 			requireNonNull(valueClass);
 			requireNonNull(sqlType);
+			requireNonNull(targetType);
 
 			this.valueClass = valueClass;
 			this.sqlType = sqlType;
+			this.targetType = targetType;
 		}
 
 		@Override
@@ -408,13 +413,15 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			if (o == null || getClass() != o.getClass()) return false;
 			InboundKey that = (InboundKey) o;
 			return valueClass.equals(that.valueClass) &&
-					(sqlType == null ? that.sqlType == null : sqlType.equals(that.sqlType));
+					(sqlType == null ? that.sqlType == null : sqlType.equals(that.sqlType)) &&
+					targetType.equals(that.targetType);
 		}
 
 		@Override
 		public int hashCode() {
 			int result = valueClass.hashCode();
 			result = 31 * result + (sqlType == null ? 0 : sqlType.hashCode());
+			result = 31 * result + targetType.hashCode();
 			return result;
 		}
 	}

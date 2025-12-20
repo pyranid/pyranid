@@ -27,6 +27,7 @@ import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -52,6 +53,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 import static java.lang.String.format;
@@ -137,6 +139,30 @@ public class DatabaseTests {
 
 		public void setZoneId(ZoneId zoneId) {
 			this.zoneId = zoneId;
+		}
+	}
+
+	public static class BigDecimalHolder {
+		private BigDecimal v;
+
+		public BigDecimal getV() {
+			return this.v;
+		}
+
+		public void setV(BigDecimal v) {
+			this.v = v;
+		}
+	}
+
+	public static class BigIntegerHolder {
+		private BigInteger v;
+
+		public BigInteger getV() {
+			return this.v;
+		}
+
+		public void setV(BigInteger v) {
+			this.v = v;
 		}
 	}
 
@@ -916,6 +942,25 @@ public class DatabaseTests {
 		Assertions.assertEquals(cur, prefs.getCurrency());
 	}
 
+	@Test
+	public void testNumericMappingPreservesPrecision() {
+		Database db = Database.withDataSource(createInMemoryDataSource("big_numbers")).build();
+		TestQueries.execute(db, "CREATE TABLE big_numbers (v BIGINT)");
+
+		long value = 9_007_199_254_740_993L; // 2^53 + 1
+		TestQueries.execute(db, "INSERT INTO big_numbers (v) VALUES (?)", value);
+
+		BigDecimalHolder bigDecimalHolder = db.query("SELECT v FROM big_numbers")
+				.fetchObject(BigDecimalHolder.class)
+				.orElseThrow();
+		BigIntegerHolder bigIntegerHolder = db.query("SELECT v FROM big_numbers")
+				.fetchObject(BigIntegerHolder.class)
+				.orElseThrow();
+
+		Assertions.assertEquals(BigDecimal.valueOf(value), bigDecimalHolder.getV());
+		Assertions.assertEquals(BigInteger.valueOf(value), bigIntegerHolder.getV());
+	}
+
 	// Should be able to read the NULL back into a Java bean
 	static class Foo {
 		private Integer id;
@@ -955,6 +1000,59 @@ public class DatabaseTests {
 	}
 
 	@Test
+	public void testDatabaseBuilderAllowsDatabaseTypeOverride() {
+		DataSource dataSource = new DataSource() {
+			@Override
+			public Connection getConnection() throws SQLException {
+				throw new SQLException("boom");
+			}
+
+			@Override
+			public Connection getConnection(String username, String password) throws SQLException {
+				throw new SQLException("boom");
+			}
+
+			@Override
+			public java.io.PrintWriter getLogWriter() throws SQLException {
+				return null;
+			}
+
+			@Override
+			public void setLogWriter(java.io.PrintWriter out) throws SQLException {
+			}
+
+			@Override
+			public void setLoginTimeout(int seconds) throws SQLException {
+			}
+
+			@Override
+			public int getLoginTimeout() throws SQLException {
+				return 0;
+			}
+
+			@Override
+			public java.util.logging.Logger getParentLogger() throws java.sql.SQLFeatureNotSupportedException {
+				throw new java.sql.SQLFeatureNotSupportedException();
+			}
+
+			@Override
+			public <T> T unwrap(Class<T> iface) throws SQLException {
+				throw new SQLException("unwrap");
+			}
+
+			@Override
+			public boolean isWrapperFor(Class<?> iface) {
+				return false;
+			}
+		};
+
+		Assertions.assertDoesNotThrow(() ->
+				Database.withDataSource(dataSource)
+						.databaseType(DatabaseType.GENERIC)
+						.build());
+	}
+
+	@Test
 	public void testStatementLoggerReceivesEvent() {
 		Database db = Database.withDataSource(createInMemoryDataSource("logger")).statementLogger((log) -> {
 			Assertions.assertNotNull(log.getStatementContext(), "StatementContext should be present");
@@ -963,6 +1061,30 @@ public class DatabaseTests {
 
 		TestQueries.execute(db, "CREATE TABLE z (id INT)");
 		TestQueries.execute(db, "INSERT INTO z VALUES (1)");
+	}
+
+	@Test
+	public void testStatementLoggerIncludesBatchSize() {
+		AtomicReference<StatementLog<?>> logRef = new AtomicReference<>();
+		Database db = Database.withDataSource(createInMemoryDataSource("logger_batch"))
+				.statementLogger(logRef::set)
+				.build();
+
+		TestQueries.execute(db, "CREATE TABLE t (id INT)");
+		logRef.set(null);
+
+		List<Map<String, Object>> groups = List.of(
+				Map.of("id", 1),
+				Map.of("id", 2),
+				Map.of("id", 3)
+		);
+
+		db.query("INSERT INTO t (id) VALUES (:id)")
+				.executeBatch(groups);
+
+		StatementLog<?> log = logRef.get();
+		Assertions.assertNotNull(log, "Expected a StatementLog for batch execution");
+		Assertions.assertEquals(Integer.valueOf(3), log.getBatchSize().orElse(null));
 	}
 
 	@Test
@@ -1767,6 +1889,79 @@ public class DatabaseTests {
 				.fetchObject(String.class)
 				.orElseThrow();
 		Assertions.assertEquals("a=1,b=2", got);
+	}
+
+	@Test
+	public void testBinder_cacheKey_includesTargetType() {
+		CustomParameterBinder uuidListBinder = new CustomParameterBinder() {
+			@Nonnull
+			@Override
+			public BindingResult bind(@Nonnull StatementContext<?> sc,
+																@Nonnull PreparedStatement ps,
+																@Nonnull Integer idx,
+																@Nonnull Object param) throws SQLException {
+				List<?> list = (List<?>) param;
+				String joined = list.stream()
+						.map(Object::toString)
+						.reduce((a, b) -> a + "," + b)
+						.orElse("");
+				ps.setString(idx, "UUID:" + joined);
+				return BindingResult.handled();
+			}
+
+			@Nonnull
+			@Override
+			public Boolean appliesTo(@Nonnull TargetType targetType) {
+				return targetType.matchesParameterizedType(List.class, UUID.class);
+			}
+		};
+
+		CustomParameterBinder stringListBinder = new CustomParameterBinder() {
+			@Nonnull
+			@Override
+			public BindingResult bind(@Nonnull StatementContext<?> sc,
+																@Nonnull PreparedStatement ps,
+																@Nonnull Integer idx,
+																@Nonnull Object param) throws SQLException {
+				List<?> list = (List<?>) param;
+				String joined = list.stream()
+						.map(Object::toString)
+						.reduce((a, b) -> a + "," + b)
+						.orElse("");
+				ps.setString(idx, "STR:" + joined);
+				return BindingResult.handled();
+			}
+
+			@Nonnull
+			@Override
+			public Boolean appliesTo(@Nonnull TargetType targetType) {
+				return targetType.matchesParameterizedType(List.class, String.class);
+			}
+		};
+
+		Database db = Database
+				.withDataSource(createInMemoryDataSource("cpb_cache_target_type"))
+				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(uuidListBinder, stringListBinder)))
+				.build();
+
+		TestQueries.execute(db, "CREATE TABLE t (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, v LONGVARCHAR)");
+
+		List<UUID> ids = List.of(
+				UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+				UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+		);
+		List<String> names = List.of("alpha", "beta");
+
+		TestQueries.execute(db, "INSERT INTO t(v) VALUES (?)", Parameters.listOf(UUID.class, ids));
+		TestQueries.execute(db, "INSERT INTO t(v) VALUES (?)", Parameters.listOf(String.class, names));
+
+		List<String> rows = db.query("SELECT v FROM t ORDER BY id")
+				.fetchList(String.class);
+
+		Assertions.assertEquals(List.of(
+				"UUID:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+				"STR:alpha,beta"
+		), rows);
 	}
 
 	@Test

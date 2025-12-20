@@ -92,7 +92,7 @@ public final class Database {
 		requireNonNull(builder);
 
 		this.dataSource = requireNonNull(builder.dataSource);
-		this.databaseType = requireNonNull(builder.databaseType);
+		this.databaseType = builder.databaseType == null ? DatabaseType.fromDataSource(builder.dataSource) : builder.databaseType;
 		this.timeZone = builder.timeZone == null ? ZoneId.systemDefault() : builder.timeZone;
 		this.instanceProvider = builder.instanceProvider == null ? new InstanceProvider() {} : builder.instanceProvider;
 		this.preparedStatementBinder = builder.preparedStatementBinder == null ? PreparedStatementBinder.withDefaultConfiguration() : builder.preparedStatementBinder;
@@ -1148,7 +1148,7 @@ public final class Database {
 			resultHolder.value = result;
 			Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);
 			return new DatabaseOperationResult(executionDuration, null);
-		});
+		}, parameterGroups.size());
 
 		return resultHolder.value;
 	}
@@ -1245,6 +1245,7 @@ public final class Database {
 			ReentrantLock connectionLock = transaction.isPresent() ? transaction.get().getConnectionLock() : null;
 			// Try to participate in txn if it's available
 			Connection connection = null;
+			Throwable thrown = null;
 
 			if (connectionLock != null)
 				connectionLock.lock();
@@ -1253,31 +1254,76 @@ public final class Database {
 				connection = transaction.isPresent() ? transaction.get().getConnection() : acquireConnection();
 				return rawConnectionOperation.perform(connection);
 			} catch (DatabaseException e) {
+				thrown = e;
 				throw e;
 			} catch (Exception e) {
-				throw new DatabaseException(e);
+				DatabaseException wrapped = new DatabaseException(e);
+				thrown = wrapped;
+				throw wrapped;
 			} finally {
+				Throwable cleanupFailure = null;
+
 				try {
 					// If this was a single-shot operation (not in a transaction), close the connection
-					if (connection != null && !transaction.isPresent())
-						closeConnection(connection);
+					if (connection != null && !transaction.isPresent()) {
+						try {
+							closeConnection(connection);
+						} catch (Throwable cleanupException) {
+							cleanupFailure = cleanupException;
+						}
+					}
 				} finally {
 					if (connectionLock != null)
 						connectionLock.unlock();
+
+					if (cleanupFailure != null) {
+						if (thrown != null) {
+							thrown.addSuppressed(cleanupFailure);
+						} else if (cleanupFailure instanceof RuntimeException) {
+							throw (RuntimeException) cleanupFailure;
+						} else if (cleanupFailure instanceof Error) {
+							throw (Error) cleanupFailure;
+						} else {
+							throw new RuntimeException(cleanupFailure);
+						}
+					}
 				}
 			}
 		} else {
 			boolean acquiredConnection = false;
+			Connection connection = null;
+			Throwable thrown = null;
 
 			// Always get a fresh connection no matter what and close it afterwards
-			try (Connection connection = getDataSource().getConnection()) {
+			try {
+				connection = getDataSource().getConnection();
 				acquiredConnection = true;
 				return rawConnectionOperation.perform(connection);
+			} catch (DatabaseException e) {
+				thrown = e;
+				throw e;
 			} catch (Exception e) {
-				if (acquiredConnection)
-					throw new DatabaseException(e);
-				else
-					throw new DatabaseException("Unable to acquire database connection", e);
+				DatabaseException wrapped = acquiredConnection
+						? new DatabaseException(e)
+						: new DatabaseException("Unable to acquire database connection", e);
+				thrown = wrapped;
+				throw wrapped;
+			} finally {
+				if (connection != null) {
+					try {
+						closeConnection(connection);
+					} catch (Throwable cleanupException) {
+						if (thrown != null) {
+							thrown.addSuppressed(cleanupException);
+						} else if (cleanupException instanceof RuntimeException) {
+							throw (RuntimeException) cleanupException;
+						} else if (cleanupException instanceof Error) {
+							throw (Error) cleanupException;
+						} else {
+							throw new RuntimeException(cleanupException);
+						}
+					}
+				}
 			}
 		}
 	}
@@ -1285,6 +1331,13 @@ public final class Database {
 	protected <T> void performDatabaseOperation(@Nonnull StatementContext<T> statementContext,
 																							@Nonnull PreparedStatementBindingOperation preparedStatementBindingOperation,
 																							@Nonnull DatabaseOperation databaseOperation) {
+		performDatabaseOperation(statementContext, preparedStatementBindingOperation, databaseOperation, null);
+	}
+
+	protected <T> void performDatabaseOperation(@Nonnull StatementContext<T> statementContext,
+																							@Nonnull PreparedStatementBindingOperation preparedStatementBindingOperation,
+																							@Nonnull DatabaseOperation databaseOperation,
+																							@Nullable Integer batchSize) {
 		requireNonNull(statementContext);
 		requireNonNull(preparedStatementBindingOperation);
 		requireNonNull(databaseOperation);
@@ -1348,6 +1401,7 @@ public final class Database {
 								.preparationDuration(preparationDuration)
 								.executionDuration(executionDuration)
 								.resultSetMappingDuration(resultSetMappingDuration)
+								.batchSize(batchSize)
 								.exception(exception)
 								.build();
 
@@ -1463,8 +1517,8 @@ public final class Database {
 	public static class Builder {
 		@Nonnull
 		private final DataSource dataSource;
-		@Nonnull
-		private final DatabaseType databaseType;
+		@Nullable
+		private DatabaseType databaseType;
 		@Nullable
 		private ZoneId timeZone;
 		@Nullable
@@ -1478,7 +1532,20 @@ public final class Database {
 
 		private Builder(@Nonnull DataSource dataSource) {
 			this.dataSource = requireNonNull(dataSource);
-			this.databaseType = DatabaseType.fromDataSource(dataSource);
+			this.databaseType = null;
+		}
+
+		/**
+		 * Overrides automatic database type detection.
+		 *
+		 * @param databaseType the database type to use (null to enable auto-detection)
+		 * @return this {@code Builder}, for chaining
+		 * @since 4.0.0
+		 */
+		@Nonnull
+		public Builder databaseType(@Nullable DatabaseType databaseType) {
+			this.databaseType = databaseType;
+			return this;
 		}
 
 		@Nonnull

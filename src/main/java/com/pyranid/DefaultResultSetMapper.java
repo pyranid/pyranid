@@ -1120,10 +1120,16 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				return Optional.of(number.floatValue());
 			if (Double.class.isAssignableFrom(targetType))
 				return Optional.of(number.doubleValue());
-			if (BigDecimal.class.isAssignableFrom(targetType))
+			if (BigDecimal.class.isAssignableFrom(targetType)) {
+				if (number instanceof Byte || number instanceof Short || number instanceof Integer || number instanceof Long)
+					return Optional.of(BigDecimal.valueOf(number.longValue()));
 				return Optional.of(BigDecimal.valueOf(number.doubleValue()));
-			if (BigInteger.class.isAssignableFrom(targetType))
+			}
+			if (BigInteger.class.isAssignableFrom(targetType)) {
+				if (number instanceof Byte || number instanceof Short || number instanceof Integer || number instanceof Long)
+					return Optional.of(BigInteger.valueOf(number.longValue()));
 				return Optional.of(BigDecimal.valueOf(number.doubleValue()).toBigInteger());
+			}
 		}
 
 		// Legacy java.sql.* coming from drivers
