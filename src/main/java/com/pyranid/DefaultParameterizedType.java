@@ -24,6 +24,8 @@ import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
 import java.lang.reflect.WildcardType;
+import java.util.Arrays;
+import java.util.Objects;
 
 import static java.util.Objects.requireNonNull;
 
@@ -51,6 +53,28 @@ class DefaultParameterizedType implements ParameterizedType {
 		this.rawType = rawType;
 		this.typeArguments = typeArguments;
 		this.ownerType = ownerType;
+	}
+
+	@Override
+	public boolean equals(@Nullable Object object) {
+		if (this == object)
+			return true;
+
+		if (!(object instanceof ParameterizedType))
+			return false;
+
+		ParameterizedType other = (ParameterizedType) object;
+		return Objects.equals(getRawType(), other.getRawType())
+				&& Objects.equals(getOwnerType(), other.getOwnerType())
+				&& Arrays.equals(getActualTypeArguments(), other.getActualTypeArguments());
+	}
+
+	@Override
+	public int hashCode() {
+		int result = Arrays.hashCode(getActualTypeArguments());
+		result = 31 * result + Objects.hashCode(getRawType());
+		result = 31 * result + Objects.hashCode(getOwnerType());
+		return result;
 	}
 
 	@Override

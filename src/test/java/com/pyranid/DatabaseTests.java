@@ -18,11 +18,11 @@ package com.pyranid;
 
 import com.pyranid.JsonParameter.BindingPreference;
 import org.hsqldb.jdbc.JDBCDataSource;
-import org.jetbrains.annotations.Nullable;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
@@ -206,10 +206,10 @@ public class DatabaseTests {
 			TestQueries.execute(database, "INSERT INTO product VALUES (1, 'VR Goggles', 3500.99)");
 
 			Product product = database.query("""
-					SELECT * 
-					FROM product 
-					WHERE product_id=:productId
-					""")
+							SELECT * 
+							FROM product 
+							WHERE product_id=:productId
+							""")
 					.bind("productId", 1L)
 					.fetchObject(Product.class)
 					.orElse(null);
@@ -219,10 +219,10 @@ public class DatabaseTests {
 			database.currentTransaction().get().rollback();
 
 			product = database.query("""
-					SELECT * 
-					FROM product 
-					WHERE product_id=:productId
-					""")
+							SELECT * 
+							FROM product 
+							WHERE product_id=:productId
+							""")
 					.bind("productId", 1L)
 					.fetchObject(Product.class)
 					.orElse(null);
@@ -1767,6 +1767,24 @@ public class DatabaseTests {
 				.fetchObject(String.class)
 				.orElseThrow();
 		Assertions.assertEquals("a=1,b=2", got);
+	}
+
+	@Test
+	public void testTypedParameterNullBindsAsSqlNull() {
+		Database db = Database.withDataSource(createInMemoryDataSource("typed_param_null")).build();
+		TestQueries.execute(db, "CREATE TABLE t (v VARCHAR(50))");
+
+		TestQueries.execute(db, "INSERT INTO t(v) VALUES (?)",
+				Parameters.listOf(String.class, null));
+
+		Long count = db.query("SELECT COUNT(*) FROM t")
+				.fetchObject(Long.class)
+				.orElse(0L);
+		Assertions.assertEquals(1L, count, "Expected one row inserted");
+
+		Optional<String> value = db.query("SELECT v FROM t")
+				.fetchObject(String.class);
+		Assertions.assertTrue(value.isEmpty(), "Expected NULL when binding TypedParameter with null");
 	}
 
 	@Test

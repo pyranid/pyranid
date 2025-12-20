@@ -751,33 +751,6 @@ List<MySpecialType> mySpecialTypes =
     .fetchList(MySpecialType.class);
 ```
 
-### Kotlin Types
-
-#### Data Class
-
-Kotlin data class result set mapping is possible through the primary constructor of the data class.
-
-* Nullable and non-null columns are supported.
-* Default parameters are supported.
-* Data classes support the same list of JDK types as above
-* Extension functions for direct `KClass` support are provided
-
-```kotlin
-data class Car(carId: UUID, color: Color = Color.BLUE, ownerId: String?)
-
-val cars = database.query("SELECT * FROM cars").fetchList(Car::class)
-```
-
-To bind multiple values to an `IN (...)` clause, give each placeholder its own name:
-
-```kotlin
-val cars = database.query("SELECT * FROM cars WHERE car_id IN (:car1Id, :car2Id) LIMIT :limit")
-  .bind("car1Id", car1Id)
-  .bind("car2Id", car2Id)
-  .bind("limit", 10)
-  .fetchList(Car::class)
-```
-
 ## Parameter Binding
 
 The out-of-the-box [`PreparedStatementBinder`](https://javadoc.pyranid.com/com/pyranid/PreparedStatementBinder.html) implementation supports binding common JDK types and generally "just works" as you would expect.

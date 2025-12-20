@@ -196,6 +196,7 @@ public final class Database {
 		Transaction transaction = new Transaction(dataSource, transactionIsolation);
 		TRANSACTION_STACK_HOLDER.get().push(transaction);
 		boolean committed = false;
+		Throwable thrown = null;
 
 		try {
 			Optional<T> returnValue = transactionalOperation.perform();
@@ -213,6 +214,7 @@ public final class Database {
 
 			return returnValue;
 		} catch (RuntimeException e) {
+			thrown = e;
 			try {
 				transaction.rollback();
 			} catch (Exception rollbackException) {
@@ -221,13 +223,15 @@ public final class Database {
 
 			throw e;
 		} catch (Throwable t) {
+			RuntimeException wrapped = new RuntimeException(t);
+			thrown = wrapped;
 			try {
 				transaction.rollback();
 			} catch (Exception rollbackException) {
 				logger.log(WARNING, "Unable to roll back transaction", rollbackException);
 			}
 
-			throw new RuntimeException(t);
+			throw wrapped;
 		} finally {
 			Deque<Transaction> transactionStack = TRANSACTION_STACK_HOLDER.get();
 
@@ -237,6 +241,8 @@ public final class Database {
 			if (transactionStack.isEmpty())
 				TRANSACTION_STACK_HOLDER.remove();
 
+			Throwable cleanupFailure = null;
+
 			try {
 				try {
 					transaction.restoreTransactionIsolationIfNeeded();
@@ -244,14 +250,44 @@ public final class Database {
 					if (transaction.getInitialAutoCommit().isPresent() && transaction.getInitialAutoCommit().get())
 						// Autocommit was true initially, so restoring to true now that transaction has completed
 						transaction.setAutoCommit(true);
+				} catch (Throwable cleanupException) {
+					cleanupFailure = cleanupException;
 				} finally {
-					if (transaction.hasConnection())
-						closeConnection(transaction.getConnection());
+					if (transaction.hasConnection()) {
+						try {
+							closeConnection(transaction.getConnection());
+						} catch (Throwable cleanupException) {
+							if (cleanupFailure == null)
+								cleanupFailure = cleanupException;
+							else
+								cleanupFailure.addSuppressed(cleanupException);
+						}
+					}
 				}
 			} finally {
 				// Execute any user-supplied post-execution hooks
-				for (Consumer<TransactionResult> postTransactionOperation : transaction.getPostTransactionOperations())
-					postTransactionOperation.accept(committed ? TransactionResult.COMMITTED : TransactionResult.ROLLED_BACK);
+				for (Consumer<TransactionResult> postTransactionOperation : transaction.getPostTransactionOperations()) {
+					try {
+						postTransactionOperation.accept(committed ? TransactionResult.COMMITTED : TransactionResult.ROLLED_BACK);
+					} catch (Throwable cleanupException) {
+						if (cleanupFailure == null)
+							cleanupFailure = cleanupException;
+						else
+							cleanupFailure.addSuppressed(cleanupException);
+					}
+				}
+			}
+
+			if (cleanupFailure != null) {
+				if (thrown != null) {
+					thrown.addSuppressed(cleanupFailure);
+				} else if (cleanupFailure instanceof RuntimeException) {
+					throw (RuntimeException) cleanupFailure;
+				} else if (cleanupFailure instanceof Error) {
+					throw (Error) cleanupFailure;
+				} else {
+					throw new RuntimeException(cleanupFailure);
+				}
 			}
 		}
 	}
@@ -1259,6 +1295,7 @@ public final class Database {
 		Duration executionDuration = null;
 		Duration resultSetMappingDuration = null;
 		Exception exception = null;
+		Throwable thrown = null;
 		Connection connection = null;
 		Optional<Transaction> transaction = currentTransaction();
 		ReentrantLock connectionLock = transaction.isPresent() ? transaction.get().getConnectionLock() : null;
@@ -1282,15 +1319,25 @@ public final class Database {
 			}
 		} catch (DatabaseException e) {
 			exception = e;
+			thrown = e;
 			throw e;
 		} catch (Exception e) {
 			exception = e;
-			throw new DatabaseException(e);
+			DatabaseException wrapped = new DatabaseException(e);
+			thrown = wrapped;
+			throw wrapped;
 		} finally {
+			Throwable cleanupFailure = null;
+
 			try {
 				// If this was a single-shot operation (not in a transaction), close the connection
-				if (connection != null && !transaction.isPresent())
-					closeConnection(connection);
+				if (connection != null && !transaction.isPresent()) {
+					try {
+						closeConnection(connection);
+					} catch (Throwable cleanupException) {
+						cleanupFailure = cleanupException;
+					}
+				}
 			} finally {
 				if (connectionLock != null)
 					connectionLock.unlock();
@@ -1304,7 +1351,26 @@ public final class Database {
 								.exception(exception)
 								.build();
 
-				getStatementLogger().log(statementLog);
+				try {
+					getStatementLogger().log(statementLog);
+				} catch (Throwable cleanupException) {
+					if (cleanupFailure == null)
+						cleanupFailure = cleanupException;
+					else
+						cleanupFailure.addSuppressed(cleanupException);
+				}
+			}
+
+			if (cleanupFailure != null) {
+				if (thrown != null) {
+					thrown.addSuppressed(cleanupFailure);
+				} else if (cleanupFailure instanceof RuntimeException) {
+					throw (RuntimeException) cleanupFailure;
+				} else if (cleanupFailure instanceof Error) {
+					throw (Error) cleanupFailure;
+				} else {
+					throw new RuntimeException(cleanupFailure);
+				}
 			}
 		}
 	}

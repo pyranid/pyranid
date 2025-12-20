@@ -98,7 +98,18 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 						? TargetType.of(typedParameter.getExplicitType())
 						: TargetType.of(rawParameter.getClass());
 
-		Integer sqlType = determineParameterSqlType(preparedStatement, parameterIndex).orElse(Types.OTHER);
+		Optional<Integer> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
+
+		if (rawParameter == null) {
+			if (sqlTypeOptional.isPresent())
+				preparedStatement.setNull(parameterIndex, sqlTypeOptional.get());
+			else
+				preparedStatement.setObject(parameterIndex, null);
+
+			return;
+		}
+
+		Integer sqlType = sqlTypeOptional.orElse(Types.OTHER);
 
 		// Try custom binders first (if they exist) on the raw value
 		if (!getCustomParameterBinders().isEmpty()
