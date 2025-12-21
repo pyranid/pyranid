@@ -55,10 +55,10 @@ public final class Parameters {
 	 * @return a SQL ARRAY parameter for the given list
 	 */
 	@Nonnull
-	public static <E> ArrayParameter<E> arrayOf(@Nonnull String baseTypeName,
-																							@Nullable List<E> list) {
+	public static <E> SqlArrayParameter<E> sqlArrayOf(@Nonnull String baseTypeName,
+																										@Nullable List<E> list) {
 		requireNonNull(baseTypeName);
-		return new DefaultArrayParameter(baseTypeName, list == null ? null : list.toArray());
+		return new DefaultSqlArrayParameter(baseTypeName, list == null ? null : list.toArray());
 	}
 
 	/**
@@ -72,27 +72,27 @@ public final class Parameters {
 	 * @return a SQL ARRAY parameter for the given Java array
 	 */
 	@Nonnull
-	public static <E> ArrayParameter<E> arrayOf(@Nonnull String baseTypeName,
-																							@Nullable E[] array) {
+	public static <E> SqlArrayParameter<E> sqlArrayOf(@Nonnull String baseTypeName,
+																										@Nullable E[] array) {
 		requireNonNull(baseTypeName);
-		return new DefaultArrayParameter(baseTypeName, array);
+		return new DefaultSqlArrayParameter(baseTypeName, array);
 	}
 
 	/**
-	 * Default package-private implementation of {@link ArrayParameter}.
+	 * Default package-private implementation of {@link SqlArrayParameter}.
 	 *
 	 * @author <a href="https://www.revetkn.com">Mark Allen</a>
 	 * @since 3.0.0
 	 */
 	@ThreadSafe
-	static class DefaultArrayParameter implements ArrayParameter {
+	static class DefaultSqlArrayParameter implements SqlArrayParameter {
 		@Nonnull
 		private final String baseTypeName; // e.g. "text", "uuid", "integer", ...
 		@Nullable
 		private final Object[] elements;
 
-		DefaultArrayParameter(@Nonnull String baseTypeName,
-													@Nullable Object[] elements) {
+		DefaultSqlArrayParameter(@Nonnull String baseTypeName,
+														 @Nullable Object[] elements) {
 			requireNonNull(baseTypeName);
 
 			this.baseTypeName = baseTypeName;
@@ -300,6 +300,8 @@ public final class Parameters {
 	 * This is useful when you want to bind an array via a {@link CustomParameterBinder} and need the
 	 * component type to be preserved for {@link TargetType} matching.
 	 * <p>
+	 * For SQL {@code ARRAY} binding, use {@link #sqlArrayOf(String, Object[])} instead.
+	 * <p>
 	 * <strong>Note:</strong> this kind of parameter requires a corresponding {@link CustomParameterBinder}
 	 * to be registered; otherwise, binding will fail-fast.
 	 *
@@ -309,10 +311,10 @@ public final class Parameters {
 	 * @return a {@link TypedParameter} representing a {@code E[]} suitable for use with custom binders
 	 */
 	@Nonnull
-	public static <E> TypedParameter typedArrayOf(@Nonnull Class<E> elementType,
-																								@Nullable E[] array) {
+	public static <E> TypedParameter arrayOf(@Nonnull Class<E> elementType,
+																					 @Nullable E[] array) {
 		requireNonNull(elementType);
-		return typedArrayOf((Class<?>) elementType, array);
+		return arrayOf((Class<?>) elementType, array);
 	}
 
 	/**
@@ -320,6 +322,8 @@ public final class Parameters {
 	 * <p>
 	 * This overload supports primitive arrays by passing the primitive component class
 	 * (for example, {@code int.class}) and the corresponding primitive array.
+	 * <p>
+	 * For SQL {@code ARRAY} binding, use {@link #sqlArrayOf(String, Object[])} instead.
 	 * <p>
 	 * <strong>Note:</strong> this kind of parameter requires a corresponding {@link CustomParameterBinder}
 	 * to be registered; otherwise, binding will fail-fast.
@@ -329,8 +333,8 @@ public final class Parameters {
 	 * @return a {@link TypedParameter} representing an array suitable for use with custom binders
 	 */
 	@Nonnull
-	public static TypedParameter typedArrayOf(@Nonnull Class<?> elementType,
-																						@Nullable Object array) {
+	public static TypedParameter arrayOf(@Nonnull Class<?> elementType,
+																			 @Nullable Object array) {
 		requireNonNull(elementType);
 
 		if (array != null) {

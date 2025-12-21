@@ -116,13 +116,13 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 				&& tryCustomBinders(statementContext, preparedStatement, parameterIndex, rawParameter, sqlType, explicitTargetType))
 			return;
 
-		// If this parameter was explicitly wrapped as a TypedParameter (e.g., Parameters.listOf/setOf/mapOf/typedArrayOf)
+		// If this parameter was explicitly wrapped as a TypedParameter (e.g., Parameters.listOf/setOf/mapOf/arrayOf(Class, ...))
 		// and no CustomParameterBinder claimed it, fail fast with a clear message.
 		if (parameter instanceof TypedParameter typedParameter)
 			throw new DatabaseException(format("This parameter requires a CustomParameterBinder: %s. "
-							+ "Parameters.listOf/setOf/mapOf/typedArrayOf are typed wrappers intended for use with custom binders. "
+							+ "Parameters.listOf/setOf/mapOf/arrayOf(Class, ...) are typed wrappers intended for use with custom binders. "
 							+ "Register a CustomParameterBinder that appliesTo(%s), "
-							+ "or use a concrete parameter type supported by the binder/driver (e.g. Parameters.arrayOf(...) or Parameters.json(...)).",
+							+ "or use a concrete parameter type supported by the binder/driver (e.g. Parameters.sqlArrayOf(...) or Parameters.json(...)).",
 					typedParameter.getExplicitType(), typedParameter.getExplicitType()));
 
 		Object normalizedParameter = normalizeParameter(statementContext, rawParameter);
@@ -196,14 +196,14 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			return;
 		}
 
-		if (normalizedParameter instanceof ArrayParameter<?> arrayParameter) {
-			Object[] elements = arrayParameter.getElements().orElse(null);
+		if (normalizedParameter instanceof SqlArrayParameter<?> sqlArrayParameter) {
+			Object[] elements = sqlArrayParameter.getElements().orElse(null);
 
 			if (elements == null) {
 				preparedStatement.setNull(parameterIndex, Types.NULL);
 			} else {
 				Object[] normalizedElements = normalizedArrayElements(statementContext, elements);
-				Array array = preparedStatement.getConnection().createArrayOf(arrayParameter.getBaseTypeName(), normalizedElements);
+				Array array = preparedStatement.getConnection().createArrayOf(sqlArrayParameter.getBaseTypeName(), normalizedElements);
 				preparedStatement.setArray(parameterIndex, array);
 			}
 

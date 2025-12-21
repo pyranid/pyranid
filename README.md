@@ -802,9 +802,9 @@ Notes:
 * Expansion is context-agnostic; using it outside of `IN (...)` is allowed but may produce invalid SQL.
 * Raw `Collection`/array values are rejected; use `Parameters.inList(...)`.
 * Primitive arrays are supported via overloads (e.g. `int[]`, `long[]`).
-* If you want SQL ARRAY binding, use `Parameters.arrayOf(...)`.
+* If you want SQL ARRAY binding, use `Parameters.sqlArrayOf(...)`.
 * If you want to bind a typed collection via a custom binder, use `Parameters.listOf(...)`/`Parameters.setOf(...)`.
-* If you want to bind a typed array via a custom binder, use `Parameters.typedArrayOf(...)`.
+* If you want to bind a typed array via a custom binder, use `Parameters.arrayOf(Class, ...)`.
 
 ### Supported Primitives
 
@@ -922,8 +922,8 @@ Single-dimension array binding is supported out-of-the-box.
 
 Supported methods:
 
-* [`Parameters::arrayOf(String, E[])`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#arrayOf(java.lang.String,E%5B%5D))
-* [`Parameters::arrayOf(String, List<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#arrayOf(java.lang.String,java.util.List))
+* [`Parameters::sqlArrayOf(String, E[])`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#sqlArrayOf(java.lang.String,E%5B%5D))
+* [`Parameters::sqlArrayOf(String, List<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#sqlArrayOf(java.lang.String,java.util.List))
 
 You might create a table with some array columns...
 
@@ -940,7 +940,7 @@ CREATE TABLE product (
 
 ```java
 String name = "...";
-int[] vendorFlags = { 1, 2, 3 };
+Integer[] vendorFlags = { 1, 2, 3 };
 List<String> tags = List.of("alpha", "beta");
 
 database.query("""
@@ -951,8 +951,8 @@ database.query("""
   ) VALUES (:name, :vendorFlags, :tags)
 """)
   .bind("name", name)
-  .bind("vendorFlags", Parameters.arrayOf("INTEGER", vendorFlags))
-  .bind("tags", Parameters.arrayOf("VARCHAR", tags))
+  .bind("vendorFlags", Parameters.sqlArrayOf("INTEGER", vendorFlags))
+  .bind("tags", Parameters.sqlArrayOf("VARCHAR", tags))
   .execute();
 ```
 
@@ -1110,15 +1110,16 @@ Pyranid will detect this missing-binder scenario and throw an exception to indic
 
 #### Typed Arrays
 
-If you need array component types at runtime for a custom binder, use `Parameters.typedArrayOf(...)`.
+If you need array component types at runtime for a custom binder, use `Parameters.arrayOf(Class, ...)`.
 This captures the array element type (including primitives) so your binder can match via `TargetType.isArray()`/`getArrayComponentType()`.
 Typed arrays require a corresponding [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html); otherwise binding fails fast.
+For SQL ARRAY binding, use `Parameters.sqlArrayOf(...)`.
 
 ```java
 String[] names = {"alpha", "beta"};
 
 database.query("INSERT INTO t(v) VALUES (:v)")
-  .bind("v", Parameters.typedArrayOf(String.class, names))
+  .bind("v", Parameters.arrayOf(String.class, names))
   .execute();
 ```
 

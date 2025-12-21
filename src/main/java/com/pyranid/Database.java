@@ -595,7 +595,7 @@ public final class Database {
 							Parameters.class.getSimpleName(), Parameters.class.getSimpleName()));
 				} else if (value != null && value.getClass().isArray() && !(value instanceof byte[])) {
 					throw new IllegalArgumentException(format(
-							"Array parameter '%s' for SQL: %s must be wrapped with %s.inList(...), %s.arrayOf(...), or %s.typedArrayOf(...)",
+							"Array parameter '%s' for SQL: %s must be wrapped with %s.inList(...), %s.sqlArrayOf(...), or %s.arrayOf(Class, ...)",
 							parameterName, this.originalSql,
 							Parameters.class.getSimpleName(), Parameters.class.getSimpleName(), Parameters.class.getSimpleName()));
 				} else {

@@ -29,7 +29,7 @@ import java.util.Optional;
  * <p>
  * You may determine available {@code baseTypeName} values for your database by examining metadata exposed via {@link Database#readDatabaseMetaData(DatabaseMetaDataReader)}.
  * <p>
- * Stardard instances may be constructed via {@link Parameters#arrayOf(String, Object[])} and {@link Parameters#arrayOf(String, List)}.
+ * Standard instances may be constructed via {@link Parameters#sqlArrayOf(String, Object[])} and {@link Parameters#sqlArrayOf(String, List)}.
  * <p>
  * Implementations should be threadsafe.
  *
@@ -38,7 +38,7 @@ import java.util.Optional;
  * @since 3.0.0
  */
 @ThreadSafe
-public interface ArrayParameter<E> {
+public interface SqlArrayParameter<E> {
 	/**
 	 * Gets the element type of this SQL ARRAY, which corresponds to the value of <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/Array.html#getBaseTypeName()" target="_blank">{@code java.sql.Array#getBaseTypeName()}</a>
 	 * and is database-specific.
