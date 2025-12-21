@@ -801,8 +801,10 @@ Notes:
 * Empty collections/arrays throw `IllegalArgumentException`.
 * Expansion is context-agnostic; using it outside of `IN (...)` is allowed but may produce invalid SQL.
 * Raw `Collection`/array values are rejected; use `Parameters.inList(...)`.
+* Primitive arrays are supported via overloads (e.g. `int[]`, `long[]`).
 * If you want SQL ARRAY binding, use `Parameters.arrayOf(...)`.
 * If you want to bind a typed collection via a custom binder, use `Parameters.listOf(...)`/`Parameters.setOf(...)`.
+* If you want to bind a typed array via a custom binder, use `Parameters.typedArrayOf(...)`.
 
 ### Supported Primitives
 
@@ -1099,11 +1101,26 @@ PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCu
   }  
 ));
 ```
+
 ##### Heads Up!
 
 If you use [`Parameters::listOf(Class<E>, List<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#listOf(java.lang.Class,java.util.List)), [`Parameters::setOf(Class<E>, Set<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#setOf(java.lang.Class,java.util.List)), or [`Parameters::mapOf(Class<K>, Class<V>, Map<K,V>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#mapOf(java.lang.Class,java.lang.Class,java.util.Map)), you must define a corresponding [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) to handle them.  These special parameter types do not automatically work out-of-the-box because Pyranid cannot reliably guess how you intend to bind them.
 
 Pyranid will detect this missing-binder scenario and throw an exception to indicate programmer error.
+
+#### Typed Arrays
+
+If you need array component types at runtime for a custom binder, use `Parameters.typedArrayOf(...)`.
+This captures the array element type (including primitives) so your binder can match via `TargetType.isArray()`/`getArrayComponentType()`.
+Typed arrays require a corresponding [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html); otherwise binding fails fast.
+
+```java
+String[] names = {"alpha", "beta"};
+
+database.query("INSERT INTO t(v) VALUES (:v)")
+  .bind("v", Parameters.typedArrayOf(String.class, names))
+  .execute();
+```
 
 ## Error Handling
 

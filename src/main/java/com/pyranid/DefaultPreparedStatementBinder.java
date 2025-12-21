@@ -116,11 +116,11 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 				&& tryCustomBinders(statementContext, preparedStatement, parameterIndex, rawParameter, sqlType, explicitTargetType))
 			return;
 
-		// If this parameter was explicitly wrapped as a TypedParameter (e.g., Parameters.listOf/setOf/mapOf)
+		// If this parameter was explicitly wrapped as a TypedParameter (e.g., Parameters.listOf/setOf/mapOf/typedArrayOf)
 		// and no CustomParameterBinder claimed it, fail fast with a clear message.
 		if (parameter instanceof TypedParameter typedParameter)
 			throw new DatabaseException(format("This parameter requires a CustomParameterBinder: %s. "
-							+ "Parameters.listOf/setOf/mapOf are typed wrappers intended for use with custom binders. "
+							+ "Parameters.listOf/setOf/mapOf/typedArrayOf are typed wrappers intended for use with custom binders. "
 							+ "Register a CustomParameterBinder that appliesTo(%s), "
 							+ "or use a concrete parameter type supported by the binder/driver (e.g. Parameters.arrayOf(...) or Parameters.json(...)).",
 					typedParameter.getExplicitType(), typedParameter.getExplicitType()));

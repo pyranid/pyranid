@@ -23,7 +23,8 @@ import java.util.Optional;
 /**
  * Encapsulates a parameter intended for SQL {@code IN} list expansion.
  * <p>
- * Standard instances may be constructed via {@link Parameters#inList(java.util.Collection)}.
+ * Standard instances may be constructed via {@link Parameters#inList(java.util.Collection)},
+ * {@link Parameters#inList(Object[])}, or the primitive-array overloads.
  * <p>
  * Implementations should be threadsafe.
  *

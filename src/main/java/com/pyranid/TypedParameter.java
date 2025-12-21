@@ -32,6 +32,7 @@ import java.util.Set;
  *   <li>{@link Parameters#listOf(Class, List)}</li>
  *   <li>{@link Parameters#setOf(Class, Set)}</li>
  *   <li>{@link Parameters#mapOf(Class, Class, Map)}</li>
+ *   <li>{@link Parameters#typedArrayOf(Class, Object)}</li>
  * </ul>
  * Implementations should be threadsafe.
  *

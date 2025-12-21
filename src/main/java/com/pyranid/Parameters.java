@@ -21,6 +21,7 @@ import com.pyranid.JsonParameter.BindingPreference;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
+import java.lang.reflect.Array;
 import java.lang.reflect.Type;
 import java.math.BigDecimal;
 import java.util.Collection;
@@ -150,6 +151,126 @@ public final class Parameters {
 	}
 
 	/**
+	 * Acquires a parameter for SQL {@code IN} list expansion using a {@code byte[]} array.
+	 *
+	 * @param elements the elements to expand into {@code ?} placeholders
+	 * @return an IN-list parameter for the given elements
+	 */
+	@Nonnull
+	public static InListParameter inList(@Nonnull byte[] elements) {
+		requireNonNull(elements);
+		Object[] boxed = new Object[elements.length];
+		for (int i = 0; i < elements.length; i++)
+			boxed[i] = elements[i];
+		return new DefaultInListParameter(boxed);
+	}
+
+	/**
+	 * Acquires a parameter for SQL {@code IN} list expansion using a {@code short[]} array.
+	 *
+	 * @param elements the elements to expand into {@code ?} placeholders
+	 * @return an IN-list parameter for the given elements
+	 */
+	@Nonnull
+	public static InListParameter inList(@Nonnull short[] elements) {
+		requireNonNull(elements);
+		Object[] boxed = new Object[elements.length];
+		for (int i = 0; i < elements.length; i++)
+			boxed[i] = elements[i];
+		return new DefaultInListParameter(boxed);
+	}
+
+	/**
+	 * Acquires a parameter for SQL {@code IN} list expansion using an {@code int[]} array.
+	 *
+	 * @param elements the elements to expand into {@code ?} placeholders
+	 * @return an IN-list parameter for the given elements
+	 */
+	@Nonnull
+	public static InListParameter inList(@Nonnull int[] elements) {
+		requireNonNull(elements);
+		Object[] boxed = new Object[elements.length];
+		for (int i = 0; i < elements.length; i++)
+			boxed[i] = elements[i];
+		return new DefaultInListParameter(boxed);
+	}
+
+	/**
+	 * Acquires a parameter for SQL {@code IN} list expansion using a {@code long[]} array.
+	 *
+	 * @param elements the elements to expand into {@code ?} placeholders
+	 * @return an IN-list parameter for the given elements
+	 */
+	@Nonnull
+	public static InListParameter inList(@Nonnull long[] elements) {
+		requireNonNull(elements);
+		Object[] boxed = new Object[elements.length];
+		for (int i = 0; i < elements.length; i++)
+			boxed[i] = elements[i];
+		return new DefaultInListParameter(boxed);
+	}
+
+	/**
+	 * Acquires a parameter for SQL {@code IN} list expansion using a {@code float[]} array.
+	 *
+	 * @param elements the elements to expand into {@code ?} placeholders
+	 * @return an IN-list parameter for the given elements
+	 */
+	@Nonnull
+	public static InListParameter inList(@Nonnull float[] elements) {
+		requireNonNull(elements);
+		Object[] boxed = new Object[elements.length];
+		for (int i = 0; i < elements.length; i++)
+			boxed[i] = elements[i];
+		return new DefaultInListParameter(boxed);
+	}
+
+	/**
+	 * Acquires a parameter for SQL {@code IN} list expansion using a {@code double[]} array.
+	 *
+	 * @param elements the elements to expand into {@code ?} placeholders
+	 * @return an IN-list parameter for the given elements
+	 */
+	@Nonnull
+	public static InListParameter inList(@Nonnull double[] elements) {
+		requireNonNull(elements);
+		Object[] boxed = new Object[elements.length];
+		for (int i = 0; i < elements.length; i++)
+			boxed[i] = elements[i];
+		return new DefaultInListParameter(boxed);
+	}
+
+	/**
+	 * Acquires a parameter for SQL {@code IN} list expansion using a {@code boolean[]} array.
+	 *
+	 * @param elements the elements to expand into {@code ?} placeholders
+	 * @return an IN-list parameter for the given elements
+	 */
+	@Nonnull
+	public static InListParameter inList(@Nonnull boolean[] elements) {
+		requireNonNull(elements);
+		Object[] boxed = new Object[elements.length];
+		for (int i = 0; i < elements.length; i++)
+			boxed[i] = elements[i];
+		return new DefaultInListParameter(boxed);
+	}
+
+	/**
+	 * Acquires a parameter for SQL {@code IN} list expansion using a {@code char[]} array.
+	 *
+	 * @param elements the elements to expand into {@code ?} placeholders
+	 * @return an IN-list parameter for the given elements
+	 */
+	@Nonnull
+	public static InListParameter inList(@Nonnull char[] elements) {
+		requireNonNull(elements);
+		Object[] boxed = new Object[elements.length];
+		for (int i = 0; i < elements.length; i++)
+			boxed[i] = elements[i];
+		return new DefaultInListParameter(boxed);
+	}
+
+	/**
 	 * Default package-private implementation of {@link InListParameter}.
 	 *
 	 * @author <a href="https://www.revetkn.com">Mark Allen</a>
@@ -171,6 +292,65 @@ public final class Parameters {
 			// Defensive copy
 			return Optional.of(this.elements.clone());
 		}
+	}
+
+	/**
+	 * Acquires a parameter of array type, preserving element type information so it is accessible at runtime.
+	 * <p>
+	 * This is useful when you want to bind an array via a {@link CustomParameterBinder} and need the
+	 * component type to be preserved for {@link TargetType} matching.
+	 * <p>
+	 * <strong>Note:</strong> this kind of parameter requires a corresponding {@link CustomParameterBinder}
+	 * to be registered; otherwise, binding will fail-fast.
+	 *
+	 * @param elementType the element type of the array
+	 * @param array       the array value to wrap; may be {@code null}
+	 * @param <E>         the element type of the array
+	 * @return a {@link TypedParameter} representing a {@code E[]} suitable for use with custom binders
+	 */
+	@Nonnull
+	public static <E> TypedParameter typedArrayOf(@Nonnull Class<E> elementType,
+																								@Nullable E[] array) {
+		requireNonNull(elementType);
+		return typedArrayOf((Class<?>) elementType, array);
+	}
+
+	/**
+	 * Acquires a parameter of array type, preserving element type information so it is accessible at runtime.
+	 * <p>
+	 * This overload supports primitive arrays by passing the primitive component class
+	 * (for example, {@code int.class}) and the corresponding primitive array.
+	 * <p>
+	 * <strong>Note:</strong> this kind of parameter requires a corresponding {@link CustomParameterBinder}
+	 * to be registered; otherwise, binding will fail-fast.
+	 *
+	 * @param elementType the element type of the array (may be primitive)
+	 * @param array       the array value to wrap; may be {@code null}
+	 * @return a {@link TypedParameter} representing an array suitable for use with custom binders
+	 */
+	@Nonnull
+	public static TypedParameter typedArrayOf(@Nonnull Class<?> elementType,
+																						@Nullable Object array) {
+		requireNonNull(elementType);
+
+		if (array != null) {
+			Class<?> arrayClass = array.getClass();
+
+			if (!arrayClass.isArray())
+				throw new IllegalArgumentException("Array parameter is not an array");
+
+			Class<?> componentType = arrayClass.getComponentType();
+
+			if (elementType.isPrimitive()) {
+				if (!componentType.equals(elementType))
+					throw new IllegalArgumentException("Array parameter component type does not match elementType");
+			} else if (!elementType.isAssignableFrom(componentType)) {
+				throw new IllegalArgumentException("Array parameter component type is not assignable to elementType");
+			}
+		}
+
+		Class<?> arrayType = Array.newInstance(elementType, 0).getClass();
+		return new DefaultTypedParameter(arrayType, array);
 	}
 
 	/**
