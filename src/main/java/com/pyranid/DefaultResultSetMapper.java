@@ -57,6 +57,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Currency;
 import java.util.Date;
+import java.util.IllformedLocaleException;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -819,7 +820,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			if (tz != null) value = timeZoneFromId(tz);
 		} else if (resultClass.isAssignableFrom(Locale.class)) {
 			String locale = resultSet.getString(1);
-			if (locale != null) value = Locale.forLanguageTag(locale);
+			if (locale != null) value = localeFromLanguageTag(locale);
 		} else if (resultClass.isAssignableFrom(Currency.class)) {
 			String currency = resultSet.getString(1);
 			if (currency != null) {
@@ -1293,7 +1294,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		} else if (TimeZone.class.isAssignableFrom(targetType)) {
 			return Optional.of(timeZoneFromId(resultSetValue.toString()));
 		} else if (Locale.class.isAssignableFrom(targetType)) {
-			return Optional.ofNullable(Locale.forLanguageTag(resultSetValue.toString()));
+			return Optional.of(localeFromLanguageTag(resultSetValue.toString()));
 		} else if (Currency.class.isAssignableFrom(targetType)) {
 			try {
 				return Optional.ofNullable(Currency.getInstance(resultSetValue.toString()));
@@ -1401,6 +1402,21 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		return timeZone;
+	}
+
+	@Nonnull
+	private static Locale localeFromLanguageTag(@Nonnull String languageTag) {
+		requireNonNull(languageTag);
+
+		String trimmed = languageTag.trim();
+		if (trimmed.isEmpty())
+			return Locale.ROOT;
+
+		try {
+			return new Locale.Builder().setLanguageTag(trimmed).build();
+		} catch (IllformedLocaleException e) {
+			throw new DatabaseException(format("Unable to convert value '%s' to Locale", languageTag), e);
+		}
 	}
 
 	/**

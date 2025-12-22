@@ -110,6 +110,12 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 						? Types.NULL
 						: defaultNullSqlTypeForTargetType(explicitTargetType);
 			}
+
+			if (explicitTargetType != null
+					&& !getCustomParameterBinders().isEmpty()
+					&& tryCustomNullBinders(statementContext, preparedStatement, parameterIndex, sqlType, explicitTargetType))
+				return;
+
 			preparedStatement.setNull(parameterIndex, sqlType);
 
 			return;
@@ -384,6 +390,36 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 				getPreferredBinderByInboundKey().putIfAbsent(key, customParameterBinder);
 				return true;
 			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Try custom binders for a null typed parameter. Returns true if a binder handled it.
+	 */
+	@Nonnull
+	protected <T> Boolean tryCustomNullBinders(@Nonnull StatementContext<T> statementContext,
+																				 @Nonnull PreparedStatement preparedStatement,
+																				 @Nonnull Integer parameterIndex,
+																				 @Nonnull Integer sqlType,
+																				 @Nonnull TargetType targetType) throws SQLException {
+		requireNonNull(statementContext);
+		requireNonNull(preparedStatement);
+		requireNonNull(parameterIndex);
+		requireNonNull(sqlType);
+		requireNonNull(targetType);
+
+		List<CustomParameterBinder> candidates = customBindersFor(targetType);
+		if (candidates.isEmpty())
+			return false;
+
+		for (CustomParameterBinder customParameterBinder : candidates) {
+			BindingResult bindingResult = requireNonNull(
+					customParameterBinder.bindNull(statementContext, preparedStatement, parameterIndex, targetType, sqlType));
+
+			if (bindingResult instanceof BindingResult.Handled)
+				return true;
 		}
 
 		return false;

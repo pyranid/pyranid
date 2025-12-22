@@ -47,6 +47,28 @@ public interface CustomParameterBinder {
 										 @Nonnull Object parameter) throws SQLException;
 
 	/**
+	 * Performs custom binding of a null value given its {@code index} and {@code targetType}.
+	 * <p>
+	 * This function is only invoked for {@link TypedParameter} values that are {@code null}.
+	 *
+	 * @param statementContext  current SQL context
+	 * @param preparedStatement the prepared statement to bind to
+	 * @param parameterIndex    1-based parameter index at which to perform the binding
+	 * @param targetType        explicit target type from {@link TypedParameter}
+	 * @param sqlType           JDBC SQL type hint (may be {@link java.sql.Types#NULL})
+	 * @return {@link BindingResult#handled()} if the custom binding was performed, or {@link BindingResult#fallback()} to fall back to default behavior
+	 * @throws SQLException if an error occurs during binding
+	 */
+	@Nonnull
+	default BindingResult bindNull(@Nonnull StatementContext<?> statementContext,
+																 @Nonnull PreparedStatement preparedStatement,
+																 @Nonnull Integer parameterIndex,
+																 @Nonnull TargetType targetType,
+																 @Nonnull Integer sqlType) throws SQLException {
+		return BindingResult.fallback();
+	}
+
+	/**
 	 * Specifies which types this custom binder should handle.
 	 * <p>
 	 * For example, if this binder should apply when binding {@code MyCustomType}, this method could return {@code targetType.matchesClass(MyCustomType.class)}.

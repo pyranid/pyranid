@@ -35,6 +35,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.sql.Types;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -234,7 +235,9 @@ public class DatabaseTests {
 				       [col:ignored] AS sq,
 				       $$:ignored$$ AS dq1,
 				       $tag$:ignored$tag$ AS dq2,
-				       E'it\\'s :ignored' AS es
+				       $tag-1$:ignored$tag-1$ AS dq3,
+				       E'it\\'s :ignored' AS es,
+				       U&'\\0041:ignored' AS us
 				FROM t -- :ignored
 				WHERE id = :id AND name = :name /* :ignored */
 				AND type = :type::VARCHAR
@@ -2435,6 +2438,54 @@ public class DatabaseTests {
 	}
 
 	@Test
+	public void testTypedParameterNullUsesCustomBinder() {
+		AtomicBoolean binderCalled = new AtomicBoolean(false);
+
+		CustomParameterBinder listUuidBinder = new CustomParameterBinder() {
+			@Nonnull
+			@Override
+			public BindingResult bind(@Nonnull StatementContext<?> sc,
+																@Nonnull PreparedStatement ps,
+																@Nonnull Integer idx,
+																@Nonnull Object param) {
+				return BindingResult.fallback();
+			}
+
+			@Nonnull
+			@Override
+			public BindingResult bindNull(@Nonnull StatementContext<?> sc,
+																		@Nonnull PreparedStatement ps,
+																		@Nonnull Integer idx,
+																		@Nonnull TargetType targetType,
+																		@Nonnull Integer sqlType) throws SQLException {
+				binderCalled.set(true);
+				ps.setNull(idx, Types.VARCHAR);
+				return BindingResult.handled();
+			}
+
+			@Nonnull
+			@Override
+			public Boolean appliesTo(@Nonnull TargetType targetType) {
+				return targetType.matchesParameterizedType(List.class, UUID.class);
+			}
+		};
+
+		Database db = Database.withDataSource(createInMemoryDataSource("typed_param_null_binder"))
+				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(listUuidBinder)))
+				.build();
+
+		TestQueries.execute(db, "CREATE TABLE t (v VARCHAR(50))");
+		TestQueries.execute(db, "INSERT INTO t(v) VALUES (?)", Parameters.listOf(UUID.class, null));
+
+		Integer nullCount = db.query("SELECT COUNT(*) FROM t WHERE v IS NULL")
+				.fetchObject(Integer.class)
+				.orElseThrow();
+
+		Assertions.assertEquals(Integer.valueOf(1), nullCount);
+		Assertions.assertTrue(binderCalled.get(), "Expected custom binder to handle typed null");
+	}
+
+	@Test
 	public void testListOf_withoutBinder_failsFast() {
 		Database db = Database.withDataSource(createInMemoryDataSource("it_failfast_list")).build();
 		TestQueries.execute(db, "CREATE TABLE t_dummy (id INT)");
@@ -2509,6 +2560,10 @@ public class DatabaseTests {
 		Assertions.assertThrows(DatabaseException.class, () ->
 				db.query("SELECT 'Not/AZone' FROM (VALUES (0)) AS t(x)")
 						.fetchObject(TimeZone.class));
+
+		Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("SELECT 'bad/locale' FROM (VALUES (0)) AS t(x)")
+						.fetchObject(Locale.class));
 	}
 
 	@SuppressWarnings("unchecked")

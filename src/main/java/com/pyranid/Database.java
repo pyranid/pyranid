@@ -806,30 +806,30 @@ public final class Database {
 					continue;
 				}
 
-			if (inSingleQuote) {
-				sqlFragment.append(c);
+				if (inSingleQuote) {
+					sqlFragment.append(c);
 
-				if (inSingleQuoteEscapesBackslash && c == '\\' && i + 1 < sql.length()) {
-					sqlFragment.append(sql.charAt(i + 1));
-					i += 2;
-					continue;
-				}
-
-				if (c == '\'') {
-					// Escaped quote: ''
-					if (i + 1 < sql.length() && sql.charAt(i + 1) == '\'') {
-						sqlFragment.append('\'');
+					if (inSingleQuoteEscapesBackslash && c == '\\' && i + 1 < sql.length()) {
+						sqlFragment.append(sql.charAt(i + 1));
 						i += 2;
 						continue;
 					}
 
-					inSingleQuote = false;
-					inSingleQuoteEscapesBackslash = false;
-				}
+					if (c == '\'') {
+						// Escaped quote: ''
+						if (i + 1 < sql.length() && sql.charAt(i + 1) == '\'') {
+							sqlFragment.append('\'');
+							i += 2;
+							continue;
+						}
 
-				++i;
-				continue;
-			}
+						inSingleQuote = false;
+						inSingleQuoteEscapesBackslash = false;
+					}
+
+					++i;
+					continue;
+				}
 
 				if (inDoubleQuote) {
 					sqlFragment.append(c);
@@ -884,21 +884,29 @@ public final class Database {
 					continue;
 				}
 
-			if ((c == 'E' || c == 'e') && i + 1 < sql.length() && sql.charAt(i + 1) == '\'') {
-				inSingleQuote = true;
-				inSingleQuoteEscapesBackslash = true;
-				sqlFragment.append(c).append('\'');
-				i += 2;
-				continue;
-			}
+				if ((c == 'U' || c == 'u') && i + 2 < sql.length() && sql.charAt(i + 1) == '&' && sql.charAt(i + 2) == '\'') {
+					inSingleQuote = true;
+					inSingleQuoteEscapesBackslash = true;
+					sqlFragment.append(c).append("&'");
+					i += 3;
+					continue;
+				}
 
-			if (c == '\'') {
-				inSingleQuote = true;
-				inSingleQuoteEscapesBackslash = false;
-				sqlFragment.append(c);
-				++i;
-				continue;
-			}
+				if ((c == 'E' || c == 'e') && i + 1 < sql.length() && sql.charAt(i + 1) == '\'') {
+					inSingleQuote = true;
+					inSingleQuoteEscapesBackslash = true;
+					sqlFragment.append(c).append('\'');
+					i += 2;
+					continue;
+				}
+
+				if (c == '\'') {
+					inSingleQuote = true;
+					inSingleQuoteEscapesBackslash = false;
+					sqlFragment.append(c);
+					++i;
+					continue;
+				}
 
 				if (c == '"') {
 					inDoubleQuote = true;
@@ -987,12 +995,10 @@ public final class Database {
 				if (c == '$')
 					return sql.substring(startIndex, i + 1);
 
-				if (Character.isLetterOrDigit(c) || c == '_') {
-					++i;
-					continue;
-				}
+				if (Character.isWhitespace(c))
+					return null;
 
-				return null;
+				++i;
 			}
 
 			return null;
