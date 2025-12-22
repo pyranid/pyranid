@@ -164,7 +164,7 @@ public interface ResultSetMapper {
 		Integer preferredColumnMapperCacheCapacity;
 
 		private Builder() {
-			this.normalizationLocale = Locale.getDefault();
+			this.normalizationLocale = Locale.ROOT;
 			this.customColumnMappers = List.of();
 			this.planCachingEnabled = true;
 			this.planCacheCapacity = 0;
