@@ -82,6 +82,16 @@ public interface ResultSetMapper {
 											@Nonnull InstanceProvider instanceProvider) throws SQLException;
 
 	/**
+	 * Default maximum number of cached row-mapping plans.
+	 */
+	int DEFAULT_PLAN_CACHE_CAPACITY = 1024;
+
+	/**
+	 * Default maximum number of cached preferred custom column mappers.
+	 */
+	int DEFAULT_PREFERRED_COLUMN_MAPPER_CACHE_CAPACITY = 256;
+
+	/**
 	 * Acquires a builder for a concrete implementation of this interface, specifying the locale to use when massaging JDBC column names for matching against Java property names.
 	 *
 	 * @param normalizationLocale the locale to use when massaging JDBC column names for matching against Java property names
@@ -167,8 +177,8 @@ public interface ResultSetMapper {
 			this.normalizationLocale = Locale.ROOT;
 			this.customColumnMappers = List.of();
 			this.planCachingEnabled = true;
-			this.planCacheCapacity = 0;
-			this.preferredColumnMapperCacheCapacity = 0;
+			this.planCacheCapacity = DEFAULT_PLAN_CACHE_CAPACITY;
+			this.preferredColumnMapperCacheCapacity = DEFAULT_PREFERRED_COLUMN_MAPPER_CACHE_CAPACITY;
 		}
 
 		/**
@@ -215,7 +225,7 @@ public interface ResultSetMapper {
 		 * <p>
 		 * Use {@code 0} for an unbounded cache.
 		 *
-		 * @param planCacheCapacity maximum number of cached plans, or {@code 0} for unbounded
+		 * @param planCacheCapacity maximum number of cached plans, or {@code 0} for unbounded. Defaults to {@link #DEFAULT_PLAN_CACHE_CAPACITY}.
 		 * @return this {@code Builder}, for chaining
 		 */
 		@Nonnull
@@ -232,7 +242,8 @@ public interface ResultSetMapper {
 		 * <p>
 		 * Use {@code 0} for an unbounded cache.
 		 *
-		 * @param preferredColumnMapperCacheCapacity maximum number of cached preferred custom column mappers, or {@code 0} for unbounded
+		 * @param preferredColumnMapperCacheCapacity maximum number of cached preferred custom column mappers, or {@code 0} for unbounded.
+		 *                                           Defaults to {@link #DEFAULT_PREFERRED_COLUMN_MAPPER_CACHE_CAPACITY}.
 		 * @return this {@code Builder}, for chaining
 		 */
 		@Nonnull

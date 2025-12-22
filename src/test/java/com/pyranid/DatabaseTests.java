@@ -770,6 +770,16 @@ public class DatabaseTests {
 	}
 
 	@Test
+	public void testDefaultRowPlanAndPreferredMapperCachesUseLru() {
+		DefaultResultSetMapper resultSetMapper = (DefaultResultSetMapper) ResultSetMapper.withDefaultConfiguration();
+
+		Assertions.assertTrue(resultSetMapper.getRowPlanningCache() instanceof ConcurrentLruMap,
+				"Row-plan cache should use LRU by default");
+		Assertions.assertTrue(resultSetMapper.getPreferredColumnMapperBySourceTargetKey() instanceof ConcurrentLruMap,
+				"Preferred mapper cache should use LRU by default");
+	}
+
+	@Test
 	public void testPreferredColumnMapperCacheCapacity() {
 		DataSource dataSource = createInMemoryDataSource("cm_cache_cap");
 
@@ -823,11 +833,12 @@ public class DatabaseTests {
 		db.query("SELECT zone_id FROM cache_types").fetchObject(ZoneIdHolder.class);
 
 		Map<?, ?> cache = resultSetMapper.getPreferredColumnMapperBySourceTargetKey();
-		if (cache instanceof ConcurrentLruMap<?, ?> lru)
-			lru.drain();
-
 		Assertions.assertTrue(cache instanceof ConcurrentLruMap, "Preferred mapper cache should use LRU when capacity is set");
-		Assertions.assertTrue(cache.size() <= 2, "Preferred mapper cache should honor configured capacity");
+		ConcurrentLruMap<?, ?> lru = (ConcurrentLruMap<?, ?>) cache;
+		lru.drain();
+
+		Assertions.assertEquals(2, lru.capacity(), "Preferred mapper cache should honor configured LRU capacity");
+		Assertions.assertTrue(lru.size() <= 2, "Preferred mapper cache should honor configured capacity");
 	}
 
 	@Test
@@ -852,11 +863,12 @@ public class DatabaseTests {
 		db.query("SELECT name, locale FROM employee").fetchList(EmployeeClass.class);
 
 		Map<?, ?> cache = resultSetMapper.getRowPlanningCache();
-		if (cache instanceof ConcurrentLruMap<?, ?> lru)
-			lru.drain();
-
 		Assertions.assertTrue(cache instanceof ConcurrentLruMap, "Row-plan cache should use LRU when capacity is set");
-		Assertions.assertTrue(cache.size() <= 2, "Row-plan cache should honor configured capacity");
+		ConcurrentLruMap<?, ?> lru = (ConcurrentLruMap<?, ?>) cache;
+		lru.drain();
+
+		Assertions.assertEquals(2, lru.capacity(), "Row-plan cache should honor configured LRU capacity");
+		Assertions.assertTrue(lru.size() <= 2, "Row-plan cache should honor configured capacity");
 	}
 
 	public record GroupRow(String groupName, List<UUID> ids) {}
@@ -1336,6 +1348,37 @@ public class DatabaseTests {
 				.orElse(0L);
 
 		Assertions.assertEquals(1L, count, "Transaction should commit even if statement logger fails");
+	}
+
+	@Test
+	public void testErrorNotMaskedByLoggerFailure() {
+		AtomicBoolean loggerCalled = new AtomicBoolean(false);
+		PreparedStatementBinder binder = new PreparedStatementBinder() {
+			@Override
+			public <T> void bindParameter(@Nonnull StatementContext<T> statementContext,
+																		@Nonnull PreparedStatement preparedStatement,
+																		@Nonnull Integer parameterIndex,
+																		@Nonnull Object parameter) throws SQLException {
+				throw new TestError("bind boom");
+			}
+		};
+
+		Database db = Database.withDataSource(createInMemoryDataSource("error_logger_mask"))
+				.preparedStatementBinder(binder)
+				.statementLogger(statementLog -> {
+					loggerCalled.set(true);
+					throw new RuntimeException("logger boom");
+				})
+				.build();
+
+		TestError thrown = Assertions.assertThrows(TestError.class, () ->
+				db.query("SELECT :id FROM (VALUES (0)) AS t(x)")
+						.bind("id", 1)
+						.fetchObject(Integer.class));
+
+		Assertions.assertTrue(loggerCalled.get(), "Expected statement logger to be invoked");
+		Assertions.assertEquals(1, thrown.getSuppressed().length, "Expected logger failure to be suppressed");
+		Assertions.assertEquals("logger boom", thrown.getSuppressed()[0].getMessage());
 	}
 
 	@Test

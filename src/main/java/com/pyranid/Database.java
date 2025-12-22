@@ -1568,6 +1568,10 @@ public final class Database {
 			exception = e;
 			thrown = e;
 			throw e;
+		} catch (Error e) {
+			exception = new DatabaseException(e);
+			thrown = e;
+			throw e;
 		} catch (Exception e) {
 			exception = e;
 			DatabaseException wrapped = new DatabaseException(e);

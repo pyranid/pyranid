@@ -97,6 +97,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	private final List<CustomColumnMapper> customColumnMappers;
 	@Nonnull
 	private final Boolean planCachingEnabled;
+	private final int planCacheCapacity;
+	private final int preferredColumnMapperCacheCapacity;
 	// Enables faster lookup of CustomColumnMapper instances by remembering which TargetType they've been used with before.
 	@Nonnull
 	private final ConcurrentMap<TargetType, List<CustomColumnMapper>> customColumnMappersByTargetTypeCache;
@@ -394,9 +396,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		this.planCachingEnabled = requireNonNull(builder.planCachingEnabled);
 
 		this.customColumnMappersByTargetTypeCache = new ConcurrentHashMap<>();
-		this.preferredColumnMapperBySourceTargetKey = createCache(builder.preferredColumnMapperCacheCapacity);
+		this.preferredColumnMapperCacheCapacity = builder.preferredColumnMapperCacheCapacity;
+		this.preferredColumnMapperBySourceTargetKey = createCache(this.preferredColumnMapperCacheCapacity);
 		this.columnLabelAliasesByPropertyNameCache = new ConcurrentHashMap<>();
-		this.rowPlanningCache = createCache(builder.planCacheCapacity);
+		this.planCacheCapacity = builder.planCacheCapacity;
+		this.rowPlanningCache = createCache(this.planCacheCapacity);
 		this.schemaSignatureByResultSetMetaData = Collections.synchronizedMap(new WeakHashMap<>());
 	}
 
