@@ -166,6 +166,12 @@ public class DatabaseTests {
 		}
 	}
 
+	private static final class TestError extends Error {
+		private TestError(String message) {
+			super(message);
+		}
+	}
+
 	@Test
 	public void testBasicQueries() {
 		Database database = Database.withDataSource(createInMemoryDataSource("testBasicQueries")).build();
@@ -356,6 +362,74 @@ public class DatabaseTests {
 		});
 
 		Assertions.assertTrue(ranPostTransactionOperation.get(), "Did not run post-transaction operation");
+	}
+
+	@Test
+	public void testTransactionPreservesInterruptFlag() {
+		Database db = Database.withDataSource(createInMemoryDataSource("txn_interrupt")).build();
+
+		Thread.interrupted();
+
+		try {
+			RuntimeException e = Assertions.assertThrows(RuntimeException.class, () ->
+					db.transaction(() -> {
+						throw new InterruptedException("boom");
+					}));
+
+			Assertions.assertTrue(e.getCause() instanceof InterruptedException, "Expected InterruptedException as cause");
+			Assertions.assertTrue(Thread.currentThread().isInterrupted(), "Expected interrupt flag to be restored");
+		} finally {
+			Thread.interrupted();
+		}
+	}
+
+	@Test
+	public void testTransactionRethrowsError() {
+		Database db = Database.withDataSource(createInMemoryDataSource("txn_error")).build();
+		TestError error = new TestError("boom");
+
+		TestError thrown = Assertions.assertThrows(TestError.class, () ->
+				db.transaction(() -> {
+					throw error;
+				}));
+
+		Assertions.assertSame(error, thrown);
+	}
+
+	@Test
+	public void testParticipatePreservesInterruptFlag() {
+		DataSource ds = createInMemoryDataSource("participate_interrupt");
+		Database db = Database.withDataSource(ds).build();
+		Transaction transaction = new Transaction(ds, TransactionIsolation.DEFAULT);
+
+		Thread.interrupted();
+
+		try {
+			RuntimeException e = Assertions.assertThrows(RuntimeException.class, () ->
+					db.participate(transaction, () -> {
+						throw new InterruptedException("boom");
+					}));
+
+			Assertions.assertTrue(e.getCause() instanceof InterruptedException, "Expected InterruptedException as cause");
+			Assertions.assertTrue(Thread.currentThread().isInterrupted(), "Expected interrupt flag to be restored");
+		} finally {
+			Thread.interrupted();
+		}
+	}
+
+	@Test
+	public void testParticipateRethrowsError() {
+		DataSource ds = createInMemoryDataSource("participate_error");
+		Database db = Database.withDataSource(ds).build();
+		Transaction transaction = new Transaction(ds, TransactionIsolation.DEFAULT);
+		TestError error = new TestError("boom");
+
+		TestError thrown = Assertions.assertThrows(TestError.class, () ->
+				db.participate(transaction, () -> {
+					throw error;
+				}));
+
+		Assertions.assertSame(error, thrown);
 	}
 
 	@Test

@@ -225,16 +225,28 @@ public final class Database {
 				logger.log(WARNING, "Unable to roll back transaction", rollbackException);
 			}
 
+			restoreInterruptIfNeeded(e);
 			throw e;
-		} catch (Throwable t) {
-			RuntimeException wrapped = new RuntimeException(t);
-			thrown = wrapped;
+		} catch (Error e) {
+			thrown = e;
 			try {
 				transaction.rollback();
 			} catch (Exception rollbackException) {
 				logger.log(WARNING, "Unable to roll back transaction", rollbackException);
 			}
 
+			restoreInterruptIfNeeded(e);
+			throw e;
+		} catch (Throwable t) {
+			try {
+				transaction.rollback();
+			} catch (Exception rollbackException) {
+				logger.log(WARNING, "Unable to roll back transaction", rollbackException);
+			}
+
+			restoreInterruptIfNeeded(t);
+			RuntimeException wrapped = new RuntimeException(t);
+			thrown = wrapped;
 			throw wrapped;
 		} finally {
 			Deque<Transaction> transactionStack = TRANSACTION_STACK_HOLDER.get();
@@ -353,9 +365,15 @@ public final class Database {
 			return returnValue == null ? Optional.empty() : returnValue;
 		} catch (RuntimeException e) {
 			transaction.setRollbackOnly(true);
+			restoreInterruptIfNeeded(e);
+			throw e;
+		} catch (Error e) {
+			transaction.setRollbackOnly(true);
+			restoreInterruptIfNeeded(e);
 			throw e;
 		} catch (Throwable t) {
 			transaction.setRollbackOnly(true);
+			restoreInterruptIfNeeded(t);
 			throw new RuntimeException(t);
 		} finally {
 			transactionStack.pop();
@@ -385,6 +403,21 @@ public final class Database {
 	public Query query(@Nonnull String sql) {
 		requireNonNull(sql);
 		return new DefaultQuery(this, sql);
+	}
+
+	private static void restoreInterruptIfNeeded(@Nonnull Throwable throwable) {
+		requireNonNull(throwable);
+
+		Throwable current = throwable;
+
+		while (current != null) {
+			if (current instanceof InterruptedException) {
+				Thread.currentThread().interrupt();
+				return;
+			}
+
+			current = current.getCause();
+		}
 	}
 
 	/**
