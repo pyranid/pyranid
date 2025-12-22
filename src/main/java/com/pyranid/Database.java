@@ -41,6 +41,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalDouble;
+import java.util.OptionalInt;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
@@ -420,6 +423,23 @@ public final class Database {
 		}
 	}
 
+	@Nullable
+	private static Object unwrapOptionalValue(@Nullable Object value) {
+		if (value == null)
+			return null;
+
+		if (value instanceof Optional<?> optional)
+			return optional.orElse(null);
+		if (value instanceof OptionalInt optionalInt)
+			return optionalInt.isPresent() ? optionalInt.getAsInt() : null;
+		if (value instanceof OptionalLong optionalLong)
+			return optionalLong.isPresent() ? optionalLong.getAsLong() : null;
+		if (value instanceof OptionalDouble optionalDouble)
+			return optionalDouble.isPresent() ? optionalDouble.getAsDouble() : null;
+
+		return value;
+	}
+
 	/**
 	 * Default internal implementation of {@link Query}.
 	 * <p>
@@ -608,7 +628,7 @@ public final class Database {
 					continue;
 				}
 
-				Object value = bindings.get(parameterName);
+				Object value = unwrapOptionalValue(bindings.get(parameterName));
 
 				if (value instanceof InListParameter inListParameter) {
 					Object[] elements = inListParameter.getElements().orElse(null);
@@ -1125,16 +1145,16 @@ public final class Database {
 				resultHolder.value = preparedStatement.executeLargeUpdate();
 			} else if (executeLargeUpdateSupported == DatabaseOperationSupportStatus.NO) {
 				resultHolder.value = (long) preparedStatement.executeUpdate();
-				} else {
-					// If the driver doesn't support executeLargeUpdate, then UnsupportedOperationException is thrown.
-					try {
-						resultHolder.value = preparedStatement.executeLargeUpdate();
-						setExecuteLargeUpdateSupported(DatabaseOperationSupportStatus.YES);
-					} catch (SQLFeatureNotSupportedException | UnsupportedOperationException | AbstractMethodError e) {
-						setExecuteLargeUpdateSupported(DatabaseOperationSupportStatus.NO);
-						resultHolder.value = (long) preparedStatement.executeUpdate();
-					}
+			} else {
+				// If the driver doesn't support executeLargeUpdate, then UnsupportedOperationException is thrown.
+				try {
+					resultHolder.value = preparedStatement.executeLargeUpdate();
+					setExecuteLargeUpdateSupported(DatabaseOperationSupportStatus.YES);
+				} catch (SQLFeatureNotSupportedException | UnsupportedOperationException | AbstractMethodError e) {
+					setExecuteLargeUpdateSupported(DatabaseOperationSupportStatus.NO);
+					resultHolder.value = (long) preparedStatement.executeUpdate();
 				}
+			}
 
 			Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);
 			return new DatabaseOperationResult(executionDuration, null);
@@ -1294,18 +1314,18 @@ public final class Database {
 			} else if (executeLargeBatchSupported == DatabaseOperationSupportStatus.NO) {
 				int[] resultArray = preparedStatement.executeBatch();
 				result = Arrays.stream(resultArray).asLongStream().boxed().collect(Collectors.toList());
-				} else {
-					// If the driver doesn't support executeLargeBatch, then UnsupportedOperationException is thrown.
-					try {
-						long[] resultArray = preparedStatement.executeLargeBatch();
-						result = Arrays.stream(resultArray).boxed().collect(Collectors.toList());
-						setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.YES);
-					} catch (SQLFeatureNotSupportedException | UnsupportedOperationException | AbstractMethodError e) {
-						setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.NO);
-						int[] resultArray = preparedStatement.executeBatch();
-						result = Arrays.stream(resultArray).asLongStream().boxed().collect(Collectors.toList());
-					}
+			} else {
+				// If the driver doesn't support executeLargeBatch, then UnsupportedOperationException is thrown.
+				try {
+					long[] resultArray = preparedStatement.executeLargeBatch();
+					result = Arrays.stream(resultArray).boxed().collect(Collectors.toList());
+					setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.YES);
+				} catch (SQLFeatureNotSupportedException | UnsupportedOperationException | AbstractMethodError e) {
+					setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.NO);
+					int[] resultArray = preparedStatement.executeBatch();
+					result = Arrays.stream(resultArray).asLongStream().boxed().collect(Collectors.toList());
 				}
+			}
 
 			resultHolder.value = result;
 			Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);

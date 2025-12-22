@@ -42,6 +42,9 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.OptionalDouble;
+import java.util.OptionalInt;
+import java.util.OptionalLong;
 import java.util.TimeZone;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -93,27 +96,28 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 		// Unwrap typed parameters if needed
 		Object rawParameter = (parameter instanceof TypedParameter typedParameter) ? typedParameter.getValue().orElse(null) : parameter;
+		Object unwrappedParameter = unwrapOptionalValue(rawParameter);
+		Optional<Integer> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
+
+		if (unwrappedParameter == null) {
+			if (sqlTypeOptional.isPresent())
+				preparedStatement.setNull(parameterIndex, sqlTypeOptional.get());
+			else
+				preparedStatement.setNull(parameterIndex, Types.NULL);
+
+			return;
+		}
+
 		TargetType explicitTargetType =
 				(parameter instanceof TypedParameter typedParameter)
 						? TargetType.of(typedParameter.getExplicitType())
-						: TargetType.of(rawParameter.getClass());
-
-		Optional<Integer> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
-
-			if (rawParameter == null) {
-				if (sqlTypeOptional.isPresent())
-					preparedStatement.setNull(parameterIndex, sqlTypeOptional.get());
-				else
-					preparedStatement.setNull(parameterIndex, Types.NULL);
-
-				return;
-			}
+						: TargetType.of(unwrappedParameter.getClass());
 
 		Integer sqlType = sqlTypeOptional.orElse(Types.OTHER);
 
-		// Try custom binders first (if they exist) on the raw value
+		// Try custom binders first (if they exist) on the unwrapped value
 		if (!getCustomParameterBinders().isEmpty()
-				&& tryCustomBinders(statementContext, preparedStatement, parameterIndex, rawParameter, sqlType, explicitTargetType))
+				&& tryCustomBinders(statementContext, preparedStatement, parameterIndex, unwrappedParameter, sqlType, explicitTargetType))
 			return;
 
 		// If this parameter was explicitly wrapped as a TypedParameter (e.g., Parameters.listOf/setOf/mapOf/arrayOf(Class, ...))
@@ -125,7 +129,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 							+ "or use a concrete parameter type supported by the binder/driver (e.g. Parameters.sqlArrayOf(...) or Parameters.json(...)).",
 					typedParameter.getExplicitType(), typedParameter.getExplicitType()));
 
-		Object normalizedParameter = normalizeParameter(statementContext, rawParameter);
+		Object normalizedParameter = normalizeParameter(statementContext, unwrappedParameter);
 
 		if (normalizedParameter instanceof LocalDate localDate) {
 			if (!trySetObject(preparedStatement, parameterIndex, localDate, Types.DATE))
@@ -264,7 +268,8 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 		for (int j = 0; j < elements.length; j++) {
 			Object element = elements[j];
-			normalizedElements[j] = element == null ? null : normalizeParameter(statementContext, element);
+			Object unwrappedElement = unwrapOptionalValue(element);
+			normalizedElements[j] = unwrappedElement == null ? null : normalizeParameter(statementContext, unwrappedElement);
 		}
 
 		return normalizedElements;
@@ -495,6 +500,23 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		return parameter;
+	}
+
+	@Nullable
+	private static Object unwrapOptionalValue(@Nullable Object value) {
+		if (value == null)
+			return null;
+
+		if (value instanceof Optional<?> optional)
+			return optional.orElse(null);
+		if (value instanceof OptionalInt optionalInt)
+			return optionalInt.isPresent() ? optionalInt.getAsInt() : null;
+		if (value instanceof OptionalLong optionalLong)
+			return optionalLong.isPresent() ? optionalLong.getAsLong() : null;
+		if (value instanceof OptionalDouble optionalDouble)
+			return optionalDouble.isPresent() ? optionalDouble.getAsDouble() : null;
+
+		return value;
 	}
 
 	@Nonnull

@@ -240,6 +240,29 @@ public class DatabaseTests {
 	}
 
 	@Test
+	public void testQueryBindOptionalUnwrapsValue() {
+		Database db = Database.withDataSource(createInMemoryDataSource("testQueryBindOptionalUnwrapsValue")).build();
+		Optional<String> email = Optional.of("admin@soklet.com");
+
+		Optional<String> result = db.query("SELECT :email FROM (VALUES (0)) AS t(x)")
+				.bind("email", email)
+				.fetchObject(String.class);
+
+		Assertions.assertEquals(email, result);
+	}
+
+	@Test
+	public void testQueryBindOptionalEmptyBindsNull() {
+		Database db = Database.withDataSource(createInMemoryDataSource("testQueryBindOptionalEmptyBindsNull")).build();
+
+		Optional<String> result = db.query("SELECT :email FROM (VALUES (0)) AS t(x)")
+				.bind("email", Optional.empty())
+				.fetchObject(String.class);
+
+		Assertions.assertTrue(result.isEmpty(), "Expected empty result");
+	}
+
+	@Test
 	public void testQueryInListExpandsParameter() {
 		Database db = Database.withDataSource(createInMemoryDataSource("testQueryInListExpandsParameter")).build();
 
