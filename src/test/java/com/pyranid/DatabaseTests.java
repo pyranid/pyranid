@@ -52,6 +52,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TimeZone;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -232,7 +233,8 @@ public class DatabaseTests {
 				       `col:ignored` AS bq,
 				       [col:ignored] AS sq,
 				       $$:ignored$$ AS dq1,
-				       $tag$:ignored$tag$ AS dq2
+				       $tag$:ignored$tag$ AS dq2,
+				       E'it\\'s :ignored' AS es
 				FROM t -- :ignored
 				WHERE id = :id AND name = :name /* :ignored */
 				AND type = :type::VARCHAR
@@ -2503,6 +2505,10 @@ public class DatabaseTests {
 		Assertions.assertThrows(DatabaseException.class, () ->
 				db.query("SELECT 'Nope/Nowhere' FROM (VALUES (0)) AS t(x)")
 						.fetchObject(ZoneId.class));
+
+		Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("SELECT 'Not/AZone' FROM (VALUES (0)) AS t(x)")
+						.fetchObject(TimeZone.class));
 	}
 
 	@SuppressWarnings("unchecked")

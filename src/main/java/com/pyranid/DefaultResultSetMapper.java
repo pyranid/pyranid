@@ -816,7 +816,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			}
 		} else if (resultClass.isAssignableFrom(TimeZone.class)) {
 			String tz = resultSet.getString(1);
-			if (tz != null) value = TimeZone.getTimeZone(tz);
+			if (tz != null) value = timeZoneFromId(tz);
 		} else if (resultClass.isAssignableFrom(Locale.class)) {
 			String locale = resultSet.getString(1);
 			if (locale != null) value = Locale.forLanguageTag(locale);
@@ -1291,7 +1291,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				throw new DatabaseException(format("Unable to convert value '%s' to ZoneId", resultSetValue), e);
 			}
 		} else if (TimeZone.class.isAssignableFrom(targetType)) {
-			return Optional.ofNullable(TimeZone.getTimeZone(resultSetValue.toString()));
+			return Optional.of(timeZoneFromId(resultSetValue.toString()));
 		} else if (Locale.class.isAssignableFrom(targetType)) {
 			return Optional.ofNullable(Locale.forLanguageTag(resultSetValue.toString()));
 		} else if (Currency.class.isAssignableFrom(targetType)) {
@@ -1375,6 +1375,32 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		} catch (IllegalArgumentException | NullPointerException e) {
 			throw new DatabaseException(format("The value '%s' is not present in enum %s", objectAsString, enumClass), e);
 		}
+	}
+
+	@Nonnull
+	private static TimeZone timeZoneFromId(@Nonnull String zoneId) {
+		requireNonNull(zoneId);
+
+		String trimmed = zoneId.trim();
+		TimeZone timeZone = TimeZone.getTimeZone(trimmed);
+
+		if ("GMT".equals(timeZone.getID())) {
+			String upper = trimmed.toUpperCase(Locale.ROOT);
+
+			if (!upper.equals("GMT") && !upper.equals("UTC") && !upper.equals("UT")) {
+				if (upper.startsWith("GMT") || upper.startsWith("UTC") || upper.startsWith("UT")) {
+					try {
+						ZoneId.of(upper);
+					} catch (DateTimeException e) {
+						throw new DatabaseException(format("Unable to convert value '%s' to TimeZone", zoneId), e);
+					}
+				} else {
+					throw new DatabaseException(format("Unable to convert value '%s' to TimeZone", zoneId));
+				}
+			}
+		}
+
+		return timeZone;
 	}
 
 	/**

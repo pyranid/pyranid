@@ -758,6 +758,7 @@ public final class Database {
 			Set<String> distinctParameterNames = new HashSet<>();
 
 			boolean inSingleQuote = false;
+			boolean inSingleQuoteEscapesBackslash = false;
 			boolean inDoubleQuote = false;
 			boolean inBacktickQuote = false;
 			boolean inBracketQuote = false;
@@ -805,23 +806,30 @@ public final class Database {
 					continue;
 				}
 
-				if (inSingleQuote) {
-					sqlFragment.append(c);
+			if (inSingleQuote) {
+				sqlFragment.append(c);
 
-					if (c == '\'') {
-						// Escaped quote: ''
-						if (i + 1 < sql.length() && sql.charAt(i + 1) == '\'') {
-							sqlFragment.append('\'');
-							i += 2;
-							continue;
-						}
-
-						inSingleQuote = false;
-					}
-
-					++i;
+				if (inSingleQuoteEscapesBackslash && c == '\\' && i + 1 < sql.length()) {
+					sqlFragment.append(sql.charAt(i + 1));
+					i += 2;
 					continue;
 				}
+
+				if (c == '\'') {
+					// Escaped quote: ''
+					if (i + 1 < sql.length() && sql.charAt(i + 1) == '\'') {
+						sqlFragment.append('\'');
+						i += 2;
+						continue;
+					}
+
+					inSingleQuote = false;
+					inSingleQuoteEscapesBackslash = false;
+				}
+
+				++i;
+				continue;
+			}
 
 				if (inDoubleQuote) {
 					sqlFragment.append(c);
@@ -876,12 +884,21 @@ public final class Database {
 					continue;
 				}
 
-				if (c == '\'') {
-					inSingleQuote = true;
-					sqlFragment.append(c);
-					++i;
-					continue;
-				}
+			if ((c == 'E' || c == 'e') && i + 1 < sql.length() && sql.charAt(i + 1) == '\'') {
+				inSingleQuote = true;
+				inSingleQuoteEscapesBackslash = true;
+				sqlFragment.append(c).append('\'');
+				i += 2;
+				continue;
+			}
+
+			if (c == '\'') {
+				inSingleQuote = true;
+				inSingleQuoteEscapesBackslash = false;
+				sqlFragment.append(c);
+				++i;
+				continue;
+			}
 
 				if (c == '"') {
 					inDoubleQuote = true;

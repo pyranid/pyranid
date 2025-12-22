@@ -94,24 +94,29 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		requireNonNull(parameterIndex);
 		requireNonNull(parameter);
 
+		TargetType explicitTargetType = (parameter instanceof TypedParameter typedParameter)
+				? TargetType.of(typedParameter.getExplicitType())
+				: null;
+
 		// Unwrap typed parameters if needed
 		Object rawParameter = (parameter instanceof TypedParameter typedParameter) ? typedParameter.getValue().orElse(null) : parameter;
 		Object unwrappedParameter = unwrapOptionalValue(rawParameter);
 		Optional<Integer> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
 
 		if (unwrappedParameter == null) {
-			if (sqlTypeOptional.isPresent())
-				preparedStatement.setNull(parameterIndex, sqlTypeOptional.get());
-			else
-				preparedStatement.setNull(parameterIndex, Types.NULL);
+			Integer sqlType = sqlTypeOptional.orElse(null);
+			if (sqlType == null || sqlType == Types.NULL) {
+				sqlType = explicitTargetType == null
+						? Types.NULL
+						: defaultNullSqlTypeForTargetType(explicitTargetType);
+			}
+			preparedStatement.setNull(parameterIndex, sqlType);
 
 			return;
 		}
 
-		TargetType explicitTargetType =
-				(parameter instanceof TypedParameter typedParameter)
-						? TargetType.of(typedParameter.getExplicitType())
-						: TargetType.of(unwrappedParameter.getClass());
+		if (explicitTargetType == null)
+			explicitTargetType = TargetType.of(unwrappedParameter.getClass());
 
 		Integer sqlType = sqlTypeOptional.orElse(Types.OTHER);
 
@@ -527,6 +532,17 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			return optionalDouble.isPresent() ? optionalDouble.getAsDouble() : null;
 
 		return value;
+	}
+
+	private static int defaultNullSqlTypeForTargetType(@Nonnull TargetType targetType) {
+		requireNonNull(targetType);
+
+		if (targetType.isArray() || targetType.isList() || targetType.isSet())
+			return Types.ARRAY;
+		if (targetType.isMap())
+			return Types.OTHER;
+
+		return Types.NULL;
 	}
 
 	@Nonnull
