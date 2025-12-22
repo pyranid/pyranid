@@ -28,6 +28,7 @@ import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.sql.Connection;
@@ -1809,6 +1810,62 @@ public class DatabaseTests {
 	}
 
 	@Test
+	public void testNullSqlArrayParameter_bindsTypedArrayNull() throws SQLException {
+		PreparedStatementBinder binder = PreparedStatementBinder.withDefaultConfiguration();
+		StatementContext<?> ctx = statementContextFor(DatabaseType.GENERIC);
+		NullBindingCapture capture = new NullBindingCapture();
+		PreparedStatement preparedStatement = preparedStatementCapturingNull(capture);
+
+		binder.bindParameter(ctx, preparedStatement, 1, Parameters.sqlArrayOf("text", (List<String>) null));
+
+		Assertions.assertEquals(1, capture.setNullCalls, "Expected one setNull call");
+		Assertions.assertEquals(Integer.valueOf(Types.ARRAY), capture.sqlType, "Expected Types.ARRAY for SQL ARRAY null binding");
+		Assertions.assertEquals("text", capture.typeName, "Expected ARRAY base type name to be used");
+	}
+
+	@Test
+	public void testNullJsonParameter_postgres_bindsJsonbNull() throws SQLException {
+		PreparedStatementBinder binder = PreparedStatementBinder.withDefaultConfiguration();
+		StatementContext<?> ctx = statementContextFor(DatabaseType.POSTGRESQL);
+		NullBindingCapture capture = new NullBindingCapture();
+		PreparedStatement preparedStatement = preparedStatementCapturingNull(capture);
+
+		binder.bindParameter(ctx, preparedStatement, 1, Parameters.json(null));
+
+		Assertions.assertEquals(1, capture.setNullCalls, "Expected one setNull call");
+		Assertions.assertEquals(Integer.valueOf(Types.OTHER), capture.sqlType, "Expected Types.OTHER for JSONB null binding");
+		Assertions.assertEquals("jsonb", capture.typeName, "Expected jsonb type name for default JSON binding");
+	}
+
+	@Test
+	public void testNullJsonParameter_postgres_textBindsJsonNull() throws SQLException {
+		PreparedStatementBinder binder = PreparedStatementBinder.withDefaultConfiguration();
+		StatementContext<?> ctx = statementContextFor(DatabaseType.POSTGRESQL);
+		NullBindingCapture capture = new NullBindingCapture();
+		PreparedStatement preparedStatement = preparedStatementCapturingNull(capture);
+
+		binder.bindParameter(ctx, preparedStatement, 1, Parameters.json(null, BindingPreference.TEXT));
+
+		Assertions.assertEquals(1, capture.setNullCalls, "Expected one setNull call");
+		Assertions.assertEquals(Integer.valueOf(Types.OTHER), capture.sqlType, "Expected Types.OTHER for JSON null binding");
+		Assertions.assertEquals("json", capture.typeName, "Expected json type name for text JSON binding");
+	}
+
+	@Test
+	public void testNullVectorParameter_postgres_bindsVectorNull() throws SQLException {
+		PreparedStatementBinder binder = PreparedStatementBinder.withDefaultConfiguration();
+		StatementContext<?> ctx = statementContextFor(DatabaseType.POSTGRESQL);
+		NullBindingCapture capture = new NullBindingCapture();
+		PreparedStatement preparedStatement = preparedStatementCapturingNull(capture);
+
+		binder.bindParameter(ctx, preparedStatement, 1, Parameters.vectorOfDoubles((double[]) null));
+
+		Assertions.assertEquals(1, capture.setNullCalls, "Expected one setNull call");
+		Assertions.assertEquals(Integer.valueOf(Types.OTHER), capture.sqlType, "Expected Types.OTHER for vector null binding");
+		Assertions.assertEquals("vector", capture.typeName, "Expected vector type name for null binding");
+	}
+
+	@Test
 	public void testOffsetTime_bindsAsTimeWithZoneOrString_noException() {
 		Database db = Database
 				.withDataSource(createInMemoryDataSource("it_psb_offsettime"))
@@ -2581,6 +2638,73 @@ public class DatabaseTests {
 		} catch (Exception e) {
 			throw new RuntimeException("Unable to parse named parameters for test", e);
 		}
+	}
+
+	@Nonnull
+	private StatementContext<?> statementContextFor(@Nonnull DatabaseType databaseType) {
+		requireNonNull(databaseType);
+
+		Database db = Database.withDataSource(createInMemoryDataSource("psb_null_binding_" + databaseType.name().toLowerCase(Locale.ROOT)))
+				.databaseType(databaseType)
+				.build();
+
+		return StatementContext.with(Statement.of("psb_null_binding", "SELECT ?"), db).build();
+	}
+
+	@Nonnull
+	private PreparedStatement preparedStatementCapturingNull(@Nonnull NullBindingCapture capture) {
+		requireNonNull(capture);
+
+		return (PreparedStatement) Proxy.newProxyInstance(
+				PreparedStatement.class.getClassLoader(),
+				new Class<?>[]{PreparedStatement.class},
+				(proxy, method, args) -> {
+					String name = method.getName();
+					if ("setNull".equals(name)) {
+						capture.setNullCalls++;
+						capture.sqlType = (Integer) args[1];
+						capture.typeName = args.length == 3 ? (String) args[2] : null;
+						return null;
+					}
+					if ("getParameterMetaData".equals(name))
+						return null;
+					if ("toString".equals(name))
+						return "PreparedStatement<null-capture>";
+					return defaultValue(method.getReturnType());
+				});
+	}
+
+	@Nullable
+	private static Object defaultValue(@Nonnull Class<?> returnType) {
+		requireNonNull(returnType);
+
+		if (!returnType.isPrimitive())
+			return null;
+		if (returnType == boolean.class)
+			return false;
+		if (returnType == byte.class)
+			return (byte) 0;
+		if (returnType == short.class)
+			return (short) 0;
+		if (returnType == int.class)
+			return 0;
+		if (returnType == long.class)
+			return 0L;
+		if (returnType == float.class)
+			return 0.0f;
+		if (returnType == double.class)
+			return 0.0d;
+		if (returnType == char.class)
+			return '\0';
+		return null;
+	}
+
+	private static final class NullBindingCapture {
+		private int setNullCalls;
+		@Nullable
+		private Integer sqlType;
+		@Nullable
+		private String typeName;
 	}
 
 	protected void createTestSchema(@Nonnull Database database) {

@@ -215,7 +215,8 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			Object[] elements = sqlArrayParameter.getElements().orElse(null);
 
 			if (elements == null) {
-				preparedStatement.setNull(parameterIndex, Types.NULL);
+				setNullWithFallback(preparedStatement, parameterIndex, Types.ARRAY, sqlArrayParameter.getBaseTypeName(),
+						sqlTypeOptional.orElse(null));
 			} else {
 				Object[] normalizedElements = normalizedArrayElements(statementContext, elements);
 				Array array = preparedStatement.getConnection().createArrayOf(sqlArrayParameter.getBaseTypeName(), normalizedElements);
@@ -243,7 +244,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			double[] elements = vectorParameter.getElements().orElse(null);
 
 			if (elements == null) {
-				preparedStatement.setNull(parameterIndex, Types.NULL);
+				setNullWithFallback(preparedStatement, parameterIndex, Types.OTHER, "vector", sqlTypeOptional.orElse(null));
 			} else {
 				org.postgresql.util.PGobject pg = new org.postgresql.util.PGobject();
 				pg.setType("vector");
@@ -258,7 +259,12 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			String json = jsonParameter.getJson().orElse(null);
 
 			if (json == null) {
-				preparedStatement.setNull(parameterIndex, Types.NULL);
+				if (statementContext.getDatabaseType() == DatabaseType.POSTGRESQL) {
+					String typeName = jsonParameter.getBindingPreference() == BindingPreference.TEXT ? "json" : "jsonb";
+					setNullWithFallback(preparedStatement, parameterIndex, Types.OTHER, typeName, sqlTypeOptional.orElse(null));
+				} else {
+					setNullWithFallback(preparedStatement, parameterIndex, Types.LONGVARCHAR, null, sqlTypeOptional.orElse(null));
+				}
 			} else {
 				// For now, only special handling for PostgreSQL.
 				// Later, we can add more handling for other DB types.
@@ -330,7 +336,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 	@Nonnull
 	protected Optional<Integer> determineParameterSqlType(@Nonnull PreparedStatement preparedStatement,
-																												@Nonnull Integer parameterIndex) throws SQLException {
+																													@Nonnull Integer parameterIndex) throws SQLException {
 		requireNonNull(preparedStatement);
 		requireNonNull(parameterIndex);
 
@@ -344,6 +350,55 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
 			return Optional.empty();
 		}
+	}
+
+	private static void setNullWithFallback(@Nonnull PreparedStatement preparedStatement,
+																					@Nonnull Integer parameterIndex,
+																					@Nonnull Integer primarySqlType,
+																					@Nullable String typeName,
+																					@Nullable Integer fallbackSqlType) throws SQLException {
+		requireNonNull(preparedStatement);
+		requireNonNull(parameterIndex);
+		requireNonNull(primarySqlType);
+
+		SQLException lastException = null;
+
+		if (typeName != null) {
+			try {
+				preparedStatement.setNull(parameterIndex, primarySqlType, typeName);
+				return;
+			} catch (SQLException e) {
+				lastException = e;
+			}
+		}
+
+		try {
+			preparedStatement.setNull(parameterIndex, primarySqlType);
+			return;
+		} catch (SQLException e) {
+			lastException = e;
+		}
+
+		if (fallbackSqlType != null && fallbackSqlType != Types.NULL && !fallbackSqlType.equals(primarySqlType)) {
+			try {
+				preparedStatement.setNull(parameterIndex, fallbackSqlType);
+				return;
+			} catch (SQLException e) {
+				lastException = e;
+			}
+		}
+
+		if (primarySqlType != Types.NULL) {
+			try {
+				preparedStatement.setNull(parameterIndex, Types.NULL);
+				return;
+			} catch (SQLException e) {
+				lastException = e;
+			}
+		}
+
+		if (lastException != null)
+			throw lastException;
 	}
 
 	/**
