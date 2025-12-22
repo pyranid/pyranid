@@ -44,6 +44,7 @@ import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
@@ -439,6 +440,28 @@ public final class Database {
 			return optionalDouble.isPresent() ? optionalDouble.getAsDouble() : null;
 
 		return value;
+	}
+
+	@Nullable
+	private static Throwable closeStatementContextResources(@Nonnull StatementContext<?> statementContext,
+																												 @Nullable Throwable cleanupFailure) {
+		requireNonNull(statementContext);
+
+		Queue<AutoCloseable> cleanupOperations = statementContext.getCleanupOperations();
+		AutoCloseable cleanupOperation;
+
+		while ((cleanupOperation = cleanupOperations.poll()) != null) {
+			try {
+				cleanupOperation.close();
+			} catch (Throwable cleanupException) {
+				if (cleanupFailure == null)
+					cleanupFailure = cleanupException;
+				else
+					cleanupFailure.addSuppressed(cleanupException);
+			}
+		}
+
+		return cleanupFailure;
 	}
 
 	/**
@@ -1581,6 +1604,8 @@ public final class Database {
 			Throwable cleanupFailure = null;
 
 			try {
+				cleanupFailure = closeStatementContextResources(statementContext, cleanupFailure);
+
 				// If this was a single-shot operation (not in a transaction), close the connection
 				if (connection != null && !transaction.isPresent()) {
 					try {

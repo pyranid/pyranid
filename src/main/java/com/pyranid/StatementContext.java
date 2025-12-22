@@ -27,7 +27,9 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Queue;
 import java.util.stream.Collectors;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
@@ -50,6 +52,8 @@ public final class StatementContext<T> {
 	private final DatabaseType databaseType;
 	@Nonnull
 	private final ZoneId timeZone;
+	@Nonnull
+	private final Queue<AutoCloseable> cleanupOperations;
 
 	protected StatementContext(@Nonnull Builder builder) {
 		requireNonNull(builder);
@@ -61,6 +65,7 @@ public final class StatementContext<T> {
 		this.resultSetRowType = builder.resultSetRowType;
 		this.databaseType = builder.databaseType;
 		this.timeZone = builder.timeZone;
+		this.cleanupOperations = new ConcurrentLinkedQueue<>();
 	}
 
 	@Override
@@ -128,6 +133,16 @@ public final class StatementContext<T> {
 	@Nonnull
 	public ZoneId getTimeZone() {
 		return this.timeZone;
+	}
+
+	void addCleanupOperation(@Nonnull AutoCloseable cleanupOperation) {
+		requireNonNull(cleanupOperation);
+		this.cleanupOperations.add(cleanupOperation);
+	}
+
+	@Nonnull
+	Queue<AutoCloseable> getCleanupOperations() {
+		return this.cleanupOperations;
 	}
 
 	@Nonnull

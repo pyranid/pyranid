@@ -208,7 +208,17 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			} else {
 				Object[] normalizedElements = normalizedArrayElements(statementContext, elements);
 				Array array = preparedStatement.getConnection().createArrayOf(sqlArrayParameter.getBaseTypeName(), normalizedElements);
-				preparedStatement.setArray(parameterIndex, array);
+				try {
+					preparedStatement.setArray(parameterIndex, array);
+					statementContext.addCleanupOperation(array::free);
+				} catch (SQLException e) {
+					try {
+						array.free();
+					} catch (SQLException freeException) {
+						e.addSuppressed(freeException);
+					}
+					throw e;
+				}
 			}
 
 			return;

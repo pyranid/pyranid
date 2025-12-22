@@ -41,6 +41,7 @@ import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Timestamp;
 import java.sql.Types;
+import java.time.DateTimeException;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -764,7 +765,13 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				value = extractEnumValue(resultClass, raw);
 		} else if (resultClass.isAssignableFrom(UUID.class)) {
 			String string = resultSet.getString(1);
-			if (string != null) value = UUID.fromString(string);
+			if (string != null) {
+				try {
+					value = UUID.fromString(string);
+				} catch (IllegalArgumentException e) {
+					throw new DatabaseException(format("Unable to convert value '%s' to UUID", string), e);
+				}
+			}
 		} else if (resultClass.isAssignableFrom(BigDecimal.class)) {
 			value = resultSet.getBigDecimal(1);
 		} else if (resultClass.isAssignableFrom(BigInteger.class)) {
@@ -800,7 +807,13 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			value = (ld == null) ? null : java.sql.Date.valueOf(ld);
 		} else if (resultClass.isAssignableFrom(ZoneId.class)) {
 			String zoneId = resultSet.getString(1);
-			if (zoneId != null) value = ZoneId.of(zoneId);
+			if (zoneId != null) {
+				try {
+					value = ZoneId.of(zoneId);
+				} catch (DateTimeException e) {
+					throw new DatabaseException(format("Unable to convert value '%s' to ZoneId", zoneId), e);
+				}
+			}
 		} else if (resultClass.isAssignableFrom(TimeZone.class)) {
 			String tz = resultSet.getString(1);
 			if (tz != null) value = TimeZone.getTimeZone(tz);
@@ -809,7 +822,13 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			if (locale != null) value = Locale.forLanguageTag(locale);
 		} else if (resultClass.isAssignableFrom(Currency.class)) {
 			String currency = resultSet.getString(1);
-			if (currency != null) value = Currency.getInstance(currency);
+			if (currency != null) {
+				try {
+					value = Currency.getInstance(currency);
+				} catch (IllegalArgumentException e) {
+					throw new DatabaseException(format("Unable to convert value '%s' to Currency", currency), e);
+				}
+			}
 		} else {
 			standardType = false;
 		}
@@ -1260,15 +1279,27 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		if (UUID.class.isAssignableFrom(targetType)) {
-			return Optional.ofNullable(UUID.fromString(resultSetValue.toString()));
+			try {
+				return Optional.ofNullable(UUID.fromString(resultSetValue.toString()));
+			} catch (IllegalArgumentException e) {
+				throw new DatabaseException(format("Unable to convert value '%s' to UUID", resultSetValue), e);
+			}
 		} else if (ZoneId.class.isAssignableFrom(targetType)) {
-			return Optional.ofNullable(ZoneId.of(resultSetValue.toString()));
+			try {
+				return Optional.ofNullable(ZoneId.of(resultSetValue.toString()));
+			} catch (DateTimeException e) {
+				throw new DatabaseException(format("Unable to convert value '%s' to ZoneId", resultSetValue), e);
+			}
 		} else if (TimeZone.class.isAssignableFrom(targetType)) {
 			return Optional.ofNullable(TimeZone.getTimeZone(resultSetValue.toString()));
 		} else if (Locale.class.isAssignableFrom(targetType)) {
 			return Optional.ofNullable(Locale.forLanguageTag(resultSetValue.toString()));
 		} else if (Currency.class.isAssignableFrom(targetType)) {
-			return Optional.ofNullable(Currency.getInstance(resultSetValue.toString()));
+			try {
+				return Optional.ofNullable(Currency.getInstance(resultSetValue.toString()));
+			} catch (IllegalArgumentException e) {
+				throw new DatabaseException(format("Unable to convert value '%s' to Currency", resultSetValue), e);
+			}
 		} else if (targetType.isEnum()) {
 			return Optional.ofNullable(extractEnumValue(targetType, resultSetValue));
 		} else if ("org.postgresql.util.PGobject".equals(resultSetValue.getClass().getName())) {

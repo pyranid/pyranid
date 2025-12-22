@@ -26,6 +26,8 @@ import javax.annotation.Nullable;
 import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.sql.Connection;
@@ -220,6 +222,25 @@ public class DatabaseTests {
 
 		Assertions.assertDoesNotThrow(() ->
 				db.query("SELECT '?' FROM (VALUES (0)) AS t(x)"));
+	}
+
+	@Test
+	public void testNamedParameterParsingSkipsQuotesCommentsAndDollarQuotes() {
+		String sql = """
+				SELECT ':ignored' AS s,
+				       "col:ignored" AS dq,
+				       `col:ignored` AS bq,
+				       [col:ignored] AS sq,
+				       $$:ignored$$ AS dq1,
+				       $tag$:ignored$tag$ AS dq2
+				FROM t -- :ignored
+				WHERE id = :id AND name = :name /* :ignored */
+				AND type = :type::VARCHAR
+				""";
+
+		List<String> parameterNames = parseNamedParameters(sql);
+
+		Assertions.assertEquals(List.of("id", "name", "type"), parameterNames);
 	}
 
 	@Test
@@ -2464,6 +2485,40 @@ public class DatabaseTests {
 			Assertions.fail("Expected DatabaseException for TypedParameter without CustomParameterBinder");
 		} catch (DatabaseException e) {
 			Assertions.assertTrue(e.getMessage() != null && e.getMessage().contains("CustomParameterBinder"), "Message should mention CustomParameterBinder");
+		}
+	}
+
+	@Test
+	public void testInvalidStandardTypeConversionsThrowDatabaseException() {
+		Database db = Database.withDataSource(createInMemoryDataSource("invalid_standard_type_conversions")).build();
+
+		Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("SELECT 'not-a-uuid' FROM (VALUES (0)) AS t(x)")
+						.fetchObject(UUID.class));
+
+		Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("SELECT 'NOPE' FROM (VALUES (0)) AS t(x)")
+						.fetchObject(Currency.class));
+
+		Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("SELECT 'Nope/Nowhere' FROM (VALUES (0)) AS t(x)")
+						.fetchObject(ZoneId.class));
+	}
+
+	@SuppressWarnings("unchecked")
+	private static List<String> parseNamedParameters(@Nonnull String sql) {
+		requireNonNull(sql);
+
+		try {
+			Class<?> defaultQueryClass = Class.forName("com.pyranid.Database$DefaultQuery");
+			Method parseMethod = defaultQueryClass.getDeclaredMethod("parseNamedParameterSql", String.class);
+			parseMethod.setAccessible(true);
+			Object parsedSql = parseMethod.invoke(null, sql);
+			Field parameterNamesField = parsedSql.getClass().getDeclaredField("parameterNames");
+			parameterNamesField.setAccessible(true);
+			return (List<String>) parameterNamesField.get(parsedSql);
+		} catch (Exception e) {
+			throw new RuntimeException("Unable to parse named parameters for test", e);
 		}
 	}
 
