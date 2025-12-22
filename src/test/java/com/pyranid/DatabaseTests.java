@@ -1187,6 +1187,56 @@ public class DatabaseTests {
 	}
 
 	@Test
+	public void testStatementLoggerFailureDoesNotRollbackTransaction() {
+		AtomicBoolean shouldThrow = new AtomicBoolean(false);
+		Database db = Database.withDataSource(createInMemoryDataSource("logger_no_rollback"))
+				.statementLogger(statementLog -> {
+					if (shouldThrow.get())
+						throw new RuntimeException("logger boom");
+				})
+				.build();
+
+		TestQueries.execute(db, "CREATE TABLE t (id INT)");
+
+		shouldThrow.set(true);
+		Assertions.assertThrows(RuntimeException.class, () ->
+				db.transaction(() -> TestQueries.execute(db, "INSERT INTO t VALUES (1)")));
+
+		shouldThrow.set(false);
+		Long count = db.query("SELECT COUNT(*) FROM t")
+				.fetchObject(Long.class)
+				.orElse(0L);
+
+		Assertions.assertEquals(1L, count, "Transaction should commit even if statement logger fails");
+	}
+
+	@Test
+	public void testQueryRejectsDuplicateColumnLabels() {
+		Database db = Database.withDataSource(createInMemoryDataSource("dup_column_labels")).build();
+
+		TestQueries.execute(db, "CREATE TABLE t (id INT, name VARCHAR(255))");
+		TestQueries.execute(db, "INSERT INTO t VALUES (1, 'alpha')");
+
+		Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("SELECT name AS name, name AS name FROM t")
+						.fetchList(EmployeeClass.class));
+	}
+
+	@Test
+	public void testQueryRejectsDuplicateColumnLabels_withoutPlanCaching() {
+		Database db = Database.withDataSource(createInMemoryDataSource("dup_column_labels_no_plan"))
+				.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(false).build())
+				.build();
+
+		TestQueries.execute(db, "CREATE TABLE t (id INT, name VARCHAR(255))");
+		TestQueries.execute(db, "INSERT INTO t VALUES (1, 'alpha')");
+
+		Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("SELECT name AS name, name AS name FROM t")
+						.fetchList(EmployeeClass.class));
+	}
+
+	@Test
 	public void testSqlArrayParameter_insertAndReadBack() {
 		Database db = Database.withDataSource(createInMemoryDataSource("it_array_param")).build();
 

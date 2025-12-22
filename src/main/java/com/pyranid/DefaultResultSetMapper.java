@@ -1028,9 +1028,19 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		int columnCount = resultSetMetaData.getColumnCount();
 		Map<String, Object> columnLabelsToValues = new HashMap<>(columnCount);
+		Map<String, String> normalizedLabelsToRawLabels = new HashMap<>(columnCount);
 
 		for (int i = 1; i <= columnCount; i++) {
-			String label = normalizeColumnLabel(resultSetMetaData.getColumnLabel(i));
+			String rawLabel = resultSetMetaData.getColumnLabel(i);
+			String label = normalizeColumnLabel(rawLabel);
+			String previousRawLabel = normalizedLabelsToRawLabels.putIfAbsent(label, rawLabel);
+
+			if (previousRawLabel != null) {
+				throw new DatabaseException(format(
+						"Duplicate column label '%s' (normalized from '%s' and '%s'); use column aliases to disambiguate.",
+						label, previousRawLabel, rawLabel));
+			}
+
 			Object resultSetValue = extractColumnValue(resultSetMetaData, statementContext, resultSet, i).orElse(null);
 
 			columnLabelsToValues.put(label, resultSetValue);
@@ -1890,8 +1900,17 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		// For each column, bind ALL matching properties (fan-out)
 		List<ColumnBinding> bindings = new ArrayList<>();
 		boolean hasFanOut = false;
+		Map<String, String> normalizedLabelsToRawLabels = new HashMap<>(cols);
 		for (int i = 1; i <= cols; i++) {
-			String labelNorm = normalizeColumnLabel(resultSetMetaData.getColumnLabel(i));
+			String rawLabel = resultSetMetaData.getColumnLabel(i);
+			String labelNorm = normalizeColumnLabel(rawLabel);
+			String previousRawLabel = normalizedLabelsToRawLabels.putIfAbsent(labelNorm, rawLabel);
+
+			if (previousRawLabel != null) {
+				throw new DatabaseException(format(
+						"Duplicate column label '%s' (normalized from '%s' and '%s'); use column aliases to disambiguate.",
+						labelNorm, previousRawLabel, rawLabel));
+			}
 			ColumnReader reader = readers[i];
 
 			// Find all properties that claim this label

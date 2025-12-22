@@ -1092,16 +1092,16 @@ public final class Database {
 				resultHolder.value = preparedStatement.executeLargeUpdate();
 			} else if (executeLargeUpdateSupported == DatabaseOperationSupportStatus.NO) {
 				resultHolder.value = (long) preparedStatement.executeUpdate();
-			} else {
-				// If the driver doesn't support executeLargeUpdate, then UnsupportedOperationException is thrown.
-				try {
-					resultHolder.value = preparedStatement.executeLargeUpdate();
-					setExecuteLargeUpdateSupported(DatabaseOperationSupportStatus.YES);
-				} catch (UnsupportedOperationException e) {
-					setExecuteLargeUpdateSupported(DatabaseOperationSupportStatus.NO);
-					resultHolder.value = (long) preparedStatement.executeUpdate();
+				} else {
+					// If the driver doesn't support executeLargeUpdate, then UnsupportedOperationException is thrown.
+					try {
+						resultHolder.value = preparedStatement.executeLargeUpdate();
+						setExecuteLargeUpdateSupported(DatabaseOperationSupportStatus.YES);
+					} catch (SQLFeatureNotSupportedException | UnsupportedOperationException | AbstractMethodError e) {
+						setExecuteLargeUpdateSupported(DatabaseOperationSupportStatus.NO);
+						resultHolder.value = (long) preparedStatement.executeUpdate();
+					}
 				}
-			}
 
 			Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);
 			return new DatabaseOperationResult(executionDuration, null);
@@ -1261,18 +1261,18 @@ public final class Database {
 			} else if (executeLargeBatchSupported == DatabaseOperationSupportStatus.NO) {
 				int[] resultArray = preparedStatement.executeBatch();
 				result = Arrays.stream(resultArray).asLongStream().boxed().collect(Collectors.toList());
-			} else {
-				// If the driver doesn't support executeLargeBatch, then UnsupportedOperationException is thrown.
-				try {
-					long[] resultArray = preparedStatement.executeLargeBatch();
-					result = Arrays.stream(resultArray).boxed().collect(Collectors.toList());
-					setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.YES);
-				} catch (UnsupportedOperationException e) {
-					setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.NO);
-					int[] resultArray = preparedStatement.executeBatch();
-					result = Arrays.stream(resultArray).asLongStream().boxed().collect(Collectors.toList());
+				} else {
+					// If the driver doesn't support executeLargeBatch, then UnsupportedOperationException is thrown.
+					try {
+						long[] resultArray = preparedStatement.executeLargeBatch();
+						result = Arrays.stream(resultArray).boxed().collect(Collectors.toList());
+						setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.YES);
+					} catch (SQLFeatureNotSupportedException | UnsupportedOperationException | AbstractMethodError e) {
+						setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.NO);
+						int[] resultArray = preparedStatement.executeBatch();
+						result = Arrays.stream(resultArray).asLongStream().boxed().collect(Collectors.toList());
+					}
 				}
-			}
 
 			resultHolder.value = result;
 			Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);
@@ -1548,10 +1548,21 @@ public final class Database {
 				try {
 					getStatementLogger().log(statementLog);
 				} catch (Throwable cleanupException) {
-					if (cleanupFailure == null)
-						cleanupFailure = cleanupException;
-					else
-						cleanupFailure.addSuppressed(cleanupException);
+					if (transaction.isPresent() && thrown == null && cleanupFailure == null) {
+						Throwable loggerFailure = cleanupException;
+						transaction.get().addPostTransactionOperation(result -> {
+							if (loggerFailure instanceof RuntimeException runtimeException)
+								throw runtimeException;
+							if (loggerFailure instanceof Error error)
+								throw error;
+							throw new RuntimeException(loggerFailure);
+						});
+					} else {
+						if (cleanupFailure == null)
+							cleanupFailure = cleanupException;
+						else
+							cleanupFailure.addSuppressed(cleanupException);
+					}
 				}
 			}
 

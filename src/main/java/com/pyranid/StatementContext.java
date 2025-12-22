@@ -55,7 +55,9 @@ public final class StatementContext<T> {
 		requireNonNull(builder);
 
 		this.statement = builder.statement;
-		this.parameters = builder.parameters == null ? List.of() : Collections.unmodifiableList(builder.parameters);
+		this.parameters = builder.parameters == null
+				? List.of()
+				: Collections.unmodifiableList(new ArrayList<>(builder.parameters));
 		this.resultSetRowType = builder.resultSetRowType;
 		this.databaseType = builder.databaseType;
 		this.timeZone = builder.timeZone;
