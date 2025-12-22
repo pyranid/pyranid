@@ -367,7 +367,8 @@ public final class Database {
 			Optional<T> returnValue = transactionalOperation.perform();
 			return returnValue == null ? Optional.empty() : returnValue;
 		} catch (RuntimeException e) {
-			transaction.setRollbackOnly(true);
+			if (!(e instanceof StatementLoggerFailureException))
+				transaction.setRollbackOnly(true);
 			restoreInterruptIfNeeded(e);
 			throw e;
 		} catch (Error e) {
@@ -1598,25 +1599,31 @@ public final class Database {
 								.exception(exception)
 								.build();
 
-				try {
-					getStatementLogger().log(statementLog);
-				} catch (Throwable cleanupException) {
-					if (transaction.isPresent() && thrown == null && cleanupFailure == null) {
-						Throwable loggerFailure = cleanupException;
-						transaction.get().addPostTransactionOperation(result -> {
-							if (loggerFailure instanceof RuntimeException runtimeException)
-								throw runtimeException;
-							if (loggerFailure instanceof Error error)
-								throw error;
-							throw new RuntimeException(loggerFailure);
-						});
-					} else {
-						if (cleanupFailure == null)
-							cleanupFailure = cleanupException;
-						else
-							cleanupFailure.addSuppressed(cleanupException);
+					try {
+						getStatementLogger().log(statementLog);
+					} catch (Throwable cleanupException) {
+						if (transaction.isPresent() && thrown == null && cleanupFailure == null) {
+							Throwable loggerFailure = cleanupException;
+							Transaction currentTransaction = transaction.get();
+
+							if (!currentTransaction.isOwnedByCurrentThread()) {
+								cleanupFailure = new StatementLoggerFailureException(loggerFailure);
+							} else {
+								currentTransaction.addPostTransactionOperation(result -> {
+									if (loggerFailure instanceof RuntimeException runtimeException)
+										throw runtimeException;
+									if (loggerFailure instanceof Error error)
+										throw error;
+									throw new RuntimeException(loggerFailure);
+								});
+							}
+						} else {
+							if (cleanupFailure == null)
+								cleanupFailure = cleanupException;
+							else
+								cleanupFailure.addSuppressed(cleanupException);
+						}
 					}
-				}
 			}
 
 			if (cleanupFailure != null) {
@@ -1821,5 +1828,11 @@ public final class Database {
 		UNKNOWN,
 		YES,
 		NO
+	}
+
+	private static final class StatementLoggerFailureException extends RuntimeException {
+		private StatementLoggerFailureException(@Nonnull Throwable cause) {
+			super("Statement logger failed", cause);
+		}
 	}
 }

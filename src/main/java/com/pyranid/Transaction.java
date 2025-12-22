@@ -65,6 +65,8 @@ public final class Transaction {
 	private final ReentrantLock connectionLock;
 	@Nonnull
 	private final Logger logger;
+	@Nonnull
+	private final Long ownerThreadId;
 
 	@Nullable
 	private Connection connection;
@@ -92,6 +94,7 @@ public final class Transaction {
 		this.postTransactionOperations = new CopyOnWriteArrayList();
 		this.connectionLock = new ReentrantLock();
 		this.logger = Logger.getLogger(Transaction.class.getName());
+		this.ownerThreadId = Thread.currentThread().getId();
 	}
 
 	@Override
@@ -211,6 +214,11 @@ public final class Transaction {
 		} finally {
 			getConnectionLock().unlock();
 		}
+	}
+
+	@Nonnull
+	Boolean isOwnedByCurrentThread() {
+		return Thread.currentThread().getId() == this.ownerThreadId;
 	}
 
 	void commit() {

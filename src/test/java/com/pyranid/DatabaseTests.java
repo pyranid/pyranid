@@ -142,6 +142,18 @@ public class DatabaseTests {
 		}
 	}
 
+	public static class IdHolder {
+		private Integer id;
+
+		public Integer getId() {
+			return this.id;
+		}
+
+		public void setId(Integer id) {
+			this.id = id;
+		}
+	}
+
 	public static class BigDecimalHolder {
 		private BigDecimal v;
 
@@ -385,6 +397,25 @@ public class DatabaseTests {
 		});
 
 		Assertions.assertTrue(ranPostTransactionOperation.get(), "Did not run post-transaction operation");
+	}
+
+	@Test
+	public void testDefaultNormalizationLocaleUsesRoot() {
+		Locale originalLocale = Locale.getDefault();
+		Locale.setDefault(Locale.forLanguageTag("tr-TR"));
+
+		try {
+			Database db = Database.withDataSource(createInMemoryDataSource("normalization_locale_root")).build();
+
+			IdHolder holder = db.query("SELECT 1 AS ID FROM (VALUES (0)) AS t(x)")
+					.fetchObject(IdHolder.class)
+					.orElse(null);
+
+			Assertions.assertNotNull(holder, "Expected a mapped row");
+			Assertions.assertEquals(Integer.valueOf(1), holder.getId());
+		} finally {
+			Locale.setDefault(originalLocale);
+		}
 	}
 
 	@Test
@@ -1305,6 +1336,50 @@ public class DatabaseTests {
 				.orElse(0L);
 
 		Assertions.assertEquals(1L, count, "Transaction should commit even if statement logger fails");
+	}
+
+	@Test
+	public void testStatementLoggerFailureInParticipateSurfacesOnParticipatingThread() {
+		AtomicBoolean shouldThrow = new AtomicBoolean(false);
+		AtomicReference<Throwable> failure = new AtomicReference<>();
+		Database db = Database.withDataSource(createInMemoryDataSource("logger_participate_thread"))
+				.statementLogger(statementLog -> {
+					if (shouldThrow.get())
+						throw new RuntimeException("logger boom");
+				})
+				.build();
+
+		TestQueries.execute(db, "CREATE TABLE t (id INT)");
+
+		shouldThrow.set(true);
+		Assertions.assertDoesNotThrow(() -> db.transaction(() -> {
+			Transaction transaction = db.currentTransaction().orElseThrow();
+			Thread thread = new Thread(() -> {
+				try {
+					db.participate(transaction, () -> TestQueries.execute(db, "INSERT INTO t VALUES (1)"));
+				} catch (Throwable t) {
+					failure.compareAndSet(null, t);
+				}
+			});
+			thread.start();
+			try {
+				thread.join();
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+				throw new RuntimeException(e);
+			}
+		}));
+		shouldThrow.set(false);
+
+		Throwable thrown = failure.get();
+		Assertions.assertNotNull(thrown, "Expected logger failure on participating thread");
+		Assertions.assertNotNull(thrown.getCause(), "Expected logger failure to be wrapped");
+		Assertions.assertEquals("logger boom", thrown.getCause().getMessage());
+
+		Long count = db.query("SELECT COUNT(*) FROM t")
+				.fetchObject(Long.class)
+				.orElse(0L);
+		Assertions.assertEquals(1L, count, "Transaction should commit even if statement logger fails on participate thread");
 	}
 
 	@Test
