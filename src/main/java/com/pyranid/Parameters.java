@@ -48,6 +48,9 @@ public final class Parameters {
 	 * Acquires a SQL ARRAY parameter for a {@link List} given an appropriate <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/Array.html#getBaseTypeName()" target="_blank">{@code java.sql.Array#getBaseTypeName()}</a>.
 	 * <p>
 	 * You may determine available {@code baseTypeName} values for your database by examining metadata exposed via {@link Database#readDatabaseMetaData(DatabaseMetaDataReader)}.
+	 * <p>
+	 * For non-SQL array binding where you need to preserve the Java element type for custom binders,
+	 * use {@link #arrayOf(Class, Object)} instead.
 	 *
 	 * @param baseTypeName the SQL ARRAY element type, e.g. {@code "text"}, {@code "uuid"}, {@code "float4"}, {@code "float8"} ...
 	 * @param list         the list whose elements will be used to populate the SQL ARRAY
@@ -65,6 +68,9 @@ public final class Parameters {
 	 * Acquires a SQL ARRAY parameter for a native Java array given an appropriate <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/Array.html#getBaseTypeName()" target="_blank">{@code java.sql.Array#getBaseTypeName()}</a>.
 	 * <p>
 	 * You may determine available {@code baseTypeName} values for your database by examining metadata exposed via {@link Database#readDatabaseMetaData(DatabaseMetaDataReader)}.
+	 * <p>
+	 * For non-SQL array binding where you need to preserve the Java element type for custom binders,
+	 * use {@link #arrayOf(Class, Object)} instead.
 	 *
 	 * @param baseTypeName the SQL ARRAY element type, e.g. {@code "text"}, {@code "uuid"}, {@code "float4"}, {@code "float8"} ...
 	 * @param array        the native Java array whose elements will be used to populate the SQL ARRAY
@@ -301,6 +307,7 @@ public final class Parameters {
 	 * component type to be preserved for {@link TargetType} matching.
 	 * <p>
 	 * For SQL {@code ARRAY} binding, use {@link #sqlArrayOf(String, Object[])} instead.
+	 * If you need a formal SQL {@code ARRAY} parameter for JDBC array binding, do not use this method.
 	 * <p>
 	 * <strong>Note:</strong> this kind of parameter requires a corresponding {@link CustomParameterBinder}
 	 * to be registered; otherwise, binding will fail-fast.
@@ -324,6 +331,7 @@ public final class Parameters {
 	 * (for example, {@code int.class}) and the corresponding primitive array.
 	 * <p>
 	 * For SQL {@code ARRAY} binding, use {@link #sqlArrayOf(String, Object[])} instead.
+	 * If you need a formal SQL {@code ARRAY} parameter for JDBC array binding, do not use this method.
 	 * <p>
 	 * <strong>Note:</strong> this kind of parameter requires a corresponding {@link CustomParameterBinder}
 	 * to be registered; otherwise, binding will fail-fast.
