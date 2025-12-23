@@ -27,7 +27,6 @@ import java.beans.Introspector;
 import java.beans.PropertyDescriptor;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
-import java.lang.invoke.MethodType;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
@@ -1865,18 +1864,15 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	@ThreadSafe
 	protected static final class RowPlan<T> {
 		final boolean isRecord;
-		final @Nullable MethodHandle recordCtor; // canonical ctor for records; null for beans
 		final int columnCount;                   // for per-row raw caching
 		final boolean hasFanOut;                 // any column maps to multiple properties?
 		final @Nonnull List<ColumnBinding> bindings; // may contain multiple entries per column (fan-out)
 
 		RowPlan(boolean isRecord,
-						@Nullable MethodHandle recordCtor,
 						int columnCount,
 						boolean hasFanOut,
 						@Nonnull List<ColumnBinding> bindings) {
 			this.isRecord = isRecord;
-			this.recordCtor = recordCtor;
 			this.columnCount = columnCount;
 			this.hasFanOut = hasFanOut;
 			this.bindings = requireNonNull(bindings);
@@ -1911,19 +1907,13 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		final boolean isRecord = resultClass.isRecord();
 		final MethodHandles.Lookup lookup = MethodHandles.lookup();
 
-		// record: ctor + name->index map
-		final MethodHandle recordCtor;
+		// record: name->index map
 		final Map<String, Integer> recordIndexByProp = new HashMap<>();
 		final RecordComponent[] recordComponents = isRecord ? determineRecordComponents(resultClass) : null;
 		if (isRecord) {
-			Class<?>[] argTypes = new Class<?>[recordComponents.length];
 			for (int i = 0; i < recordComponents.length; i++) {
-				argTypes[i] = recordComponents[i].getType();
 				recordIndexByProp.put(recordComponents[i].getName(), i);
 			}
-			recordCtor = lookup.findConstructor(resultClass, MethodType.methodType(void.class, argTypes));
-		} else {
-			recordCtor = null;
 		}
 
 		// bean: property -> setter handle
@@ -2068,7 +2058,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			}
 		}
 
-		RowPlan<T> plan = new RowPlan<>(isRecord, recordCtor, cols, hasFanOut, bindings);
+		RowPlan<T> plan = new RowPlan<>(isRecord, cols, hasFanOut, bindings);
 		getRowPlanningCache().putIfAbsent(key, plan);
 		return plan;
 	}

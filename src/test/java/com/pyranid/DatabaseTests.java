@@ -1810,6 +1810,20 @@ public class DatabaseTests {
 	}
 
 	@Test
+	public void testNullJsonParameter_nonPostgres_bindsLongVarcharNull() throws SQLException {
+		PreparedStatementBinder binder = PreparedStatementBinder.withDefaultConfiguration();
+		StatementContext<?> ctx = statementContextFor(DatabaseType.GENERIC);
+		NullBindingCapture capture = new NullBindingCapture();
+		PreparedStatement preparedStatement = preparedStatementCapturingNull(capture);
+
+		binder.bindParameter(ctx, preparedStatement, 1, Parameters.json(null));
+
+		Assertions.assertEquals(1, capture.setNullCalls, "Expected one setNull call");
+		Assertions.assertEquals(Integer.valueOf(Types.LONGVARCHAR), capture.sqlType, "Expected Types.LONGVARCHAR for non-Postgres JSON null binding");
+		Assertions.assertNull(capture.typeName, "Expected no type name for non-Postgres JSON null binding");
+	}
+
+	@Test
 	public void testNullSqlArrayParameter_bindsTypedArrayNull() throws SQLException {
 		PreparedStatementBinder binder = PreparedStatementBinder.withDefaultConfiguration();
 		StatementContext<?> ctx = statementContextFor(DatabaseType.GENERIC);
@@ -1849,6 +1863,25 @@ public class DatabaseTests {
 		Assertions.assertEquals(1, capture.setNullCalls, "Expected one setNull call");
 		Assertions.assertEquals(Integer.valueOf(Types.OTHER), capture.sqlType, "Expected Types.OTHER for JSON null binding");
 		Assertions.assertEquals("json", capture.typeName, "Expected json type name for text JSON binding");
+	}
+
+	@Test
+	public void testNullJsonParameter_postgres_typeNameFailureFallsBackToSqlType() throws SQLException {
+		PreparedStatementBinder binder = PreparedStatementBinder.withDefaultConfiguration();
+		StatementContext<?> ctx = statementContextFor(DatabaseType.POSTGRESQL);
+		NullBindingCapture capture = new NullBindingCapture();
+		capture.throwOnTypeName = true;
+		PreparedStatement preparedStatement = preparedStatementCapturingNull(capture);
+
+		binder.bindParameter(ctx, preparedStatement, 1, Parameters.json(null));
+
+		Assertions.assertEquals(2, capture.setNullCalls, "Expected typed-null fallback to retry without type name");
+		Assertions.assertEquals(1, capture.setNullWithTypeNameCalls, "Expected initial setNull with type name");
+		Assertions.assertEquals(1, capture.setNullWithoutTypeNameCalls, "Expected retry without type name");
+		Assertions.assertEquals(Integer.valueOf(Types.OTHER), capture.typeNameSqlType, "Expected Types.OTHER for JSONB type-name binding");
+		Assertions.assertEquals("jsonb", capture.typeNameValue, "Expected jsonb type name for default JSON binding");
+		Assertions.assertEquals(Integer.valueOf(Types.OTHER), capture.sqlType, "Expected Types.OTHER for fallback binding");
+		Assertions.assertNull(capture.typeName, "Expected no type name for fallback binding");
 	}
 
 	@Test
@@ -2658,16 +2691,26 @@ public class DatabaseTests {
 		return (PreparedStatement) Proxy.newProxyInstance(
 				PreparedStatement.class.getClassLoader(),
 				new Class<?>[]{PreparedStatement.class},
-				(proxy, method, args) -> {
-					String name = method.getName();
-					if ("setNull".equals(name)) {
-						capture.setNullCalls++;
-						capture.sqlType = (Integer) args[1];
-						capture.typeName = args.length == 3 ? (String) args[2] : null;
-						return null;
-					}
-					if ("getParameterMetaData".equals(name))
-						return null;
+					(proxy, method, args) -> {
+						String name = method.getName();
+						if ("setNull".equals(name)) {
+							capture.setNullCalls++;
+							capture.sqlType = (Integer) args[1];
+							if (args.length == 3) {
+								capture.setNullWithTypeNameCalls++;
+								capture.typeName = (String) args[2];
+								capture.typeNameSqlType = capture.sqlType;
+								capture.typeNameValue = capture.typeName;
+								if (capture.throwOnTypeName)
+									throw new SQLException("Simulated setNull(typeName) failure");
+							} else {
+								capture.setNullWithoutTypeNameCalls++;
+								capture.typeName = null;
+							}
+							return null;
+						}
+						if ("getParameterMetaData".equals(name))
+							return null;
 					if ("toString".equals(name))
 						return "PreparedStatement<null-capture>";
 					return defaultValue(method.getReturnType());
@@ -2701,10 +2744,17 @@ public class DatabaseTests {
 
 	private static final class NullBindingCapture {
 		private int setNullCalls;
+		private int setNullWithTypeNameCalls;
+		private int setNullWithoutTypeNameCalls;
+		private boolean throwOnTypeName;
 		@Nullable
 		private Integer sqlType;
 		@Nullable
 		private String typeName;
+		@Nullable
+		private Integer typeNameSqlType;
+		@Nullable
+		private String typeNameValue;
 	}
 
 	protected void createTestSchema(@Nonnull Database database) {

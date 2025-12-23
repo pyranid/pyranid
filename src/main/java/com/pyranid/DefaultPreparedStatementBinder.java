@@ -349,6 +349,8 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			return Optional.of(parameterMetaData.getParameterType(parameterIndex));
 		} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
 			return Optional.empty();
+		} catch (SQLException e) {
+			return Optional.empty();
 		}
 	}
 
