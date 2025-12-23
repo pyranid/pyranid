@@ -898,6 +898,34 @@ public class DatabaseTests {
 		Assertions.assertTrue(lru.size() <= 2, "Row-plan cache should honor configured capacity");
 	}
 
+	@Test
+	public void testQueryCustomize_overwritesPrevious_andLimitsResults() {
+		Database db = Database.withDataSource(createInMemoryDataSource("query_customize")).build();
+		createTestSchema(db);
+
+		TestQueries.execute(db, "INSERT INTO employee VALUES (1, 'A', 'a@x.com', 'en-US')");
+		TestQueries.execute(db, "INSERT INTO employee VALUES (2, 'B', 'b@x.com', 'en-US')");
+		TestQueries.execute(db, "INSERT INTO employee VALUES (3, 'C', 'c@x.com', 'en-US')");
+
+		AtomicInteger firstCalls = new AtomicInteger(0);
+		AtomicInteger secondCalls = new AtomicInteger(0);
+
+		List<EmployeeClass> rows = db.query("SELECT * FROM employee ORDER BY employee_id")
+				.customize((statementContext, preparedStatement) -> {
+					firstCalls.incrementAndGet();
+					preparedStatement.setMaxRows(1);
+				})
+				.customize((statementContext, preparedStatement) -> {
+					secondCalls.incrementAndGet();
+					preparedStatement.setMaxRows(2);
+				})
+				.fetchList(EmployeeClass.class);
+
+		Assertions.assertEquals(2, rows.size(), "Last customizer should win and limit max rows");
+		Assertions.assertEquals(0, firstCalls.get(), "Previous customizer should be overwritten");
+		Assertions.assertEquals(1, secondCalls.get(), "Last customizer should run");
+	}
+
 	public record GroupRow(String groupName, List<UUID> ids) {}
 
 	@Test

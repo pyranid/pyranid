@@ -97,6 +97,17 @@ public interface Query {
 	Query id(@Nullable Object id);
 
 	/**
+	 * Customizes the {@link java.sql.PreparedStatement} before execution.
+	 * <p>
+	 * If called multiple times, the most recent customizer wins.
+	 *
+	 * @param preparedStatementCustomizer customization callback
+	 * @return this builder, for chaining
+	 */
+	@Nonnull
+	Query customize(@Nonnull PreparedStatementCustomizer preparedStatementCustomizer);
+
+	/**
 	 * Executes the query and returns a single result.
 	 *
 	 * @param resultType the type to marshal each row to

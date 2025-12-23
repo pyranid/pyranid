@@ -444,7 +444,7 @@ public final class Database {
 
 	@Nullable
 	private static Throwable closeStatementContextResources(@Nonnull StatementContext<?> statementContext,
-																												 @Nullable Throwable cleanupFailure) {
+																													@Nullable Throwable cleanupFailure) {
 		requireNonNull(statementContext);
 
 		Queue<AutoCloseable> cleanupOperations = statementContext.getCleanupOperations();
@@ -484,6 +484,8 @@ public final class Database {
 		@Nonnull
 		private final Map<String, Object> bindings;
 		@Nullable
+		private PreparedStatementCustomizer preparedStatementCustomizer;
+		@Nullable
 		private Object id;
 
 		private DefaultQuery(@Nonnull Database database,
@@ -500,6 +502,7 @@ public final class Database {
 			this.distinctParameterNames = parsedSql.distinctParameterNames;
 
 			this.bindings = new LinkedHashMap<>(Math.max(8, this.distinctParameterNames.size()));
+			this.preparedStatementCustomizer = null;
 		}
 
 		@Nonnull
@@ -535,10 +538,19 @@ public final class Database {
 
 		@Nonnull
 		@Override
+		public Query customize(@Nonnull PreparedStatementCustomizer preparedStatementCustomizer) {
+			requireNonNull(preparedStatementCustomizer);
+			this.preparedStatementCustomizer = preparedStatementCustomizer;
+
+			return this;
+		}
+
+		@Nonnull
+		@Override
 		public <T> Optional<T> fetchObject(@Nonnull Class<T> resultType) {
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
-			return this.database.queryForObject(preparedQuery.statement, resultType, preparedQuery.parameters);
+			return this.database.queryForObject(preparedQuery.statement, resultType, this.preparedStatementCustomizer, preparedQuery.parameters);
 		}
 
 		@Nonnull
@@ -546,14 +558,14 @@ public final class Database {
 		public <T> List<T> fetchList(@Nonnull Class<T> resultType) {
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
-			return this.database.queryForList(preparedQuery.statement, resultType, preparedQuery.parameters);
+			return this.database.queryForList(preparedQuery.statement, resultType, this.preparedStatementCustomizer, preparedQuery.parameters);
 		}
 
 		@Nonnull
 		@Override
 		public Long execute() {
 			PreparedQuery preparedQuery = prepare(this.bindings);
-			return this.database.execute(preparedQuery.statement, preparedQuery.parameters);
+			return this.database.execute(preparedQuery.statement, this.preparedStatementCustomizer, preparedQuery.parameters);
 		}
 
 		@Nonnull
@@ -601,7 +613,7 @@ public final class Database {
 			if (statement == null)
 				statement = Statement.of(statementId, buildPlaceholderSql());
 
-			return this.database.executeBatch(statement, parametersAsList);
+			return this.database.executeBatch(statement, parametersAsList, this.preparedStatementCustomizer);
 		}
 
 		@Nonnull
@@ -609,7 +621,7 @@ public final class Database {
 		public <T> Optional<T> executeForObject(@Nonnull Class<T> resultType) {
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
-			return this.database.executeForObject(preparedQuery.statement, resultType, preparedQuery.parameters);
+			return this.database.executeForObject(preparedQuery.statement, resultType, this.preparedStatementCustomizer, preparedQuery.parameters);
 		}
 
 		@Nonnull
@@ -617,7 +629,7 @@ public final class Database {
 		public <T> List<T> executeForList(@Nonnull Class<T> resultType) {
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
-			return this.database.executeForList(preparedQuery.statement, resultType, preparedQuery.parameters);
+			return this.database.executeForList(preparedQuery.statement, resultType, this.preparedStatementCustomizer, preparedQuery.parameters);
 		}
 
 		@Nonnull
@@ -1041,6 +1053,16 @@ public final class Database {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
+		return queryForObject(statement, resultSetRowType, null, parameters);
+	}
+
+	private <T> Optional<T> queryForObject(@Nonnull Statement statement,
+																				 @Nonnull Class<T> resultSetRowType,
+																				 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
+																				 @Nullable Object... parameters) {
+		requireNonNull(statement);
+		requireNonNull(resultSetRowType);
+
 		ResultHolder<Optional<T>> resultHolder = new ResultHolder<>();
 		StatementContext<T> statementContext = StatementContext.<T>with(statement, this)
 				.resultSetRowType(resultSetRowType)
@@ -1049,7 +1071,7 @@ public final class Database {
 
 		List<Object> parametersAsList = parameters == null ? List.of() : Arrays.asList(parameters);
 
-		performDatabaseOperation(statementContext, parametersAsList, (PreparedStatement preparedStatement) -> {
+		performDatabaseOperation(statementContext, parametersAsList, preparedStatementCustomizer, (PreparedStatement preparedStatement) -> {
 			long startTime = nanoTime();
 
 			try (ResultSet resultSet = preparedStatement.executeQuery()) {
@@ -1114,6 +1136,16 @@ public final class Database {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
+		return queryForList(statement, resultSetRowType, null, parameters);
+	}
+
+	private <T> List<T> queryForList(@Nonnull Statement statement,
+																	 @Nonnull Class<T> resultSetRowType,
+																	 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
+																	 @Nullable Object... parameters) {
+		requireNonNull(statement);
+		requireNonNull(resultSetRowType);
+
 		List<T> list = new ArrayList<>();
 		StatementContext<T> statementContext = StatementContext.<T>with(statement, this)
 				.resultSetRowType(resultSetRowType)
@@ -1122,7 +1154,7 @@ public final class Database {
 
 		List<Object> parametersAsList = parameters == null ? List.of() : Arrays.asList(parameters);
 
-		performDatabaseOperation(statementContext, parametersAsList, (PreparedStatement preparedStatement) -> {
+		performDatabaseOperation(statementContext, parametersAsList, preparedStatementCustomizer, (PreparedStatement preparedStatement) -> {
 			long startTime = nanoTime();
 
 			try (ResultSet resultSet = preparedStatement.executeQuery()) {
@@ -1174,6 +1206,14 @@ public final class Database {
 											 @Nullable Object... parameters) {
 		requireNonNull(statement);
 
+		return execute(statement, null, parameters);
+	}
+
+	private Long execute(@Nonnull Statement statement,
+											 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
+											 @Nullable Object... parameters) {
+		requireNonNull(statement);
+
 		ResultHolder<Long> resultHolder = new ResultHolder<>();
 		StatementContext<Void> statementContext = StatementContext.with(statement, this)
 				.parameters(parameters)
@@ -1181,7 +1221,7 @@ public final class Database {
 
 		List<Object> parametersAsList = parameters == null ? List.of() : Arrays.asList(parameters);
 
-		performDatabaseOperation(statementContext, parametersAsList, (PreparedStatement preparedStatement) -> {
+		performDatabaseOperation(statementContext, parametersAsList, preparedStatementCustomizer, (PreparedStatement preparedStatement) -> {
 			long startTime = nanoTime();
 
 			DatabaseOperationSupportStatus executeLargeUpdateSupported = getExecuteLargeUpdateSupported();
@@ -1248,11 +1288,21 @@ public final class Database {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
+		return executeForObject(statement, resultSetRowType, null, parameters);
+	}
+
+	private <T> Optional<T> executeForObject(@Nonnull Statement statement,
+																					 @Nonnull Class<T> resultSetRowType,
+																					 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
+																					 @Nullable Object... parameters) {
+		requireNonNull(statement);
+		requireNonNull(resultSetRowType);
+
 		// Ultimately we just delegate to queryForObject.
 		// Having `executeForList` is to allow for users to explicitly express intent
 		// and make static analysis of code easier (e.g. maybe you'd like to hook all of your "execute" statements for
 		// logging, or delegation to a writable master as opposed to a read replica)
-		return queryForObject(statement, resultSetRowType, parameters);
+		return queryForObject(statement, resultSetRowType, preparedStatementCustomizer, parameters);
 	}
 
 	/**
@@ -1292,11 +1342,21 @@ public final class Database {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
+		return executeForList(statement, resultSetRowType, null, parameters);
+	}
+
+	private <T> List<T> executeForList(@Nonnull Statement statement,
+																		 @Nonnull Class<T> resultSetRowType,
+																		 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
+																		 @Nullable Object... parameters) {
+		requireNonNull(statement);
+		requireNonNull(resultSetRowType);
+
 		// Ultimately we just delegate to queryForList.
 		// Having `executeForList` is to allow for users to explicitly express intent
 		// and make static analysis of code easier (e.g. maybe you'd like to hook all of your "execute" statements for
 		// logging, or delegation to a writable master as opposed to a read replica)
-		return queryForList(statement, resultSetRowType, parameters);
+		return queryForList(statement, resultSetRowType, preparedStatementCustomizer, parameters);
 	}
 
 	/**
@@ -1334,6 +1394,15 @@ public final class Database {
 		requireNonNull(statement);
 		requireNonNull(parameterGroups);
 
+		return executeBatch(statement, parameterGroups, null);
+	}
+
+	private List<Long> executeBatch(@Nonnull Statement statement,
+																	@Nonnull List<List<Object>> parameterGroups,
+																	@Nullable PreparedStatementCustomizer preparedStatementCustomizer) {
+		requireNonNull(statement);
+		requireNonNull(parameterGroups);
+
 		ResultHolder<List<Long>> resultHolder = new ResultHolder<>();
 		StatementContext<List<Long>> statementContext = StatementContext.with(statement, this)
 				.parameters((List) parameterGroups)
@@ -1341,6 +1410,8 @@ public final class Database {
 				.build();
 
 		performDatabaseOperation(statementContext, (preparedStatement) -> {
+			applyPreparedStatementCustomizer(statementContext, preparedStatement, preparedStatementCustomizer);
+
 			for (List<Object> parameterGroup : parameterGroups) {
 				if (parameterGroup != null && parameterGroup.size() > 0)
 					performPreparedStatementBinding(statementContext, preparedStatement, parameterGroup);
@@ -1409,7 +1480,19 @@ public final class Database {
 		requireNonNull(parameters);
 		requireNonNull(databaseOperation);
 
+		performDatabaseOperation(statementContext, parameters, null, databaseOperation);
+	}
+
+	protected <T> void performDatabaseOperation(@Nonnull StatementContext<T> statementContext,
+																							@Nonnull List<Object> parameters,
+																							@Nullable PreparedStatementCustomizer preparedStatementCustomizer,
+																							@Nonnull DatabaseOperation databaseOperation) {
+		requireNonNull(statementContext);
+		requireNonNull(parameters);
+		requireNonNull(databaseOperation);
+
 		performDatabaseOperation(statementContext, (preparedStatement) -> {
+			applyPreparedStatementCustomizer(statementContext, preparedStatement, preparedStatementCustomizer);
 			if (parameters.size() > 0)
 				performPreparedStatementBinding(statementContext, preparedStatement, parameters);
 		}, databaseOperation);
@@ -1445,6 +1528,18 @@ public final class Database {
 		} catch (Exception e) {
 			throw new DatabaseException(e);
 		}
+	}
+
+	protected void applyPreparedStatementCustomizer(@Nonnull StatementContext<?> statementContext,
+																									@Nonnull PreparedStatement preparedStatement,
+																									@Nullable PreparedStatementCustomizer preparedStatementCustomizer) throws SQLException {
+		requireNonNull(statementContext);
+		requireNonNull(preparedStatement);
+
+		if (preparedStatementCustomizer == null)
+			return;
+
+		preparedStatementCustomizer.customize(statementContext, preparedStatement);
 	}
 
 	@FunctionalInterface
@@ -1651,31 +1746,31 @@ public final class Database {
 								.exception(exception)
 								.build();
 
-					try {
-						getStatementLogger().log(statementLog);
-					} catch (Throwable cleanupException) {
-						if (transaction.isPresent() && thrown == null && cleanupFailure == null) {
-							Throwable loggerFailure = cleanupException;
-							Transaction currentTransaction = transaction.get();
+				try {
+					getStatementLogger().log(statementLog);
+				} catch (Throwable cleanupException) {
+					if (transaction.isPresent() && thrown == null && cleanupFailure == null) {
+						Throwable loggerFailure = cleanupException;
+						Transaction currentTransaction = transaction.get();
 
-							if (!currentTransaction.isOwnedByCurrentThread()) {
-								cleanupFailure = new StatementLoggerFailureException(loggerFailure);
-							} else {
-								currentTransaction.addPostTransactionOperation(result -> {
-									if (loggerFailure instanceof RuntimeException runtimeException)
-										throw runtimeException;
-									if (loggerFailure instanceof Error error)
-										throw error;
-									throw new RuntimeException(loggerFailure);
-								});
-							}
+						if (!currentTransaction.isOwnedByCurrentThread()) {
+							cleanupFailure = new StatementLoggerFailureException(loggerFailure);
 						} else {
-							if (cleanupFailure == null)
-								cleanupFailure = cleanupException;
-							else
-								cleanupFailure.addSuppressed(cleanupException);
+							currentTransaction.addPostTransactionOperation(result -> {
+								if (loggerFailure instanceof RuntimeException runtimeException)
+									throw runtimeException;
+								if (loggerFailure instanceof Error error)
+									throw error;
+								throw new RuntimeException(loggerFailure);
+							});
 						}
+					} else {
+						if (cleanupFailure == null)
+							cleanupFailure = cleanupException;
+						else
+							cleanupFailure.addSuppressed(cleanupException);
 					}
+				}
 			}
 
 			if (cleanupFailure != null) {
