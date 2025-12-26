@@ -336,7 +336,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 	@Nonnull
 	protected Optional<Integer> determineParameterSqlType(@Nonnull PreparedStatement preparedStatement,
-																													@Nonnull Integer parameterIndex) throws SQLException {
+																												@Nonnull Integer parameterIndex) throws SQLException {
 		requireNonNull(preparedStatement);
 		requireNonNull(parameterIndex);
 
@@ -457,10 +457,10 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	 */
 	@Nonnull
 	protected <T> Boolean tryCustomNullBinders(@Nonnull StatementContext<T> statementContext,
-																				 @Nonnull PreparedStatement preparedStatement,
-																				 @Nonnull Integer parameterIndex,
-																				 @Nonnull Integer sqlType,
-																				 @Nonnull TargetType targetType) throws SQLException {
+																						 @Nonnull PreparedStatement preparedStatement,
+																						 @Nonnull Integer parameterIndex,
+																						 @Nonnull Integer sqlType,
+																						 @Nonnull TargetType targetType) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(preparedStatement);
 		requireNonNull(parameterIndex);
@@ -494,7 +494,6 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 		return getBindersByTargetTypeCache().computeIfAbsent(targetType, tt -> {
 			// Evaluate once per unique TargetType instance (equals/hash provided by DefaultTargetType)
-			new Object(); // noop anchor for clarity
 			return getCustomParameterBinders().stream()
 					.filter(b -> b.appliesTo(tt))
 					.toList();
