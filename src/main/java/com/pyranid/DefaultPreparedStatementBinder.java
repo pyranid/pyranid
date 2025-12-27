@@ -18,9 +18,9 @@ package com.pyranid;
 
 import com.pyranid.CustomParameterBinder.BindingResult;
 import com.pyranid.JsonParameter.BindingPreference;
-
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
+
 import javax.annotation.concurrent.ThreadSafe;
 import java.nio.ByteBuffer;
 import java.sql.Array;

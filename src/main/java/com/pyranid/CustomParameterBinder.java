@@ -17,6 +17,7 @@
 package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
+
 import javax.annotation.concurrent.ThreadSafe;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;

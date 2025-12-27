@@ -18,6 +18,7 @@ package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
+
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
 import java.sql.Connection;

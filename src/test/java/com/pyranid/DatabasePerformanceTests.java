@@ -17,10 +17,10 @@
 package com.pyranid;
 
 import org.hsqldb.jdbc.JDBCDataSource;
-import org.junit.jupiter.api.Test;
-
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
+import org.junit.jupiter.api.Test;
+
 import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;

@@ -18,6 +18,7 @@ package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
+
 import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;

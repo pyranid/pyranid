@@ -22,9 +22,12 @@ import org.jspecify.annotations.Nullable;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
+/**
+ * @author <a href="https://www.revetkn.com">Mark Allen</a>
+ * @since 4.0.0
+ */
 final class TestQueries {
-	private TestQueries() {
-	}
+	private TestQueries() {}
 
 	@NonNull
 	static Long execute(@NonNull Database db,

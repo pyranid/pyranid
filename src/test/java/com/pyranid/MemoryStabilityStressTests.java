@@ -17,12 +17,12 @@
 package com.pyranid;
 
 import org.hsqldb.jdbc.JDBCDataSource;
+import org.jspecify.annotations.NonNull;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
-import org.jspecify.annotations.NonNull;
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
 import java.math.BigDecimal;

@@ -18,11 +18,11 @@ package com.pyranid;
 
 import com.pyranid.JsonParameter.BindingPreference;
 import org.hsqldb.jdbc.JDBCDataSource;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-import org.jspecify.annotations.NonNull;
-import org.jspecify.annotations.Nullable;
 import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;

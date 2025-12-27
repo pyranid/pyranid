@@ -17,10 +17,10 @@
 package com.pyranid;
 
 import org.hsqldb.jdbc.JDBCDataSource;
+import org.jspecify.annotations.NonNull;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-import org.jspecify.annotations.NonNull;
 import javax.sql.DataSource;
 import java.io.PrintWriter;
 import java.lang.reflect.InvocationTargetException;

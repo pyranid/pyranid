@@ -17,6 +17,7 @@
 package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
+
 import javax.annotation.concurrent.ThreadSafe;
 import java.lang.reflect.Type;
 import java.util.List;

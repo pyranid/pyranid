@@ -18,6 +18,7 @@ package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
+
 import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
 import java.time.ZoneId;
@@ -28,8 +29,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Queue;
-import java.util.stream.Collectors;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.stream.Collectors;
 
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
