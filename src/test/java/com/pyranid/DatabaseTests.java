@@ -27,6 +27,8 @@ import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.math.BigDecimal;
@@ -60,6 +62,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
@@ -207,6 +210,67 @@ public class DatabaseTests {
 				.fetchList(EmployeeClass.class);
 		Assertions.assertEquals(2, employeeClasses.size(), "Wrong number of employees");
 		Assertions.assertEquals("Employee One", employeeClasses.get(0).getDisplayName(), "Didn't detect DB column name override");
+	}
+
+	@Test
+	public void testFetchStream() {
+		Database database = Database.withDataSource(createInMemoryDataSource("testFetchStream")).build();
+
+		createTestSchema(database);
+
+		TestQueries.execute(database, "INSERT INTO employee VALUES (1, 'Employee One', 'employee-one@company.com', NULL)");
+		TestQueries.execute(database, "INSERT INTO employee VALUES (2, 'Employee Two', NULL, NULL)");
+
+		try (Stream<EmployeeRecord> stream = database.query("SELECT * FROM employee ORDER BY name")
+				.fetchStream(EmployeeRecord.class)) {
+			List<EmployeeRecord> records = stream.collect(Collectors.toList());
+			Assertions.assertEquals(2, records.size(), "Wrong number of employees");
+			Assertions.assertEquals("Employee One", records.get(0).displayName(), "Didn't detect DB column name override");
+		}
+	}
+
+	@Test
+	public void testFetchStreamClosesConnectionOutsideTransaction() {
+		TrackingDataSource dataSource = new TrackingDataSource(createInMemoryDataSource("testFetchStreamClosesConnection"));
+		Database database = Database.withDataSource(dataSource).build();
+
+		createTestSchema(database);
+		TestQueries.execute(database, "INSERT INTO employee VALUES (1, 'Employee One', 'employee-one@company.com', NULL)");
+
+		dataSource.resetCloseCount();
+
+		try (Stream<EmployeeRecord> stream = database.query("SELECT * FROM employee")
+				.fetchStream(EmployeeRecord.class)) {
+			stream.forEach(record -> {});
+		}
+
+		Assertions.assertEquals(1, dataSource.getCloseCount(),
+				"Streaming query should close its connection when not in a transaction");
+	}
+
+	@Test
+	public void testFetchStreamKeepsConnectionOpenWithinTransaction() {
+		TrackingDataSource dataSource = new TrackingDataSource(createInMemoryDataSource("testFetchStreamInTxn"));
+		Database database = Database.withDataSource(dataSource).build();
+
+		createTestSchema(database);
+		TestQueries.execute(database, "INSERT INTO employee VALUES (1, 'Employee One', 'employee-one@company.com', NULL)");
+
+		dataSource.resetCloseCount();
+
+		database.transaction(() -> {
+			try (Stream<EmployeeRecord> stream = database.query("SELECT * FROM employee")
+					.fetchStream(EmployeeRecord.class)) {
+				stream.forEach(record -> {});
+			}
+
+			Assertions.assertEquals(0, dataSource.getCloseCount(),
+					"Streaming query should not close the connection inside a transaction");
+
+			List<EmployeeRecord> records = database.query("SELECT * FROM employee")
+					.fetchList(EmployeeRecord.class);
+			Assertions.assertEquals(1, records.size(), "Expected follow-up query to succeed inside transaction");
+		});
 	}
 
 	@Test
@@ -2719,26 +2783,26 @@ public class DatabaseTests {
 		return (PreparedStatement) Proxy.newProxyInstance(
 				PreparedStatement.class.getClassLoader(),
 				new Class<?>[]{PreparedStatement.class},
-					(proxy, method, args) -> {
-						String name = method.getName();
-						if ("setNull".equals(name)) {
-							capture.setNullCalls++;
-							capture.sqlType = (Integer) args[1];
-							if (args.length == 3) {
-								capture.setNullWithTypeNameCalls++;
-								capture.typeName = (String) args[2];
-								capture.typeNameSqlType = capture.sqlType;
-								capture.typeNameValue = capture.typeName;
-								if (capture.throwOnTypeName)
-									throw new SQLException("Simulated setNull(typeName) failure");
-							} else {
-								capture.setNullWithoutTypeNameCalls++;
-								capture.typeName = null;
-							}
-							return null;
+				(proxy, method, args) -> {
+					String name = method.getName();
+					if ("setNull".equals(name)) {
+						capture.setNullCalls++;
+						capture.sqlType = (Integer) args[1];
+						if (args.length == 3) {
+							capture.setNullWithTypeNameCalls++;
+							capture.typeName = (String) args[2];
+							capture.typeNameSqlType = capture.sqlType;
+							capture.typeNameValue = capture.typeName;
+							if (capture.throwOnTypeName)
+								throw new SQLException("Simulated setNull(typeName) failure");
+						} else {
+							capture.setNullWithoutTypeNameCalls++;
+							capture.typeName = null;
 						}
-						if ("getParameterMetaData".equals(name))
-							return null;
+						return null;
+					}
+					if ("getParameterMetaData".equals(name))
+						return null;
 					if ("toString".equals(name))
 						return "PreparedStatement<null-capture>";
 					return defaultValue(method.getReturnType());
@@ -2768,6 +2832,93 @@ public class DatabaseTests {
 		if (returnType == char.class)
 			return '\0';
 		return null;
+	}
+
+	@NotThreadSafe
+	private static final class TrackingDataSource implements DataSource {
+		private final DataSource delegate;
+		private final AtomicInteger closeCount = new AtomicInteger();
+
+		private TrackingDataSource(@Nonnull DataSource delegate) {
+			this.delegate = requireNonNull(delegate);
+		}
+
+		public int getCloseCount() {
+			return this.closeCount.get();
+		}
+
+		public void resetCloseCount() {
+			this.closeCount.set(0);
+		}
+
+		@Override
+		public Connection getConnection() throws SQLException {
+			return wrap(delegate.getConnection());
+		}
+
+		@Override
+		public Connection getConnection(String username, String password) throws SQLException {
+			return wrap(delegate.getConnection(username, password));
+		}
+
+		@Override
+		public java.io.PrintWriter getLogWriter() throws SQLException {
+			return delegate.getLogWriter();
+		}
+
+		@Override
+		public void setLogWriter(java.io.PrintWriter out) throws SQLException {
+			delegate.setLogWriter(out);
+		}
+
+		@Override
+		public void setLoginTimeout(int seconds) throws SQLException {
+			delegate.setLoginTimeout(seconds);
+		}
+
+		@Override
+		public int getLoginTimeout() throws SQLException {
+			return delegate.getLoginTimeout();
+		}
+
+		@Override
+		public java.util.logging.Logger getParentLogger() throws java.sql.SQLFeatureNotSupportedException {
+			return delegate.getParentLogger();
+		}
+
+		@Override
+		public <T> T unwrap(Class<T> iface) throws SQLException {
+			return delegate.unwrap(iface);
+		}
+
+		@Override
+		public boolean isWrapperFor(Class<?> iface) throws SQLException {
+			return delegate.isWrapperFor(iface);
+		}
+
+		private Connection wrap(@Nonnull Connection connection) {
+			InvocationHandler handler = (proxy, method, args) -> {
+				if ("close".equals(method.getName())) {
+					closeCount.incrementAndGet();
+					try {
+						return method.invoke(connection, args);
+					} catch (InvocationTargetException e) {
+						throw e.getTargetException();
+					}
+				}
+
+				try {
+					return method.invoke(connection, args);
+				} catch (InvocationTargetException e) {
+					throw e.getTargetException();
+				}
+			};
+
+			return (Connection) Proxy.newProxyInstance(
+					Connection.class.getClassLoader(),
+					new Class<?>[]{Connection.class},
+					handler);
+		}
 	}
 
 	private static final class NullBindingCapture {

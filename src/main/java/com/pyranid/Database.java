@@ -46,11 +46,15 @@ import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.Queue;
 import java.util.Set;
+import java.util.Spliterator;
+import java.util.Spliterators;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 import static java.lang.String.format;
 import static java.lang.System.nanoTime;
@@ -559,6 +563,14 @@ public final class Database {
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
 			return this.database.queryForList(preparedQuery.statement, resultType, this.preparedStatementCustomizer, preparedQuery.parameters);
+		}
+
+		@Nonnull
+		@Override
+		public <T> Stream<T> fetchStream(@Nonnull Class<T> resultType) {
+			requireNonNull(resultType);
+			PreparedQuery preparedQuery = prepare(this.bindings);
+			return this.database.queryForStream(preparedQuery.statement, resultType, this.preparedStatementCustomizer, preparedQuery.parameters);
 		}
 
 		@Nonnull
@@ -1176,6 +1188,26 @@ public final class Database {
 		});
 
 		return list;
+	}
+
+	@Nonnull
+	private <T> Stream<T> queryForStream(@Nonnull Statement statement,
+																			 @Nonnull Class<T> resultSetRowType,
+																			 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
+																			 @Nullable Object... parameters) {
+		requireNonNull(statement);
+		requireNonNull(resultSetRowType);
+
+		StatementContext<T> statementContext = StatementContext.<T>with(statement, this)
+				.resultSetRowType(resultSetRowType)
+				.parameters(parameters)
+				.build();
+
+		List<Object> parametersAsList = parameters == null ? List.of() : Arrays.asList(parameters);
+		StreamingResultSet<T> iterator = new StreamingResultSet<>(this, statementContext, parametersAsList, preparedStatementCustomizer);
+
+		return StreamSupport.stream(Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED | Spliterator.NONNULL), false)
+				.onClose(iterator::close);
 	}
 
 	/**
@@ -1861,6 +1893,230 @@ public final class Database {
 	@FunctionalInterface
 	protected interface PreparedStatementBindingOperation {
 		void perform(@Nonnull PreparedStatement preparedStatement) throws Exception;
+	}
+
+	@NotThreadSafe
+	private static final class StreamingResultSet<T> implements java.util.Iterator<T>, AutoCloseable {
+		private final Database database;
+		private final StatementContext<T> statementContext;
+		private final List<Object> parameters;
+		@Nullable
+		private final PreparedStatementCustomizer preparedStatementCustomizer;
+		@Nonnull
+		private final Optional<Transaction> transaction;
+		@Nullable
+		private final ReentrantLock connectionLock;
+		@Nullable
+		private Connection connection;
+		@Nullable
+		private PreparedStatement preparedStatement;
+		@Nullable
+		private ResultSet resultSet;
+		private boolean closed;
+		private boolean hasNextEvaluated;
+		private boolean hasNext;
+		@Nullable
+		private Duration connectionAcquisitionDuration;
+		@Nullable
+		private Duration preparationDuration;
+		@Nullable
+		private Duration executionDuration;
+		private long resultSetMappingNanos;
+		@Nullable
+		private Exception exception;
+		@Nullable
+		private Throwable thrown;
+
+		private StreamingResultSet(@Nonnull Database database,
+															 @Nonnull StatementContext<T> statementContext,
+															 @Nonnull List<Object> parameters,
+															 @Nullable PreparedStatementCustomizer preparedStatementCustomizer) {
+			this.database = requireNonNull(database);
+			this.statementContext = requireNonNull(statementContext);
+			this.parameters = requireNonNull(parameters);
+			this.preparedStatementCustomizer = preparedStatementCustomizer;
+			this.transaction = database.currentTransaction();
+			this.connectionLock = this.transaction.isPresent() ? this.transaction.get().getConnectionLock() : null;
+
+			open();
+		}
+
+		private void open() {
+			long startTime = nanoTime();
+
+			if (this.connectionLock != null)
+				this.connectionLock.lock();
+
+			try {
+				boolean alreadyHasConnection = this.transaction.isPresent() && this.transaction.get().hasConnection();
+				this.connection = this.transaction.isPresent() ? this.transaction.get().getConnection() : this.database.acquireConnection();
+				this.connectionAcquisitionDuration = alreadyHasConnection ? null : Duration.ofNanos(nanoTime() - startTime);
+				startTime = nanoTime();
+
+				this.preparedStatement = this.connection.prepareStatement(this.statementContext.getStatement().getSql());
+				this.database.applyPreparedStatementCustomizer(this.statementContext, this.preparedStatement, this.preparedStatementCustomizer);
+				if (this.parameters.size() > 0)
+					this.database.performPreparedStatementBinding(this.statementContext, this.preparedStatement, this.parameters);
+				this.preparationDuration = Duration.ofNanos(nanoTime() - startTime);
+
+				startTime = nanoTime();
+				this.resultSet = this.preparedStatement.executeQuery();
+				this.executionDuration = Duration.ofNanos(nanoTime() - startTime);
+			} catch (DatabaseException e) {
+				this.exception = e;
+				this.thrown = e;
+				close();
+				throw e;
+			} catch (Exception e) {
+				this.exception = e;
+				DatabaseException wrapped = new DatabaseException(e);
+				this.thrown = wrapped;
+				close();
+				throw wrapped;
+			}
+		}
+
+		@Override
+		public boolean hasNext() {
+			if (this.closed)
+				return false;
+
+			if (!this.hasNextEvaluated) {
+				try {
+					this.hasNext = this.resultSet != null && this.resultSet.next();
+					this.hasNextEvaluated = true;
+					if (!this.hasNext)
+						close();
+				} catch (SQLException e) {
+					this.exception = e;
+					this.thrown = new DatabaseException(e);
+					close();
+					throw (DatabaseException) this.thrown;
+				}
+			}
+
+			return this.hasNext;
+		}
+
+		@Override
+		public T next() {
+			if (!hasNext())
+				throw new java.util.NoSuchElementException();
+
+			this.hasNextEvaluated = false;
+			long startTime = nanoTime();
+
+			try {
+				T value = this.database.getResultSetMapper()
+						.map(this.statementContext, requireNonNull(this.resultSet), this.statementContext.getResultSetRowType().get(), this.database.getInstanceProvider())
+						.orElse(null);
+				this.resultSetMappingNanos += nanoTime() - startTime;
+				return value;
+			} catch (SQLException e) {
+				this.exception = e;
+				this.thrown = new DatabaseException(format("Unable to map JDBC %s row to %s", ResultSet.class.getSimpleName(), this.statementContext.getResultSetRowType().get()), e);
+				close();
+				throw (DatabaseException) this.thrown;
+			} catch (DatabaseException e) {
+				this.exception = e;
+				this.thrown = e;
+				close();
+				throw e;
+			}
+		}
+
+		@Override
+		public void close() {
+			if (this.closed)
+				return;
+
+			this.closed = true;
+			Throwable cleanupFailure = null;
+
+			try {
+				cleanupFailure = closeStatementContextResources(this.statementContext, cleanupFailure);
+
+				if (this.resultSet != null) {
+					try {
+						this.resultSet.close();
+					} catch (Throwable cleanupException) {
+						cleanupFailure = cleanupFailure == null ? cleanupException : addSuppressed(cleanupFailure, cleanupException);
+					}
+				}
+
+				if (this.preparedStatement != null) {
+					try {
+						this.preparedStatement.close();
+					} catch (Throwable cleanupException) {
+						cleanupFailure = cleanupFailure == null ? cleanupException : addSuppressed(cleanupFailure, cleanupException);
+					}
+				}
+
+				if (this.connection != null && this.transaction.isEmpty()) {
+					try {
+						this.database.closeConnection(this.connection);
+					} catch (Throwable cleanupException) {
+						cleanupFailure = cleanupFailure == null ? cleanupException : addSuppressed(cleanupFailure, cleanupException);
+					}
+				}
+			} finally {
+				if (this.connectionLock != null)
+					this.connectionLock.unlock();
+
+				Duration mappingDuration = this.resultSetMappingNanos == 0L ? null : Duration.ofNanos(this.resultSetMappingNanos);
+
+				StatementLog statementLog =
+						StatementLog.withStatementContext(this.statementContext)
+								.connectionAcquisitionDuration(this.connectionAcquisitionDuration)
+								.preparationDuration(this.preparationDuration)
+								.executionDuration(this.executionDuration)
+								.resultSetMappingDuration(mappingDuration)
+								.exception(this.exception)
+								.build();
+
+				try {
+					this.database.getStatementLogger().log(statementLog);
+				} catch (Throwable cleanupException) {
+					if (this.transaction.isPresent() && this.thrown == null && cleanupFailure == null) {
+						Throwable loggerFailure = cleanupException;
+						Transaction currentTransaction = this.transaction.get();
+
+						if (!currentTransaction.isOwnedByCurrentThread()) {
+							cleanupFailure = new StatementLoggerFailureException(loggerFailure);
+						} else {
+							currentTransaction.addPostTransactionOperation(result -> {
+								if (loggerFailure instanceof RuntimeException runtimeException)
+									throw runtimeException;
+								if (loggerFailure instanceof Error error)
+									throw error;
+								throw new RuntimeException(loggerFailure);
+							});
+						}
+					} else {
+						cleanupFailure = cleanupFailure == null ? cleanupException : addSuppressed(cleanupFailure, cleanupException);
+					}
+				}
+			}
+
+			if (cleanupFailure != null) {
+				if (this.thrown != null) {
+					this.thrown.addSuppressed(cleanupFailure);
+				} else if (cleanupFailure instanceof RuntimeException) {
+					throw (RuntimeException) cleanupFailure;
+				} else if (cleanupFailure instanceof Error) {
+					throw (Error) cleanupFailure;
+				} else {
+					throw new RuntimeException(cleanupFailure);
+				}
+			}
+		}
+
+		@Nonnull
+		private static Throwable addSuppressed(@Nonnull Throwable existing,
+																					 @Nonnull Throwable additional) {
+			existing.addSuppressed(additional);
+			return existing;
+		}
 	}
 
 	/**

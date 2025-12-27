@@ -22,6 +22,7 @@ import javax.annotation.concurrent.NotThreadSafe;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 /**
  * Fluent builder for SQL statements.
@@ -127,6 +128,27 @@ public interface Query {
 	 */
 	@Nonnull
 	<T> List<T> fetchList(@Nonnull Class<T> resultType);
+
+	/**
+	 * Executes the query and returns a {@link Stream} backed by the underlying {@link java.sql.ResultSet}.
+	 * <p>
+	 * This approach is useful for processing very large resultsets (e.g. millions of rows), where it's impractical to load all rows into memory at once.
+	 * <p>
+	 * The returned stream must be closed to release JDBC resources. Prefer try-with-resources:
+	 * <pre>{@code
+	 * try (Stream<MyRow> rows = database.query("SELECT * FROM t").fetchStream(MyRow.class)) {
+	 *   rows.forEach(...);
+	 * }
+	 * }</pre>
+	 * <p>
+	 * The stream must be consumed and closed within the scope of the transaction or connection that created it.
+	 *
+	 * @param resultType the type to marshal each row to
+	 * @param <T>        the result type
+	 * @return stream of results
+	 */
+	@Nonnull
+	<T> Stream<T> fetchStream(@Nonnull Class<T> resultType);
 
 	/**
 	 * Executes a DML statement (INSERT, UPDATE, DELETE) with no resultset.
