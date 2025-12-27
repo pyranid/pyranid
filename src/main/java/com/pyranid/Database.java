@@ -52,6 +52,7 @@ import java.util.Spliterators;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -566,13 +567,16 @@ public final class Database {
 			return this.database.queryForList(preparedQuery.statement, resultType, this.preparedStatementCustomizer, preparedQuery.parameters);
 		}
 
-		@NonNull
+		@Nullable
 		@Override
-		public <T> Stream<T> fetchStream(@NonNull Class<T> resultType) {
+		public <T, R> R fetchStream(@NonNull Class<T> resultType,
+																@NonNull Function<Stream<T>, R> streamFunction) {
 			requireNonNull(resultType);
+			requireNonNull(streamFunction);
 			PreparedQuery preparedQuery = prepare(this.bindings);
-			return this.database.queryForStream(preparedQuery.statement, resultType, this.preparedStatementCustomizer, preparedQuery.parameters);
+			return this.database.queryForStream(preparedQuery.statement, resultType, this.preparedStatementCustomizer, streamFunction, preparedQuery.parameters);
 		}
+
 
 		@NonNull
 		@Override
@@ -1191,13 +1195,15 @@ public final class Database {
 		return list;
 	}
 
-	@NonNull
-	private <T> Stream<T> queryForStream(@NonNull Statement statement,
-																			 @NonNull Class<T> resultSetRowType,
-																			 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
-																			 Object @Nullable ... parameters) {
+	@Nullable
+	private <T, R> R queryForStream(@NonNull Statement statement,
+																	@NonNull Class<T> resultSetRowType,
+																	@Nullable PreparedStatementCustomizer preparedStatementCustomizer,
+																	@NonNull Function<Stream<T>, R> streamFunction,
+																	Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
+		requireNonNull(streamFunction);
 
 		StatementContext<T> statementContext = StatementContext.<T>with(statement, this)
 				.resultSetRowType(resultSetRowType)
@@ -1207,8 +1213,10 @@ public final class Database {
 		List<Object> parametersAsList = parameters == null ? List.of() : Arrays.asList(parameters);
 		StreamingResultSet<T> iterator = new StreamingResultSet<>(this, statementContext, parametersAsList, preparedStatementCustomizer);
 
-		return StreamSupport.stream(Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED), false)
-				.onClose(iterator::close);
+		try (Stream<T> stream = StreamSupport.stream(Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED), false)
+				.onClose(iterator::close)) {
+			return streamFunction.apply(stream);
+		}
 	}
 
 	/**

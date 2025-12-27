@@ -62,7 +62,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
@@ -221,12 +220,10 @@ public class DatabaseTests {
 		TestQueries.execute(database, "INSERT INTO employee VALUES (1, 'Employee One', 'employee-one@company.com', NULL)");
 		TestQueries.execute(database, "INSERT INTO employee VALUES (2, 'Employee Two', NULL, NULL)");
 
-		try (Stream<EmployeeRecord> stream = database.query("SELECT * FROM employee ORDER BY name")
-				.fetchStream(EmployeeRecord.class)) {
-			List<EmployeeRecord> records = stream.collect(Collectors.toList());
-			Assertions.assertEquals(2, records.size(), "Wrong number of employees");
-			Assertions.assertEquals("Employee One", records.get(0).displayName(), "Didn't detect DB column name override");
-		}
+		List<EmployeeRecord> records = database.query("SELECT * FROM employee ORDER BY name")
+				.fetchStream(EmployeeRecord.class, stream -> stream.collect(Collectors.toList()));
+		Assertions.assertEquals(2, records.size(), "Wrong number of employees");
+		Assertions.assertEquals("Employee One", records.get(0).displayName(), "Didn't detect DB column name override");
 	}
 
 	@Test
@@ -239,10 +236,11 @@ public class DatabaseTests {
 
 		dataSource.resetCloseCount();
 
-		try (Stream<EmployeeRecord> stream = database.query("SELECT * FROM employee")
-				.fetchStream(EmployeeRecord.class)) {
-			stream.forEach(record -> {});
-		}
+		database.query("SELECT * FROM employee")
+				.fetchStream(EmployeeRecord.class, stream -> {
+					stream.forEach(record -> {});
+					return null;
+				});
 
 		Assertions.assertEquals(1, dataSource.getCloseCount(),
 				"Streaming query should close its connection when not in a transaction");
@@ -259,10 +257,11 @@ public class DatabaseTests {
 		dataSource.resetCloseCount();
 
 		database.transaction(() -> {
-			try (Stream<EmployeeRecord> stream = database.query("SELECT * FROM employee")
-					.fetchStream(EmployeeRecord.class)) {
-				stream.forEach(record -> {});
-			}
+			database.query("SELECT * FROM employee")
+					.fetchStream(EmployeeRecord.class, stream -> {
+						stream.forEach(record -> {});
+						return null;
+					});
 
 			Assertions.assertEquals(0, dataSource.getCloseCount(),
 					"Streaming query should not close the connection inside a transaction");

@@ -23,6 +23,7 @@ import javax.annotation.concurrent.NotThreadSafe;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 /**
@@ -131,25 +132,25 @@ public interface Query {
 	<T> List<T> fetchList(@NonNull Class<T> resultType);
 
 	/**
-	 * Executes the query and returns a {@link Stream} backed by the underlying {@link java.sql.ResultSet}.
+	 * Executes the query and provides a {@link Stream} backed by the underlying {@link java.sql.ResultSet}.
 	 * <p>
 	 * This approach is useful for processing very large resultsets (e.g. millions of rows), where it's impractical to load all rows into memory at once.
 	 * <p>
-	 * The returned stream must be closed to release JDBC resources. Prefer try-with-resources:
-	 * <pre>{@code
-	 * try (Stream<MyRow> rows = database.query("SELECT * FROM t").fetchStream(MyRow.class)) {
-	 *   rows.forEach(...);
-	 * }
-	 * }</pre>
+	 * JDBC resources are closed automatically when {@code streamFunction} returns (or throws), so the stream must be fully consumed
+	 * within that callback. Do not escape the stream from the function.
 	 * <p>
-	 * The stream must be consumed and closed within the scope of the transaction or connection that created it.
+	 * The stream must be consumed within the scope of the transaction or connection that created it.
 	 *
-	 * @param resultType the type to marshal each row to
-	 * @param <T>        the result type
-	 * @return stream of results
+	 * @param resultType     the type to marshal each row to
+	 * @param streamFunction function that consumes the stream and returns a result
+	 * @param <T>            the result type
+	 * @param <R>            the return type
+	 * @return the value returned by {@code streamFunction}
 	 */
-	@NonNull
-	<T> Stream<T> fetchStream(@NonNull Class<T> resultType);
+	@Nullable
+	<T, R> R fetchStream(@NonNull Class<T> resultType,
+											 @NonNull Function<Stream<T>, R> streamFunction);
+
 
 	/**
 	 * Executes a DML statement (INSERT, UPDATE, DELETE) with no resultset.
