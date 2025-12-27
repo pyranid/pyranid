@@ -1207,7 +1207,7 @@ public final class Database {
 		List<Object> parametersAsList = parameters == null ? List.of() : Arrays.asList(parameters);
 		StreamingResultSet<T> iterator = new StreamingResultSet<>(this, statementContext, parametersAsList, preparedStatementCustomizer);
 
-		return StreamSupport.stream(Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED | Spliterator.NONNULL), false)
+		return StreamSupport.stream(Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED), false)
 				.onClose(iterator::close);
 	}
 
