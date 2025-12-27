@@ -16,7 +16,7 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
+import org.jspecify.annotations.NonNull;
 import javax.annotation.concurrent.ThreadSafe;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
@@ -40,11 +40,11 @@ public interface CustomParameterBinder {
 	 * @return {@link BindingResult#handled()} if the custom binding was performed, or {@link BindingResult#fallback()} to fall back to default {@link PreparedStatementBinder} behavior
 	 * @throws SQLException if an error occurs during binding
 	 */
-	@Nonnull
-	BindingResult bind(@Nonnull StatementContext<?> statementContext,
-										 @Nonnull PreparedStatement preparedStatement,
-										 @Nonnull Integer parameterIndex,
-										 @Nonnull Object parameter) throws SQLException;
+	@NonNull
+	BindingResult bind(@NonNull StatementContext<?> statementContext,
+										 @NonNull PreparedStatement preparedStatement,
+										 @NonNull Integer parameterIndex,
+										 @NonNull Object parameter) throws SQLException;
 
 	/**
 	 * Performs custom binding of a null value given its {@code index} and {@code targetType}.
@@ -59,12 +59,12 @@ public interface CustomParameterBinder {
 	 * @return {@link BindingResult#handled()} if the custom binding was performed, or {@link BindingResult#fallback()} to fall back to default behavior
 	 * @throws SQLException if an error occurs during binding
 	 */
-	@Nonnull
-	default BindingResult bindNull(@Nonnull StatementContext<?> statementContext,
-																 @Nonnull PreparedStatement preparedStatement,
-																 @Nonnull Integer parameterIndex,
-																 @Nonnull TargetType targetType,
-																 @Nonnull Integer sqlType) throws SQLException {
+	@NonNull
+	default BindingResult bindNull(@NonNull StatementContext<?> statementContext,
+																 @NonNull PreparedStatement preparedStatement,
+																 @NonNull Integer parameterIndex,
+																 @NonNull TargetType targetType,
+																 @NonNull Integer sqlType) throws SQLException {
 		return BindingResult.fallback();
 	}
 
@@ -78,8 +78,8 @@ public interface CustomParameterBinder {
 	 * @param targetType the target type to evaluate - should this custom binder handle it or not?
 	 * @return {@code true} if this binder should handle the type, {@code false} otherwise.
 	 */
-	@Nonnull
-	Boolean appliesTo(@Nonnull TargetType targetType);
+	@NonNull
+	Boolean appliesTo(@NonNull TargetType targetType);
 
 	/**
 	 * Result of a custom parameter binding attempt.
@@ -95,7 +95,7 @@ public interface CustomParameterBinder {
 		 *
 		 * @return a result which indicates that this binder successfully bound a custom value
 		 */
-		@Nonnull
+		@NonNull
 		public static BindingResult handled() {
 			return Handled.INSTANCE;
 		}
@@ -105,7 +105,7 @@ public interface CustomParameterBinder {
 		 *
 		 * @return a result which indicates that this binder did not bind a custom value
 		 */
-		@Nonnull
+		@NonNull
 		public static BindingResult fallback() {
 			return Fallback.INSTANCE;
 		}

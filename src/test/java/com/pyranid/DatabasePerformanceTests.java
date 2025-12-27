@@ -19,8 +19,8 @@ package com.pyranid;
 import org.hsqldb.jdbc.JDBCDataSource;
 import org.junit.jupiter.api.Test;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
@@ -473,7 +473,7 @@ public class DatabasePerformanceTests {
 			this.enabled.set(true);
 		}
 
-		void record(@Nonnull StatementLog<?> log) {
+		void record(@NonNull StatementLog<?> log) {
 			requireNonNull(log);
 
 			if (!this.enabled.get())
@@ -501,10 +501,10 @@ public class DatabasePerformanceTests {
 		}
 	}
 
-	@Nonnull
-	private PerfRunResult runOnceWithMapper(@Nonnull String dbName,
+	@NonNull
+	private PerfRunResult runOnceWithMapper(@NonNull String dbName,
 																					int rowCount,
-																					@Nonnull ResultSetMapper mapper) {
+																					@NonNull ResultSetMapper mapper) {
 		requireNonNull(mapper);
 
 		DataSource ds = createInMemoryDataSource(dbName);
@@ -546,9 +546,9 @@ public class DatabasePerformanceTests {
 		return new PerfRunResult(warmupMs, warmupMappingMs, ms, mapMs);
 	}
 
-	private QueryRun runQueryWithTimings(@Nonnull Database db,
-																			 @Nonnull MappingCollector mappingCollector,
-																			 @Nonnull String sql,
+	private QueryRun runQueryWithTimings(@NonNull Database db,
+																			 @NonNull MappingCollector mappingCollector,
+																			 @NonNull String sql,
 																			 int expectedRows) {
 		requireNonNull(db);
 		requireNonNull(mappingCollector);
@@ -584,7 +584,7 @@ public class DatabasePerformanceTests {
 		return Boolean.getBoolean("pyranid.perf.detailed");
 	}
 
-	@Nonnull
+	@NonNull
 	private ResultSetMapper createPlannedMapper() {
 		return ResultSetMapper.withPlanCachingEnabled(true).build();
 	}
@@ -594,7 +594,7 @@ public class DatabasePerformanceTests {
 		return ResultSetMapper.withPlanCachingEnabled(false).build();
 	}
 
-	private void createWideSchema(@Nonnull Database db) {
+	private void createWideSchema(@NonNull Database db) {
 		TestQueries.execute(db, """
 				CREATE TABLE wide_table (
 				  id BIGINT PRIMARY KEY,
@@ -646,7 +646,7 @@ public class DatabasePerformanceTests {
 				""");
 	}
 
-	private void insertWideRows(@Nonnull Database db, int n) {
+	private void insertWideRows(@NonNull Database db, int n) {
 		db.transaction(() -> {
 			for (int i = 1; i <= n; i++) {
 				long id = i;
@@ -728,8 +728,8 @@ public class DatabasePerformanceTests {
 		});
 	}
 
-	@Nonnull
-	protected DataSource createInMemoryDataSource(@Nonnull String databaseName) {
+	@NonNull
+	protected DataSource createInMemoryDataSource(@NonNull String databaseName) {
 		requireNonNull(databaseName);
 		JDBCDataSource dataSource = new JDBCDataSource();
 		dataSource.setUrl(format("jdbc:hsqldb:mem:%s;sql.syntax_pgs=true", databaseName));

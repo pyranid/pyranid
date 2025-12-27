@@ -16,7 +16,7 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
+import org.jspecify.annotations.NonNull;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
@@ -54,8 +54,8 @@ public enum DatabaseType {
 	 * @return the type of database
 	 * @throws DatabaseException if an exception occurs while attempting to read database metadata
 	 */
-	@Nonnull
-	public static DatabaseType fromDataSource(@Nonnull DataSource dataSource) {
+	@NonNull
+	public static DatabaseType fromDataSource(@NonNull DataSource dataSource) {
 		requireNonNull(dataSource);
 		
 		try (Connection connection = dataSource.getConnection()) {

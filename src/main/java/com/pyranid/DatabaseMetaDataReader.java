@@ -16,7 +16,7 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
+import org.jspecify.annotations.NonNull;
 import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
 
@@ -34,5 +34,5 @@ public interface DatabaseMetaDataReader {
 	 * @param databaseMetaData JBDC metadata for this database
 	 * @throws SQLException if an error occurs while examining metadata
 	 */
-	void read(@Nonnull DatabaseMetaData databaseMetaData) throws SQLException;
+	void read(@NonNull DatabaseMetaData databaseMetaData) throws SQLException;
 }

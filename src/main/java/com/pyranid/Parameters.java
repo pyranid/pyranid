@@ -18,8 +18,8 @@ package com.pyranid;
 
 import com.pyranid.JsonParameter.BindingPreference;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import java.lang.reflect.Array;
 import java.lang.reflect.Type;
@@ -57,8 +57,8 @@ public final class Parameters {
 	 * @param <E>          the element type of the Java list ({@code List<E>}); each element must be bindable to {@code baseTypeName} by the active {@link PreparedStatementBinder}.
 	 * @return a SQL ARRAY parameter for the given list
 	 */
-	@Nonnull
-	public static <E> SqlArrayParameter<E> sqlArrayOf(@Nonnull String baseTypeName,
+	@NonNull
+	public static <E> SqlArrayParameter<E> sqlArrayOf(@NonNull String baseTypeName,
 																										@Nullable List<E> list) {
 		requireNonNull(baseTypeName);
 		return new DefaultSqlArrayParameter(baseTypeName, list == null ? null : list.toArray());
@@ -77,9 +77,9 @@ public final class Parameters {
 	 * @param <E>          the element type of the Java array ({@code T[]}); each element must be bindable to {@code baseTypeName} by the active {@link PreparedStatementBinder}.
 	 * @return a SQL ARRAY parameter for the given Java array
 	 */
-	@Nonnull
-	public static <E> SqlArrayParameter<E> sqlArrayOf(@Nonnull String baseTypeName,
-																										@Nullable E[] array) {
+	@NonNull
+	public static <E> SqlArrayParameter<E> sqlArrayOf(@NonNull String baseTypeName,
+																										E @Nullable [] array) {
 		requireNonNull(baseTypeName);
 		return new DefaultSqlArrayParameter(baseTypeName, array);
 	}
@@ -92,13 +92,13 @@ public final class Parameters {
 	 */
 	@ThreadSafe
 	static class DefaultSqlArrayParameter implements SqlArrayParameter {
-		@Nonnull
+		@NonNull
 		private final String baseTypeName; // e.g. "text", "uuid", "integer", ...
 		@Nullable
-		private final Object[] elements;
+		private final Object @Nullable [] elements;
 
-		DefaultSqlArrayParameter(@Nonnull String baseTypeName,
-														 @Nullable Object[] elements) {
+		DefaultSqlArrayParameter(@NonNull String baseTypeName,
+														 Object @Nullable [] elements) {
 			requireNonNull(baseTypeName);
 
 			this.baseTypeName = baseTypeName;
@@ -111,7 +111,7 @@ public final class Parameters {
 		 *
 		 * @return the element type of this SQL ARRAY
 		 */
-		@Nonnull
+		@NonNull
 		@Override
 		public String getBaseTypeName() {
 			return this.baseTypeName;
@@ -122,7 +122,7 @@ public final class Parameters {
 		 *
 		 * @return the elements of this SQL ARRAY
 		 */
-		@Nonnull
+		@NonNull
 		@Override
 		public Optional<Object[]> getElements() {
 			// Defensive copy
@@ -137,8 +137,8 @@ public final class Parameters {
 	 * @param <E>      the element type
 	 * @return an IN-list parameter for the given elements
 	 */
-	@Nonnull
-	public static <E> InListParameter inList(@Nonnull Collection<E> elements) {
+	@NonNull
+	public static <E> InListParameter inList(@NonNull Collection<E> elements) {
 		requireNonNull(elements);
 		return new DefaultInListParameter(elements.toArray());
 	}
@@ -150,8 +150,8 @@ public final class Parameters {
 	 * @param <E>      the element type
 	 * @return an IN-list parameter for the given elements
 	 */
-	@Nonnull
-	public static <E> InListParameter inList(@Nonnull E[] elements) {
+	@NonNull
+	public static <E> InListParameter inList(E @NonNull [] elements) {
 		requireNonNull(elements);
 		return new DefaultInListParameter(elements);
 	}
@@ -162,8 +162,8 @@ public final class Parameters {
 	 * @param elements the elements to expand into {@code ?} placeholders
 	 * @return an IN-list parameter for the given elements
 	 */
-	@Nonnull
-	public static InListParameter inList(@Nonnull byte[] elements) {
+	@NonNull
+	public static InListParameter inList(byte @NonNull [] elements) {
 		requireNonNull(elements);
 		Object[] boxed = new Object[elements.length];
 		for (int i = 0; i < elements.length; i++)
@@ -177,8 +177,8 @@ public final class Parameters {
 	 * @param elements the elements to expand into {@code ?} placeholders
 	 * @return an IN-list parameter for the given elements
 	 */
-	@Nonnull
-	public static InListParameter inList(@Nonnull short[] elements) {
+	@NonNull
+	public static InListParameter inList(short @NonNull [] elements) {
 		requireNonNull(elements);
 		Object[] boxed = new Object[elements.length];
 		for (int i = 0; i < elements.length; i++)
@@ -192,8 +192,8 @@ public final class Parameters {
 	 * @param elements the elements to expand into {@code ?} placeholders
 	 * @return an IN-list parameter for the given elements
 	 */
-	@Nonnull
-	public static InListParameter inList(@Nonnull int[] elements) {
+	@NonNull
+	public static InListParameter inList(int @NonNull [] elements) {
 		requireNonNull(elements);
 		Object[] boxed = new Object[elements.length];
 		for (int i = 0; i < elements.length; i++)
@@ -207,8 +207,8 @@ public final class Parameters {
 	 * @param elements the elements to expand into {@code ?} placeholders
 	 * @return an IN-list parameter for the given elements
 	 */
-	@Nonnull
-	public static InListParameter inList(@Nonnull long[] elements) {
+	@NonNull
+	public static InListParameter inList(long @NonNull [] elements) {
 		requireNonNull(elements);
 		Object[] boxed = new Object[elements.length];
 		for (int i = 0; i < elements.length; i++)
@@ -222,8 +222,8 @@ public final class Parameters {
 	 * @param elements the elements to expand into {@code ?} placeholders
 	 * @return an IN-list parameter for the given elements
 	 */
-	@Nonnull
-	public static InListParameter inList(@Nonnull float[] elements) {
+	@NonNull
+	public static InListParameter inList(float @NonNull [] elements) {
 		requireNonNull(elements);
 		Object[] boxed = new Object[elements.length];
 		for (int i = 0; i < elements.length; i++)
@@ -237,8 +237,8 @@ public final class Parameters {
 	 * @param elements the elements to expand into {@code ?} placeholders
 	 * @return an IN-list parameter for the given elements
 	 */
-	@Nonnull
-	public static InListParameter inList(@Nonnull double[] elements) {
+	@NonNull
+	public static InListParameter inList(double @NonNull [] elements) {
 		requireNonNull(elements);
 		Object[] boxed = new Object[elements.length];
 		for (int i = 0; i < elements.length; i++)
@@ -252,8 +252,8 @@ public final class Parameters {
 	 * @param elements the elements to expand into {@code ?} placeholders
 	 * @return an IN-list parameter for the given elements
 	 */
-	@Nonnull
-	public static InListParameter inList(@Nonnull boolean[] elements) {
+	@NonNull
+	public static InListParameter inList(boolean @NonNull [] elements) {
 		requireNonNull(elements);
 		Object[] boxed = new Object[elements.length];
 		for (int i = 0; i < elements.length; i++)
@@ -267,8 +267,8 @@ public final class Parameters {
 	 * @param elements the elements to expand into {@code ?} placeholders
 	 * @return an IN-list parameter for the given elements
 	 */
-	@Nonnull
-	public static InListParameter inList(@Nonnull char[] elements) {
+	@NonNull
+	public static InListParameter inList(char @NonNull [] elements) {
 		requireNonNull(elements);
 		Object[] boxed = new Object[elements.length];
 		for (int i = 0; i < elements.length; i++)
@@ -284,15 +284,15 @@ public final class Parameters {
 	 */
 	@ThreadSafe
 	static class DefaultInListParameter implements InListParameter {
-		@Nonnull
+		@NonNull
 		private final Object[] elements;
 
-		DefaultInListParameter(@Nonnull Object[] elements) {
+		DefaultInListParameter(Object @NonNull [] elements) {
 			requireNonNull(elements);
 			this.elements = elements.clone(); // Always perform a defensive copy
 		}
 
-		@Nonnull
+		@NonNull
 		@Override
 		public Optional<Object[]> getElements() {
 			// Defensive copy
@@ -317,9 +317,9 @@ public final class Parameters {
 	 * @param <E>         the element type of the array
 	 * @return a {@link TypedParameter} representing a {@code E[]} suitable for use with custom binders
 	 */
-	@Nonnull
-	public static <E> TypedParameter arrayOf(@Nonnull Class<E> elementType,
-																					 @Nullable E[] array) {
+	@NonNull
+	public static <E> TypedParameter arrayOf(@NonNull Class<E> elementType,
+																					 E @Nullable [] array) {
 		requireNonNull(elementType);
 		return arrayOf((Class<?>) elementType, array);
 	}
@@ -340,8 +340,8 @@ public final class Parameters {
 	 * @param array       the array value to wrap; may be {@code null}
 	 * @return a {@link TypedParameter} representing an array suitable for use with custom binders
 	 */
-	@Nonnull
-	public static TypedParameter arrayOf(@Nonnull Class<?> elementType,
+	@NonNull
+	public static TypedParameter arrayOf(@NonNull Class<?> elementType,
 																			 @Nullable Object array) {
 		requireNonNull(elementType);
 
@@ -371,8 +371,8 @@ public final class Parameters {
 	 * @param elements the elements of the vector parameter
 	 * @return the vector parameter
 	 */
-	@Nonnull
-	public static VectorParameter vectorOfDoubles(@Nullable double[] elements) {
+	@NonNull
+	public static VectorParameter vectorOfDoubles(double @Nullable [] elements) {
 		return new DefaultVectorParameter(elements);
 	}
 
@@ -382,7 +382,7 @@ public final class Parameters {
 	 * @param elements the elements of the vector parameter
 	 * @return the vector parameter
 	 */
-	@Nonnull
+	@NonNull
 	public static VectorParameter vectorOfDoubles(@Nullable List<Double> elements) {
 		if (elements == null)
 			return new DefaultVectorParameter(null);
@@ -398,8 +398,8 @@ public final class Parameters {
 	 * @param elements the elements of the vector parameter
 	 * @return the vector parameter
 	 */
-	@Nonnull
-	public static VectorParameter vectorOfFloats(@Nullable float[] elements) {
+	@NonNull
+	public static VectorParameter vectorOfFloats(float @Nullable [] elements) {
 		if (elements == null)
 			return new DefaultVectorParameter(null);
 
@@ -414,7 +414,7 @@ public final class Parameters {
 	 * @param elements the elements of the vector parameter
 	 * @return the vector parameter
 	 */
-	@Nonnull
+	@NonNull
 	public static VectorParameter vectorOfFloats(@Nullable List<Float> elements) {
 		if (elements == null)
 			return new DefaultVectorParameter(null);
@@ -430,7 +430,7 @@ public final class Parameters {
 	 * @param elements the elements of the vector parameter
 	 * @return the vector parameter
 	 */
-	@Nonnull
+	@NonNull
 	public static VectorParameter vectorOfBigDecimals(@Nullable List<BigDecimal> elements) {
 		if (elements == null)
 			return new DefaultVectorParameter(null);
@@ -451,7 +451,7 @@ public final class Parameters {
 		@Nullable
 		private final double[] elements;
 
-		private DefaultVectorParameter(@Nullable double[] elements) {
+		private DefaultVectorParameter(double @Nullable [] elements) {
 			if (elements == null) {
 				this.elements = null;
 				return;
@@ -473,7 +473,7 @@ public final class Parameters {
 		 *
 		 * @return the elements of this vector
 		 */
-		@Nonnull
+		@NonNull
 		@Override
 		public Optional<double[]> getElements() {
 			// Defensive copy
@@ -487,7 +487,7 @@ public final class Parameters {
 	 * @param json the stringified JSON for this parameter
 	 * @return the JSON parameter
 	 */
-	@Nonnull
+	@NonNull
 	public static JsonParameter json(@Nullable String json) {
 		return new DefaultJsonParameter(json, BindingPreference.BINARY);
 	}
@@ -499,9 +499,9 @@ public final class Parameters {
 	 * @param bindingPreference how the JSON parameter should be bound to a {@link java.sql.PreparedStatement}
 	 * @return the JSON parameter
 	 */
-	@Nonnull
+	@NonNull
 	public static JsonParameter json(@Nullable String json,
-																	 @Nonnull BindingPreference bindingPreference) {
+																	 @NonNull BindingPreference bindingPreference) {
 		requireNonNull(bindingPreference);
 
 		return new DefaultJsonParameter(json, bindingPreference);
@@ -517,24 +517,24 @@ public final class Parameters {
 	static class DefaultJsonParameter implements JsonParameter {
 		@Nullable
 		private final String json;
-		@Nonnull
+		@NonNull
 		private final BindingPreference bindingPreference;
 
 		private DefaultJsonParameter(@Nullable String json,
-																 @Nonnull BindingPreference bindingPreference) {
+																 @NonNull BindingPreference bindingPreference) {
 			requireNonNull(bindingPreference);
 
 			this.json = json;
 			this.bindingPreference = bindingPreference;
 		}
 
-		@Nonnull
+		@NonNull
 		@Override
 		public Optional<String> getJson() {
 			return Optional.ofNullable(this.json);
 		}
 
-		@Nonnull
+		@NonNull
 		@Override
 		public BindingPreference getBindingPreference() {
 			return this.bindingPreference;
@@ -559,8 +559,8 @@ public final class Parameters {
 	 * @param <E>         the element type of the list
 	 * @return a {@link TypedParameter} representing a {@code List<E>} suitable for use with custom binders
 	 */
-	@Nonnull
-	public static <E> TypedParameter listOf(@Nonnull Class<E> elementType,
+	@NonNull
+	public static <E> TypedParameter listOf(@NonNull Class<E> elementType,
 																					@Nullable List<E> list) {
 		requireNonNull(elementType);
 
@@ -586,8 +586,8 @@ public final class Parameters {
 	 * @param <E>         the element type of the set
 	 * @return a {@link TypedParameter} representing a {@code Set<E>} suitable for use with custom binders
 	 */
-	@Nonnull
-	public static <E> TypedParameter setOf(@Nonnull Class<E> elementType,
+	@NonNull
+	public static <E> TypedParameter setOf(@NonNull Class<E> elementType,
 																				 @Nullable Set<E> set) {
 		requireNonNull(elementType);
 
@@ -615,9 +615,9 @@ public final class Parameters {
 	 * @param <V>       the value type
 	 * @return a {@link TypedParameter} representing {@code Map<K,V>}
 	 */
-	@Nonnull
-	public static <K, V> TypedParameter mapOf(@Nonnull Class<K> keyType,
-																						@Nonnull Class<V> valueType,
+	@NonNull
+	public static <K, V> TypedParameter mapOf(@NonNull Class<K> keyType,
+																						@NonNull Class<V> valueType,
 																						@Nullable Map<K, V> map) {
 		requireNonNull(keyType);
 		requireNonNull(valueType);

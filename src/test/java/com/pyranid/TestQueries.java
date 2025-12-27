@@ -16,8 +16,8 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
@@ -26,10 +26,10 @@ final class TestQueries {
 	private TestQueries() {
 	}
 
-	@Nonnull
-	static Long execute(@Nonnull Database db,
-											@Nonnull String sql,
-											@Nullable Object... parameters) {
+	@NonNull
+	static Long execute(@NonNull Database db,
+											@NonNull String sql,
+											Object @Nullable ... parameters) {
 		requireNonNull(db);
 		requireNonNull(sql);
 
@@ -43,8 +43,8 @@ final class TestQueries {
 		return query.execute();
 	}
 
-	@Nonnull
-	private static String rewritePositionalParameters(@Nonnull String sql, int paramCount) {
+	@NonNull
+	private static String rewritePositionalParameters(@NonNull String sql, int paramCount) {
 		requireNonNull(sql);
 
 		StringBuilder rewritten = new StringBuilder(sql.length() + paramCount * 3);

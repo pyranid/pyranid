@@ -16,8 +16,8 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
 import java.sql.Connection;
@@ -46,41 +46,41 @@ import static java.util.Objects.requireNonNull;
  */
 @ThreadSafe
 public final class Transaction {
-	@Nonnull
+	@NonNull
 	private static final AtomicLong ID_GENERATOR;
 
 	static {
 		ID_GENERATOR = new AtomicLong(0);
 	}
 
-	@Nonnull
+	@NonNull
 	private final Long id;
-	@Nonnull
+	@NonNull
 	private final DataSource dataSource;
-	@Nonnull
+	@NonNull
 	private final TransactionIsolation transactionIsolation;
-	@Nonnull
+	@NonNull
 	private final List<Consumer<TransactionResult>> postTransactionOperations;
-	@Nonnull
+	@NonNull
 	private final ReentrantLock connectionLock;
-	@Nonnull
+	@NonNull
 	private final Logger logger;
-	@Nonnull
+	@NonNull
 	private final Long ownerThreadId;
 
 	@Nullable
 	private Connection connection;
-	@Nonnull
+	@NonNull
 	private final AtomicBoolean rollbackOnly;
 	@Nullable
 	private volatile Boolean initialAutoCommit;
 	@Nullable
 	private volatile Integer initialTransactionIsolationJdbcLevel;
-	@Nonnull
+	@NonNull
 	private final AtomicBoolean transactionIsolationWasChanged;
 
-	Transaction(@Nonnull DataSource dataSource,
-							@Nonnull TransactionIsolation transactionIsolation) {
+	Transaction(@NonNull DataSource dataSource,
+							@NonNull TransactionIsolation transactionIsolation) {
 		requireNonNull(dataSource);
 		requireNonNull(transactionIsolation);
 
@@ -98,7 +98,7 @@ public final class Transaction {
 	}
 
 	@Override
-	@Nonnull
+	@NonNull
 	public String toString() {
 		return format("%s{id=%s, transactionIsolation=%s, hasConnection=%s, isRollbackOnly=%s}",
 				getClass().getSimpleName(), id(), getTransactionIsolation(), hasConnection(), isRollbackOnly());
@@ -109,7 +109,7 @@ public final class Transaction {
 	 *
 	 * @return a transaction savepoint
 	 */
-	@Nonnull
+	@NonNull
 	public Savepoint createSavepoint() {
 		try {
 			return getConnection().setSavepoint();
@@ -123,7 +123,7 @@ public final class Transaction {
 	 *
 	 * @param savepoint the savepoint to roll back to
 	 */
-	public void rollback(@Nonnull Savepoint savepoint) {
+	public void rollback(@NonNull Savepoint savepoint) {
 		requireNonNull(savepoint);
 
 		try {
@@ -140,7 +140,7 @@ public final class Transaction {
 	 *
 	 * @return {@code true} if this transaction should be rolled back, {@code false} otherwise
 	 */
-	@Nonnull
+	@NonNull
 	public Boolean isRollbackOnly() {
 		return this.rollbackOnly.get();
 	}
@@ -150,7 +150,7 @@ public final class Transaction {
 	 *
 	 * @param rollbackOnly whether to set this transaction to be rollback-only
 	 */
-	public void setRollbackOnly(@Nonnull Boolean rollbackOnly) {
+	public void setRollbackOnly(@NonNull Boolean rollbackOnly) {
 		requireNonNull(rollbackOnly);
 		this.rollbackOnly.set(rollbackOnly);
 	}
@@ -160,7 +160,7 @@ public final class Transaction {
 	 *
 	 * @param postTransactionOperation the post-transaction operation to add
 	 */
-	public void addPostTransactionOperation(@Nonnull Consumer<TransactionResult> postTransactionOperation) {
+	public void addPostTransactionOperation(@NonNull Consumer<TransactionResult> postTransactionOperation) {
 		requireNonNull(postTransactionOperation);
 		this.postTransactionOperations.add(postTransactionOperation);
 	}
@@ -171,8 +171,8 @@ public final class Transaction {
 	 * @param postTransactionOperation the post-transaction operation to remove
 	 * @return {@code true} if the post-transaction operation was removed, {@code false} otherwise
 	 */
-	@Nonnull
-	public Boolean removePostTransactionOperation(@Nonnull Consumer<TransactionResult> postTransactionOperation) {
+	@NonNull
+	public Boolean removePostTransactionOperation(@NonNull Consumer<TransactionResult> postTransactionOperation) {
 		requireNonNull(postTransactionOperation);
 		return this.postTransactionOperations.remove(postTransactionOperation);
 	}
@@ -185,7 +185,7 @@ public final class Transaction {
 	 *
 	 * @return the list of post-transaction operations
 	 */
-	@Nonnull
+	@NonNull
 	public List<Consumer<TransactionResult>> getPostTransactionOperations() {
 		return Collections.unmodifiableList(this.postTransactionOperations);
 	}
@@ -195,17 +195,17 @@ public final class Transaction {
 	 *
 	 * @return the isolation level
 	 */
-	@Nonnull
+	@NonNull
 	public TransactionIsolation getTransactionIsolation() {
 		return this.transactionIsolation;
 	}
 
-	@Nonnull
+	@NonNull
 	Long id() {
 		return this.id;
 	}
 
-	@Nonnull
+	@NonNull
 	Boolean hasConnection() {
 		getConnectionLock().lock();
 
@@ -216,7 +216,7 @@ public final class Transaction {
 		}
 	}
 
-	@Nonnull
+	@NonNull
 	Boolean isOwnedByCurrentThread() {
 		return Thread.currentThread().getId() == this.ownerThreadId;
 	}
@@ -273,7 +273,7 @@ public final class Transaction {
 	 * @return The connection associated with this transaction.
 	 * @throws DatabaseException if unable to acquire a connection.
 	 */
-	@Nonnull
+	@NonNull
 	Connection getConnection() {
 		getConnectionLock().lock();
 
@@ -332,7 +332,7 @@ public final class Transaction {
 		}
 	}
 
-	void setAutoCommit(@Nonnull Boolean autoCommit) {
+	void setAutoCommit(@NonNull Boolean autoCommit) {
 		requireNonNull(autoCommit);
 
 		getConnectionLock().lock();
@@ -371,32 +371,32 @@ public final class Transaction {
 		}
 	}
 
-	@Nonnull
+	@NonNull
 	Long generateId() {
 		return ID_GENERATOR.incrementAndGet();
 	}
 
-	@Nonnull
+	@NonNull
 	Optional<Boolean> getInitialAutoCommit() {
 		return Optional.ofNullable(this.initialAutoCommit);
 	}
 
-	@Nonnull
+	@NonNull
 	DataSource getDataSource() {
 		return this.dataSource;
 	}
 
-	@Nonnull
+	@NonNull
 	protected Optional<Integer> getInitialTransactionIsolationJdbcLevel() {
 		return Optional.ofNullable(this.initialTransactionIsolationJdbcLevel);
 	}
 
-	@Nonnull
+	@NonNull
 	protected Boolean getTransactionIsolationWasChanged() {
 		return this.transactionIsolationWasChanged.get();
 	}
 
-	@Nonnull
+	@NonNull
 	protected ReentrantLock getConnectionLock() {
 		return this.connectionLock;
 	}

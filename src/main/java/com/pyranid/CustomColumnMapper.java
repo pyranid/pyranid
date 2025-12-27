@@ -16,8 +16,8 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -45,14 +45,14 @@ public interface CustomColumnMapper {
 	 * @return the result of the custom column mapping operation - either {@link MappingResult#of(Object)} to indicate a successfully-mapped value or {@link MappingResult#fallback()} if Pyranid should fall back to the registered {@link ResultSetMapper} mapping behavior.
 	 * @throws SQLException if an error occurs during mapping
 	 */
-	@Nonnull
-	MappingResult map(@Nonnull StatementContext<?> statementContext,
-										@Nonnull ResultSet resultSet,
-										@Nonnull Object resultSetValue,
-										@Nonnull TargetType targetType,
-										@Nonnull Integer columnIndex,
+	@NonNull
+	MappingResult map(@NonNull StatementContext<?> statementContext,
+										@NonNull ResultSet resultSet,
+										@NonNull Object resultSetValue,
+										@NonNull TargetType targetType,
+										@NonNull Integer columnIndex,
 										@Nullable String columnLabel,
-										@Nonnull InstanceProvider instanceProvider) throws SQLException;
+										@NonNull InstanceProvider instanceProvider) throws SQLException;
 
 	/**
 	 * Specifies which types this mapper should handle.
@@ -64,8 +64,8 @@ public interface CustomColumnMapper {
 	 * @param targetType the target type to evaluate - should this mapper handle it or not?
 	 * @return {@code true} if this mapper should handle the type, {@code false} otherwise.
 	 */
-	@Nonnull
-	Boolean appliesTo(@Nonnull TargetType targetType);
+	@NonNull
+	Boolean appliesTo(@NonNull TargetType targetType);
 
 	/**
 	 * Result of a custom column mapping attempt.
@@ -82,7 +82,7 @@ public interface CustomColumnMapper {
 		 * @param value the custom value, may be {@code null}
 		 * @return a result which indicates a successfully-mapped custom value
 		 */
-		@Nonnull
+		@NonNull
 		public static MappingResult of(@Nullable Object value) {
 			return new CustomMapping(value);
 		}
@@ -92,7 +92,7 @@ public interface CustomColumnMapper {
 		 *
 		 * @return a result which indicates that this mapper did not map a custom value
 		 */
-		@Nonnull
+		@NonNull
 		public static MappingResult fallback() {
 			return Fallback.INSTANCE;
 		}
@@ -106,7 +106,7 @@ public interface CustomColumnMapper {
 				this.value = value;
 			}
 
-			@Nonnull
+			@NonNull
 			public Optional<Object> getValue() {
 				return Optional.ofNullable(value);
 			}

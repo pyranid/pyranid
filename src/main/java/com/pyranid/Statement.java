@@ -16,7 +16,7 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
+import org.jspecify.annotations.NonNull;
 import javax.annotation.concurrent.ThreadSafe;
 import java.util.Objects;
 
@@ -31,13 +31,13 @@ import static java.util.Objects.requireNonNull;
  */
 @ThreadSafe
 public final class Statement {
-	@Nonnull
+	@NonNull
 	private final Object id;
-	@Nonnull
+	@NonNull
 	private final String sql;
 
-	private Statement(@Nonnull Object id,
-										@Nonnull String sql) {
+	private Statement(@NonNull Object id,
+										@NonNull String sql) {
 		requireNonNull(id);
 		requireNonNull(sql);
 
@@ -52,9 +52,9 @@ public final class Statement {
 	 * @param sql the SQL being identified
 	 * @return a statement instance
 	 */
-	@Nonnull
-	public static Statement of(@Nonnull Object id,
-														 @Nonnull String sql) {
+	@NonNull
+	public static Statement of(@NonNull Object id,
+														 @NonNull String sql) {
 		requireNonNull(id);
 		requireNonNull(sql);
 
@@ -81,19 +81,19 @@ public final class Statement {
 	}
 
 	@Override
-	@Nonnull
+	@NonNull
 	public String toString() {
 		// Strip out newlines for more compact SQL representation
 		return format("%s{id=%s, sql=%s}", getClass().getSimpleName(),
 				getId(), getSql().replaceAll("\n+", " ").trim());
 	}
 
-	@Nonnull
+	@NonNull
 	public Object getId() {
 		return this.id;
 	}
 
-	@Nonnull
+	@NonNull
 	public String getSql() {
 		return this.sql;
 	}

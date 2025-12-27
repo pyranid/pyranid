@@ -16,8 +16,8 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
@@ -69,38 +69,38 @@ import static java.util.logging.Level.WARNING;
  */
 @ThreadSafe
 public final class Database {
-	@Nonnull
+	@NonNull
 	private static final ThreadLocal<Deque<Transaction>> TRANSACTION_STACK_HOLDER;
 
 	static {
 		TRANSACTION_STACK_HOLDER = ThreadLocal.withInitial(() -> new ArrayDeque<>());
 	}
 
-	@Nonnull
+	@NonNull
 	private final DataSource dataSource;
-	@Nonnull
+	@NonNull
 	private final DatabaseType databaseType;
-	@Nonnull
+	@NonNull
 	private final ZoneId timeZone;
-	@Nonnull
+	@NonNull
 	private final InstanceProvider instanceProvider;
-	@Nonnull
+	@NonNull
 	private final PreparedStatementBinder preparedStatementBinder;
-	@Nonnull
+	@NonNull
 	private final ResultSetMapper resultSetMapper;
-	@Nonnull
+	@NonNull
 	private final StatementLogger statementLogger;
-	@Nonnull
+	@NonNull
 	private final AtomicInteger defaultIdGenerator;
-	@Nonnull
+	@NonNull
 	private final Logger logger;
 
-	@Nonnull
+	@NonNull
 	private volatile DatabaseOperationSupportStatus executeLargeBatchSupported;
-	@Nonnull
+	@NonNull
 	private volatile DatabaseOperationSupportStatus executeLargeUpdateSupported;
 
-	protected Database(@Nonnull Builder builder) {
+	protected Database(@NonNull Builder builder) {
 		requireNonNull(builder);
 
 		this.dataSource = requireNonNull(builder.dataSource);
@@ -122,8 +122,8 @@ public final class Database {
 	 * @param dataSource data source used to create the {@link Database} builder
 	 * @return a {@link Database} builder
 	 */
-	@Nonnull
-	public static Builder withDataSource(@Nonnull DataSource dataSource) {
+	@NonNull
+	public static Builder withDataSource(@NonNull DataSource dataSource) {
 		requireNonNull(dataSource);
 		return new Builder(dataSource);
 	}
@@ -133,7 +133,7 @@ public final class Database {
 	 *
 	 * @return the current transaction
 	 */
-	@Nonnull
+	@NonNull
 	public Optional<Transaction> currentTransaction() {
 		Deque<Transaction> transactionStack = TRANSACTION_STACK_HOLDER.get();
 		return Optional.ofNullable(transactionStack.isEmpty() ? null : transactionStack.peek());
@@ -146,7 +146,7 @@ public final class Database {
 	 *
 	 * @param transactionalOperation the operation to perform transactionally
 	 */
-	public void transaction(@Nonnull TransactionalOperation transactionalOperation) {
+	public void transaction(@NonNull TransactionalOperation transactionalOperation) {
 		requireNonNull(transactionalOperation);
 
 		transaction(() -> {
@@ -163,8 +163,8 @@ public final class Database {
 	 * @param transactionIsolation   the desired database transaction isolation level
 	 * @param transactionalOperation the operation to perform transactionally
 	 */
-	public void transaction(@Nonnull TransactionIsolation transactionIsolation,
-													@Nonnull TransactionalOperation transactionalOperation) {
+	public void transaction(@NonNull TransactionIsolation transactionIsolation,
+													@NonNull TransactionalOperation transactionalOperation) {
 		requireNonNull(transactionIsolation);
 		requireNonNull(transactionalOperation);
 
@@ -183,8 +183,8 @@ public final class Database {
 	 * @param <T>                    the type to be returned
 	 * @return the result of the transactional operation
 	 */
-	@Nonnull
-	public <T> Optional<T> transaction(@Nonnull ReturningTransactionalOperation<T> transactionalOperation) {
+	@NonNull
+	public <T> Optional<T> transaction(@NonNull ReturningTransactionalOperation<T> transactionalOperation) {
 		requireNonNull(transactionalOperation);
 		return transaction(TransactionIsolation.DEFAULT, transactionalOperation);
 	}
@@ -199,9 +199,9 @@ public final class Database {
 	 * @param <T>                    the type to be returned
 	 * @return the result of the transactional operation
 	 */
-	@Nonnull
-	public <T> Optional<T> transaction(@Nonnull TransactionIsolation transactionIsolation,
-																		 @Nonnull ReturningTransactionalOperation<T> transactionalOperation) {
+	@NonNull
+	public <T> Optional<T> transaction(@NonNull TransactionIsolation transactionIsolation,
+																		 @NonNull ReturningTransactionalOperation<T> transactionalOperation) {
 		requireNonNull(transactionIsolation);
 		requireNonNull(transactionalOperation);
 
@@ -316,7 +316,7 @@ public final class Database {
 		}
 	}
 
-	protected void closeConnection(@Nonnull Connection connection) {
+	protected void closeConnection(@NonNull Connection connection) {
 		requireNonNull(connection);
 
 		try {
@@ -336,8 +336,8 @@ public final class Database {
 	 * @param transaction            the transaction in which to participate
 	 * @param transactionalOperation the operation that should participate in the transaction
 	 */
-	public void participate(@Nonnull Transaction transaction,
-													@Nonnull TransactionalOperation transactionalOperation) {
+	public void participate(@NonNull Transaction transaction,
+													@NonNull TransactionalOperation transactionalOperation) {
 		requireNonNull(transaction);
 		requireNonNull(transactionalOperation);
 
@@ -359,9 +359,9 @@ public final class Database {
 	 * @param <T>                    the type to be returned
 	 * @return the result of the transactional operation
 	 */
-	@Nonnull
-	public <T> Optional<T> participate(@Nonnull Transaction transaction,
-																		 @Nonnull ReturningTransactionalOperation<T> transactionalOperation) {
+	@NonNull
+	public <T> Optional<T> participate(@NonNull Transaction transaction,
+																		 @NonNull ReturningTransactionalOperation<T> transactionalOperation) {
 		requireNonNull(transaction);
 		requireNonNull(transactionalOperation);
 
@@ -408,13 +408,13 @@ public final class Database {
 	 * @return a fluent builder for binding parameters and executing
 	 * @since 4.0.0
 	 */
-	@Nonnull
-	public Query query(@Nonnull String sql) {
+	@NonNull
+	public Query query(@NonNull String sql) {
 		requireNonNull(sql);
 		return new DefaultQuery(this, sql);
 	}
 
-	private static void restoreInterruptIfNeeded(@Nonnull Throwable throwable) {
+	private static void restoreInterruptIfNeeded(@NonNull Throwable throwable) {
 		requireNonNull(throwable);
 
 		Throwable current = throwable;
@@ -447,7 +447,7 @@ public final class Database {
 	}
 
 	@Nullable
-	private static Throwable closeStatementContextResources(@Nonnull StatementContext<?> statementContext,
+	private static Throwable closeStatementContextResources(@NonNull StatementContext<?> statementContext,
 																													@Nullable Throwable cleanupFailure) {
 		requireNonNull(statementContext);
 
@@ -475,25 +475,25 @@ public final class Database {
 	 */
 	@NotThreadSafe
 	private static final class DefaultQuery implements Query {
-		@Nonnull
+		@NonNull
 		private final Database database;
-		@Nonnull
+		@NonNull
 		private final String originalSql;
-		@Nonnull
+		@NonNull
 		private final List<String> sqlFragments;
-		@Nonnull
+		@NonNull
 		private final List<String> parameterNames;
-		@Nonnull
+		@NonNull
 		private final Set<String> distinctParameterNames;
-		@Nonnull
+		@NonNull
 		private final Map<String, Object> bindings;
 		@Nullable
 		private PreparedStatementCustomizer preparedStatementCustomizer;
 		@Nullable
 		private Object id;
 
-		private DefaultQuery(@Nonnull Database database,
-												 @Nonnull String sql) {
+		private DefaultQuery(@NonNull Database database,
+												 @NonNull String sql) {
 			requireNonNull(database);
 			requireNonNull(sql);
 
@@ -509,9 +509,9 @@ public final class Database {
 			this.preparedStatementCustomizer = null;
 		}
 
-		@Nonnull
+		@NonNull
 		@Override
-		public Query bind(@Nonnull String name,
+		public Query bind(@NonNull String name,
 											@Nullable Object value) {
 			requireNonNull(name);
 
@@ -522,9 +522,9 @@ public final class Database {
 			return this;
 		}
 
-		@Nonnull
+		@NonNull
 		@Override
-		public Query bindAll(@Nonnull Map<String, Object> parameters) {
+		public Query bindAll(@NonNull Map<String, Object> parameters) {
 			requireNonNull(parameters);
 
 			for (Map.Entry<String, Object> entry : parameters.entrySet())
@@ -533,56 +533,56 @@ public final class Database {
 			return this;
 		}
 
-		@Nonnull
+		@NonNull
 		@Override
 		public Query id(@Nullable Object id) {
 			this.id = id;
 			return this;
 		}
 
-		@Nonnull
+		@NonNull
 		@Override
-		public Query customize(@Nonnull PreparedStatementCustomizer preparedStatementCustomizer) {
+		public Query customize(@NonNull PreparedStatementCustomizer preparedStatementCustomizer) {
 			requireNonNull(preparedStatementCustomizer);
 			this.preparedStatementCustomizer = preparedStatementCustomizer;
 
 			return this;
 		}
 
-		@Nonnull
+		@NonNull
 		@Override
-		public <T> Optional<T> fetchObject(@Nonnull Class<T> resultType) {
+		public <T> Optional<T> fetchObject(@NonNull Class<T> resultType) {
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
 			return this.database.queryForObject(preparedQuery.statement, resultType, this.preparedStatementCustomizer, preparedQuery.parameters);
 		}
 
-		@Nonnull
+		@NonNull
 		@Override
-		public <T> List<T> fetchList(@Nonnull Class<T> resultType) {
+		public <T> List<T> fetchList(@NonNull Class<T> resultType) {
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
 			return this.database.queryForList(preparedQuery.statement, resultType, this.preparedStatementCustomizer, preparedQuery.parameters);
 		}
 
-		@Nonnull
+		@NonNull
 		@Override
-		public <T> Stream<T> fetchStream(@Nonnull Class<T> resultType) {
+		public <T> Stream<T> fetchStream(@NonNull Class<T> resultType) {
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
 			return this.database.queryForStream(preparedQuery.statement, resultType, this.preparedStatementCustomizer, preparedQuery.parameters);
 		}
 
-		@Nonnull
+		@NonNull
 		@Override
 		public Long execute() {
 			PreparedQuery preparedQuery = prepare(this.bindings);
 			return this.database.execute(preparedQuery.statement, this.preparedStatementCustomizer, preparedQuery.parameters);
 		}
 
-		@Nonnull
+		@NonNull
 		@Override
-		public List<Long> executeBatch(@Nonnull List<Map<String, Object>> parameterGroups) {
+		public List<Long> executeBatch(@NonNull List<Map<String, Object>> parameterGroups) {
 			requireNonNull(parameterGroups);
 
 			List<List<Object>> parametersAsList = new ArrayList<>(parameterGroups.size());
@@ -628,31 +628,31 @@ public final class Database {
 			return this.database.executeBatch(statement, parametersAsList, this.preparedStatementCustomizer);
 		}
 
-		@Nonnull
+		@NonNull
 		@Override
-		public <T> Optional<T> executeForObject(@Nonnull Class<T> resultType) {
+		public <T> Optional<T> executeForObject(@NonNull Class<T> resultType) {
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
 			return this.database.executeForObject(preparedQuery.statement, resultType, this.preparedStatementCustomizer, preparedQuery.parameters);
 		}
 
-		@Nonnull
+		@NonNull
 		@Override
-		public <T> List<T> executeForList(@Nonnull Class<T> resultType) {
+		public <T> List<T> executeForList(@NonNull Class<T> resultType) {
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
 			return this.database.executeForList(preparedQuery.statement, resultType, this.preparedStatementCustomizer, preparedQuery.parameters);
 		}
 
-		@Nonnull
-		private PreparedQuery prepare(@Nonnull Map<String, Object> bindings) {
+		@NonNull
+		private PreparedQuery prepare(@NonNull Map<String, Object> bindings) {
 			Object statementId = this.id == null ? this.database.generateId() : this.id;
 			return prepare(bindings, statementId);
 		}
 
-		@Nonnull
-		private PreparedQuery prepare(@Nonnull Map<String, Object> bindings,
-																	@Nonnull Object statementId) {
+		@NonNull
+		private PreparedQuery prepare(@NonNull Map<String, Object> bindings,
+																	@NonNull Object statementId) {
 			requireNonNull(bindings);
 			requireNonNull(statementId);
 
@@ -713,7 +713,7 @@ public final class Database {
 			return new PreparedQuery(Statement.of(statementId, sql.toString()), parameters.toArray());
 		}
 
-		@Nonnull
+		@NonNull
 		private String buildPlaceholderSql() {
 			if (this.parameterNames.isEmpty())
 				return this.originalSql;
@@ -727,7 +727,7 @@ public final class Database {
 			return sql.toString();
 		}
 
-		private void appendPlaceholders(@Nonnull StringBuilder sql,
+		private void appendPlaceholders(@NonNull StringBuilder sql,
 																		int count) {
 			requireNonNull(sql);
 
@@ -739,29 +739,29 @@ public final class Database {
 		}
 
 		private static final class PreparedQuery {
-			@Nonnull
+			@NonNull
 			private final Statement statement;
-			@Nonnull
-			private final Object[] parameters;
+			@NonNull
+			private final Object @NonNull [] parameters;
 
-			private PreparedQuery(@Nonnull Statement statement,
-														@Nonnull Object[] parameters) {
+			private PreparedQuery(@NonNull Statement statement,
+														Object @NonNull [] parameters) {
 				this.statement = requireNonNull(statement);
 				this.parameters = requireNonNull(parameters);
 			}
 		}
 
 		private static final class ParsedSql {
-			@Nonnull
+			@NonNull
 			private final List<String> sqlFragments;
-			@Nonnull
+			@NonNull
 			private final List<String> parameterNames;
-			@Nonnull
+			@NonNull
 			private final Set<String> distinctParameterNames;
 
-			private ParsedSql(@Nonnull List<String> sqlFragments,
-												@Nonnull List<String> parameterNames,
-												@Nonnull Set<String> distinctParameterNames) {
+			private ParsedSql(@NonNull List<String> sqlFragments,
+												@NonNull List<String> parameterNames,
+												@NonNull Set<String> distinctParameterNames) {
 				requireNonNull(sqlFragments);
 				requireNonNull(parameterNames);
 				requireNonNull(distinctParameterNames);
@@ -772,8 +772,8 @@ public final class Database {
 			}
 		}
 
-		@Nonnull
-		private static ParsedSql parseNamedParameterSql(@Nonnull String sql) {
+		@NonNull
+		private static ParsedSql parseNamedParameterSql(@NonNull String sql) {
 			requireNonNull(sql);
 
 			List<String> sqlFragments = new ArrayList<>();
@@ -1001,7 +1001,7 @@ public final class Database {
 		}
 
 		@Nullable
-		private static String parseDollarQuoteDelimiter(@Nonnull String sql,
+		private static String parseDollarQuoteDelimiter(@NonNull String sql,
 																										int startIndex) {
 			requireNonNull(sql);
 
@@ -1039,10 +1039,10 @@ public final class Database {
 	 * @return a single result (or no result)
 	 * @throws DatabaseException if > 1 row is returned
 	 */
-	@Nonnull
-	private <T> Optional<T> queryForObject(@Nonnull String sql,
-																				 @Nonnull Class<T> resultSetRowType,
-																				 @Nullable Object... parameters) {
+	@NonNull
+	private <T> Optional<T> queryForObject(@NonNull String sql,
+																				 @NonNull Class<T> resultSetRowType,
+																				 Object @Nullable ... parameters) {
 		requireNonNull(sql);
 		requireNonNull(resultSetRowType);
 
@@ -1059,19 +1059,19 @@ public final class Database {
 	 * @return a single result (or no result)
 	 * @throws DatabaseException if > 1 row is returned
 	 */
-	private <T> Optional<T> queryForObject(@Nonnull Statement statement,
-																				 @Nonnull Class<T> resultSetRowType,
-																				 @Nullable Object... parameters) {
+	private <T> Optional<T> queryForObject(@NonNull Statement statement,
+																				 @NonNull Class<T> resultSetRowType,
+																				 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
 		return queryForObject(statement, resultSetRowType, null, parameters);
 	}
 
-	private <T> Optional<T> queryForObject(@Nonnull Statement statement,
-																				 @Nonnull Class<T> resultSetRowType,
+	private <T> Optional<T> queryForObject(@NonNull Statement statement,
+																				 @NonNull Class<T> resultSetRowType,
 																				 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
-																				 @Nullable Object... parameters) {
+																				 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
@@ -1122,10 +1122,10 @@ public final class Database {
 	 * @param <T>              the type to be returned
 	 * @return a list of results
 	 */
-	@Nonnull
-	private <T> List<T> queryForList(@Nonnull String sql,
-																	 @Nonnull Class<T> resultSetRowType,
-																	 @Nullable Object... parameters) {
+	@NonNull
+	private <T> List<T> queryForList(@NonNull String sql,
+																	 @NonNull Class<T> resultSetRowType,
+																	 Object @Nullable ... parameters) {
 		requireNonNull(sql);
 		requireNonNull(resultSetRowType);
 
@@ -1141,20 +1141,20 @@ public final class Database {
 	 * @param <T>              the type to be returned
 	 * @return a list of results
 	 */
-	@Nonnull
-	private <T> List<T> queryForList(@Nonnull Statement statement,
-																	 @Nonnull Class<T> resultSetRowType,
-																	 @Nullable Object... parameters) {
+	@NonNull
+	private <T> List<T> queryForList(@NonNull Statement statement,
+																	 @NonNull Class<T> resultSetRowType,
+																	 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
 		return queryForList(statement, resultSetRowType, null, parameters);
 	}
 
-	private <T> List<T> queryForList(@Nonnull Statement statement,
-																	 @Nonnull Class<T> resultSetRowType,
+	private <T> List<T> queryForList(@NonNull Statement statement,
+																	 @NonNull Class<T> resultSetRowType,
 																	 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
-																	 @Nullable Object... parameters) {
+																	 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
@@ -1190,11 +1190,11 @@ public final class Database {
 		return list;
 	}
 
-	@Nonnull
-	private <T> Stream<T> queryForStream(@Nonnull Statement statement,
-																			 @Nonnull Class<T> resultSetRowType,
+	@NonNull
+	private <T> Stream<T> queryForStream(@NonNull Statement statement,
+																			 @NonNull Class<T> resultSetRowType,
 																			 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
-																			 @Nullable Object... parameters) {
+																			 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
@@ -1218,9 +1218,9 @@ public final class Database {
 	 * @param parameters {@link PreparedStatement} parameters, if any
 	 * @return the number of rows affected by the SQL statement
 	 */
-	@Nonnull
-	private Long execute(@Nonnull String sql,
-											 @Nullable Object... parameters) {
+	@NonNull
+	private Long execute(@NonNull String sql,
+											 Object @Nullable ... parameters) {
 		requireNonNull(sql);
 		return execute(Statement.of(generateId(), sql), parameters);
 	}
@@ -1233,17 +1233,17 @@ public final class Database {
 	 * @param parameters {@link PreparedStatement} parameters, if any
 	 * @return the number of rows affected by the SQL statement
 	 */
-	@Nonnull
-	private Long execute(@Nonnull Statement statement,
-											 @Nullable Object... parameters) {
+	@NonNull
+	private Long execute(@NonNull Statement statement,
+											 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 
 		return execute(statement, null, parameters);
 	}
 
-	private Long execute(@Nonnull Statement statement,
+	private Long execute(@NonNull Statement statement,
 											 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
-											 @Nullable Object... parameters) {
+											 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 
 		ResultHolder<Long> resultHolder = new ResultHolder<>();
@@ -1293,10 +1293,10 @@ public final class Database {
 	 * @return a single result (or no result)
 	 * @throws DatabaseException if > 1 row is returned
 	 */
-	@Nonnull
-	private <T> Optional<T> executeForObject(@Nonnull String sql,
-																					 @Nonnull Class<T> resultSetRowType,
-																					 @Nullable Object... parameters) {
+	@NonNull
+	private <T> Optional<T> executeForObject(@NonNull String sql,
+																					 @NonNull Class<T> resultSetRowType,
+																					 Object @Nullable ... parameters) {
 		requireNonNull(sql);
 		requireNonNull(resultSetRowType);
 
@@ -1314,19 +1314,19 @@ public final class Database {
 	 * @return a single result (or no result)
 	 * @throws DatabaseException if > 1 row is returned
 	 */
-	private <T> Optional<T> executeForObject(@Nonnull Statement statement,
-																					 @Nonnull Class<T> resultSetRowType,
-																					 @Nullable Object... parameters) {
+	private <T> Optional<T> executeForObject(@NonNull Statement statement,
+																					 @NonNull Class<T> resultSetRowType,
+																					 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
 		return executeForObject(statement, resultSetRowType, null, parameters);
 	}
 
-	private <T> Optional<T> executeForObject(@Nonnull Statement statement,
-																					 @Nonnull Class<T> resultSetRowType,
+	private <T> Optional<T> executeForObject(@NonNull Statement statement,
+																					 @NonNull Class<T> resultSetRowType,
 																					 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
-																					 @Nullable Object... parameters) {
+																					 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
@@ -1347,10 +1347,10 @@ public final class Database {
 	 * @param <T>              the type to be returned
 	 * @return a list of results
 	 */
-	@Nonnull
-	private <T> List<T> executeForList(@Nonnull String sql,
-																		 @Nonnull Class<T> resultSetRowType,
-																		 @Nullable Object... parameters) {
+	@NonNull
+	private <T> List<T> executeForList(@NonNull String sql,
+																		 @NonNull Class<T> resultSetRowType,
+																		 Object @Nullable ... parameters) {
 		requireNonNull(sql);
 		requireNonNull(resultSetRowType);
 
@@ -1367,20 +1367,20 @@ public final class Database {
 	 * @param <T>              the type to be returned
 	 * @return a list of results
 	 */
-	@Nonnull
-	private <T> List<T> executeForList(@Nonnull Statement statement,
-																		 @Nonnull Class<T> resultSetRowType,
-																		 @Nullable Object... parameters) {
+	@NonNull
+	private <T> List<T> executeForList(@NonNull Statement statement,
+																		 @NonNull Class<T> resultSetRowType,
+																		 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
 		return executeForList(statement, resultSetRowType, null, parameters);
 	}
 
-	private <T> List<T> executeForList(@Nonnull Statement statement,
-																		 @Nonnull Class<T> resultSetRowType,
+	private <T> List<T> executeForList(@NonNull Statement statement,
+																		 @NonNull Class<T> resultSetRowType,
 																		 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
-																		 @Nullable Object... parameters) {
+																		 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
@@ -1401,9 +1401,9 @@ public final class Database {
 	 * @param parameterGroups Groups of {@link PreparedStatement} parameters
 	 * @return the number of rows affected by the SQL statement per-group
 	 */
-	@Nonnull
-	private List<Long> executeBatch(@Nonnull String sql,
-																	@Nonnull List<List<Object>> parameterGroups) {
+	@NonNull
+	private List<Long> executeBatch(@NonNull String sql,
+																	@NonNull List<List<Object>> parameterGroups) {
 		requireNonNull(sql);
 		requireNonNull(parameterGroups);
 
@@ -1420,17 +1420,17 @@ public final class Database {
 	 * @param parameterGroups Groups of {@link PreparedStatement} parameters
 	 * @return the number of rows affected by the SQL statement per-group
 	 */
-	@Nonnull
-	private List<Long> executeBatch(@Nonnull Statement statement,
-																	@Nonnull List<List<Object>> parameterGroups) {
+	@NonNull
+	private List<Long> executeBatch(@NonNull Statement statement,
+																	@NonNull List<List<Object>> parameterGroups) {
 		requireNonNull(statement);
 		requireNonNull(parameterGroups);
 
 		return executeBatch(statement, parameterGroups, null);
 	}
 
-	private List<Long> executeBatch(@Nonnull Statement statement,
-																	@Nonnull List<List<Object>> parameterGroups,
+	private List<Long> executeBatch(@NonNull Statement statement,
+																	@NonNull List<List<Object>> parameterGroups,
 																	@Nullable PreparedStatementCustomizer preparedStatementCustomizer) {
 		requireNonNull(statement);
 		requireNonNull(parameterGroups);
@@ -1496,7 +1496,7 @@ public final class Database {
 	 * <p>
 	 * See <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/DatabaseMetaData.html">{@code DatabaseMetaData} Javadoc</a> for details.
 	 */
-	public void readDatabaseMetaData(@Nonnull DatabaseMetaDataReader databaseMetaDataReader) {
+	public void readDatabaseMetaData(@NonNull DatabaseMetaDataReader databaseMetaDataReader) {
 		requireNonNull(databaseMetaDataReader);
 
 		performRawConnectionOperation((connection -> {
@@ -1505,9 +1505,9 @@ public final class Database {
 		}), false);
 	}
 
-	protected <T> void performDatabaseOperation(@Nonnull StatementContext<T> statementContext,
-																							@Nonnull List<Object> parameters,
-																							@Nonnull DatabaseOperation databaseOperation) {
+	protected <T> void performDatabaseOperation(@NonNull StatementContext<T> statementContext,
+																							@NonNull List<Object> parameters,
+																							@NonNull DatabaseOperation databaseOperation) {
 		requireNonNull(statementContext);
 		requireNonNull(parameters);
 		requireNonNull(databaseOperation);
@@ -1515,10 +1515,10 @@ public final class Database {
 		performDatabaseOperation(statementContext, parameters, null, databaseOperation);
 	}
 
-	protected <T> void performDatabaseOperation(@Nonnull StatementContext<T> statementContext,
-																							@Nonnull List<Object> parameters,
+	protected <T> void performDatabaseOperation(@NonNull StatementContext<T> statementContext,
+																							@NonNull List<Object> parameters,
 																							@Nullable PreparedStatementCustomizer preparedStatementCustomizer,
-																							@Nonnull DatabaseOperation databaseOperation) {
+																							@NonNull DatabaseOperation databaseOperation) {
 		requireNonNull(statementContext);
 		requireNonNull(parameters);
 		requireNonNull(databaseOperation);
@@ -1530,9 +1530,9 @@ public final class Database {
 		}, databaseOperation);
 	}
 
-	protected <T> void performPreparedStatementBinding(@Nonnull StatementContext<T> statementContext,
-																										 @Nonnull PreparedStatement preparedStatement,
-																										 @Nonnull List<Object> parameters) {
+	protected <T> void performPreparedStatementBinding(@NonNull StatementContext<T> statementContext,
+																										 @NonNull PreparedStatement preparedStatement,
+																										 @NonNull List<Object> parameters) {
 		requireNonNull(statementContext);
 		requireNonNull(preparedStatement);
 		requireNonNull(parameters);
@@ -1562,8 +1562,8 @@ public final class Database {
 		}
 	}
 
-	protected void applyPreparedStatementCustomizer(@Nonnull StatementContext<?> statementContext,
-																									@Nonnull PreparedStatement preparedStatement,
+	protected void applyPreparedStatementCustomizer(@NonNull StatementContext<?> statementContext,
+																									@NonNull PreparedStatement preparedStatement,
 																									@Nullable PreparedStatementCustomizer preparedStatementCustomizer) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(preparedStatement);
@@ -1576,14 +1576,14 @@ public final class Database {
 
 	@FunctionalInterface
 	protected interface RawConnectionOperation<R> {
-		@Nonnull
-		Optional<R> perform(@Nonnull Connection connection) throws Exception;
+		@NonNull
+		Optional<R> perform(@NonNull Connection connection) throws Exception;
 	}
 
 	/**
 	 * @since 3.0.0
 	 */
-	@Nonnull
+	@NonNull
 	public DatabaseType getDatabaseType() {
 		return this.databaseType;
 	}
@@ -1591,7 +1591,7 @@ public final class Database {
 	/**
 	 * @since 3.0.0
 	 */
-	@Nonnull
+	@NonNull
 	public ZoneId getTimeZone() {
 		return this.timeZone;
 	}
@@ -1601,9 +1601,9 @@ public final class Database {
 	 * <p>
 	 * Example: {@link #readDatabaseMetaData(DatabaseMetaDataReader)}.
 	 */
-	@Nonnull
-	protected <R> Optional<R> performRawConnectionOperation(@Nonnull RawConnectionOperation<R> rawConnectionOperation,
-																													@Nonnull Boolean shouldParticipateInExistingTransactionIfPossible) {
+	@NonNull
+	protected <R> Optional<R> performRawConnectionOperation(@NonNull RawConnectionOperation<R> rawConnectionOperation,
+																													@NonNull Boolean shouldParticipateInExistingTransactionIfPossible) {
 		requireNonNull(rawConnectionOperation);
 		requireNonNull(shouldParticipateInExistingTransactionIfPossible);
 
@@ -1695,15 +1695,15 @@ public final class Database {
 		}
 	}
 
-	protected <T> void performDatabaseOperation(@Nonnull StatementContext<T> statementContext,
-																							@Nonnull PreparedStatementBindingOperation preparedStatementBindingOperation,
-																							@Nonnull DatabaseOperation databaseOperation) {
+	protected <T> void performDatabaseOperation(@NonNull StatementContext<T> statementContext,
+																							@NonNull PreparedStatementBindingOperation preparedStatementBindingOperation,
+																							@NonNull DatabaseOperation databaseOperation) {
 		performDatabaseOperation(statementContext, preparedStatementBindingOperation, databaseOperation, null);
 	}
 
-	protected <T> void performDatabaseOperation(@Nonnull StatementContext<T> statementContext,
-																							@Nonnull PreparedStatementBindingOperation preparedStatementBindingOperation,
-																							@Nonnull DatabaseOperation databaseOperation,
+	protected <T> void performDatabaseOperation(@NonNull StatementContext<T> statementContext,
+																							@NonNull PreparedStatementBindingOperation preparedStatementBindingOperation,
+																							@NonNull DatabaseOperation databaseOperation,
 																							@Nullable Integer batchSize) {
 		requireNonNull(statementContext);
 		requireNonNull(preparedStatementBindingOperation);
@@ -1819,7 +1819,7 @@ public final class Database {
 		}
 	}
 
-	@Nonnull
+	@NonNull
 	protected Connection acquireConnection() {
 		Optional<Transaction> transaction = currentTransaction();
 
@@ -1833,52 +1833,52 @@ public final class Database {
 		}
 	}
 
-	@Nonnull
+	@NonNull
 	protected DataSource getDataSource() {
 		return this.dataSource;
 	}
 
-	@Nonnull
+	@NonNull
 	protected InstanceProvider getInstanceProvider() {
 		return this.instanceProvider;
 	}
 
-	@Nonnull
+	@NonNull
 	protected PreparedStatementBinder getPreparedStatementBinder() {
 		return this.preparedStatementBinder;
 	}
 
-	@Nonnull
+	@NonNull
 	protected ResultSetMapper getResultSetMapper() {
 		return this.resultSetMapper;
 	}
 
-	@Nonnull
+	@NonNull
 	protected StatementLogger getStatementLogger() {
 		return this.statementLogger;
 	}
 
-	@Nonnull
+	@NonNull
 	protected DatabaseOperationSupportStatus getExecuteLargeBatchSupported() {
 		return this.executeLargeBatchSupported;
 	}
 
-	protected void setExecuteLargeBatchSupported(@Nonnull DatabaseOperationSupportStatus executeLargeBatchSupported) {
+	protected void setExecuteLargeBatchSupported(@NonNull DatabaseOperationSupportStatus executeLargeBatchSupported) {
 		requireNonNull(executeLargeBatchSupported);
 		this.executeLargeBatchSupported = executeLargeBatchSupported;
 	}
 
-	@Nonnull
+	@NonNull
 	protected DatabaseOperationSupportStatus getExecuteLargeUpdateSupported() {
 		return this.executeLargeUpdateSupported;
 	}
 
-	protected void setExecuteLargeUpdateSupported(@Nonnull DatabaseOperationSupportStatus executeLargeUpdateSupported) {
+	protected void setExecuteLargeUpdateSupported(@NonNull DatabaseOperationSupportStatus executeLargeUpdateSupported) {
 		requireNonNull(executeLargeUpdateSupported);
 		this.executeLargeUpdateSupported = executeLargeUpdateSupported;
 	}
 
-	@Nonnull
+	@NonNull
 	protected Object generateId() {
 		// "Unique" keys
 		return format("com.pyranid.%s", this.defaultIdGenerator.incrementAndGet());
@@ -1886,13 +1886,13 @@ public final class Database {
 
 	@FunctionalInterface
 	protected interface DatabaseOperation {
-		@Nonnull
-		DatabaseOperationResult perform(@Nonnull PreparedStatement preparedStatement) throws Exception;
+		@NonNull
+		DatabaseOperationResult perform(@NonNull PreparedStatement preparedStatement) throws Exception;
 	}
 
 	@FunctionalInterface
 	protected interface PreparedStatementBindingOperation {
-		void perform(@Nonnull PreparedStatement preparedStatement) throws Exception;
+		void perform(@NonNull PreparedStatement preparedStatement) throws Exception;
 	}
 
 	@NotThreadSafe
@@ -1902,7 +1902,7 @@ public final class Database {
 		private final List<Object> parameters;
 		@Nullable
 		private final PreparedStatementCustomizer preparedStatementCustomizer;
-		@Nonnull
+		@NonNull
 		private final Optional<Transaction> transaction;
 		@Nullable
 		private final ReentrantLock connectionLock;
@@ -1927,9 +1927,9 @@ public final class Database {
 		@Nullable
 		private Throwable thrown;
 
-		private StreamingResultSet(@Nonnull Database database,
-															 @Nonnull StatementContext<T> statementContext,
-															 @Nonnull List<Object> parameters,
+		private StreamingResultSet(@NonNull Database database,
+															 @NonNull StatementContext<T> statementContext,
+															 @NonNull List<Object> parameters,
 															 @Nullable PreparedStatementCustomizer preparedStatementCustomizer) {
 			this.database = requireNonNull(database);
 			this.statementContext = requireNonNull(statementContext);
@@ -2111,9 +2111,9 @@ public final class Database {
 			}
 		}
 
-		@Nonnull
-		private static Throwable addSuppressed(@Nonnull Throwable existing,
-																					 @Nonnull Throwable additional) {
+		@NonNull
+		private static Throwable addSuppressed(@NonNull Throwable existing,
+																					 @NonNull Throwable additional) {
 			existing.addSuppressed(additional);
 			return existing;
 		}
@@ -2129,7 +2129,7 @@ public final class Database {
 	 */
 	@NotThreadSafe
 	public static class Builder {
-		@Nonnull
+		@NonNull
 		private final DataSource dataSource;
 		@Nullable
 		private DatabaseType databaseType;
@@ -2144,7 +2144,7 @@ public final class Database {
 		@Nullable
 		private StatementLogger statementLogger;
 
-		private Builder(@Nonnull DataSource dataSource) {
+		private Builder(@NonNull DataSource dataSource) {
 			this.dataSource = requireNonNull(dataSource);
 			this.databaseType = null;
 		}
@@ -2156,43 +2156,43 @@ public final class Database {
 		 * @return this {@code Builder}, for chaining
 		 * @since 4.0.0
 		 */
-		@Nonnull
+		@NonNull
 		public Builder databaseType(@Nullable DatabaseType databaseType) {
 			this.databaseType = databaseType;
 			return this;
 		}
 
-		@Nonnull
+		@NonNull
 		public Builder timeZone(@Nullable ZoneId timeZone) {
 			this.timeZone = timeZone;
 			return this;
 		}
 
-		@Nonnull
+		@NonNull
 		public Builder instanceProvider(@Nullable InstanceProvider instanceProvider) {
 			this.instanceProvider = instanceProvider;
 			return this;
 		}
 
-		@Nonnull
+		@NonNull
 		public Builder preparedStatementBinder(@Nullable PreparedStatementBinder preparedStatementBinder) {
 			this.preparedStatementBinder = preparedStatementBinder;
 			return this;
 		}
 
-		@Nonnull
+		@NonNull
 		public Builder resultSetMapper(@Nullable ResultSetMapper resultSetMapper) {
 			this.resultSetMapper = resultSetMapper;
 			return this;
 		}
 
-		@Nonnull
+		@NonNull
 		public Builder statementLogger(@Nullable StatementLogger statementLogger) {
 			this.statementLogger = statementLogger;
 			return this;
 		}
 
-		@Nonnull
+		@NonNull
 		public Database build() {
 			return new Database(this);
 		}
@@ -2211,12 +2211,12 @@ public final class Database {
 			this.resultSetMappingDuration = resultSetMappingDuration;
 		}
 
-		@Nonnull
+		@NonNull
 		public Optional<Duration> getExecutionDuration() {
 			return Optional.ofNullable(this.executionDuration);
 		}
 
-		@Nonnull
+		@NonNull
 		public Optional<Duration> getResultSetMappingDuration() {
 			return Optional.ofNullable(this.resultSetMappingDuration);
 		}
@@ -2234,7 +2234,7 @@ public final class Database {
 	}
 
 	private static final class StatementLoggerFailureException extends RuntimeException {
-		private StatementLoggerFailureException(@Nonnull Throwable cause) {
+		private StatementLoggerFailureException(@NonNull Throwable cause) {
 			super("Statement logger failed", cause);
 		}
 	}

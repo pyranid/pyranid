@@ -18,8 +18,8 @@ package com.pyranid;
 
 import com.pyranid.CustomColumnMapper.MappingResult;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import java.beans.BeanInfo;
 import java.beans.IntrospectionException;
@@ -89,38 +89,38 @@ import static java.util.stream.Collectors.toSet;
  */
 @ThreadSafe
 class DefaultResultSetMapper implements ResultSetMapper {
-	@Nonnull
+	@NonNull
 	private static final Map<Class<?>, Class<?>> WRAPPER_CLASSES_BY_PRIMITIVE_CLASS;
 
-	@Nonnull
+	@NonNull
 	private final Locale normalizationLocale;
-	@Nonnull
+	@NonNull
 	private final List<CustomColumnMapper> customColumnMappers;
-	@Nonnull
+	@NonNull
 	private final Boolean planCachingEnabled;
 	private final int planCacheCapacity;
 	private final int preferredColumnMapperCacheCapacity;
 	// Enables faster lookup of CustomColumnMapper instances by remembering which TargetType they've been used with before.
-	@Nonnull
+	@NonNull
 	private final ConcurrentMap<TargetType, List<CustomColumnMapper>> customColumnMappersByTargetTypeCache;
-	@Nonnull
+	@NonNull
 	private final Map<SourceTargetKey, CustomColumnMapper> preferredColumnMapperBySourceTargetKey;
-	@Nonnull
+	@NonNull
 	private final ConcurrentMap<Class<?>, Map<String, TargetType>> propertyTargetTypeCache = new ConcurrentHashMap<>();
-	@Nonnull
+	@NonNull
 	private final ConcurrentMap<Class<?>, Map<String, Set<String>>> columnLabelAliasesByPropertyNameCache;
-	@Nonnull
+	@NonNull
 	private final ConcurrentMap<Class<?>, PropertyDescriptor[]> propertyDescriptorsCache = new ConcurrentHashMap<>();
-	@Nonnull
+	@NonNull
 	private final ConcurrentMap<Class<?>, Map<String, Set<String>>> normalizedColumnLabelsByPropertyNameCache = new ConcurrentHashMap<>();
-	@Nonnull
+	@NonNull
 	private final ConcurrentMap<Class<?>, Map<String, Set<String>>> columnLabelsByRecordComponentNameCache = new ConcurrentHashMap<>();
-	@Nonnull
+	@NonNull
 	private final ConcurrentMap<Class<?>, RecordComponent[]> recordComponentsCache = new ConcurrentHashMap<>();
 	// Only used if row-planning is enabled
-	@Nonnull
+	@NonNull
 	private final Map<PlanKey, RowPlan<?>> rowPlanningCache;
-	@Nonnull
+	@NonNull
 	private final Map<ResultSetMetaData, String> schemaSignatureByResultSetMetaData;
 
 	static {
@@ -142,8 +142,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		private final Class<?> sourceClass;
 		private final TargetType targetType;
 
-		public SourceTargetKey(@Nonnull Class<?> sourceClass,
-													 @Nonnull TargetType targetType) {
+		public SourceTargetKey(@NonNull Class<?> sourceClass,
+													 @NonNull TargetType targetType) {
 			requireNonNull(sourceClass);
 			requireNonNull(targetType);
 
@@ -165,8 +165,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 	}
 
-	@Nonnull
-	protected List<CustomColumnMapper> customColumnMappersFor(@Nonnull TargetType targetType) {
+	@NonNull
+	protected List<CustomColumnMapper> customColumnMappersFor(@NonNull TargetType targetType) {
 		requireNonNull(targetType);
 
 		return getCustomColumnMappersByTargetTypeCache().computeIfAbsent(targetType, applicableTargetType -> {
@@ -185,16 +185,16 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		});
 	}
 
-	@Nonnull
-	protected Boolean mappingApplied(@Nonnull MappingResult mappingResult) {
+	@NonNull
+	protected Boolean mappingApplied(@NonNull MappingResult mappingResult) {
 		requireNonNull(mappingResult);
 
 		// Cache preference if a mapper *applied*, regardless of whether it produced null.
 		return !(mappingResult instanceof MappingResult.Fallback);
 	}
 
-	@Nonnull
-	protected Optional<Object> mappedValue(@Nonnull MappingResult mappingResult) {
+	@NonNull
+	protected Optional<Object> mappedValue(@NonNull MappingResult mappingResult) {
 		requireNonNull(mappingResult);
 
 		if (mappingResult instanceof MappingResult.CustomMapping u)
@@ -203,20 +203,20 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		return Optional.empty();
 	}
 
-	@Nonnull
-	protected Class<?> boxedClass(@Nonnull Class<?> type) {
+	@NonNull
+	protected Class<?> boxedClass(@NonNull Class<?> type) {
 		requireNonNull(type);
 		return type.isPrimitive() ? WRAPPER_CLASSES_BY_PRIMITIVE_CLASS.get(type) : type;
 	}
 
-	@Nonnull
-	protected <T> Optional<Object> tryCustomColumnMappers(@Nonnull StatementContext<T> statementContext,
-																												@Nonnull ResultSet resultSet,
-																												@Nonnull Object resultSetValue,
-																												@Nonnull TargetType targetType,
-																												@Nonnull Integer columnIndex,
+	@NonNull
+	protected <T> Optional<Object> tryCustomColumnMappers(@NonNull StatementContext<T> statementContext,
+																												@NonNull ResultSet resultSet,
+																												@NonNull Object resultSetValue,
+																												@NonNull TargetType targetType,
+																												@NonNull Integer columnIndex,
 																												@Nullable String columnLabel,
-																												@Nonnull InstanceProvider instanceProvider) throws SQLException {
+																												@NonNull InstanceProvider instanceProvider) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(resultSetValue);
@@ -227,15 +227,15 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		return tryCustomColumnMappers(statementContext, resultSet, resultSetValue, targetType, mappers, columnIndex, columnLabel, instanceProvider);
 	}
 
-	@Nonnull
-	protected <T> Optional<Object> tryCustomColumnMappers(@Nonnull StatementContext<T> statementContext,
-																												@Nonnull ResultSet resultSet,
-																												@Nonnull Object resultSetValue,
-																												@Nonnull TargetType targetType,
-																												@Nonnull List<CustomColumnMapper> mappers,
-																												@Nonnull Integer columnIndex,
+	@NonNull
+	protected <T> Optional<Object> tryCustomColumnMappers(@NonNull StatementContext<T> statementContext,
+																												@NonNull ResultSet resultSet,
+																												@NonNull Object resultSetValue,
+																												@NonNull TargetType targetType,
+																												@NonNull List<CustomColumnMapper> mappers,
+																												@NonNull Integer columnIndex,
 																												@Nullable String columnLabel,
-																												@Nonnull InstanceProvider instanceProvider) throws SQLException {
+																												@NonNull InstanceProvider instanceProvider) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(resultSetValue);
@@ -283,8 +283,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	 * Determines (and caches) the TargetType of each writable JavaBean property and each Record component
 	 * for the given result class. Keys are property/record-component names.
 	 */
-	@Nonnull
-	protected Map<String, TargetType> determinePropertyTargetTypes(@Nonnull Class<?> resultClass) {
+	@NonNull
+	protected Map<String, TargetType> determinePropertyTargetTypes(@NonNull Class<?> resultClass) {
 		requireNonNull(resultClass);
 
 		return getPropertyTargetTypeCache().computeIfAbsent(resultClass, rc -> {
@@ -315,8 +315,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		});
 	}
 
-	@Nonnull
-	protected PropertyDescriptor[] determinePropertyDescriptors(@Nonnull Class<?> resultClass) {
+	@NonNull
+	protected PropertyDescriptor[] determinePropertyDescriptors(@NonNull Class<?> resultClass) {
 		requireNonNull(resultClass);
 
 		return getPropertyDescriptorsCache().computeIfAbsent(resultClass, rc -> {
@@ -330,8 +330,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		});
 	}
 
-	@Nonnull
-	protected RecordComponent[] determineRecordComponents(@Nonnull Class<?> resultClass) {
+	@NonNull
+	protected RecordComponent[] determineRecordComponents(@NonNull Class<?> resultClass) {
 		requireNonNull(resultClass);
 
 		return getRecordComponentsCache().computeIfAbsent(resultClass, rc -> {
@@ -340,8 +340,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		});
 	}
 
-	@Nonnull
-	protected Map<String, Set<String>> determineNormalizedColumnLabelsByPropertyName(@Nonnull Class<?> resultClass) {
+	@NonNull
+	protected Map<String, Set<String>> determineNormalizedColumnLabelsByPropertyName(@NonNull Class<?> resultClass) {
 		requireNonNull(resultClass);
 
 		return getNormalizedColumnLabelsByPropertyNameCache().computeIfAbsent(resultClass, rc -> {
@@ -368,8 +368,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		});
 	}
 
-	@Nonnull
-	protected Map<String, Set<String>> determineColumnLabelsByRecordComponentName(@Nonnull Class<?> resultClass) {
+	@NonNull
+	protected Map<String, Set<String>> determineColumnLabelsByRecordComponentName(@NonNull Class<?> resultClass) {
 		requireNonNull(resultClass);
 
 		return getColumnLabelsByRecordComponentNameCache().computeIfAbsent(resultClass, rc -> {
@@ -389,7 +389,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		});
 	}
 
-	DefaultResultSetMapper(@Nonnull Builder builder) {
+	DefaultResultSetMapper(@NonNull Builder builder) {
 		requireNonNull(builder);
 
 		this.normalizationLocale = requireNonNull(builder.normalizationLocale);
@@ -405,8 +405,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		this.schemaSignatureByResultSetMetaData = Collections.synchronizedMap(new WeakHashMap<>());
 	}
 
-	@Nonnull
-	private static <K, V> Map<K, V> createCache(@Nonnull Integer capacity) {
+	@NonNull
+	private static <K, V> Map<K, V> createCache(@NonNull Integer capacity) {
 		requireNonNull(capacity);
 		if (capacity <= 0)
 			return new ConcurrentHashMap<>();
@@ -414,11 +414,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@Override
-	@Nonnull
-	public <T> Optional<T> map(@Nonnull StatementContext<T> statementContext,
-														 @Nonnull ResultSet resultSet,
-														 @Nonnull Class<T> resultSetRowType,
-														 @Nonnull InstanceProvider instanceProvider) throws SQLException {
+	@NonNull
+	public <T> Optional<T> map(@NonNull StatementContext<T> statementContext,
+														 @NonNull ResultSet resultSet,
+														 @NonNull Class<T> resultSetRowType,
+														 @NonNull InstanceProvider instanceProvider) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(resultSetRowType);
@@ -432,12 +432,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		return mapWithoutRowPlanning(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData);
 	}
 
-	@Nonnull
-	protected <T> Optional<T> mapWithoutRowPlanning(@Nonnull StatementContext<T> statementContext,
-																									@Nonnull ResultSet resultSet,
-																									@Nonnull Class<T> resultSetRowType,
-																									@Nonnull InstanceProvider instanceProvider,
-																									@Nonnull ResultSetMetaData resultSetMetaData) throws SQLException {
+	@NonNull
+	protected <T> Optional<T> mapWithoutRowPlanning(@NonNull StatementContext<T> statementContext,
+																									@NonNull ResultSet resultSet,
+																									@NonNull Class<T> resultSetRowType,
+																									@NonNull InstanceProvider instanceProvider,
+																									@NonNull ResultSetMetaData resultSetMetaData) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(resultSetRowType);
@@ -464,12 +464,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 	}
 
-	@Nonnull
-	protected <T> Optional<T> mapWithRowPlanning(@Nonnull StatementContext<T> statementContext,
-																							 @Nonnull ResultSet resultSet,
-																							 @Nonnull Class<T> resultSetRowType,
-																							 @Nonnull InstanceProvider instanceProvider,
-																							 @Nonnull ResultSetMetaData resultSetMetaData) throws SQLException {
+	@NonNull
+	protected <T> Optional<T> mapWithRowPlanning(@NonNull StatementContext<T> statementContext,
+																							 @NonNull ResultSet resultSet,
+																							 @NonNull Class<T> resultSetRowType,
+																							 @NonNull InstanceProvider instanceProvider,
+																							 @NonNull ResultSetMetaData resultSetMetaData) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(resultSetRowType);
@@ -593,9 +593,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 	}
 
-	@Nonnull
-	protected String schemaSignatureFor(@Nonnull StatementContext<?> statementContext,
-																			@Nonnull ResultSetMetaData resultSetMetaData) throws SQLException {
+	@NonNull
+	protected String schemaSignatureFor(@NonNull StatementContext<?> statementContext,
+																			@NonNull ResultSetMetaData resultSetMetaData) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(resultSetMetaData);
 
@@ -608,9 +608,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		return signature;
 	}
 
-	@Nonnull
-	private String buildSchemaSignature(@Nonnull StatementContext<?> statementContext,
-																			@Nonnull ResultSetMetaData resultSetMetaData) throws SQLException {
+	@NonNull
+	private String buildSchemaSignature(@NonNull StatementContext<?> statementContext,
+																			@NonNull ResultSetMetaData resultSetMetaData) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(resultSetMetaData);
 
@@ -659,12 +659,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	 * @throws Exception if an error occurs during mapping
 	 */
 	@SuppressWarnings({"unchecked", "rawtypes"})
-	@Nonnull
-	protected <T> StandardTypeResult<T> mapResultSetToStandardType(@Nonnull StatementContext<T> statementContext,
-																																 @Nonnull ResultSet resultSet,
-																																 @Nonnull Class<T> resultClass,
-																																 @Nonnull InstanceProvider instanceProvider,
-																																 @Nonnull ResultSetMetaData resultSetMetaData) throws Exception {
+	@NonNull
+	protected <T> StandardTypeResult<T> mapResultSetToStandardType(@NonNull StatementContext<T> statementContext,
+																																 @NonNull ResultSet resultSet,
+																																 @NonNull Class<T> resultClass,
+																																 @NonNull InstanceProvider instanceProvider,
+																																 @NonNull ResultSetMetaData resultSetMetaData) throws Exception {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(resultClass);
@@ -857,11 +857,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	 * @return the result of the mapping
 	 * @throws Exception if an error occurs during mapping
 	 */
-	@Nonnull
-	protected <T extends Record> T mapResultSetToRecord(@Nonnull StatementContext<T> statementContext,
-																											@Nonnull ResultSet resultSet,
-																											@Nonnull InstanceProvider instanceProvider,
-																											@Nonnull ResultSetMetaData resultSetMetaData) throws Exception {
+	@NonNull
+	protected <T extends Record> T mapResultSetToRecord(@NonNull StatementContext<T> statementContext,
+																											@NonNull ResultSet resultSet,
+																											@NonNull InstanceProvider instanceProvider,
+																											@NonNull ResultSetMetaData resultSetMetaData) throws Exception {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(instanceProvider);
@@ -945,11 +945,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	 * @return the result of the mapping
 	 * @throws Exception if an error occurs during mapping
 	 */
-	@Nonnull
-	protected <T> T mapResultSetToBean(@Nonnull StatementContext<T> statementContext,
-																		 @Nonnull ResultSet resultSet,
-																		 @Nonnull InstanceProvider instanceProvider,
-																		 @Nonnull ResultSetMetaData resultSetMetaData) throws Exception {
+	@NonNull
+	protected <T> T mapResultSetToBean(@NonNull StatementContext<T> statementContext,
+																		 @NonNull ResultSet resultSet,
+																		 @NonNull InstanceProvider instanceProvider,
+																		 @NonNull ResultSetMetaData resultSetMetaData) throws Exception {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(instanceProvider);
@@ -1018,8 +1018,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		return object;
 	}
 
-	@Nonnull
-	protected Map<String, Set<String>> determineColumnLabelAliasesByPropertyName(@Nonnull Class<?> resultClass) {
+	@NonNull
+	protected Map<String, Set<String>> determineColumnLabelAliasesByPropertyName(@NonNull Class<?> resultClass) {
 		requireNonNull(resultClass);
 
 		return getColumnLabelAliasesByPropertyNameCache().computeIfAbsent(
@@ -1041,10 +1041,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				});
 	}
 
-	@Nonnull
-	protected <T> Map<String, Object> extractColumnLabelsToValues(@Nonnull StatementContext<T> statementContext,
-																																@Nonnull ResultSet resultSet,
-																																@Nonnull ResultSetMetaData resultSetMetaData) throws SQLException {
+	@NonNull
+	protected <T> Map<String, Object> extractColumnLabelsToValues(@NonNull StatementContext<T> statementContext,
+																																@NonNull ResultSet resultSet,
+																																@NonNull ResultSetMetaData resultSetMetaData) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(resultSetMetaData);
@@ -1072,10 +1072,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		return columnLabelsToValues;
 	}
 
-	@Nonnull
-	protected <T> Optional<Object> extractColumnValue(@Nonnull ResultSetMetaData resultSetMetaData,
-																										@Nonnull StatementContext<T> statementContext,
-																										@Nonnull ResultSet resultSet,
+	@NonNull
+	protected <T> Optional<Object> extractColumnValue(@NonNull ResultSetMetaData resultSetMetaData,
+																										@NonNull StatementContext<T> statementContext,
+																										@NonNull ResultSet resultSet,
 																										int columnIndex) throws SQLException {
 		Object resultSetValue;
 
@@ -1112,10 +1112,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	 * @param propertyType     the JavaBean property type we'd like to map {@code resultSetValue} to
 	 * @return a representation of {@code resultSetValue} that is of type {@code propertyType}
 	 */
-	@Nonnull
-	protected <T> Optional<Object> convertResultSetValueToPropertyType(@Nonnull StatementContext<T> statementContext,
+	@NonNull
+	protected <T> Optional<Object> convertResultSetValueToPropertyType(@NonNull StatementContext<T> statementContext,
 																																		 @Nullable Object resultSetValue,
-																																		 @Nonnull Class<?> propertyType) {
+																																		 @NonNull Class<?> propertyType) {
 		requireNonNull(statementContext);
 		requireNonNull(propertyType);
 
@@ -1359,9 +1359,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	 * @throws DatabaseException if {@code object} does not correspond to a valid enum value
 	 */
 	@SuppressWarnings({"unchecked", "rawtypes"})
-	@Nonnull
-	protected Enum<?> extractEnumValue(@Nonnull Class<?> enumClass,
-																		 @Nonnull Object object) {
+	@NonNull
+	protected Enum<?> extractEnumValue(@NonNull Class<?> enumClass,
+																		 @NonNull Object object) {
 		requireNonNull(enumClass);
 		requireNonNull(object);
 
@@ -1377,8 +1377,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 	}
 
-	@Nonnull
-	private static TimeZone timeZoneFromId(@Nonnull String zoneId) {
+	@NonNull
+	private static TimeZone timeZoneFromId(@NonNull String zoneId) {
 		requireNonNull(zoneId);
 
 		String trimmed = zoneId.trim();
@@ -1403,8 +1403,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		return timeZone;
 	}
 
-	@Nonnull
-	private static Locale localeFromLanguageTag(@Nonnull String languageTag) {
+	@NonNull
+	private static Locale localeFromLanguageTag(@NonNull String languageTag) {
 		requireNonNull(languageTag);
 
 		String trimmed = languageTag.trim();
@@ -1426,8 +1426,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	 * @param columnLabel the {@link ResultSet} column label to massage
 	 * @return the massaged label
 	 */
-	@Nonnull
-	protected String normalizeColumnLabel(@Nonnull String columnLabel) {
+	@NonNull
+	protected String normalizeColumnLabel(@NonNull String columnLabel) {
 		requireNonNull(columnLabel);
 		return columnLabel.toLowerCase(getNormalizationLocale());
 	}
@@ -1443,8 +1443,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	 * @param propertyName the JavaBean property name to massage
 	 * @return the column names that match the JavaBean property name
 	 */
-	@Nonnull
-	protected Set<String> databaseColumnNamesForPropertyName(@Nonnull String propertyName) {
+	@NonNull
+	protected Set<String> databaseColumnNamesForPropertyName(@NonNull String propertyName) {
 		requireNonNull(propertyName);
 
 		Set<String> normalizedPropertyNames = new HashSet<>(2);
@@ -1472,7 +1472,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	 *
 	 * @return the locale to use for massaging
 	 */
-	@Nonnull
+	@NonNull
 	protected Locale getNormalizationLocale() {
 		return this.normalizationLocale;
 	}
@@ -1487,7 +1487,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	protected static class StandardTypeResult<T> {
 		@Nullable
 		private final T value;
-		@Nonnull
+		@NonNull
 		private final Boolean standardType;
 
 		/**
@@ -1497,7 +1497,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		 * @param standardType {@code true} if the mapped type was a standard type, {@code false} otherwise
 		 */
 		public StandardTypeResult(@Nullable T value,
-															@Nonnull Boolean standardType) {
+															@NonNull Boolean standardType) {
 			requireNonNull(standardType);
 
 			this.value = value;
@@ -1509,7 +1509,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		 *
 		 * @return the mapping result value, may be {@code null}
 		 */
-		@Nonnull
+		@NonNull
 		public Optional<T> getValue() {
 			return Optional.ofNullable(this.value);
 		}
@@ -1519,7 +1519,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		 *
 		 * @return {@code true} if this was a standard type, {@code false} otherwise
 		 */
-		@Nonnull
+		@NonNull
 		public Boolean isStandardType() {
 			return this.standardType;
 		}
@@ -1743,43 +1743,43 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@Nullable
-	private Integer getNullableInt(@Nonnull ResultSet resultSet, int columnIndex) throws SQLException {
+	private Integer getNullableInt(@NonNull ResultSet resultSet, int columnIndex) throws SQLException {
 		int v = resultSet.getInt(columnIndex);
 		return resultSet.wasNull() ? null : v;
 	}
 
 	@Nullable
-	private Long getNullableLong(@Nonnull ResultSet resultSet, int columnIndex) throws SQLException {
+	private Long getNullableLong(@NonNull ResultSet resultSet, int columnIndex) throws SQLException {
 		long v = resultSet.getLong(columnIndex);
 		return resultSet.wasNull() ? null : v;
 	}
 
 	@Nullable
-	private Short getNullableShort(@Nonnull ResultSet resultSet, int columnIndex) throws SQLException {
+	private Short getNullableShort(@NonNull ResultSet resultSet, int columnIndex) throws SQLException {
 		short v = resultSet.getShort(columnIndex);
 		return resultSet.wasNull() ? null : v;
 	}
 
 	@Nullable
-	private Byte getNullableByte(@Nonnull ResultSet resultSet, int columnIndex) throws SQLException {
+	private Byte getNullableByte(@NonNull ResultSet resultSet, int columnIndex) throws SQLException {
 		byte v = resultSet.getByte(columnIndex);
 		return resultSet.wasNull() ? null : v;
 	}
 
 	@Nullable
-	private Float getNullableFloat(@Nonnull ResultSet resultSet, int columnIndex) throws SQLException {
+	private Float getNullableFloat(@NonNull ResultSet resultSet, int columnIndex) throws SQLException {
 		float v = resultSet.getFloat(columnIndex);
 		return resultSet.wasNull() ? null : v;
 	}
 
 	@Nullable
-	private Double getNullableDouble(@Nonnull ResultSet resultSet, int columnIndex) throws SQLException {
+	private Double getNullableDouble(@NonNull ResultSet resultSet, int columnIndex) throws SQLException {
 		double v = resultSet.getDouble(columnIndex);
 		return resultSet.wasNull() ? null : v;
 	}
 
 	@Nullable
-	private Boolean getNullableBoolean(@Nonnull ResultSet resultSet, int columnIndex) throws SQLException {
+	private Boolean getNullableBoolean(@NonNull ResultSet resultSet, int columnIndex) throws SQLException {
 		boolean v = resultSet.getBoolean(columnIndex);
 		return resultSet.wasNull() ? null : v;
 	}
@@ -1789,7 +1789,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		final Class<?> resultClass;
 		final String schemaSignature;
 
-		PlanKey(@Nonnull Class<?> resultClass, @Nonnull String schemaSignature) {
+		PlanKey(@NonNull Class<?> resultClass, @NonNull String schemaSignature) {
 			this.resultClass = requireNonNull(resultClass);
 			this.schemaSignature = requireNonNull(schemaSignature);
 		}
@@ -1814,8 +1814,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	@FunctionalInterface
 	protected interface ColumnReader {
 		@Nullable
-		Object read(@Nonnull ResultSet rs,
-								@Nonnull StatementContext<?> ctx,
+		Object read(@NonNull ResultSet rs,
+								@NonNull StatementContext<?> ctx,
 								int col) throws SQLException;
 	}
 
@@ -1826,9 +1826,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	protected interface Converter {
 		@Nullable
 		Object convert(@Nullable Object raw,
-									 @Nonnull ResultSet rs,
-									 @Nonnull StatementContext<?> ctx,
-									 @Nonnull InstanceProvider ip);
+									 @NonNull ResultSet rs,
+									 @NonNull StatementContext<?> ctx,
+									 @NonNull InstanceProvider ip);
 	}
 
 	@ThreadSafe
@@ -1836,20 +1836,20 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		final int columnIndex; // 1-based
 		final int recordArgIndexOrMinusOne; // >=0 for record components, -1 for bean or SKIP
 		final @Nullable MethodHandle setterOrNull; // for bean properties; type: (Declaring, Param)void or (Declaring, Param)Object
-		final @Nonnull ColumnReader reader; // chosen at plan time
-		final @Nonnull Converter converter; // chosen at plan time
+		final @NonNull ColumnReader reader; // chosen at plan time
+		final @NonNull Converter converter; // chosen at plan time
 		final boolean targetIsPrimitive;        // original target declared as primitive?
-		final @Nonnull Class<?> targetRawClass; // BOXED class for type checks
-		final @Nonnull String propertyName;     // for helpful errors; empty if SKIP
+		final @NonNull Class<?> targetRawClass; // BOXED class for type checks
+		final @NonNull String propertyName;     // for helpful errors; empty if SKIP
 
 		ColumnBinding(int columnIndex,
 									int recordArgIndexOrMinusOne,
 									@Nullable MethodHandle setterOrNull,
-									@Nonnull ColumnReader reader,
-									@Nonnull Converter converter,
+									@NonNull ColumnReader reader,
+									@NonNull Converter converter,
 									boolean targetIsPrimitive,
-									@Nonnull Class<?> targetRawClass,
-									@Nonnull String propertyName) {
+									@NonNull Class<?> targetRawClass,
+									@NonNull String propertyName) {
 			this.columnIndex = columnIndex;
 			this.recordArgIndexOrMinusOne = recordArgIndexOrMinusOne;
 			this.setterOrNull = setterOrNull;
@@ -1866,12 +1866,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		final boolean isRecord;
 		final int columnCount;                   // for per-row raw caching
 		final boolean hasFanOut;                 // any column maps to multiple properties?
-		final @Nonnull List<ColumnBinding> bindings; // may contain multiple entries per column (fan-out)
+		final @NonNull List<ColumnBinding> bindings; // may contain multiple entries per column (fan-out)
 
 		RowPlan(boolean isRecord,
 						int columnCount,
 						boolean hasFanOut,
-						@Nonnull List<ColumnBinding> bindings) {
+						@NonNull List<ColumnBinding> bindings) {
 			this.isRecord = isRecord;
 			this.columnCount = columnCount;
 			this.hasFanOut = hasFanOut;
@@ -1880,13 +1880,13 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@SuppressWarnings({"unchecked", "rawtypes"})
-	@Nonnull
-	protected <T> RowPlan<T> buildPlan(@Nonnull StatementContext<T> ctx,
-																		 @Nonnull ResultSet rs,
-																		 @Nonnull Class<T> resultClass,
-																		 @Nonnull InstanceProvider instanceProvider,
-																		 @Nonnull ResultSetMetaData resultSetMetaData,
-																		 @Nonnull String schemaSignature) throws Exception {
+	@NonNull
+	protected <T> RowPlan<T> buildPlan(@NonNull StatementContext<T> ctx,
+																		 @NonNull ResultSet rs,
+																		 @NonNull Class<T> resultClass,
+																		 @NonNull InstanceProvider instanceProvider,
+																		 @NonNull ResultSetMetaData resultSetMetaData,
+																		 @NonNull String schemaSignature) throws Exception {
 		requireNonNull(ctx);
 		requireNonNull(rs);
 		requireNonNull(resultClass);
@@ -2063,62 +2063,62 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		return plan;
 	}
 
-	@Nonnull
+	@NonNull
 	protected List<CustomColumnMapper> getCustomColumnMappers() {
 		return this.customColumnMappers;
 	}
 
-	@Nonnull
+	@NonNull
 	protected Boolean getPlanCachingEnabled() {
 		return this.planCachingEnabled;
 	}
 
-	@Nonnull
+	@NonNull
 	protected ConcurrentMap<TargetType, List<CustomColumnMapper>> getCustomColumnMappersByTargetTypeCache() {
 		return this.customColumnMappersByTargetTypeCache;
 	}
 
-	@Nonnull
+	@NonNull
 	protected Map<SourceTargetKey, CustomColumnMapper> getPreferredColumnMapperBySourceTargetKey() {
 		return this.preferredColumnMapperBySourceTargetKey;
 	}
 
-	@Nonnull
+	@NonNull
 	protected ConcurrentMap<Class<?>, Map<String, TargetType>> getPropertyTargetTypeCache() {
 		return this.propertyTargetTypeCache;
 	}
 
-	@Nonnull
+	@NonNull
 	protected ConcurrentMap<Class<?>, Map<String, Set<String>>> getColumnLabelAliasesByPropertyNameCache() {
 		return this.columnLabelAliasesByPropertyNameCache;
 	}
 
-	@Nonnull
+	@NonNull
 	protected ConcurrentMap<Class<?>, PropertyDescriptor[]> getPropertyDescriptorsCache() {
 		return this.propertyDescriptorsCache;
 	}
 
-	@Nonnull
+	@NonNull
 	protected ConcurrentMap<Class<?>, Map<String, Set<String>>> getNormalizedColumnLabelsByPropertyNameCache() {
 		return this.normalizedColumnLabelsByPropertyNameCache;
 	}
 
-	@Nonnull
+	@NonNull
 	protected ConcurrentMap<Class<?>, Map<String, Set<String>>> getColumnLabelsByRecordComponentNameCache() {
 		return this.columnLabelsByRecordComponentNameCache;
 	}
 
-	@Nonnull
+	@NonNull
 	protected ConcurrentMap<Class<?>, RecordComponent[]> getRecordComponentsCache() {
 		return this.recordComponentsCache;
 	}
 
-	@Nonnull
+	@NonNull
 	protected Map<PlanKey, RowPlan<?>> getRowPlanningCache() {
 		return this.rowPlanningCache;
 	}
 
-	@Nonnull
+	@NonNull
 	protected Map<ResultSetMetaData, String> getSchemaSignatureByResultSetMetaData() {
 		return this.schemaSignatureByResultSetMetaData;
 	}

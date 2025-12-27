@@ -21,8 +21,8 @@ import org.hsqldb.jdbc.JDBCDataSource;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
@@ -740,21 +740,21 @@ public class DatabaseTests {
 
 		// Mapper: for any Locale target, always return CANADA (to prove the custom path is used)
 		CustomColumnMapper localeOverride = new CustomColumnMapper() {
-			@Nonnull
+			@NonNull
 			@Override
-			public Boolean appliesTo(@Nonnull TargetType targetType) {
+			public Boolean appliesTo(@NonNull TargetType targetType) {
 				return targetType.matchesClass(Locale.class);
 			}
 
-			@Nonnull
+			@NonNull
 			@Override
-			public MappingResult map(@Nonnull StatementContext<?> statementContext,
-															 @Nonnull ResultSet resultSet,
-															 @Nonnull Object resultSetValue,
-															 @Nonnull TargetType targetType,
-															 @Nonnull Integer columnIndex,
+			public MappingResult map(@NonNull StatementContext<?> statementContext,
+															 @NonNull ResultSet resultSet,
+															 @NonNull Object resultSetValue,
+															 @NonNull TargetType targetType,
+															 @NonNull Integer columnIndex,
 															 @Nullable String columnLabel,
-															 @Nonnull InstanceProvider instanceProvider) {
+															 @NonNull InstanceProvider instanceProvider) {
 				// ignore DB value; force a deterministic value so we can assert override happened
 				return MappingResult.of(Locale.CANADA);
 			}
@@ -794,21 +794,21 @@ public class DatabaseTests {
 
 		// First mapper applies to Locale but never handles (returns empty). We count calls.
 		CustomColumnMapper first = new CustomColumnMapper() {
-			@Nonnull
+			@NonNull
 			@Override
-			public Boolean appliesTo(@Nonnull TargetType targetType) {
+			public Boolean appliesTo(@NonNull TargetType targetType) {
 				return targetType.matchesClass(Locale.class);
 			}
 
-			@Nonnull
+			@NonNull
 			@Override
-			public MappingResult map(@Nonnull StatementContext<?> statementContext,
-															 @Nonnull ResultSet resultSet,
-															 @Nonnull Object resultSetValue,
-															 @Nonnull TargetType targetType,
-															 @Nonnull Integer columnIndex,
+			public MappingResult map(@NonNull StatementContext<?> statementContext,
+															 @NonNull ResultSet resultSet,
+															 @NonNull Object resultSetValue,
+															 @NonNull TargetType targetType,
+															 @NonNull Integer columnIndex,
 															 @Nullable String columnLabel,
-															 @Nonnull InstanceProvider instanceProvider) {
+															 @NonNull InstanceProvider instanceProvider) {
 				firstCalls.incrementAndGet();
 				return MappingResult.fallback();
 			}
@@ -816,21 +816,21 @@ public class DatabaseTests {
 
 		// Second mapper actually handles and returns a fixed Locale
 		CustomColumnMapper second = new CustomColumnMapper() {
-			@Nonnull
+			@NonNull
 			@Override
-			public Boolean appliesTo(@Nonnull TargetType targetType) {
+			public Boolean appliesTo(@NonNull TargetType targetType) {
 				return targetType.matchesClass(Locale.class);
 			}
 
-			@Nonnull
+			@NonNull
 			@Override
-			public MappingResult map(@Nonnull StatementContext<?> statementContext,
-															 @Nonnull ResultSet resultSet,
-															 @Nonnull Object resultSetValue,
-															 @Nonnull TargetType targetType,
-															 @Nonnull Integer columnIndex,
+			public MappingResult map(@NonNull StatementContext<?> statementContext,
+															 @NonNull ResultSet resultSet,
+															 @NonNull Object resultSetValue,
+															 @NonNull TargetType targetType,
+															 @NonNull Integer columnIndex,
 															 @Nullable String columnLabel,
-															 @Nonnull InstanceProvider instanceProvider) {
+															 @NonNull InstanceProvider instanceProvider) {
 				secondCalls.incrementAndGet();
 				return MappingResult.of(Locale.GERMANY);
 			}
@@ -875,23 +875,23 @@ public class DatabaseTests {
 		DataSource dataSource = createInMemoryDataSource("cm_cache_cap");
 
 		CustomColumnMapper mapper = new CustomColumnMapper() {
-			@Nonnull
+			@NonNull
 			@Override
-			public Boolean appliesTo(@Nonnull TargetType targetType) {
+			public Boolean appliesTo(@NonNull TargetType targetType) {
 				return targetType.matchesClass(Locale.class)
 						|| targetType.matchesClass(Currency.class)
 						|| targetType.matchesClass(ZoneId.class);
 			}
 
-			@Nonnull
+			@NonNull
 			@Override
-			public MappingResult map(@Nonnull StatementContext<?> statementContext,
-															 @Nonnull ResultSet resultSet,
-															 @Nonnull Object resultSetValue,
-															 @Nonnull TargetType targetType,
-															 @Nonnull Integer columnIndex,
+			public MappingResult map(@NonNull StatementContext<?> statementContext,
+															 @NonNull ResultSet resultSet,
+															 @NonNull Object resultSetValue,
+															 @NonNull TargetType targetType,
+															 @NonNull Integer columnIndex,
 															 @Nullable String columnLabel,
-															 @Nonnull InstanceProvider instanceProvider) {
+															 @NonNull InstanceProvider instanceProvider) {
 				if (targetType.matchesClass(Locale.class))
 					return MappingResult.of(Locale.CANADA);
 				if (targetType.matchesClass(Currency.class))
@@ -998,21 +998,21 @@ public class DatabaseTests {
 
 		// Mapper: List<UUID> from CSV string (e.g., "u1,u2")
 		CustomColumnMapper csvUuidList = new CustomColumnMapper() {
-			@Nonnull
+			@NonNull
 			@Override
-			public Boolean appliesTo(@Nonnull TargetType targetType) {
+			public Boolean appliesTo(@NonNull TargetType targetType) {
 				return targetType.matchesParameterizedType(List.class, UUID.class);
 			}
 
-			@Nonnull
+			@NonNull
 			@Override
-			public MappingResult map(@Nonnull StatementContext<?> statementContext,
-															 @Nonnull ResultSet resultSet,
-															 @Nonnull Object resultSetValue,
-															 @Nonnull TargetType targetType,
-															 @Nonnull Integer columnIndex,
+			public MappingResult map(@NonNull StatementContext<?> statementContext,
+															 @NonNull ResultSet resultSet,
+															 @NonNull Object resultSetValue,
+															 @NonNull TargetType targetType,
+															 @NonNull Integer columnIndex,
 															 @Nullable String columnLabel,
-															 @Nonnull InstanceProvider instanceProvider) {
+															 @NonNull InstanceProvider instanceProvider) {
 				String s = resultSetValue == null ? null : resultSetValue.toString();
 				if (s == null || s.isBlank())
 					return MappingResult.of(List.of());
@@ -1060,21 +1060,21 @@ public class DatabaseTests {
 
 		// Mapper: for any Locale target, always return CANADA (proves custom path is used on standard fast path)
 		CustomColumnMapper localeOverride = new CustomColumnMapper() {
-			@Nonnull
+			@NonNull
 			@Override
-			public Boolean appliesTo(@Nonnull TargetType targetType) {
+			public Boolean appliesTo(@NonNull TargetType targetType) {
 				return targetType.matchesClass(Locale.class);
 			}
 
-			@Nonnull
+			@NonNull
 			@Override
-			public MappingResult map(@Nonnull StatementContext<?> statementContext,
-															 @Nonnull ResultSet resultSet,
-															 @Nonnull Object resultSetValue,
-															 @Nonnull TargetType targetType,
-															 @Nonnull Integer columnIndex,
+			public MappingResult map(@NonNull StatementContext<?> statementContext,
+															 @NonNull ResultSet resultSet,
+															 @NonNull Object resultSetValue,
+															 @NonNull TargetType targetType,
+															 @NonNull Integer columnIndex,
 															 @Nullable String columnLabel,
-															 @Nonnull InstanceProvider instanceProvider) {
+															 @NonNull InstanceProvider instanceProvider) {
 				// Ignore DB value; force a deterministic value so we can assert override happened.
 				return MappingResult.of(Locale.CANADA);
 			}
@@ -1157,21 +1157,21 @@ public class DatabaseTests {
 
 		// Mapper: if target is Person.class and source is a JSON string, inflate it.
 		CustomColumnMapper jsonToPerson = new CustomColumnMapper() {
-			@Nonnull
+			@NonNull
 			@Override
-			public Boolean appliesTo(@Nonnull TargetType targetType) {
+			public Boolean appliesTo(@NonNull TargetType targetType) {
 				return targetType.matchesClass(TestPerson.class);
 			}
 
-			@Nonnull
+			@NonNull
 			@Override
-			public MappingResult map(@Nonnull StatementContext<?> statementContext,
-															 @Nonnull ResultSet resultSet,
-															 @Nonnull Object resultSetValue,
-															 @Nonnull TargetType targetType,
-															 @Nonnull Integer columnIndex,
+			public MappingResult map(@NonNull StatementContext<?> statementContext,
+															 @NonNull ResultSet resultSet,
+															 @NonNull Object resultSetValue,
+															 @NonNull TargetType targetType,
+															 @NonNull Integer columnIndex,
 															 @Nullable String columnLabel,
-															 @Nonnull InstanceProvider instanceProvider) {
+															 @NonNull InstanceProvider instanceProvider) {
 				if (!(resultSetValue instanceof String json)) return MappingResult.fallback();
 				// Very simple parser for test purposes (no external libs needed)
 				json = json.trim().replaceAll("[{}\"]", "");
@@ -1474,10 +1474,10 @@ public class DatabaseTests {
 		AtomicBoolean loggerCalled = new AtomicBoolean(false);
 		PreparedStatementBinder binder = new PreparedStatementBinder() {
 			@Override
-			public <T> void bindParameter(@Nonnull StatementContext<T> statementContext,
-																		@Nonnull PreparedStatement preparedStatement,
-																		@Nonnull Integer parameterIndex,
-																		@Nonnull Object parameter) throws SQLException {
+			public <T> void bindParameter(@NonNull StatementContext<T> statementContext,
+																		@NonNull PreparedStatement preparedStatement,
+																		@NonNull Integer parameterIndex,
+																		@NonNull Object parameter) throws SQLException {
 				throw new TestError("bind boom");
 			}
 		};
@@ -2062,21 +2062,21 @@ public class DatabaseTests {
 		AtomicInteger calls = new AtomicInteger();
 
 		CustomParameterBinder localeBinder = new CustomParameterBinder() {
-			@Nonnull
+			@NonNull
 			@Override
-			public BindingResult bind(@Nonnull StatementContext<?> sc,
-																@Nonnull PreparedStatement ps,
-																@Nonnull Integer idx,
-																@Nonnull Object param) throws SQLException {
+			public BindingResult bind(@NonNull StatementContext<?> sc,
+																@NonNull PreparedStatement ps,
+																@NonNull Integer idx,
+																@NonNull Object param) throws SQLException {
 				Assertions.assertTrue(param instanceof Locale, "Expected Locale");
 				calls.incrementAndGet();
 				ps.setString(idx, "CUSTOM:" + ((Locale) param).toLanguageTag());
 				return BindingResult.handled();
 			}
 
-			@Nonnull
+			@NonNull
 			@Override
-			public Boolean appliesTo(@Nonnull TargetType targetType) {
+			public Boolean appliesTo(@NonNull TargetType targetType) {
 				return targetType.matchesClass(Locale.class);
 			}
 		};
@@ -2108,32 +2108,32 @@ public class DatabaseTests {
 		AtomicInteger called = new AtomicInteger(0);
 
 		CustomParameterBinder intOnly = new CustomParameterBinder() {
-			@Nonnull
+			@NonNull
 			@Override
-			public BindingResult bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) {
+			public BindingResult bind(@NonNull StatementContext<?> sc, @NonNull PreparedStatement ps, @NonNull Integer idx, @NonNull Object param) {
 				neverCalled.incrementAndGet();
 				throw new AssertionError("Should not be called for Locale");
 			}
 
-			@Nonnull
+			@NonNull
 			@Override
-			public Boolean appliesTo(@Nonnull TargetType targetType) {
+			public Boolean appliesTo(@NonNull TargetType targetType) {
 				return targetType.matchesClass(Integer.class);
 			}
 		};
 
 		CustomParameterBinder localeBinder = new CustomParameterBinder() {
-			@Nonnull
+			@NonNull
 			@Override
-			public BindingResult bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) throws SQLException {
+			public BindingResult bind(@NonNull StatementContext<?> sc, @NonNull PreparedStatement ps, @NonNull Integer idx, @NonNull Object param) throws SQLException {
 				called.incrementAndGet();
 				ps.setString(idx, "OK");
 				return BindingResult.handled();
 			}
 
-			@Nonnull
+			@NonNull
 			@Override
-			public Boolean appliesTo(@Nonnull TargetType targetType) {
+			public Boolean appliesTo(@NonNull TargetType targetType) {
 				return targetType.matchesClass(Locale.class);
 			}
 		};
@@ -2165,33 +2165,33 @@ public class DatabaseTests {
 		AtomicInteger secondCalls = new AtomicInteger();
 
 		CustomParameterBinder first = new CustomParameterBinder() {
-			@Nonnull
+			@NonNull
 			@Override
-			public BindingResult bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) throws SQLException {
+			public BindingResult bind(@NonNull StatementContext<?> sc, @NonNull PreparedStatement ps, @NonNull Integer idx, @NonNull Object param) throws SQLException {
 				firstCalls.incrementAndGet();
 				ps.setString(idx, "FIRST");
 				return BindingResult.handled();
 			}
 
-			@Nonnull
+			@NonNull
 			@Override
-			public Boolean appliesTo(@Nonnull TargetType targetType) {
+			public Boolean appliesTo(@NonNull TargetType targetType) {
 				return targetType.matchesClass(Locale.class);
 			}
 		};
 
 		CustomParameterBinder second = new CustomParameterBinder() {
-			@Nonnull
+			@NonNull
 			@Override
-			public BindingResult bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) throws SQLException {
+			public BindingResult bind(@NonNull StatementContext<?> sc, @NonNull PreparedStatement ps, @NonNull Integer idx, @NonNull Object param) throws SQLException {
 				secondCalls.incrementAndGet();
 				ps.setString(idx, "SECOND");
 				return BindingResult.handled();
 			}
 
-			@Nonnull
+			@NonNull
 			@Override
-			public Boolean appliesTo(@Nonnull TargetType targetType) {
+			public Boolean appliesTo(@NonNull TargetType targetType) {
 				return targetType.matchesClass(Locale.class);
 			}
 		};
@@ -2225,9 +2225,9 @@ public class DatabaseTests {
 	@Test
 	public void testBinder_parameterizedType_ListOfUuid() {
 		CustomParameterBinder listUuidBinder = new CustomParameterBinder() {
-			@Nonnull
+			@NonNull
 			@Override
-			public BindingResult bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) throws SQLException {
+			public BindingResult bind(@NonNull StatementContext<?> sc, @NonNull PreparedStatement ps, @NonNull Integer idx, @NonNull Object param) throws SQLException {
 				if (!(param instanceof List<?> list)) return BindingResult.fallback();
 				for (Object o : list) if (!(o instanceof UUID)) return BindingResult.fallback();
 				String joined = list.stream().map(Object::toString).reduce((a, b) -> a + "," + b).orElse("");
@@ -2235,9 +2235,9 @@ public class DatabaseTests {
 				return BindingResult.handled();
 			}
 
-			@Nonnull
+			@NonNull
 			@Override
-			public Boolean appliesTo(@Nonnull TargetType targetType) {
+			public Boolean appliesTo(@NonNull TargetType targetType) {
 				return targetType.matchesParameterizedType(List.class, UUID.class);
 			}
 		};
@@ -2270,16 +2270,16 @@ public class DatabaseTests {
 		AtomicInteger falseCalls = new AtomicInteger();
 
 		CustomParameterBinder alwaysFalseForString = new CustomParameterBinder() {
-			@Nonnull
+			@NonNull
 			@Override
-			public BindingResult bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) {
+			public BindingResult bind(@NonNull StatementContext<?> sc, @NonNull PreparedStatement ps, @NonNull Integer idx, @NonNull Object param) {
 				falseCalls.incrementAndGet();
 				return BindingResult.fallback(); // claim applicability but decide not to handle now
 			}
 
-			@Nonnull
+			@NonNull
 			@Override
-			public Boolean appliesTo(@Nonnull TargetType targetType) {
+			public Boolean appliesTo(@NonNull TargetType targetType) {
 				return targetType.matchesClass(String.class);
 			}
 		};
@@ -2305,15 +2305,15 @@ public class DatabaseTests {
 	@Test
 	public void testBinder_throwsSQLException_propagates() {
 		CustomParameterBinder throwingBinder = new CustomParameterBinder() {
-			@Nonnull
+			@NonNull
 			@Override
-			public BindingResult bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) throws SQLException {
+			public BindingResult bind(@NonNull StatementContext<?> sc, @NonNull PreparedStatement ps, @NonNull Integer idx, @NonNull Object param) throws SQLException {
 				throw new SQLException("boom");
 			}
 
-			@Nonnull
+			@NonNull
 			@Override
-			public Boolean appliesTo(@Nonnull TargetType targetType) {
+			public Boolean appliesTo(@NonNull TargetType targetType) {
 				return targetType.matchesClass(Locale.class);
 			}
 		};
@@ -2344,17 +2344,17 @@ public class DatabaseTests {
 	@Test
 	public void testBinder_cacheKey_includesSqlType() {
 		CustomParameterBinder localeBinder = new CustomParameterBinder() {
-			@Nonnull
+			@NonNull
 			@Override
-			public BindingResult bind(@Nonnull StatementContext<?> sc, @Nonnull PreparedStatement ps, @Nonnull Integer idx, @Nonnull Object param) throws SQLException {
+			public BindingResult bind(@NonNull StatementContext<?> sc, @NonNull PreparedStatement ps, @NonNull Integer idx, @NonNull Object param) throws SQLException {
 				if (!(param instanceof Locale l)) return BindingResult.fallback();
 				ps.setString(idx, l.toLanguageTag());
 				return BindingResult.handled();
 			}
 
-			@Nonnull
+			@NonNull
 			@Override
-			public Boolean appliesTo(@Nonnull TargetType targetType) {
+			public Boolean appliesTo(@NonNull TargetType targetType) {
 				return targetType.matchesClass(Locale.class);
 			}
 		};
@@ -2381,12 +2381,12 @@ public class DatabaseTests {
 	@Test
 	public void testBinder_parameterizedType_SetOfUuid() {
 		CustomParameterBinder setUuidBinder = new CustomParameterBinder() {
-			@Nonnull
+			@NonNull
 			@Override
-			public BindingResult bind(@Nonnull StatementContext<?> sc,
-																@Nonnull PreparedStatement ps,
-																@Nonnull Integer idx,
-																@Nonnull Object param) throws SQLException {
+			public BindingResult bind(@NonNull StatementContext<?> sc,
+																@NonNull PreparedStatement ps,
+																@NonNull Integer idx,
+																@NonNull Object param) throws SQLException {
 				if (!(param instanceof Set<?> set)) return BindingResult.fallback();
 				for (Object o : set) if (!(o instanceof UUID)) return BindingResult.fallback();
 
@@ -2400,9 +2400,9 @@ public class DatabaseTests {
 				return BindingResult.handled();
 			}
 
-			@Nonnull
+			@NonNull
 			@Override
-			public Boolean appliesTo(@Nonnull TargetType targetType) {
+			public Boolean appliesTo(@NonNull TargetType targetType) {
 				// Should succeed because TypedParameter carries explicit Set<UUID> type
 				return targetType.matchesParameterizedType(Set.class, UUID.class);
 			}
@@ -2434,12 +2434,12 @@ public class DatabaseTests {
 	@Test
 	public void testBinder_parameterizedType_MapOfStringInteger() {
 		CustomParameterBinder mapBinder = new CustomParameterBinder() {
-			@Nonnull
+			@NonNull
 			@Override
-			public BindingResult bind(@Nonnull StatementContext<?> sc,
-																@Nonnull PreparedStatement ps,
-																@Nonnull Integer idx,
-																@Nonnull Object param) throws SQLException {
+			public BindingResult bind(@NonNull StatementContext<?> sc,
+																@NonNull PreparedStatement ps,
+																@NonNull Integer idx,
+																@NonNull Object param) throws SQLException {
 				if (!(param instanceof Map<?, ?> map)) return BindingResult.fallback();
 
 				// Validate key/value types at runtime
@@ -2460,9 +2460,9 @@ public class DatabaseTests {
 				return BindingResult.handled();
 			}
 
-			@Nonnull
+			@NonNull
 			@Override
-			public Boolean appliesTo(@Nonnull TargetType targetType) {
+			public Boolean appliesTo(@NonNull TargetType targetType) {
 				// Matches Map<String,Integer>
 				return targetType.matchesParameterizedType(Map.class, String.class, Integer.class);
 			}
@@ -2491,20 +2491,20 @@ public class DatabaseTests {
 	@Test
 	public void testBinder_arrayOf_StringArray() {
 		CustomParameterBinder arrayBinder = new CustomParameterBinder() {
-			@Nonnull
+			@NonNull
 			@Override
-			public BindingResult bind(@Nonnull StatementContext<?> sc,
-																@Nonnull PreparedStatement ps,
-																@Nonnull Integer idx,
-																@Nonnull Object param) throws SQLException {
+			public BindingResult bind(@NonNull StatementContext<?> sc,
+																@NonNull PreparedStatement ps,
+																@NonNull Integer idx,
+																@NonNull Object param) throws SQLException {
 				if (!(param instanceof String[] values)) return BindingResult.fallback();
 				ps.setString(idx, Arrays.stream(values).collect(Collectors.joining(",")));
 				return BindingResult.handled();
 			}
 
-			@Nonnull
+			@NonNull
 			@Override
-			public Boolean appliesTo(@Nonnull TargetType targetType) {
+			public Boolean appliesTo(@NonNull TargetType targetType) {
 				return targetType.isArray()
 						&& targetType.getArrayComponentType()
 						.map(component -> component.matchesClass(String.class))
@@ -2531,12 +2531,12 @@ public class DatabaseTests {
 	@Test
 	public void testBinder_cacheKey_includesTargetType() {
 		CustomParameterBinder uuidListBinder = new CustomParameterBinder() {
-			@Nonnull
+			@NonNull
 			@Override
-			public BindingResult bind(@Nonnull StatementContext<?> sc,
-																@Nonnull PreparedStatement ps,
-																@Nonnull Integer idx,
-																@Nonnull Object param) throws SQLException {
+			public BindingResult bind(@NonNull StatementContext<?> sc,
+																@NonNull PreparedStatement ps,
+																@NonNull Integer idx,
+																@NonNull Object param) throws SQLException {
 				List<?> list = (List<?>) param;
 				String joined = list.stream()
 						.map(Object::toString)
@@ -2546,20 +2546,20 @@ public class DatabaseTests {
 				return BindingResult.handled();
 			}
 
-			@Nonnull
+			@NonNull
 			@Override
-			public Boolean appliesTo(@Nonnull TargetType targetType) {
+			public Boolean appliesTo(@NonNull TargetType targetType) {
 				return targetType.matchesParameterizedType(List.class, UUID.class);
 			}
 		};
 
 		CustomParameterBinder stringListBinder = new CustomParameterBinder() {
-			@Nonnull
+			@NonNull
 			@Override
-			public BindingResult bind(@Nonnull StatementContext<?> sc,
-																@Nonnull PreparedStatement ps,
-																@Nonnull Integer idx,
-																@Nonnull Object param) throws SQLException {
+			public BindingResult bind(@NonNull StatementContext<?> sc,
+																@NonNull PreparedStatement ps,
+																@NonNull Integer idx,
+																@NonNull Object param) throws SQLException {
 				List<?> list = (List<?>) param;
 				String joined = list.stream()
 						.map(Object::toString)
@@ -2569,9 +2569,9 @@ public class DatabaseTests {
 				return BindingResult.handled();
 			}
 
-			@Nonnull
+			@NonNull
 			@Override
-			public Boolean appliesTo(@Nonnull TargetType targetType) {
+			public Boolean appliesTo(@NonNull TargetType targetType) {
 				return targetType.matchesParameterizedType(List.class, String.class);
 			}
 		};
@@ -2624,30 +2624,30 @@ public class DatabaseTests {
 		AtomicBoolean binderCalled = new AtomicBoolean(false);
 
 		CustomParameterBinder listUuidBinder = new CustomParameterBinder() {
-			@Nonnull
+			@NonNull
 			@Override
-			public BindingResult bind(@Nonnull StatementContext<?> sc,
-																@Nonnull PreparedStatement ps,
-																@Nonnull Integer idx,
-																@Nonnull Object param) {
+			public BindingResult bind(@NonNull StatementContext<?> sc,
+																@NonNull PreparedStatement ps,
+																@NonNull Integer idx,
+																@NonNull Object param) {
 				return BindingResult.fallback();
 			}
 
-			@Nonnull
+			@NonNull
 			@Override
-			public BindingResult bindNull(@Nonnull StatementContext<?> sc,
-																		@Nonnull PreparedStatement ps,
-																		@Nonnull Integer idx,
-																		@Nonnull TargetType targetType,
-																		@Nonnull Integer sqlType) throws SQLException {
+			public BindingResult bindNull(@NonNull StatementContext<?> sc,
+																		@NonNull PreparedStatement ps,
+																		@NonNull Integer idx,
+																		@NonNull TargetType targetType,
+																		@NonNull Integer sqlType) throws SQLException {
 				binderCalled.set(true);
 				ps.setNull(idx, Types.VARCHAR);
 				return BindingResult.handled();
 			}
 
-			@Nonnull
+			@NonNull
 			@Override
-			public Boolean appliesTo(@Nonnull TargetType targetType) {
+			public Boolean appliesTo(@NonNull TargetType targetType) {
 				return targetType.matchesParameterizedType(List.class, UUID.class);
 			}
 		};
@@ -2749,7 +2749,7 @@ public class DatabaseTests {
 	}
 
 	@SuppressWarnings("unchecked")
-	private static List<String> parseNamedParameters(@Nonnull String sql) {
+	private static List<String> parseNamedParameters(@NonNull String sql) {
 		requireNonNull(sql);
 
 		try {
@@ -2765,8 +2765,8 @@ public class DatabaseTests {
 		}
 	}
 
-	@Nonnull
-	private StatementContext<?> statementContextFor(@Nonnull DatabaseType databaseType) {
+	@NonNull
+	private StatementContext<?> statementContextFor(@NonNull DatabaseType databaseType) {
 		requireNonNull(databaseType);
 
 		Database db = Database.withDataSource(createInMemoryDataSource("psb_null_binding_" + databaseType.name().toLowerCase(Locale.ROOT)))
@@ -2776,8 +2776,8 @@ public class DatabaseTests {
 		return StatementContext.with(Statement.of("psb_null_binding", "SELECT ?"), db).build();
 	}
 
-	@Nonnull
-	private PreparedStatement preparedStatementCapturingNull(@Nonnull NullBindingCapture capture) {
+	@NonNull
+	private PreparedStatement preparedStatementCapturingNull(@NonNull NullBindingCapture capture) {
 		requireNonNull(capture);
 
 		return (PreparedStatement) Proxy.newProxyInstance(
@@ -2810,7 +2810,7 @@ public class DatabaseTests {
 	}
 
 	@Nullable
-	private static Object defaultValue(@Nonnull Class<?> returnType) {
+	private static Object defaultValue(@NonNull Class<?> returnType) {
 		requireNonNull(returnType);
 
 		if (!returnType.isPrimitive())
@@ -2839,7 +2839,7 @@ public class DatabaseTests {
 		private final DataSource delegate;
 		private final AtomicInteger closeCount = new AtomicInteger();
 
-		private TrackingDataSource(@Nonnull DataSource delegate) {
+		private TrackingDataSource(@NonNull DataSource delegate) {
 			this.delegate = requireNonNull(delegate);
 		}
 
@@ -2896,7 +2896,7 @@ public class DatabaseTests {
 			return delegate.isWrapperFor(iface);
 		}
 
-		private Connection wrap(@Nonnull Connection connection) {
+		private Connection wrap(@NonNull Connection connection) {
 			InvocationHandler handler = (proxy, method, args) -> {
 				if ("close".equals(method.getName())) {
 					closeCount.incrementAndGet();
@@ -2936,7 +2936,7 @@ public class DatabaseTests {
 		private String typeNameValue;
 	}
 
-	protected void createTestSchema(@Nonnull Database database) {
+	protected void createTestSchema(@NonNull Database database) {
 		requireNonNull(database);
 		TestQueries.execute(database, """
 				CREATE TABLE employee (
@@ -2948,8 +2948,8 @@ public class DatabaseTests {
 				""");
 	}
 
-	@Nonnull
-	protected DataSource createInMemoryDataSource(@Nonnull String databaseName) {
+	@NonNull
+	protected DataSource createInMemoryDataSource(@NonNull String databaseName) {
 		requireNonNull(databaseName);
 
 		JDBCDataSource dataSource = new JDBCDataSource();
@@ -2960,9 +2960,9 @@ public class DatabaseTests {
 		return dataSource;
 	}
 
-	@Nonnull
-	protected LocalDateTime truncate(@Nonnull LocalDateTime localDateTime,
-																	 @Nonnull ChronoUnit chronoUnit) {
+	@NonNull
+	protected LocalDateTime truncate(@NonNull LocalDateTime localDateTime,
+																	 @NonNull ChronoUnit chronoUnit) {
 		requireNonNull(localDateTime);
 		requireNonNull(chronoUnit);
 

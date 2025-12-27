@@ -16,8 +16,9 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
+
 import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
 import java.time.Duration;
@@ -38,9 +39,9 @@ import static java.util.Objects.requireNonNull;
  */
 @ThreadSafe
 public final class StatementLog<T> {
-	@Nonnull
+	@NonNull
 	private final StatementContext<T> statementContext;
-	@Nonnull
+	@NonNull
 	private final Duration totalDuration;
 	@Nullable
 	private final Duration connectionAcquisitionDuration;
@@ -60,7 +61,7 @@ public final class StatementLog<T> {
 	 *
 	 * @param builder the builder used to construct this {@code StatementLog}
 	 */
-	private StatementLog(@Nonnull Builder builder) {
+	private StatementLog(@NonNull Builder builder) {
 		requireNonNull(builder);
 
 		this.statementContext = requireNonNull(builder.statementContext);
@@ -94,8 +95,8 @@ public final class StatementLog<T> {
 	 * @param statementContext current SQL context
 	 * @return a {@link StatementLog} builder
 	 */
-	@Nonnull
-	public static <T> Builder withStatementContext(@Nonnull StatementContext<T> statementContext) {
+	@NonNull
+	public static <T> Builder withStatementContext(@NonNull StatementContext<T> statementContext) {
 		requireNonNull(statementContext);
 		return new Builder(statementContext);
 	}
@@ -170,7 +171,7 @@ public final class StatementLog<T> {
 	 *
 	 * @return how long it took to acquire a {@link java.sql.Connection}, if available
 	 */
-	@Nonnull
+	@NonNull
 	public Optional<Duration> getConnectionAcquisitionDuration() {
 		return Optional.ofNullable(this.connectionAcquisitionDuration);
 	}
@@ -180,7 +181,7 @@ public final class StatementLog<T> {
 	 *
 	 * @return how long it took to bind data to the {@link java.sql.PreparedStatement}, if available
 	 */
-	@Nonnull
+	@NonNull
 	public Optional<Duration> getPreparationDuration() {
 		return Optional.ofNullable(this.preparationDuration);
 	}
@@ -211,7 +212,7 @@ public final class StatementLog<T> {
 	 *
 	 * @return how long the database operation took in total
 	 */
-	@Nonnull
+	@NonNull
 	public Duration getTotalDuration() {
 		return this.totalDuration;
 	}
@@ -221,7 +222,7 @@ public final class StatementLog<T> {
 	 *
 	 * @return the SQL statement that was executed.
 	 */
-	@Nonnull
+	@NonNull
 	public StatementContext<T> getStatementContext() {
 		return this.statementContext;
 	}
@@ -231,7 +232,7 @@ public final class StatementLog<T> {
 	 *
 	 * @return how many records were processed as part of the batch operation, if available
 	 */
-	@Nonnull
+	@NonNull
 	public Optional<Integer> getBatchSize() {
 		return Optional.ofNullable(this.batchSize);
 	}
@@ -241,7 +242,7 @@ public final class StatementLog<T> {
 	 *
 	 * @return the exception that occurred during SQL statement execution, if available
 	 */
-	@Nonnull
+	@NonNull
 	public Optional<Exception> getException() {
 		return Optional.ofNullable(this.exception);
 	}
@@ -256,7 +257,7 @@ public final class StatementLog<T> {
 	 */
 	@NotThreadSafe
 	public static class Builder<T> {
-		@Nonnull
+		@NonNull
 		private final StatementContext<T> statementContext;
 		@Nullable
 		private Duration connectionAcquisitionDuration;
@@ -276,7 +277,7 @@ public final class StatementLog<T> {
 		 *
 		 * @param statementContext current SQL context
 		 */
-		private Builder(@Nonnull StatementContext<T> statementContext) {
+		private Builder(@NonNull StatementContext<T> statementContext) {
 			requireNonNull(statementContext);
 			this.statementContext = statementContext;
 		}
@@ -287,7 +288,7 @@ public final class StatementLog<T> {
 		 * @param connectionAcquisitionDuration how long it took to acquire a {@link java.sql.Connection}, if available
 		 * @return this {@code Builder}, for chaining
 		 */
-		@Nonnull
+		@NonNull
 		public Builder connectionAcquisitionDuration(@Nullable Duration connectionAcquisitionDuration) {
 			this.connectionAcquisitionDuration = connectionAcquisitionDuration;
 			return this;
@@ -353,7 +354,7 @@ public final class StatementLog<T> {
 		 *
 		 * @return a {@code StatementLog} instance
 		 */
-		@Nonnull
+		@NonNull
 		public StatementLog build() {
 			return new StatementLog(this);
 		}

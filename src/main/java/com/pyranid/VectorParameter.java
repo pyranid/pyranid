@@ -16,7 +16,7 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
+import org.jspecify.annotations.NonNull;
 import javax.annotation.concurrent.ThreadSafe;
 import java.util.List;
 import java.util.Optional;
@@ -44,6 +44,6 @@ public interface VectorParameter {
 	 *
 	 * @return the elements of this vector
 	 */
-	@Nonnull
+	@NonNull
 	Optional<double[]> getElements();
 }

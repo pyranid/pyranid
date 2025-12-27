@@ -16,7 +16,7 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
+import org.jspecify.annotations.NonNull;
 import javax.annotation.concurrent.ThreadSafe;
 import java.util.List;
 import java.util.Optional;
@@ -45,7 +45,7 @@ public interface SqlArrayParameter<E> {
 	 *
 	 * @return the element type of this SQL ARRAY
 	 */
-	@Nonnull
+	@NonNull
 	String getBaseTypeName();
 
 	/**
@@ -53,6 +53,6 @@ public interface SqlArrayParameter<E> {
 	 *
 	 * @return the elements of this SQL ARRAY
 	 */
-	@Nonnull
+	@NonNull
 	Optional<E[]> getElements();
 }

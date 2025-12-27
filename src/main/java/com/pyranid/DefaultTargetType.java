@@ -16,8 +16,8 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import java.lang.reflect.Array;
 import java.lang.reflect.GenericArrayType;
@@ -41,10 +41,10 @@ import static java.util.Objects.requireNonNull;
  */
 @ThreadSafe
 class DefaultTargetType implements TargetType {
-	@Nonnull
+	@NonNull
 	private final Type type;
 
-	DefaultTargetType(@Nonnull Type type) {
+	DefaultTargetType(@NonNull Type type) {
 		requireNonNull(type);
 		this.type = requireNonNull(type);
 	}
@@ -64,13 +64,13 @@ class DefaultTargetType implements TargetType {
 	}
 
 	@Override
-	@Nonnull
+	@NonNull
 	public Type getType() {
 		return this.type;
 	}
 
 	@Override
-	@Nonnull
+	@NonNull
 	public Class<?> getRawClass() {
 		if (type instanceof Class<?> rawClass)
 			return rawClass;
@@ -96,7 +96,7 @@ class DefaultTargetType implements TargetType {
 		return Object.class;
 	}
 
-	@Nonnull
+	@NonNull
 	public List<TargetType> getTypeArguments() {
 		if (getType() instanceof ParameterizedType parameterizedType) {
 			Type[] actualTypeArguments = parameterizedType.getActualTypeArguments();

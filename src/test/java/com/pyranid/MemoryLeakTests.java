@@ -17,13 +17,14 @@
 package com.pyranid;
 
 import org.hsqldb.jdbc.JDBCDataSource;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
+import java.sql.ResultSet;
 import java.util.List;
 
 import static java.lang.String.format;
@@ -40,8 +41,8 @@ public class MemoryLeakTests {
 	private static final int PLAN_CACHE_CAPACITY = 8;
 	private static final int PREFERRED_MAPPER_CACHE_CAPACITY = 3;
 
-	@Nonnull
-	protected DataSource createInMemoryDataSource(@Nonnull String databaseName) {
+	@NonNull
+	protected DataSource createInMemoryDataSource(@NonNull String databaseName) {
 		requireNonNull(databaseName);
 
 		JDBCDataSource dataSource = new JDBCDataSource();
@@ -85,11 +86,11 @@ public class MemoryLeakTests {
 	public static final class SpecialType {
 		private final String value;
 
-		SpecialType(@Nonnull String value) {
+		SpecialType(@NonNull String value) {
 			this.value = requireNonNull(value);
 		}
 
-		@Nonnull
+		@NonNull
 		public String getValue() {
 			return this.value;
 		}
@@ -100,21 +101,21 @@ public class MemoryLeakTests {
 		DataSource ds = createInMemoryDataSource("preferred_mapper_bounded");
 
 		CustomColumnMapper specialTypeMapper = new CustomColumnMapper() {
-			@Nonnull
+			@NonNull
 			@Override
-			public Boolean appliesTo(@Nonnull TargetType targetType) {
+			public Boolean appliesTo(@NonNull TargetType targetType) {
 				return targetType.matchesClass(SpecialType.class);
 			}
 
-			@Nonnull
+			@NonNull
 			@Override
-			public MappingResult map(@Nonnull StatementContext<?> statementContext,
-															 @Nonnull java.sql.ResultSet resultSet,
-															 @Nonnull Object resultSetValue,
-															 @Nonnull TargetType targetType,
-															 @Nonnull Integer columnIndex,
+			public MappingResult map(@NonNull StatementContext<?> statementContext,
+															 @NonNull ResultSet resultSet,
+															 @NonNull Object resultSetValue,
+															 @NonNull TargetType targetType,
+															 @NonNull Integer columnIndex,
 															 @Nullable String columnLabel,
-															 @Nonnull InstanceProvider instanceProvider) {
+															 @NonNull InstanceProvider instanceProvider) {
 				return MappingResult.of(new SpecialType(resultSetValue.toString()));
 			}
 		};

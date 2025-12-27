@@ -16,7 +16,7 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
+import org.jspecify.annotations.NonNull;
 import java.util.Optional;
 
 /**
@@ -35,6 +35,6 @@ public interface ReturningTransactionalOperation<T> {
 	 * @return the result of operation execution
 	 * @throws Exception if an error occurs while executing the transactional operation
 	 */
-	@Nonnull
+	@NonNull
 	Optional<T> perform() throws Exception;
 }

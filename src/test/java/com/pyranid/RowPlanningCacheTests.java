@@ -20,7 +20,7 @@ import org.hsqldb.jdbc.JDBCDataSource;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-import javax.annotation.Nonnull;
+import org.jspecify.annotations.NonNull;
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
 import java.lang.reflect.Constructor;
@@ -52,8 +52,8 @@ public class RowPlanningCacheTests {
 				.build();
 	}
 
-	@Nonnull
-	protected DataSource createInMemoryDataSource(@Nonnull String databaseName) {
+	@NonNull
+	protected DataSource createInMemoryDataSource(@NonNull String databaseName) {
 		requireNonNull(databaseName);
 
 		JDBCDataSource dataSource = new JDBCDataSource();

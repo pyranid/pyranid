@@ -16,8 +16,8 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import java.sql.Connection;
 import java.util.Optional;
 
@@ -60,7 +60,7 @@ public enum TransactionIsolation {
 		this.jdbcLevel = jdbcLevel;
 	}
 
-	@Nonnull
+	@NonNull
 	Optional<Integer> getJdbcLevel() {
 		return Optional.ofNullable(this.jdbcLevel);
 	}

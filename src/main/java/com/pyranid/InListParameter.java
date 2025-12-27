@@ -16,7 +16,7 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
+import org.jspecify.annotations.NonNull;
 import javax.annotation.concurrent.ThreadSafe;
 import java.util.Optional;
 
@@ -38,6 +38,6 @@ public interface InListParameter {
 	 *
 	 * @return the elements for the {@code IN} list
 	 */
-	@Nonnull
+	@NonNull
 	Optional<Object[]> getElements();
 }

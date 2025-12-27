@@ -16,8 +16,8 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
@@ -40,20 +40,20 @@ public interface TargetType {
 	/**
 	 * The original reflective type ({@code Class}, {@code ParameterizedType}, etc.)
 	 */
-	@Nonnull
+	@NonNull
 	Type getType();
 
 	/**
 	 * Raw class, with erasure ({@code List.class} for {@code List<UUID>}, etc.)
 	 */
-	@Nonnull
+	@NonNull
 	Class<?> getRawClass();
 
 	/**
 	 * @return {@code true} if {@link #getRawClass()} matches the provided {@code rawClass} (no subtype/parameter checks), {@code false} otherwise.
 	 */
-	@Nonnull
-	default Boolean matchesClass(@Nonnull Class<?> rawClass) {
+	@NonNull
+	default Boolean matchesClass(@NonNull Class<?> rawClass) {
 		requireNonNull(rawClass);
 		return getRawClass().equals(rawClass);
 	}
@@ -63,9 +63,9 @@ public interface TargetType {
 	 * <p>
 	 * For example, invoke {@code matchesParameterizedType(List.class, UUID.class)} to determine "is this type a {@code List<UUID>}?"
 	 */
-	@Nonnull
-	default Boolean matchesParameterizedType(@Nonnull Class<?> rawClass,
-																					 @Nullable Class<?>... typeArguments) {
+	@NonNull
+	default Boolean matchesParameterizedType(@NonNull Class<?> rawClass,
+																					 Class<?> @Nullable ... typeArguments) {
 		requireNonNull(rawClass);
 
 		if (typeArguments == null || typeArguments.length == 0)
@@ -86,47 +86,47 @@ public interface TargetType {
 		return true;
 	}
 
-	@Nonnull
+	@NonNull
 	default Boolean isList() {
 		return matchesClass(List.class);
 	}
 
-	@Nonnull
+	@NonNull
 	default Optional<TargetType> getListElementType() {
 		return matchesClass(List.class) ? getFirstTargetTypeArgument() : Optional.empty();
 	}
 
-	@Nonnull
+	@NonNull
 	default Boolean isSet() {
 		return matchesClass(Set.class);
 	}
 
-	@Nonnull
+	@NonNull
 	default Optional<TargetType> getSetElementType() {
 		return matchesClass(Set.class) ? getFirstTargetTypeArgument() : Optional.empty();
 	}
 
-	@Nonnull
+	@NonNull
 	default Boolean isMap() {
 		return matchesClass(Map.class);
 	}
 
-	@Nonnull
+	@NonNull
 	default Optional<TargetType> getMapKeyType() {
 		return matchesClass(Map.class) ? getTargetTypeArgumentAtIndex(0) : Optional.empty();
 	}
 
-	@Nonnull
+	@NonNull
 	default Optional<TargetType> getMapValueType() {
 		return matchesClass(Map.class) ? getTargetTypeArgumentAtIndex(1) : Optional.empty();
 	}
 
-	@Nonnull
+	@NonNull
 	default Boolean isArray() {
 		return getRawClass().isArray() || getType() instanceof GenericArrayType;
 	}
 
-	@Nonnull
+	@NonNull
 	default Optional<TargetType> getArrayComponentType() {
 		if (getRawClass().isArray())
 			return Optional.of(TargetType.of(getRawClass().getComponentType()));
@@ -140,22 +140,22 @@ public interface TargetType {
 	/**
 	 * All type arguments wrapped (empty for raw/non-parameterized).
 	 */
-	@Nonnull
+	@NonNull
 	List<TargetType> getTypeArguments();
 
-	@Nonnull
-	static TargetType of(@Nonnull Type type) {
+	@NonNull
+	static TargetType of(@NonNull Type type) {
 		requireNonNull(type);
 		return new DefaultTargetType(type);
 	}
 
-	@Nonnull
+	@NonNull
 	private Optional<TargetType> getFirstTargetTypeArgument() {
 		return getTargetTypeArgumentAtIndex(0);
 	}
 
-	@Nonnull
-	private Optional<TargetType> getTargetTypeArgumentAtIndex(@Nonnull Integer index) {
+	@NonNull
+	private Optional<TargetType> getTargetTypeArgumentAtIndex(@NonNull Integer index) {
 		requireNonNull(index);
 
 		List<TargetType> targetTypeArguments = getTypeArguments();

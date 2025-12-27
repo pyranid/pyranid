@@ -16,8 +16,8 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
 import java.time.ZoneId;
@@ -42,20 +42,20 @@ import static java.util.Objects.requireNonNull;
  */
 @ThreadSafe
 public final class StatementContext<T> {
-	@Nonnull
+	@NonNull
 	private final Statement statement;
-	@Nonnull
+	@NonNull
 	private final List<Object> parameters;
 	@Nullable
 	private final Class<T> resultSetRowType;
-	@Nonnull
+	@NonNull
 	private final DatabaseType databaseType;
-	@Nonnull
+	@NonNull
 	private final ZoneId timeZone;
-	@Nonnull
+	@NonNull
 	private final Queue<AutoCloseable> cleanupOperations;
 
-	protected StatementContext(@Nonnull Builder builder) {
+	protected StatementContext(@NonNull Builder builder) {
 		requireNonNull(builder);
 
 		this.statement = builder.statement;
@@ -110,44 +110,44 @@ public final class StatementContext<T> {
 		return format("%s{%s}", getClass().getSimpleName(), components.stream().collect(Collectors.joining(", ")));
 	}
 
-	@Nonnull
+	@NonNull
 	public Statement getStatement() {
 		return this.statement;
 	}
 
-	@Nonnull
+	@NonNull
 	public List<Object> getParameters() {
 		return this.parameters;
 	}
 
-	@Nonnull
+	@NonNull
 	public Optional<Class<T>> getResultSetRowType() {
 		return Optional.ofNullable(this.resultSetRowType);
 	}
 
-	@Nonnull
+	@NonNull
 	public DatabaseType getDatabaseType() {
 		return this.databaseType;
 	}
 
-	@Nonnull
+	@NonNull
 	public ZoneId getTimeZone() {
 		return this.timeZone;
 	}
 
-	void addCleanupOperation(@Nonnull AutoCloseable cleanupOperation) {
+	void addCleanupOperation(@NonNull AutoCloseable cleanupOperation) {
 		requireNonNull(cleanupOperation);
 		this.cleanupOperations.add(cleanupOperation);
 	}
 
-	@Nonnull
+	@NonNull
 	Queue<AutoCloseable> getCleanupOperations() {
 		return this.cleanupOperations;
 	}
 
-	@Nonnull
-	public static <T> Builder<T> with(@Nonnull Statement statement,
-																		@Nonnull Database database) {
+	@NonNull
+	public static <T> Builder<T> with(@NonNull Statement statement,
+																		@NonNull Database database) {
 		requireNonNull(statement);
 		requireNonNull(database);
 
@@ -164,19 +164,19 @@ public final class StatementContext<T> {
 	 */
 	@NotThreadSafe
 	public static class Builder<T> {
-		@Nonnull
+		@NonNull
 		private final Statement statement;
-		@Nonnull
+		@NonNull
 		private final DatabaseType databaseType;
-		@Nonnull
+		@NonNull
 		private final ZoneId timeZone;
 		@Nullable
 		private List<Object> parameters;
 		@Nullable
 		private Class<T> resultSetRowType;
 
-		private Builder(@Nonnull Statement statement,
-										@Nonnull Database database) {
+		private Builder(@NonNull Statement statement,
+										@NonNull Database database) {
 			requireNonNull(statement);
 			requireNonNull(database);
 
@@ -185,25 +185,25 @@ public final class StatementContext<T> {
 			this.timeZone = database.getTimeZone();
 		}
 
-		@Nonnull
+		@NonNull
 		public Builder parameters(@Nullable List<Object> parameters) {
 			this.parameters = parameters;
 			return this;
 		}
 
-		@Nonnull
-		public Builder parameters(@Nullable Object... parameters) {
+		@NonNull
+		public Builder parameters(Object @Nullable ... parameters) {
 			this.parameters = parameters == null ? null : Arrays.asList(parameters);
 			return this;
 		}
 
-		@Nonnull
+		@NonNull
 		public Builder resultSetRowType(Class<T> resultSetRowType) {
 			this.resultSetRowType = resultSetRowType;
 			return this;
 		}
 
-		@Nonnull
+		@NonNull
 		public StatementContext build() {
 			return new StatementContext(this);
 		}

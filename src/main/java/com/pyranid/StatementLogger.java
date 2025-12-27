@@ -16,7 +16,7 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
+import org.jspecify.annotations.NonNull;
 import javax.annotation.concurrent.ThreadSafe;
 
 /**
@@ -38,5 +38,5 @@ public interface StatementLogger {
 	 *
 	 * @param statementLog The event to log
 	 */
-	void log(@Nonnull StatementLog statementLog);
+	void log(@NonNull StatementLog statementLog);
 }

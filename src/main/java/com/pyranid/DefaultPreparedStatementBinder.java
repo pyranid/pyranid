@@ -19,8 +19,8 @@ package com.pyranid;
 import com.pyranid.CustomParameterBinder.BindingResult;
 import com.pyranid.JsonParameter.BindingPreference;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import java.nio.ByteBuffer;
 import java.sql.Array;
@@ -61,15 +61,15 @@ import static java.util.Objects.requireNonNull;
  */
 @ThreadSafe
 class DefaultPreparedStatementBinder implements PreparedStatementBinder {
-	@Nonnull
+	@NonNull
 	private final List<CustomParameterBinder> customParameterBinders;
 
 	// Cache: which binders apply for a given target type?
-	@Nonnull
+	@NonNull
 	private final ConcurrentMap<TargetType, List<CustomParameterBinder>> bindersByTargetTypeCache;
 
 	// Cache: which binder last won for (valueClass, sqlType)?
-	@Nonnull
+	@NonNull
 	private final ConcurrentMap<InboundKey, CustomParameterBinder> preferredBinderByInboundKey;
 
 
@@ -77,7 +77,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		this(List.of());
 	}
 
-	DefaultPreparedStatementBinder(@Nonnull List<CustomParameterBinder> customParameterBinders) {
+	DefaultPreparedStatementBinder(@NonNull List<CustomParameterBinder> customParameterBinders) {
 		requireNonNull(customParameterBinders);
 		this.customParameterBinders = Collections.unmodifiableList(customParameterBinders);
 		this.bindersByTargetTypeCache = new ConcurrentHashMap<>();
@@ -85,10 +85,10 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	}
 
 	@Override
-	public <T> void bindParameter(@Nonnull StatementContext<T> statementContext,
-																@Nonnull PreparedStatement preparedStatement,
-																@Nonnull Integer parameterIndex,
-																@Nonnull Object parameter) throws SQLException {
+	public <T> void bindParameter(@NonNull StatementContext<T> statementContext,
+																@NonNull PreparedStatement preparedStatement,
+																@NonNull Integer parameterIndex,
+																@NonNull Object parameter) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(preparedStatement);
 		requireNonNull(parameterIndex);
@@ -285,9 +285,9 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		preparedStatement.setObject(parameterIndex, normalizedParameter);
 	}
 
-	@Nonnull
-	protected <T> Object[] normalizedArrayElements(@Nonnull StatementContext<T> statementContext,
-																								 @Nonnull Object[] elements) {
+	@NonNull
+	protected <T> Object[] normalizedArrayElements(@NonNull StatementContext<T> statementContext,
+																								 Object @NonNull [] elements) {
 		requireNonNull(statementContext);
 		requireNonNull(elements);
 
@@ -302,9 +302,9 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		return normalizedElements;
 	}
 
-	@Nonnull
-	protected boolean trySetObject(@Nonnull PreparedStatement preparedStatement,
-																 @Nonnull Integer parameterIndex,
+	@NonNull
+	protected boolean trySetObject(@NonNull PreparedStatement preparedStatement,
+																 @NonNull Integer parameterIndex,
 																 @Nullable Object parameter) throws SQLException {
 		requireNonNull(preparedStatement);
 		requireNonNull(parameterIndex);
@@ -317,11 +317,11 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 	}
 
-	@Nonnull
-	protected boolean trySetObject(@Nonnull PreparedStatement preparedStatement,
-																 @Nonnull Integer parameterIndex,
+	@NonNull
+	protected boolean trySetObject(@NonNull PreparedStatement preparedStatement,
+																 @NonNull Integer parameterIndex,
 																 @Nullable Object parameter,
-																 @Nonnull Integer sqlType) throws SQLException {
+																 @NonNull Integer sqlType) throws SQLException {
 		requireNonNull(preparedStatement);
 		requireNonNull(parameterIndex);
 		requireNonNull(sqlType);
@@ -334,9 +334,9 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 	}
 
-	@Nonnull
-	protected Optional<Integer> determineParameterSqlType(@Nonnull PreparedStatement preparedStatement,
-																												@Nonnull Integer parameterIndex) throws SQLException {
+	@NonNull
+	protected Optional<Integer> determineParameterSqlType(@NonNull PreparedStatement preparedStatement,
+																												@NonNull Integer parameterIndex) throws SQLException {
 		requireNonNull(preparedStatement);
 		requireNonNull(parameterIndex);
 
@@ -354,9 +354,9 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 	}
 
-	private static void setNullWithFallback(@Nonnull PreparedStatement preparedStatement,
-																					@Nonnull Integer parameterIndex,
-																					@Nonnull Integer primarySqlType,
+	private static void setNullWithFallback(@NonNull PreparedStatement preparedStatement,
+																					@NonNull Integer parameterIndex,
+																					@NonNull Integer primarySqlType,
 																					@Nullable String typeName,
 																					@Nullable Integer fallbackSqlType) throws SQLException {
 		requireNonNull(preparedStatement);
@@ -406,13 +406,13 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	/**
 	 * Try custom binders for the given value. Returns true if a binder handled it.
 	 */
-	@Nonnull
-	protected <T> Boolean tryCustomBinders(@Nonnull StatementContext<T> statementContext,
-																				 @Nonnull PreparedStatement preparedStatement,
-																				 @Nonnull Integer parameterIndex,
-																				 @Nonnull Object parameter, /* must be the UNWRAPPED value */
-																				 @Nonnull Integer sqlType,
-																				 @Nonnull TargetType targetType /* explicit target (from TypedParameter if present) */) throws SQLException {
+	@NonNull
+	protected <T> Boolean tryCustomBinders(@NonNull StatementContext<T> statementContext,
+																				 @NonNull PreparedStatement preparedStatement,
+																				 @NonNull Integer parameterIndex,
+																				 @NonNull Object parameter, /* must be the UNWRAPPED value */
+																				 @NonNull Integer sqlType,
+																				 @NonNull TargetType targetType /* explicit target (from TypedParameter if present) */) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(preparedStatement);
 		requireNonNull(parameterIndex);
@@ -455,12 +455,12 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	/**
 	 * Try custom binders for a null typed parameter. Returns true if a binder handled it.
 	 */
-	@Nonnull
-	protected <T> Boolean tryCustomNullBinders(@Nonnull StatementContext<T> statementContext,
-																						 @Nonnull PreparedStatement preparedStatement,
-																						 @Nonnull Integer parameterIndex,
-																						 @Nonnull Integer sqlType,
-																						 @Nonnull TargetType targetType) throws SQLException {
+	@NonNull
+	protected <T> Boolean tryCustomNullBinders(@NonNull StatementContext<T> statementContext,
+																						 @NonNull PreparedStatement preparedStatement,
+																						 @NonNull Integer parameterIndex,
+																						 @NonNull Integer sqlType,
+																						 @NonNull TargetType targetType) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(preparedStatement);
 		requireNonNull(parameterIndex);
@@ -485,8 +485,8 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	/**
 	 * Filter and cache the binders whose {@code appliesTo(targetType)} returned true.
 	 */
-	@Nonnull
-	protected List<CustomParameterBinder> customBindersFor(@Nonnull TargetType targetType) {
+	@NonNull
+	protected List<CustomParameterBinder> customBindersFor(@NonNull TargetType targetType) {
 		requireNonNull(targetType);
 
 		if (getCustomParameterBinders().isEmpty())
@@ -502,16 +502,16 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 	@ThreadSafe
 	protected static final class InboundKey {
-		@Nonnull
+		@NonNull
 		private final Class<?> valueClass;
-		@Nonnull
+		@NonNull
 		private final Integer sqlType;
-		@Nonnull
+		@NonNull
 		private final TargetType targetType;
 
-		InboundKey(@Nonnull Class<?> valueClass,
-							 @Nonnull Integer sqlType,
-							 @Nonnull TargetType targetType) {
+		InboundKey(@NonNull Class<?> valueClass,
+							 @NonNull Integer sqlType,
+							 @NonNull TargetType targetType) {
 			requireNonNull(valueClass);
 			requireNonNull(sqlType);
 			requireNonNull(targetType);
@@ -540,8 +540,8 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 	}
 
-	@Nonnull
-	protected String toPostgresVectorLiteralValue(@Nonnull double[] elements) {
+	@NonNull
+	protected String toPostgresVectorLiteralValue(double @NonNull [] elements) {
 		requireNonNull(elements);
 
 		StringBuilder sb = new StringBuilder(2 + elements.length * 8);
@@ -568,9 +568,9 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	 * @param parameter        the parameter to (possibly) massage
 	 * @return the result of the massaging process
 	 */
-	@Nonnull
-	protected <T> Object normalizeParameter(@Nonnull StatementContext<T> statementContext,
-																					@Nonnull Object parameter) {
+	@NonNull
+	protected <T> Object normalizeParameter(@NonNull StatementContext<T> statementContext,
+																					@NonNull Object parameter) {
 		requireNonNull(statementContext);
 		requireNonNull(parameter);
 
@@ -626,7 +626,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		return value;
 	}
 
-	private static int defaultNullSqlTypeForTargetType(@Nonnull TargetType targetType) {
+	private static int defaultNullSqlTypeForTargetType(@NonNull TargetType targetType) {
 		requireNonNull(targetType);
 
 		if (targetType.isArray() || targetType.isList() || targetType.isSet())
@@ -637,17 +637,17 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		return Types.NULL;
 	}
 
-	@Nonnull
+	@NonNull
 	protected List<CustomParameterBinder> getCustomParameterBinders() {
 		return this.customParameterBinders;
 	}
 
-	@Nonnull
+	@NonNull
 	protected ConcurrentMap<TargetType, List<CustomParameterBinder>> getBindersByTargetTypeCache() {
 		return this.bindersByTargetTypeCache;
 	}
 
-	@Nonnull
+	@NonNull
 	protected ConcurrentMap<InboundKey, CustomParameterBinder> getPreferredBinderByInboundKey() {
 		return this.preferredBinderByInboundKey;
 	}

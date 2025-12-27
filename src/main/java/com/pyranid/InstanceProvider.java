@@ -16,8 +16,8 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
@@ -50,9 +50,9 @@ public interface InstanceProvider {
 	 * @param instanceType the type of instance to create
 	 * @return an instance of the given {@code instanceType}
 	 */
-	@Nonnull
-	default <T> T provide(@Nonnull StatementContext<T> statementContext,
-												@Nonnull Class<T> instanceType) {
+	@NonNull
+	default <T> T provide(@NonNull StatementContext<T> statementContext,
+												@NonNull Class<T> instanceType) {
 		requireNonNull(statementContext);
 		requireNonNull(instanceType);
 
@@ -76,10 +76,10 @@ public interface InstanceProvider {
 	 * @return an instance of the given {@code recordType}
 	 * @since 2.0.0
 	 */
-	@Nonnull
-	default <T extends Record> T provideRecord(@Nonnull StatementContext<T> statementContext,
-																						 @Nonnull Class<T> recordType,
-																						 @Nullable Object... initargs) {
+	@NonNull
+	default <T extends Record> T provideRecord(@NonNull StatementContext<T> statementContext,
+																						 @NonNull Class<T> recordType,
+																						 Object @Nullable ... initargs) {
 		requireNonNull(statementContext);
 		requireNonNull(recordType);
 

@@ -16,7 +16,7 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
+import org.jspecify.annotations.NonNull;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.List;
@@ -40,10 +40,10 @@ import static java.util.Objects.requireNonNull;
  * Or, implement your own: <pre>{@code  PreparedStatementBinder myImpl = new PreparedStatementBinder() {
  *   @Override
  *   <T> void bindParameter(
- *     @Nonnull StatementContext<T> statementContext,
- *     @Nonnull PreparedStatement preparedStatement,
- *     @Nonnull Integer parameterIndex,
- *     @Nonnull Object parameter
+ *     @NonNull StatementContext<T> statementContext,
+ *     @NonNull PreparedStatement preparedStatement,
+ *     @NonNull Integer parameterIndex,
+ *     @NonNull Object parameter
  *   ) throws SQLException {
  *     // TODO: your own code that binds the parameter at the specified index to the PreparedStatement
  *   }
@@ -65,10 +65,10 @@ public interface PreparedStatementBinder {
 	 * @param parameter         the parameter we are binding to the {@link PreparedStatement}, if any
 	 * @throws SQLException if an error occurs during binding
 	 */
-	<T> void bindParameter(@Nonnull StatementContext<T> statementContext,
-												 @Nonnull PreparedStatement preparedStatement,
-												 @Nonnull Integer parameterIndex,
-												 @Nonnull Object parameter) throws SQLException;
+	<T> void bindParameter(@NonNull StatementContext<T> statementContext,
+												 @NonNull PreparedStatement preparedStatement,
+												 @NonNull Integer parameterIndex,
+												 @NonNull Object parameter) throws SQLException;
 
 	/**
 	 * Acquires a concrete implementation of this interface with out-of-the-box defaults.
@@ -77,7 +77,7 @@ public interface PreparedStatementBinder {
 	 *
 	 * @return a concrete implementation of this interface with out-of-the-box defaults
 	 */
-	@Nonnull
+	@NonNull
 	static PreparedStatementBinder withDefaultConfiguration() {
 		return new DefaultPreparedStatementBinder();
 	}
@@ -90,8 +90,8 @@ public interface PreparedStatementBinder {
 	 * @param customParameterBinders the "surgical" per-type custom parameter binders
 	 * @return a concrete implementation of this interface
 	 */
-	@Nonnull
-	static PreparedStatementBinder withCustomParameterBinders(@Nonnull List<CustomParameterBinder> customParameterBinders) {
+	@NonNull
+	static PreparedStatementBinder withCustomParameterBinders(@NonNull List<CustomParameterBinder> customParameterBinders) {
 		requireNonNull(customParameterBinders);
 		return new DefaultPreparedStatementBinder(customParameterBinders);
 	}

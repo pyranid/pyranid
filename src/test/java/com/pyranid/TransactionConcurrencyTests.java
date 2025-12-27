@@ -20,7 +20,7 @@ import org.hsqldb.jdbc.JDBCDataSource;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-import javax.annotation.Nonnull;
+import org.jspecify.annotations.NonNull;
 import javax.sql.DataSource;
 import java.io.PrintWriter;
 import java.lang.reflect.InvocationTargetException;
@@ -99,10 +99,10 @@ public class TransactionConcurrencyTests {
 		Assertions.assertEquals(2L, count);
 	}
 
-	private void runParticipate(@Nonnull Database database,
-															@Nonnull Transaction transaction,
-															@Nonnull CyclicBarrier barrier,
-															@Nonnull AtomicReference<Throwable> failure,
+	private void runParticipate(@NonNull Database database,
+															@NonNull Transaction transaction,
+															@NonNull CyclicBarrier barrier,
+															@NonNull AtomicReference<Throwable> failure,
 															int id) {
 		requireNonNull(database);
 		requireNonNull(transaction);
@@ -123,7 +123,7 @@ public class TransactionConcurrencyTests {
 		}
 	}
 
-	private DataSource createInMemoryDataSource(@Nonnull String databaseName) {
+	private DataSource createInMemoryDataSource(@NonNull String databaseName) {
 		requireNonNull(databaseName);
 
 		JDBCDataSource dataSource = new JDBCDataSource();
@@ -191,12 +191,12 @@ public class TransactionConcurrencyTests {
 			this.active.decrementAndGet();
 		}
 
-		private boolean awaitFirstEntered(long timeout, @Nonnull TimeUnit unit) throws InterruptedException {
+		private boolean awaitFirstEntered(long timeout, @NonNull TimeUnit unit) throws InterruptedException {
 			requireNonNull(unit);
 			return this.firstEntered.await(timeout, unit);
 		}
 
-		private boolean awaitSecondEntered(long timeout, @Nonnull TimeUnit unit) throws InterruptedException {
+		private boolean awaitSecondEntered(long timeout, @NonNull TimeUnit unit) throws InterruptedException {
 			requireNonNull(unit);
 			return this.secondEntered.await(timeout, unit);
 		}
@@ -211,13 +211,13 @@ public class TransactionConcurrencyTests {
 	}
 
 	private static final class GuardedDataSource implements DataSource {
-		@Nonnull
+		@NonNull
 		private final DataSource delegate;
-		@Nonnull
+		@NonNull
 		private final ConcurrencyGuard guard;
 
-		private GuardedDataSource(@Nonnull DataSource delegate,
-															@Nonnull ConcurrencyGuard guard) {
+		private GuardedDataSource(@NonNull DataSource delegate,
+															@NonNull ConcurrencyGuard guard) {
 			this.delegate = requireNonNull(delegate);
 			this.guard = requireNonNull(guard);
 		}
@@ -270,7 +270,7 @@ public class TransactionConcurrencyTests {
 			return iface.isInstance(this) || this.delegate.isWrapperFor(iface);
 		}
 
-		private Connection wrapConnection(@Nonnull Connection connection) {
+		private Connection wrapConnection(@NonNull Connection connection) {
 			requireNonNull(connection);
 
 			return (Connection) Proxy.newProxyInstance(
@@ -286,7 +286,7 @@ public class TransactionConcurrencyTests {
 					});
 		}
 
-		private PreparedStatement wrapPreparedStatement(@Nonnull PreparedStatement preparedStatement) {
+		private PreparedStatement wrapPreparedStatement(@NonNull PreparedStatement preparedStatement) {
 			requireNonNull(preparedStatement);
 
 			return (PreparedStatement) Proxy.newProxyInstance(
@@ -306,7 +306,7 @@ public class TransactionConcurrencyTests {
 					});
 		}
 
-		private boolean isExecuteMethod(@Nonnull Method method) {
+		private boolean isExecuteMethod(@NonNull Method method) {
 			requireNonNull(method);
 			String name = method.getName();
 			return name.equals("execute")
@@ -317,8 +317,8 @@ public class TransactionConcurrencyTests {
 					|| name.equals("executeLargeBatch");
 		}
 
-		private Object invoke(@Nonnull Method method,
-													@Nonnull Object target,
+		private Object invoke(@NonNull Method method,
+													@NonNull Object target,
 													Object[] args) throws Throwable {
 			requireNonNull(method);
 			requireNonNull(target);

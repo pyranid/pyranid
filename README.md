@@ -78,18 +78,18 @@ Database database = Database.withDataSource(dataSource).build();
 // Controls how Pyranid creates instances of objects that represent ResultSet rows
 InstanceProvider instanceProvider = new InstanceProvider() {
   @Override
-  @Nonnull
-  public <T> T provide(@Nonnull StatementContext<T> statementContext,
-                       @Nonnull Class<T> instanceType) {
+  @NonNull
+  public <T> T provide(@NonNull StatementContext<T> statementContext,
+                       @NonNull Class<T> instanceType) {
     // You might have your DI framework vend regular object instances
     return guiceInjector.getInstance(instanceType);
   }
   
   @Override
-  @Nonnull
-  public <T extends Record> T provideRecord(@Nonnull StatementContext<T> statementContext,
-                                            @Nonnull Class<T> recordType,
-                                            @Nullable Object... initargs) {
+  @NonNull
+  public <T extends Record> T provideRecord(@NonNull StatementContext<T> statementContext,
+                                            @NonNull Class<T> recordType,
+                                            Object @Nullable ... initargs) {
     // If you use Record types, customize their instantiation here.
     // Default implementation will use the canonical constructor
     return super.provideRecord(statementContext, recordType, initargs);
@@ -104,24 +104,24 @@ InstanceProvider instanceProvider = new InstanceProvider() {
 ResultSetMapper resultSetMapper = ResultSetMapper.withPlanCachingEnabled(false)
   .normalizationLocale(Locale.forLanguageTag("pt-BR"))
   .customColumnMappers(List.of(new CustomColumnMapper() {
-    @Nonnull
+    @NonNull
     @Override
-    public Boolean appliesTo(@Nonnull TargetType targetType) {
+    public Boolean appliesTo(@NonNull TargetType targetType) {
       // Can also apply to parameterized types, e.g.
       // targetType.matchesParameterizedType(List.class, UUID.class) for List<UUID>
       return targetType.matchesClass(Money.class);
     }
 
-    @Nonnull
+    @NonNull
     @Override
     public MappingResult map(
-      @Nonnull StatementContext<?> statementContext,
-      @Nonnull ResultSet resultSet,
-      @Nonnull Object resultSetValue,
-      @Nonnull TargetType targetType,
-      @Nonnull Integer columnIndex,
+      @NonNull StatementContext<?> statementContext,
+      @NonNull ResultSet resultSet,
+      @NonNull Object resultSetValue,
+      @NonNull TargetType targetType,
+      @NonNull Integer columnIndex,
       @Nullable String columnLabel,
-      @Nonnull InstanceProvider instanceProvider
+      @NonNull InstanceProvider instanceProvider
     ) {
       // Convert the ResultSet column's value to the "appliesTo" Java type.
       // Don't need null checks - this method is only invoked when the value is non-null
@@ -140,19 +140,19 @@ ResultSetMapper resultSetMapper = ResultSetMapper.withPlanCachingEnabled(false)
 // Here, we transform Money instances into a DB-friendly string representation 
 PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCustomParameterBinders(List.of(
   new CustomParameterBinder() {
-    @Nonnull
+    @NonNull
     @Override
-    public Boolean appliesTo(@Nonnull TargetType targetType) {
+    public Boolean appliesTo(@NonNull TargetType targetType) {
       return targetType.matchesClass(Money.class);
     }		
 			
-    @Nonnull
+    @NonNull
     @Override
     public BindingResult bind(
-      @Nonnull StatementContext<?> statementContext, 
-      @Nonnull PreparedStatement preparedStatement,
-      @Nonnull Integer parameterIndex,
-      @Nonnull Object parameter
+      @NonNull StatementContext<?> statementContext, 
+      @NonNull PreparedStatement preparedStatement,
+      @NonNull Integer parameterIndex,
+      @NonNull Object parameter
     ) throws SQLException {
       // Convert Money to a string representation for binding.
       // Don't need null checks - this method is only invoked when the value is non-null
@@ -172,7 +172,7 @@ PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCu
 // Optionally logs SQL statements
 StatementLogger statementLogger = new StatementLogger() {
   @Override
-  public void log(@Nonnull StatementLog statementLog) {
+  public void log(@NonNull StatementLog statementLog) {
     // Send to whatever output sink you'd like
     out.println(statementLog);
   }
@@ -662,24 +662,24 @@ Just add a [`CustomColumnMapper`](https://javadoc.pyranid.com/com/pyranid/Custom
 
 ```java
 ResultSetMapper resultSetMapper = ResultSetMapper.withCustomColumnMappers(List.of(new CustomColumnMapper() {
-  @Nonnull
+  @NonNull
   @Override
-  public Boolean appliesTo(@Nonnull TargetType targetType) {
+  public Boolean appliesTo(@NonNull TargetType targetType) {
     // Can also apply to parameterized types, e.g.
     // targetType.matchesParameterizedType(List.class, UUID.class) for List<UUID>
     return targetType.matchesClass(MySpecialType.class);
   }
 
-  @Nonnull
+  @NonNull
   @Override
   public MappingResult map(
-    @Nonnull StatementContext<?> statementContext,
-    @Nonnull ResultSet resultSet,
-    @Nonnull Object resultSetValue,
-    @Nonnull TargetType targetType,
-    @Nonnull Integer columnIndex,
+    @NonNull StatementContext<?> statementContext,
+    @NonNull ResultSet resultSet,
+    @NonNull Object resultSetValue,
+    @NonNull TargetType targetType,
+    @NonNull Integer columnIndex,
     @Nullable String columnLabel,
-    @Nonnull InstanceProvider instanceProvider
+    @NonNull InstanceProvider instanceProvider
   ) {
     // Pull JSON String data from the ResultSet and inflate it
     String json = resultSetValue.toString();
@@ -994,19 +994,19 @@ Then, we'll register a [`CustomParameterBinder`](https://javadoc.pyranid.com/com
 ```java
 PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCustomParameterBinders(List.of(
   new CustomParameterBinder() {
-    @Nonnull
+    @NonNull
     @Override
-    public Boolean appliesTo(@Nonnull TargetType targetType) {
+    public Boolean appliesTo(@NonNull TargetType targetType) {
       return targetType.matchesClass(HexColor.class);
     }		
 			
-    @Nonnull
+    @NonNull
     @Override
     public BindingResult bind(
-      @Nonnull StatementContext<?> statementContext, 
-      @Nonnull PreparedStatement preparedStatement,
-      @Nonnull Integer parameterIndex,
-      @Nonnull Object parameter
+      @NonNull StatementContext<?> statementContext, 
+      @NonNull PreparedStatement preparedStatement,
+      @NonNull Integer parameterIndex,
+      @NonNull Object parameter
     ) throws SQLException {
       HexColor hexColor = (HexColor) parameter; 
 
@@ -1071,21 +1071,21 @@ database.query("INSERT INTO t(v) VALUES (:v)")
 ```java
 PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCustomParameterBinders(List.of(
   new CustomParameterBinder() {
-    @Nonnull
+    @NonNull
     @Override
-    public Boolean appliesTo(@Nonnull TargetType targetType) {
+    public Boolean appliesTo(@NonNull TargetType targetType) {
       // For Parameters::mapOf(Class<K>, Class<V>, Map<K,V>), you'd say:
       // matchesParameterizedType(Map.class, MyKey.class, MyValue.class)
       return targetType.matchesParameterizedType(List.class, UUID.class);
     }		
 			
-    @Nonnull
+    @NonNull
     @Override
     public BindingResult bind(
-      @Nonnull StatementContext<?> statementContext, 
-      @Nonnull PreparedStatement preparedStatement,
-      @Nonnull Integer parameterIndex,
-      @Nonnull Object parameter
+      @NonNull StatementContext<?> statementContext, 
+      @NonNull PreparedStatement preparedStatement,
+      @NonNull Integer parameterIndex,
+      @NonNull Object parameter
     ) throws SQLException {
       // Convert UUIDs to a comma-delimited string, or null for the empty list 
       List<UUID> uuids = (List<UUID>) param;
@@ -1201,7 +1201,7 @@ Database database = Database.withDataSource(dataSource)
     Duration SLOW_QUERY_THRESHOLD = Duration.ofMillis(500);
 
     @Override
-    public void log(@Nonnull StatementLog statementLog) {
+    public void log(@NonNull StatementLog statementLog) {
       if(statementLog.getTotalDuration().compareTo(SLOW_QUERY_THRESHOLD) > 0)
         out.printf("Slow query: %s\n", statementLog);
     }
@@ -1278,7 +1278,7 @@ A corresponding [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.ht
 Database database = Database.withDataSource(dataSource)
   .statementLogger(new StatementLogger() {
     @Override
-    public void log(@Nonnull StatementLog statementLog) {
+    public void log(@NonNull StatementLog statementLog) {
       // Log everything except HOT_QUERY
       if(statementLog.getStatementContext().getStatement().getId() != HOT_QUERY)
         out.println(statementLog);

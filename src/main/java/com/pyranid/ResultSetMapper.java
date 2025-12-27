@@ -16,7 +16,7 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
+import org.jspecify.annotations.NonNull;
 import javax.annotation.concurrent.NotThreadSafe;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -46,13 +46,13 @@ import static java.util.Objects.requireNonNull;
  *  .customColumnMappers(List.of(...))
  *  .normalizationLocale(Locale.forLanguageTag("pt-BR"))
  *  .build();}</pre> Or, implement your own: <pre>{@code  ResultSetMapper myImpl = new ResultSetMapper() {
- *   @Nonnull
+ *   @NonNull
  *   @Override
  *   public <T> Optional<T> map(
- *     @Nonnull StatementContext<T> statementContext,
- *     @Nonnull ResultSet resultSet,
- *     @Nonnull Class<T> resultSetRowType,
- *     @Nonnull InstanceProvider instanceProvider
+ *     @NonNull StatementContext<T> statementContext,
+ *     @NonNull ResultSet resultSet,
+ *     @NonNull Class<T> resultSetRowType,
+ *     @NonNull InstanceProvider instanceProvider
  *   ) throws SQLException {
  *     // TODO: pull data from resultSet and apply to a new instance of T
  *     return Optional.empty();
@@ -75,11 +75,11 @@ public interface ResultSetMapper {
 	 * @return an {@link Optional} containing an instance of the given {@code resultClass}, or {@link Optional#empty()} to indicate a {@code null} value
 	 * @throws SQLException if an error occurs during mapping
 	 */
-	@Nonnull
-	<T> Optional<T> map(@Nonnull StatementContext<T> statementContext,
-											@Nonnull ResultSet resultSet,
-											@Nonnull Class<T> resultSetRowType,
-											@Nonnull InstanceProvider instanceProvider) throws SQLException;
+	@NonNull
+	<T> Optional<T> map(@NonNull StatementContext<T> statementContext,
+											@NonNull ResultSet resultSet,
+											@NonNull Class<T> resultSetRowType,
+											@NonNull InstanceProvider instanceProvider) throws SQLException;
 
 	/**
 	 * Default maximum number of cached row-mapping plans.
@@ -97,18 +97,18 @@ public interface ResultSetMapper {
 	 * @param normalizationLocale the locale to use when massaging JDBC column names for matching against Java property names
 	 * @return a {@code Builder} for a concrete implementation
 	 */
-	@Nonnull
-	static Builder withNormalizationLocale(@Nonnull Locale normalizationLocale) {
+	@NonNull
+	static Builder withNormalizationLocale(@NonNull Locale normalizationLocale) {
 		requireNonNull(normalizationLocale);
 
 		new ResultSetMapper() {
-			@Nonnull
+			@NonNull
 			@Override
 			public <T> Optional<T> map(
-					@Nonnull StatementContext<T> statementContext,
-					@Nonnull ResultSet resultSet,
-					@Nonnull Class<T> resultSetRowType,
-					@Nonnull InstanceProvider instanceProvider) {
+					@NonNull StatementContext<T> statementContext,
+					@NonNull ResultSet resultSet,
+					@NonNull Class<T> resultSetRowType,
+					@NonNull InstanceProvider instanceProvider) {
 				return Optional.empty();
 			}
 		};
@@ -122,8 +122,8 @@ public interface ResultSetMapper {
 	 * @param customColumnMappers a {@link List} of custom column-specific mapping logic to apply, in priority order
 	 * @return a {@code Builder} for a concrete implementation
 	 */
-	@Nonnull
-	static Builder withCustomColumnMappers(@Nonnull List<CustomColumnMapper> customColumnMappers) {
+	@NonNull
+	static Builder withCustomColumnMappers(@NonNull List<CustomColumnMapper> customColumnMappers) {
 		requireNonNull(customColumnMappers);
 		return new Builder().customColumnMappers(customColumnMappers);
 	}
@@ -134,8 +134,8 @@ public interface ResultSetMapper {
 	 * @param planCachingEnabled whether an internal "mapping plan" cache should be used to speed up {@link ResultSet} mapping
 	 * @return a {@code Builder} for a concrete implementation
 	 */
-	@Nonnull
-	static Builder withPlanCachingEnabled(@Nonnull Boolean planCachingEnabled) {
+	@NonNull
+	static Builder withPlanCachingEnabled(@NonNull Boolean planCachingEnabled) {
 		requireNonNull(planCachingEnabled);
 		return new Builder().planCachingEnabled(planCachingEnabled);
 	}
@@ -147,7 +147,7 @@ public interface ResultSetMapper {
 	 *
 	 * @return a concrete implementation of this interface with out-of-the-box defaults
 	 */
-	@Nonnull
+	@NonNull
 	static ResultSetMapper withDefaultConfiguration() {
 		return new Builder().build();
 	}
@@ -162,15 +162,15 @@ public interface ResultSetMapper {
 	 */
 	@NotThreadSafe
 	class Builder {
-		@Nonnull
+		@NonNull
 		Locale normalizationLocale;
-		@Nonnull
+		@NonNull
 		List<CustomColumnMapper> customColumnMappers;
-		@Nonnull
+		@NonNull
 		Boolean planCachingEnabled;
-		@Nonnull
+		@NonNull
 		Integer planCacheCapacity;
-		@Nonnull
+		@NonNull
 		Integer preferredColumnMapperCacheCapacity;
 
 		private Builder() {
@@ -187,8 +187,8 @@ public interface ResultSetMapper {
 		 * @param normalizationLocale the locale to use when massaging JDBC column names for matching against Java property names
 		 * @return this {@code Builder}, for chaining
 		 */
-		@Nonnull
-		public Builder normalizationLocale(@Nonnull Locale normalizationLocale) {
+		@NonNull
+		public Builder normalizationLocale(@NonNull Locale normalizationLocale) {
 			requireNonNull(normalizationLocale);
 			this.normalizationLocale = normalizationLocale;
 			return this;
@@ -200,8 +200,8 @@ public interface ResultSetMapper {
 		 * @param customColumnMappers a {@link List} of custom column-specific mapping logic to apply, in priority order
 		 * @return this {@code Builder}, for chaining
 		 */
-		@Nonnull
-		public Builder customColumnMappers(@Nonnull List<CustomColumnMapper> customColumnMappers) {
+		@NonNull
+		public Builder customColumnMappers(@NonNull List<CustomColumnMapper> customColumnMappers) {
 			requireNonNull(customColumnMappers);
 			this.customColumnMappers = customColumnMappers;
 			return this;
@@ -213,8 +213,8 @@ public interface ResultSetMapper {
 		 * @param planCachingEnabled whether an internal "mapping plan" cache should be used to speed up {@link ResultSet} mapping
 		 * @return this {@code Builder}, for chaining
 		 */
-		@Nonnull
-		public Builder planCachingEnabled(@Nonnull Boolean planCachingEnabled) {
+		@NonNull
+		public Builder planCachingEnabled(@NonNull Boolean planCachingEnabled) {
 			requireNonNull(planCachingEnabled);
 			this.planCachingEnabled = planCachingEnabled;
 			return this;
@@ -228,8 +228,8 @@ public interface ResultSetMapper {
 		 * @param planCacheCapacity maximum number of cached plans, or {@code 0} for unbounded. Defaults to {@link #DEFAULT_PLAN_CACHE_CAPACITY}.
 		 * @return this {@code Builder}, for chaining
 		 */
-		@Nonnull
-		public Builder planCacheCapacity(@Nonnull Integer planCacheCapacity) {
+		@NonNull
+		public Builder planCacheCapacity(@NonNull Integer planCacheCapacity) {
 			requireNonNull(planCacheCapacity);
 			if (planCacheCapacity < 0)
 				throw new IllegalArgumentException("Plan cache capacity must be >= 0");
@@ -246,8 +246,8 @@ public interface ResultSetMapper {
 		 *                                           Defaults to {@link #DEFAULT_PREFERRED_COLUMN_MAPPER_CACHE_CAPACITY}.
 		 * @return this {@code Builder}, for chaining
 		 */
-		@Nonnull
-		public Builder preferredColumnMapperCacheCapacity(@Nonnull Integer preferredColumnMapperCacheCapacity) {
+		@NonNull
+		public Builder preferredColumnMapperCacheCapacity(@NonNull Integer preferredColumnMapperCacheCapacity) {
 			requireNonNull(preferredColumnMapperCacheCapacity);
 			if (preferredColumnMapperCacheCapacity < 0)
 				throw new IllegalArgumentException("Preferred column mapper cache capacity must be >= 0");
@@ -262,7 +262,7 @@ public interface ResultSetMapper {
 		 *
 		 * @return a {@code ResultSetMapper} instance
 		 */
-		@Nonnull
+		@NonNull
 		public ResultSetMapper build() {
 			return new DefaultResultSetMapper(this);
 		}

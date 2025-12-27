@@ -16,7 +16,7 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
+import org.jspecify.annotations.NonNull;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 
@@ -37,6 +37,6 @@ public interface PreparedStatementCustomizer {
 	 * @param preparedStatement the prepared statement to customize
 	 * @throws SQLException if customization fails
 	 */
-	void customize(@Nonnull StatementContext<?> statementContext,
-								 @Nonnull PreparedStatement preparedStatement) throws SQLException;
+	void customize(@NonNull StatementContext<?> statementContext,
+								 @NonNull PreparedStatement preparedStatement) throws SQLException;
 }

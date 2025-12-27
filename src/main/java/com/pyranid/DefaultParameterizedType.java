@@ -16,8 +16,8 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.ParameterizedType;
@@ -37,15 +37,15 @@ import static java.util.Objects.requireNonNull;
  */
 @ThreadSafe
 class DefaultParameterizedType implements ParameterizedType {
-	@Nonnull
+	@NonNull
 	private final Type rawType;
-	@Nonnull
-	private final Type[] typeArguments;
+	@NonNull
+	private final Type @NonNull [] typeArguments;
 	@Nullable
 	private final Type ownerType;
 
-	DefaultParameterizedType(@Nonnull Type rawType,
-													 @Nonnull Type[] typeArguments,
+	DefaultParameterizedType(@NonNull Type rawType,
+													 Type @NonNull [] typeArguments,
 													 @Nullable Type ownerType) {
 		requireNonNull(rawType);
 		requireNonNull(typeArguments);
@@ -78,13 +78,13 @@ class DefaultParameterizedType implements ParameterizedType {
 	}
 
 	@Override
-	@Nonnull
+	@NonNull
 	public Type[] getActualTypeArguments() {
 		return this.typeArguments.clone();
 	}
 
 	@Override
-	@Nonnull
+	@NonNull
 	public Type getRawType() {
 		return this.rawType;
 	}
@@ -96,15 +96,15 @@ class DefaultParameterizedType implements ParameterizedType {
 	}
 
 	@Override
-	@Nonnull
+	@NonNull
 	public String toString() {
 		StringBuilder sb = new StringBuilder();
 		appendParameterizedType(sb, this);
 		return sb.toString();
 	}
 
-	private void appendParameterizedType(@Nonnull StringBuilder sb,
-																			 @Nonnull ParameterizedType pt) {
+	private void appendParameterizedType(@NonNull StringBuilder sb,
+																			 @NonNull ParameterizedType pt) {
 		requireNonNull(sb);
 		requireNonNull(pt);
 
@@ -129,7 +129,7 @@ class DefaultParameterizedType implements ParameterizedType {
 		}
 	}
 
-	@Nonnull
+	@NonNull
 	private String typeToString(Type t) {
 		requireNonNull(t);
 
@@ -165,7 +165,7 @@ class DefaultParameterizedType implements ParameterizedType {
 		return String.valueOf(t);
 	}
 
-	@Nonnull
+	@NonNull
 	private String classToString(Class<?> c) {
 		requireNonNull(c);
 
@@ -181,8 +181,8 @@ class DefaultParameterizedType implements ParameterizedType {
 		return c.getName();
 	}
 
-	@Nonnull
-	private String joinTypes(@Nonnull Type[] types) {
+	@NonNull
+	private String joinTypes(Type @NonNull [] types) {
 		requireNonNull(types);
 
 		StringBuilder sb = new StringBuilder();

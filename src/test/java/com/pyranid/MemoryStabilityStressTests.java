@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
-import javax.annotation.Nonnull;
+import org.jspecify.annotations.NonNull;
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
 import java.math.BigDecimal;
@@ -55,8 +55,8 @@ public class MemoryStabilityStressTests {
 	private static final long BASELINE_SLACK_BYTES = 64L * 1024L * 1024L;
 	private static final double BASELINE_SLACK_RATIO = 0.35d;
 
-	@Nonnull
-	protected DataSource createInMemoryDataSource(@Nonnull String databaseName) {
+	@NonNull
+	protected DataSource createInMemoryDataSource(@NonNull String databaseName) {
 		requireNonNull(databaseName);
 
 		JDBCDataSource dataSource = new JDBCDataSource();
@@ -112,7 +112,7 @@ public class MemoryStabilityStressTests {
 						baseline, finalUsed, allowedGrowth));
 	}
 
-	private void runWorkload(@Nonnull Database db, @Nonnull Duration duration) {
+	private void runWorkload(@NonNull Database db, @NonNull Duration duration) {
 		requireNonNull(db);
 		requireNonNull(duration);
 

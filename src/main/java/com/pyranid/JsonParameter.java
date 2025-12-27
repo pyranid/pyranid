@@ -16,7 +16,7 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
+import org.jspecify.annotations.NonNull;
 import javax.annotation.concurrent.ThreadSafe;
 import java.util.Optional;
 
@@ -54,7 +54,7 @@ public interface JsonParameter {
 	 *
 	 * @return the "stringified" JSON
 	 */
-	@Nonnull
+	@NonNull
 	Optional<String> getJson();
 
 	/**
@@ -62,6 +62,6 @@ public interface JsonParameter {
 	 *
 	 * @return how the JSON should be bound
 	 */
-	@Nonnull
+	@NonNull
 	BindingPreference getBindingPreference();
 }

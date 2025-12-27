@@ -16,8 +16,8 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import java.lang.reflect.Type;
 import java.util.Optional;
@@ -32,12 +32,12 @@ import static java.util.Objects.requireNonNull;
  */
 @ThreadSafe
 class DefaultTypedParameter implements TypedParameter {
-	@Nonnull
+	@NonNull
 	private final Type explicitType;
 	@Nullable
 	private final Object value;
 
-	DefaultTypedParameter(@Nonnull Type explicitType,
+	DefaultTypedParameter(@NonNull Type explicitType,
 												@Nullable Object value) {
 		requireNonNull(explicitType);
 
@@ -45,13 +45,13 @@ class DefaultTypedParameter implements TypedParameter {
 		this.value = value;
 	}
 
-	@Nonnull
+	@NonNull
 	@Override
 	public Type getExplicitType() {
 		return this.explicitType;
 	}
 
-	@Nonnull
+	@NonNull
 	@Override
 	public Optional<Object> getValue() {
 		return Optional.ofNullable(this.value);

@@ -16,8 +16,8 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import javax.annotation.concurrent.NotThreadSafe;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -227,7 +227,7 @@ public class DatabaseException extends RuntimeException {
 	 *
 	 * @return the value of {@link SQLException#getErrorCode()}, or empty if not available
 	 */
-	@Nonnull
+	@NonNull
 	public Optional<Integer> getErrorCode() {
 		return Optional.ofNullable(this.errorCode);
 	}
@@ -237,7 +237,7 @@ public class DatabaseException extends RuntimeException {
 	 *
 	 * @return the value of {@link SQLException#getSQLState()}, or empty if not available
 	 */
-	@Nonnull
+	@NonNull
 	public Optional<String> getSqlState() {
 		return Optional.ofNullable(this.sqlState);
 	}
@@ -246,7 +246,7 @@ public class DatabaseException extends RuntimeException {
 	 * @return the value of the offending {@code column}, or empty if not available
 	 * @since 1.0.12
 	 */
-	@Nonnull
+	@NonNull
 	public Optional<String> getColumn() {
 		return Optional.ofNullable(this.column);
 	}
@@ -255,7 +255,7 @@ public class DatabaseException extends RuntimeException {
 	 * @return the value of the offending {@code constraint}, or empty if not available
 	 * @since 1.0.12
 	 */
-	@Nonnull
+	@NonNull
 	public Optional<String> getConstraint() {
 		return Optional.ofNullable(this.constraint);
 	}
@@ -264,7 +264,7 @@ public class DatabaseException extends RuntimeException {
 	 * @return the value of the offending {@code datatype}, or empty if not available
 	 * @since 1.0.12
 	 */
-	@Nonnull
+	@NonNull
 	public Optional<String> getDatatype() {
 		return Optional.ofNullable(this.datatype);
 	}
@@ -273,7 +273,7 @@ public class DatabaseException extends RuntimeException {
 	 * @return the value of the offending {@code detail}, or empty if not available
 	 * @since 1.0.12
 	 */
-	@Nonnull
+	@NonNull
 	public Optional<String> getDetail() {
 		return Optional.ofNullable(this.detail);
 	}
@@ -282,7 +282,7 @@ public class DatabaseException extends RuntimeException {
 	 * @return the value of the offending {@code file}, or empty if not available
 	 * @since 1.0.12
 	 */
-	@Nonnull
+	@NonNull
 	public Optional<String> getFile() {
 		return Optional.ofNullable(this.file);
 	}
@@ -291,7 +291,7 @@ public class DatabaseException extends RuntimeException {
 	 * @return the value of the error {@code hint}, or empty if not available
 	 * @since 1.0.12
 	 */
-	@Nonnull
+	@NonNull
 	public Optional<String> getHint() {
 		return Optional.ofNullable(this.hint);
 	}
@@ -300,7 +300,7 @@ public class DatabaseException extends RuntimeException {
 	 * @return the value of the offending {@code internalPosition}, or empty if not available
 	 * @since 1.0.12
 	 */
-	@Nonnull
+	@NonNull
 	public Optional<Integer> getInternalPosition() {
 		return Optional.ofNullable(this.internalPosition);
 	}
@@ -309,7 +309,7 @@ public class DatabaseException extends RuntimeException {
 	 * @return the value of the offending {@code internalQuery}, or empty if not available
 	 * @since 1.0.12
 	 */
-	@Nonnull
+	@NonNull
 	public Optional<String> getInternalQuery() {
 		return Optional.ofNullable(this.internalQuery);
 	}
@@ -318,7 +318,7 @@ public class DatabaseException extends RuntimeException {
 	 * @return the value of the offending {@code line}, or empty if not available
 	 * @since 1.0.12
 	 */
-	@Nonnull
+	@NonNull
 	public Optional<Integer> getLine() {
 		return Optional.ofNullable(this.line);
 	}
@@ -327,7 +327,7 @@ public class DatabaseException extends RuntimeException {
 	 * @return the value of the error {@code dbmsMessage}, or empty if not available
 	 * @since 1.0.12
 	 */
-	@Nonnull
+	@NonNull
 	public Optional<String> getDbmsMessage() {
 		return Optional.ofNullable(this.dbmsMessage);
 	}
@@ -336,7 +336,7 @@ public class DatabaseException extends RuntimeException {
 	 * @return the value of the offending {@code position}, or empty if not available
 	 * @since 1.0.12
 	 */
-	@Nonnull
+	@NonNull
 	public Optional<Integer> getPosition() {
 		return Optional.ofNullable(this.position);
 	}
@@ -345,7 +345,7 @@ public class DatabaseException extends RuntimeException {
 	 * @return the value of the offending {@code routine}, or empty if not available
 	 * @since 1.0.12
 	 */
-	@Nonnull
+	@NonNull
 	public Optional<String> getRoutine() {
 		return Optional.ofNullable(this.routine);
 	}
@@ -354,7 +354,7 @@ public class DatabaseException extends RuntimeException {
 	 * @return the value of the offending {@code schema}, or empty if not available
 	 * @since 1.0.12
 	 */
-	@Nonnull
+	@NonNull
 	public Optional<String> getSchema() {
 		return Optional.ofNullable(this.schema);
 	}
@@ -363,7 +363,7 @@ public class DatabaseException extends RuntimeException {
 	 * @return the error {@code severity}, or empty if not available
 	 * @since 1.0.12
 	 */
-	@Nonnull
+	@NonNull
 	public Optional<String> getSeverity() {
 		return Optional.ofNullable(this.severity);
 	}
@@ -372,7 +372,7 @@ public class DatabaseException extends RuntimeException {
 	 * @return the value of the offending {@code table}, or empty if not available
 	 * @since 1.0.12
 	 */
-	@Nonnull
+	@NonNull
 	public Optional<String> getTable() {
 		return Optional.ofNullable(this.table);
 	}
@@ -381,7 +381,7 @@ public class DatabaseException extends RuntimeException {
 	 * @return the value of the offending {@code where}, or empty if not available
 	 * @since 1.0.12
 	 */
-	@Nonnull
+	@NonNull
 	public Optional<String> getWhere() {
 		return Optional.ofNullable(this.where);
 	}

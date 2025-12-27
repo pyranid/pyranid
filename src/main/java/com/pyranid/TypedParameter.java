@@ -16,7 +16,7 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
+import org.jspecify.annotations.NonNull;
 import javax.annotation.concurrent.ThreadSafe;
 import java.lang.reflect.Type;
 import java.util.List;
@@ -46,7 +46,7 @@ public interface TypedParameter {
 	 *
 	 * @return the full type information for this parameter
 	 */
-	@Nonnull
+	@NonNull
 	Type getExplicitType();
 
 	/**
@@ -54,6 +54,6 @@ public interface TypedParameter {
 	 *
 	 * @return the value of this parameter, or {@link Optional#empty()} if none
 	 */
-	@Nonnull
+	@NonNull
 	Optional<Object> getValue();
 }

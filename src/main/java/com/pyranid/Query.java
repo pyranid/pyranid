@@ -16,8 +16,8 @@
 
 package com.pyranid;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import javax.annotation.concurrent.NotThreadSafe;
 import java.util.List;
 import java.util.Map;
@@ -73,8 +73,8 @@ public interface Query {
 	 *              as appropriate.
 	 * @return this builder, for chaining
 	 */
-	@Nonnull
-	Query bind(@Nonnull String name,
+	@NonNull
+	Query bind(@NonNull String name,
 						 @Nullable Object value);
 
 	/**
@@ -83,8 +83,8 @@ public interface Query {
 	 * @param parameters map of parameter names to values
 	 * @return this builder, for chaining
 	 */
-	@Nonnull
-	Query bindAll(@Nonnull Map<String, Object> parameters);
+	@NonNull
+	Query bindAll(@NonNull Map<String, Object> parameters);
 
 	/**
 	 * Associates an identifier with this query for logging/diagnostics.
@@ -94,7 +94,7 @@ public interface Query {
 	 * @param id the identifier
 	 * @return this builder, for chaining
 	 */
-	@Nonnull
+	@NonNull
 	Query id(@Nullable Object id);
 
 	/**
@@ -105,8 +105,8 @@ public interface Query {
 	 * @param preparedStatementCustomizer customization callback
 	 * @return this builder, for chaining
 	 */
-	@Nonnull
-	Query customize(@Nonnull PreparedStatementCustomizer preparedStatementCustomizer);
+	@NonNull
+	Query customize(@NonNull PreparedStatementCustomizer preparedStatementCustomizer);
 
 	/**
 	 * Executes the query and returns a single result.
@@ -116,8 +116,8 @@ public interface Query {
 	 * @return the single result, or empty if no rows
 	 * @throws DatabaseException if more than one row is returned
 	 */
-	@Nonnull
-	<T> Optional<T> fetchObject(@Nonnull Class<T> resultType);
+	@NonNull
+	<T> Optional<T> fetchObject(@NonNull Class<T> resultType);
 
 	/**
 	 * Executes the query and returns all results as a list.
@@ -126,8 +126,8 @@ public interface Query {
 	 * @param <T>        the result type
 	 * @return list of results (empty if no rows)
 	 */
-	@Nonnull
-	<T> List<T> fetchList(@Nonnull Class<T> resultType);
+	@NonNull
+	<T> List<T> fetchList(@NonNull Class<T> resultType);
 
 	/**
 	 * Executes the query and returns a {@link Stream} backed by the underlying {@link java.sql.ResultSet}.
@@ -147,15 +147,15 @@ public interface Query {
 	 * @param <T>        the result type
 	 * @return stream of results
 	 */
-	@Nonnull
-	<T> Stream<T> fetchStream(@Nonnull Class<T> resultType);
+	@NonNull
+	<T> Stream<T> fetchStream(@NonNull Class<T> resultType);
 
 	/**
 	 * Executes a DML statement (INSERT, UPDATE, DELETE) with no resultset.
 	 *
 	 * @return the number of rows affected
 	 */
-	@Nonnull
+	@NonNull
 	Long execute();
 
 	/**
@@ -166,8 +166,8 @@ public interface Query {
 	 * @param parameterGroups groups of named parameter values (without the leading {@code :})
 	 * @return the number of rows affected by the SQL statement per-group
 	 */
-	@Nonnull
-	List<Long> executeBatch(@Nonnull List<Map<String, Object>> parameterGroups);
+	@NonNull
+	List<Long> executeBatch(@NonNull List<Map<String, Object>> parameterGroups);
 
 	/**
 	 * Executes a DML statement that returns a single row (e.g., with {@code RETURNING} clause).
@@ -177,8 +177,8 @@ public interface Query {
 	 * @return the single result, or empty if no rows
 	 * @throws DatabaseException if more than one row is returned
 	 */
-	@Nonnull
-	<T> Optional<T> executeForObject(@Nonnull Class<T> resultType);
+	@NonNull
+	<T> Optional<T> executeForObject(@NonNull Class<T> resultType);
 
 	/**
 	 * Executes a DML statement that returns multiple rows (e.g., with {@code RETURNING} clause).
@@ -187,6 +187,6 @@ public interface Query {
 	 * @param <T>        the result type
 	 * @return list of results
 	 */
-	@Nonnull
-	<T> List<T> executeForList(@Nonnull Class<T> resultType);
+	@NonNull
+	<T> List<T> executeForList(@NonNull Class<T> resultType);
 }
