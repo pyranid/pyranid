@@ -69,10 +69,10 @@ public final class Transaction {
 	@NonNull
 	private final Long ownerThreadId;
 
-	@Nullable
-	private Connection connection;
 	@NonNull
 	private final AtomicBoolean rollbackOnly;
+	@Nullable
+	private volatile Connection connection;
 	@Nullable
 	private volatile Boolean initialAutoCommit;
 	@Nullable
