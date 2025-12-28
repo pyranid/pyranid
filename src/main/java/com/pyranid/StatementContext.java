@@ -206,7 +206,7 @@ public final class StatementContext<T> {
 
 		@NonNull
 		public StatementContext build() {
-			return new StatementContext(this);
+			return new StatementContext<>(this);
 		}
 	}
 }

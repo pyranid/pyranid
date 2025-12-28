@@ -47,7 +47,7 @@ class DefaultTargetType implements TargetType {
 
 	DefaultTargetType(@NonNull Type type) {
 		requireNonNull(type);
-		this.type = requireNonNull(type);
+		this.type = type;
 	}
 
 	@Override
