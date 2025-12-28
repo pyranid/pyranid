@@ -387,9 +387,12 @@ public final class Database {
 			restoreInterruptIfNeeded(t);
 			throw new RuntimeException(t);
 		} finally {
-			transactionStack.pop();
-			if (transactionStack.isEmpty())
-				TRANSACTION_STACK_HOLDER.remove();
+			try {
+				transactionStack.pop();
+			} finally {
+				if (transactionStack.isEmpty())
+					TRANSACTION_STACK_HOLDER.remove();
+			}
 		}
 	}
 
@@ -1129,8 +1132,8 @@ public final class Database {
 	 */
 	@NonNull
 	private <T> List<@Nullable T> queryForList(@NonNull String sql,
-																			 @NonNull Class<T> resultSetRowType,
-																			 Object @Nullable ... parameters) {
+																						 @NonNull Class<T> resultSetRowType,
+																						 Object @Nullable ... parameters) {
 		requireNonNull(sql);
 		requireNonNull(resultSetRowType);
 
@@ -1148,8 +1151,8 @@ public final class Database {
 	 */
 	@NonNull
 	private <T> List<@Nullable T> queryForList(@NonNull Statement statement,
-																			 @NonNull Class<T> resultSetRowType,
-																			 Object @Nullable ... parameters) {
+																						 @NonNull Class<T> resultSetRowType,
+																						 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
@@ -1157,9 +1160,9 @@ public final class Database {
 	}
 
 	private <T> List<@Nullable T> queryForList(@NonNull Statement statement,
-																			 @NonNull Class<T> resultSetRowType,
-																			 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
-																			 Object @Nullable ... parameters) {
+																						 @NonNull Class<T> resultSetRowType,
+																						 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
+																						 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
@@ -1358,8 +1361,8 @@ public final class Database {
 	 */
 	@NonNull
 	private <T> List<@Nullable T> executeForList(@NonNull String sql,
-																			 @NonNull Class<T> resultSetRowType,
-																			 Object @Nullable ... parameters) {
+																							 @NonNull Class<T> resultSetRowType,
+																							 Object @Nullable ... parameters) {
 		requireNonNull(sql);
 		requireNonNull(resultSetRowType);
 
@@ -1378,8 +1381,8 @@ public final class Database {
 	 */
 	@NonNull
 	private <T> List<@Nullable T> executeForList(@NonNull Statement statement,
-																			 @NonNull Class<T> resultSetRowType,
-																			 Object @Nullable ... parameters) {
+																							 @NonNull Class<T> resultSetRowType,
+																							 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
@@ -1387,9 +1390,9 @@ public final class Database {
 	}
 
 	private <T> List<@Nullable T> executeForList(@NonNull Statement statement,
-																			 @NonNull Class<T> resultSetRowType,
-																			 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
-																			 Object @Nullable ... parameters) {
+																							 @NonNull Class<T> resultSetRowType,
+																							 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
+																							 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
