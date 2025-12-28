@@ -38,6 +38,8 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 
+import static java.util.Objects.requireNonNull;
+
 /**
  * A high-performance thread-safe approximate LRU {@link Map} using buffered access recording.
  * <p>
@@ -234,8 +236,8 @@ class ConcurrentLruMap<K, V> implements Map<K, V> {
 
 	@Override
 	public V put(K key, V value) {
-		Objects.requireNonNull(key, "key");
-		Objects.requireNonNull(value, "value");
+		requireNonNull(key, "key");
+		requireNonNull(value, "value");
 
 		Node<K, V> newNode = new Node<>(key, value);
 		Node<K, V> oldNode = map.put(key, newNode);
@@ -252,8 +254,8 @@ class ConcurrentLruMap<K, V> implements Map<K, V> {
 
 	@Override
 	public V putIfAbsent(K key, V value) {
-		Objects.requireNonNull(key, "key");
-		Objects.requireNonNull(value, "value");
+		requireNonNull(key, "key");
+		requireNonNull(value, "value");
 
 		Node<K, V> newNode = new Node<>(key, value);
 		Node<K, V> existing = map.putIfAbsent(key, newNode);
@@ -269,8 +271,8 @@ class ConcurrentLruMap<K, V> implements Map<K, V> {
 
 	@Override
 	public V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction) {
-		Objects.requireNonNull(key, "key");
-		Objects.requireNonNull(mappingFunction, "mappingFunction");
+		requireNonNull(key, "key");
+		requireNonNull(mappingFunction, "mappingFunction");
 
 		Node<K, V> existing = map.get(key);
 		if (existing != null) {
@@ -326,7 +328,8 @@ class ConcurrentLruMap<K, V> implements Map<K, V> {
 	}
 
 	@Override
-	public void putAll(Map<? extends K, ? extends V> m) {
+	public void putAll(@NonNull Map<@NonNull ? extends K, @NonNull ? extends V> m) {
+		requireNonNull(m);
 		for (Entry<? extends K, ? extends V> entry : m.entrySet())
 			put(entry.getKey(), entry.getValue());
 	}
@@ -370,17 +373,17 @@ class ConcurrentLruMap<K, V> implements Map<K, V> {
 	// ===================================================================================
 
 	@Override
-	public Set<K> keySet() {
+	public Set<@NonNull K> keySet() {
 		return new KeySetView();
 	}
 
 	@Override
-	public Collection<V> values() {
+	public Collection<@NonNull V> values() {
 		return new ValuesView();
 	}
 
 	@Override
-	public Set<Entry<K, V>> entrySet() {
+	public Set<Entry<@NonNull K, @NonNull V>> entrySet() {
 		return new EntrySetView();
 	}
 
@@ -889,7 +892,7 @@ class ConcurrentLruMap<K, V> implements Map<K, V> {
 		 */
 		@Override
 		public V setValue(V value) {
-			Objects.requireNonNull(value, "value");
+			requireNonNull(value, "value");
 			Node<K, V> prior = map.get(key);
 			V oldValue = prior == null ? null : prior.value;
 			ConcurrentLruMap.this.put(key, value);
@@ -930,7 +933,7 @@ class ConcurrentLruMap<K, V> implements Map<K, V> {
 	 * Snapshot of keys in (approximate) MRU->LRU order. Primarily for tests/debugging.
 	 */
 	@NonNull
-	public List<K> keysInAccessOrder() {
+	public List<@NonNull K> keysInAccessOrder() {
 		List<K> keys = new ArrayList<>();
 		List<Node<K, V>> evicted;
 

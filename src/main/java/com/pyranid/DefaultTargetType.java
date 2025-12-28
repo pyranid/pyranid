@@ -98,7 +98,7 @@ class DefaultTargetType implements TargetType {
 	}
 
 	@NonNull
-	public List<TargetType> getTypeArguments() {
+	public List<@NonNull TargetType> getTypeArguments() {
 		if (getType() instanceof ParameterizedType parameterizedType) {
 			Type[] actualTypeArguments = parameterizedType.getActualTypeArguments();
 			List<TargetType> targetTypes = new ArrayList<>(actualTypeArguments.length);

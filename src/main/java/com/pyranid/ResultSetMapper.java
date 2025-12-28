@@ -124,7 +124,7 @@ public interface ResultSetMapper {
 	 * @return a {@code Builder} for a concrete implementation
 	 */
 	@NonNull
-	static Builder withCustomColumnMappers(@NonNull List<CustomColumnMapper> customColumnMappers) {
+	static Builder withCustomColumnMappers(@NonNull List<@NonNull CustomColumnMapper> customColumnMappers) {
 		requireNonNull(customColumnMappers);
 		return new Builder().customColumnMappers(customColumnMappers);
 	}
@@ -166,7 +166,7 @@ public interface ResultSetMapper {
 		@NonNull
 		Locale normalizationLocale;
 		@NonNull
-		List<CustomColumnMapper> customColumnMappers;
+		List<@NonNull CustomColumnMapper> customColumnMappers;
 		@NonNull
 		Boolean planCachingEnabled;
 		@NonNull
@@ -202,7 +202,7 @@ public interface ResultSetMapper {
 		 * @return this {@code Builder}, for chaining
 		 */
 		@NonNull
-		public Builder customColumnMappers(@NonNull List<CustomColumnMapper> customColumnMappers) {
+		public Builder customColumnMappers(@NonNull List<@NonNull CustomColumnMapper> customColumnMappers) {
 			requireNonNull(customColumnMappers);
 			this.customColumnMappers = customColumnMappers;
 			return this;

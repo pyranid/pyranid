@@ -166,7 +166,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@NonNull
-	protected List<CustomColumnMapper> customColumnMappersFor(@NonNull TargetType targetType) {
+	protected List<@NonNull CustomColumnMapper> customColumnMappersFor(@NonNull TargetType targetType) {
 		requireNonNull(targetType);
 
 		return getCustomColumnMappersByTargetTypeCache().computeIfAbsent(targetType, applicableTargetType -> {
@@ -284,7 +284,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	 * for the given result class. Keys are property/record-component names.
 	 */
 	@NonNull
-	protected Map<String, TargetType> determinePropertyTargetTypes(@NonNull Class<?> resultClass) {
+	protected Map<@NonNull String, @NonNull TargetType> determinePropertyTargetTypes(@NonNull Class<?> resultClass) {
 		requireNonNull(resultClass);
 
 		return getPropertyTargetTypeCache().computeIfAbsent(resultClass, rc -> {
@@ -341,7 +341,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@NonNull
-	protected Map<String, Set<String>> determineNormalizedColumnLabelsByPropertyName(@NonNull Class<?> resultClass) {
+	protected Map<@NonNull String, @NonNull Set<@NonNull String>> determineNormalizedColumnLabelsByPropertyName(@NonNull Class<?> resultClass) {
 		requireNonNull(resultClass);
 
 		return getNormalizedColumnLabelsByPropertyNameCache().computeIfAbsent(resultClass, rc -> {
@@ -369,7 +369,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@NonNull
-	protected Map<String, Set<String>> determineColumnLabelsByRecordComponentName(@NonNull Class<?> resultClass) {
+	protected Map<@NonNull String, @NonNull Set<@NonNull String>> determineColumnLabelsByRecordComponentName(@NonNull Class<?> resultClass) {
 		requireNonNull(resultClass);
 
 		return getColumnLabelsByRecordComponentNameCache().computeIfAbsent(resultClass, rc -> {
@@ -1019,7 +1019,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@NonNull
-	protected Map<String, Set<String>> determineColumnLabelAliasesByPropertyName(@NonNull Class<?> resultClass) {
+	protected Map<@NonNull String, @NonNull Set<@NonNull String>> determineColumnLabelAliasesByPropertyName(@NonNull Class<?> resultClass) {
 		requireNonNull(resultClass);
 
 		return getColumnLabelAliasesByPropertyNameCache().computeIfAbsent(
@@ -1042,9 +1042,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@NonNull
-	protected <T> Map<String, Object> extractColumnLabelsToValues(@NonNull StatementContext<T> statementContext,
-																																@NonNull ResultSet resultSet,
-																																@NonNull ResultSetMetaData resultSetMetaData) throws SQLException {
+	protected <T> Map<@NonNull String, @Nullable Object> extractColumnLabelsToValues(@NonNull StatementContext<T> statementContext,
+																																								 @NonNull ResultSet resultSet,
+																																								 @NonNull ResultSetMetaData resultSetMetaData) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(resultSetMetaData);
@@ -1444,7 +1444,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	 * @return the column names that match the JavaBean property name
 	 */
 	@NonNull
-	protected Set<String> databaseColumnNamesForPropertyName(@NonNull String propertyName) {
+	protected Set<@NonNull String> databaseColumnNamesForPropertyName(@NonNull String propertyName) {
 		requireNonNull(propertyName);
 
 		Set<String> normalizedPropertyNames = new HashSet<>(2);
@@ -2064,7 +2064,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@NonNull
-	protected List<CustomColumnMapper> getCustomColumnMappers() {
+	protected List<@NonNull CustomColumnMapper> getCustomColumnMappers() {
 		return this.customColumnMappers;
 	}
 
@@ -2074,22 +2074,22 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@NonNull
-	protected ConcurrentMap<TargetType, List<CustomColumnMapper>> getCustomColumnMappersByTargetTypeCache() {
+	protected ConcurrentMap<@NonNull TargetType, @NonNull List<@NonNull CustomColumnMapper>> getCustomColumnMappersByTargetTypeCache() {
 		return this.customColumnMappersByTargetTypeCache;
 	}
 
 	@NonNull
-	protected Map<SourceTargetKey, CustomColumnMapper> getPreferredColumnMapperBySourceTargetKey() {
+	protected Map<@NonNull SourceTargetKey, @NonNull CustomColumnMapper> getPreferredColumnMapperBySourceTargetKey() {
 		return this.preferredColumnMapperBySourceTargetKey;
 	}
 
 	@NonNull
-	protected ConcurrentMap<Class<?>, Map<String, TargetType>> getPropertyTargetTypeCache() {
+	protected ConcurrentMap<@NonNull Class<?>, @NonNull Map<@NonNull String, @NonNull TargetType>> getPropertyTargetTypeCache() {
 		return this.propertyTargetTypeCache;
 	}
 
 	@NonNull
-	protected ConcurrentMap<Class<?>, Map<String, Set<String>>> getColumnLabelAliasesByPropertyNameCache() {
+	protected ConcurrentMap<@NonNull Class<?>, @NonNull Map<@NonNull String, @NonNull Set<@NonNull String>>> getColumnLabelAliasesByPropertyNameCache() {
 		return this.columnLabelAliasesByPropertyNameCache;
 	}
 
@@ -2099,12 +2099,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@NonNull
-	protected ConcurrentMap<Class<?>, Map<String, Set<String>>> getNormalizedColumnLabelsByPropertyNameCache() {
+	protected ConcurrentMap<@NonNull Class<?>, @NonNull Map<@NonNull String, @NonNull Set<@NonNull String>>> getNormalizedColumnLabelsByPropertyNameCache() {
 		return this.normalizedColumnLabelsByPropertyNameCache;
 	}
 
 	@NonNull
-	protected ConcurrentMap<Class<?>, Map<String, Set<String>>> getColumnLabelsByRecordComponentNameCache() {
+	protected ConcurrentMap<@NonNull Class<?>, @NonNull Map<@NonNull String, @NonNull Set<@NonNull String>>> getColumnLabelsByRecordComponentNameCache() {
 		return this.columnLabelsByRecordComponentNameCache;
 	}
 
@@ -2114,12 +2114,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@NonNull
-	protected Map<PlanKey, RowPlan<?>> getRowPlanningCache() {
+	protected Map<@NonNull PlanKey, @NonNull RowPlan<?>> getRowPlanningCache() {
 		return this.rowPlanningCache;
 	}
 
 	@NonNull
-	protected Map<ResultSetMetaData, String> getSchemaSignatureByResultSetMetaData() {
+	protected Map<@NonNull ResultSetMetaData, @NonNull String> getSchemaSignatureByResultSetMetaData() {
 		return this.schemaSignatureByResultSetMetaData;
 	}
 }

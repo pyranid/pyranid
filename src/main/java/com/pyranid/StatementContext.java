@@ -46,7 +46,7 @@ public final class StatementContext<T> {
 	@NonNull
 	private final Statement statement;
 	@NonNull
-	private final List<Object> parameters;
+	private final List<@Nullable Object> parameters;
 	@Nullable
 	private final Class<T> resultSetRowType;
 	@NonNull
@@ -54,7 +54,7 @@ public final class StatementContext<T> {
 	@NonNull
 	private final ZoneId timeZone;
 	@NonNull
-	private final Queue<AutoCloseable> cleanupOperations;
+	private final Queue<@NonNull AutoCloseable> cleanupOperations;
 
 	protected StatementContext(@NonNull Builder builder) {
 		requireNonNull(builder);
@@ -117,7 +117,7 @@ public final class StatementContext<T> {
 	}
 
 	@NonNull
-	public List<Object> getParameters() {
+	public List<@Nullable Object> getParameters() {
 		return this.parameters;
 	}
 
@@ -142,7 +142,7 @@ public final class StatementContext<T> {
 	}
 
 	@NonNull
-	Queue<AutoCloseable> getCleanupOperations() {
+	Queue<@NonNull AutoCloseable> getCleanupOperations() {
 		return this.cleanupOperations;
 	}
 
@@ -172,7 +172,7 @@ public final class StatementContext<T> {
 		@NonNull
 		private final ZoneId timeZone;
 		@Nullable
-		private List<Object> parameters;
+		private List<@Nullable Object> parameters;
 		@Nullable
 		private Class<T> resultSetRowType;
 
@@ -187,7 +187,7 @@ public final class StatementContext<T> {
 		}
 
 		@NonNull
-		public Builder parameters(@Nullable List<Object> parameters) {
+		public Builder parameters(@Nullable List<@Nullable Object> parameters) {
 			this.parameters = parameters;
 			return this;
 		}

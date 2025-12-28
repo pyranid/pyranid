@@ -486,7 +486,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	 * Filter and cache the binders whose {@code appliesTo(targetType)} returned true.
 	 */
 	@NonNull
-	protected List<CustomParameterBinder> customBindersFor(@NonNull TargetType targetType) {
+	protected List<@NonNull CustomParameterBinder> customBindersFor(@NonNull TargetType targetType) {
 		requireNonNull(targetType);
 
 		if (getCustomParameterBinders().isEmpty())
@@ -638,17 +638,17 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	}
 
 	@NonNull
-	protected List<CustomParameterBinder> getCustomParameterBinders() {
+	protected List<@NonNull CustomParameterBinder> getCustomParameterBinders() {
 		return this.customParameterBinders;
 	}
 
 	@NonNull
-	protected ConcurrentMap<TargetType, List<CustomParameterBinder>> getBindersByTargetTypeCache() {
+	protected ConcurrentMap<@NonNull TargetType, @NonNull List<@NonNull CustomParameterBinder>> getBindersByTargetTypeCache() {
 		return this.bindersByTargetTypeCache;
 	}
 
 	@NonNull
-	protected ConcurrentMap<InboundKey, CustomParameterBinder> getPreferredBinderByInboundKey() {
+	protected ConcurrentMap<@NonNull InboundKey, @NonNull CustomParameterBinder> getPreferredBinderByInboundKey() {
 		return this.preferredBinderByInboundKey;
 	}
 }

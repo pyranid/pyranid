@@ -61,7 +61,7 @@ public final class Transaction {
 	@NonNull
 	private final TransactionIsolation transactionIsolation;
 	@NonNull
-	private final List<Consumer<TransactionResult>> postTransactionOperations;
+	private final List<@NonNull Consumer<TransactionResult>> postTransactionOperations;
 	@NonNull
 	private final ReentrantLock connectionLock;
 	@NonNull
@@ -187,7 +187,7 @@ public final class Transaction {
 	 * @return the list of post-transaction operations
 	 */
 	@NonNull
-	public List<Consumer<TransactionResult>> getPostTransactionOperations() {
+	public List<@NonNull Consumer<TransactionResult>> getPostTransactionOperations() {
 		return Collections.unmodifiableList(this.postTransactionOperations);
 	}
 

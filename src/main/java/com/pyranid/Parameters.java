@@ -138,7 +138,7 @@ public final class Parameters {
 	 * @return an IN-list parameter for the given elements
 	 */
 	@NonNull
-	public static <E> InListParameter inList(@NonNull Collection<E> elements) {
+	public static <E> InListParameter inList(@NonNull Collection<@Nullable E> elements) {
 		requireNonNull(elements);
 		return new DefaultInListParameter(elements.toArray());
 	}
@@ -151,7 +151,7 @@ public final class Parameters {
 	 * @return an IN-list parameter for the given elements
 	 */
 	@NonNull
-	public static <E> InListParameter inList(E @NonNull [] elements) {
+	public static <E> InListParameter inList(@NonNull E @Nullable [] elements) {
 		requireNonNull(elements);
 		return new DefaultInListParameter(elements);
 	}
@@ -383,7 +383,7 @@ public final class Parameters {
 	 * @return the vector parameter
 	 */
 	@NonNull
-	public static VectorParameter vectorOfDoubles(@Nullable List<Double> elements) {
+	public static VectorParameter vectorOfDoubles(@Nullable List<@NonNull Double> elements) {
 		if (elements == null)
 			return new DefaultVectorParameter(null);
 
@@ -415,7 +415,7 @@ public final class Parameters {
 	 * @return the vector parameter
 	 */
 	@NonNull
-	public static VectorParameter vectorOfFloats(@Nullable List<Float> elements) {
+	public static VectorParameter vectorOfFloats(@Nullable List<@NonNull Float> elements) {
 		if (elements == null)
 			return new DefaultVectorParameter(null);
 
@@ -431,7 +431,7 @@ public final class Parameters {
 	 * @return the vector parameter
 	 */
 	@NonNull
-	public static VectorParameter vectorOfBigDecimals(@Nullable List<BigDecimal> elements) {
+	public static VectorParameter vectorOfBigDecimals(@Nullable List<@NonNull BigDecimal> elements) {
 		if (elements == null)
 			return new DefaultVectorParameter(null);
 

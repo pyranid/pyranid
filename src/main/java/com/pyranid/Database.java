@@ -526,10 +526,10 @@ public final class Database {
 
 		@NonNull
 		@Override
-		public Query bindAll(@NonNull Map<String, Object> parameters) {
+		public Query bindAll(@NonNull Map<@NonNull String, @Nullable Object> parameters) {
 			requireNonNull(parameters);
 
-			for (Map.Entry<String, Object> entry : parameters.entrySet())
+			for (Map.Entry<@NonNull String, @Nullable Object> entry : parameters.entrySet())
 				bind(entry.getKey(), entry.getValue());
 
 			return this;
@@ -561,7 +561,7 @@ public final class Database {
 
 		@NonNull
 		@Override
-		public <T> List<T> fetchList(@NonNull Class<T> resultType) {
+		public <T> List<@Nullable T> fetchList(@NonNull Class<T> resultType) {
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
 			return this.database.queryForList(preparedQuery.statement, resultType, this.preparedStatementCustomizer, preparedQuery.parameters);
@@ -570,7 +570,7 @@ public final class Database {
 		@Nullable
 		@Override
 		public <T, R> R fetchStream(@NonNull Class<T> resultType,
-																@NonNull Function<Stream<T>, R> streamFunction) {
+																@NonNull Function<Stream<@Nullable T>, R> streamFunction) {
 			requireNonNull(resultType);
 			requireNonNull(streamFunction);
 			PreparedQuery preparedQuery = prepare(this.bindings);
@@ -587,7 +587,7 @@ public final class Database {
 
 		@NonNull
 		@Override
-		public List<Long> executeBatch(@NonNull List<Map<String, Object>> parameterGroups) {
+		public List<Long> executeBatch(@NonNull List<@NonNull Map<@NonNull String, @Nullable Object>> parameterGroups) {
 			requireNonNull(parameterGroups);
 
 			List<List<Object>> parametersAsList = new ArrayList<>(parameterGroups.size());
@@ -595,7 +595,7 @@ public final class Database {
 			Statement statement = null;
 			String expandedSql = null;
 
-			for (Map<String, Object> parameterGroup : parameterGroups) {
+			for (Map<@NonNull String, @Nullable Object> parameterGroup : parameterGroups) {
 				requireNonNull(parameterGroup);
 
 				for (String parameterName : parameterGroup.keySet())
@@ -643,7 +643,7 @@ public final class Database {
 
 		@NonNull
 		@Override
-		public <T> List<T> executeForList(@NonNull Class<T> resultType) {
+		public <T> List<@Nullable T> executeForList(@NonNull Class<T> resultType) {
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
 			return this.database.executeForList(preparedQuery.statement, resultType, this.preparedStatementCustomizer, preparedQuery.parameters);
@@ -1128,9 +1128,9 @@ public final class Database {
 	 * @return a list of results
 	 */
 	@NonNull
-	private <T> List<T> queryForList(@NonNull String sql,
-																	 @NonNull Class<T> resultSetRowType,
-																	 Object @Nullable ... parameters) {
+	private <T> List<@Nullable T> queryForList(@NonNull String sql,
+																			 @NonNull Class<T> resultSetRowType,
+																			 Object @Nullable ... parameters) {
 		requireNonNull(sql);
 		requireNonNull(resultSetRowType);
 
@@ -1147,19 +1147,19 @@ public final class Database {
 	 * @return a list of results
 	 */
 	@NonNull
-	private <T> List<T> queryForList(@NonNull Statement statement,
-																	 @NonNull Class<T> resultSetRowType,
-																	 Object @Nullable ... parameters) {
+	private <T> List<@Nullable T> queryForList(@NonNull Statement statement,
+																			 @NonNull Class<T> resultSetRowType,
+																			 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
 		return queryForList(statement, resultSetRowType, null, parameters);
 	}
 
-	private <T> List<T> queryForList(@NonNull Statement statement,
-																	 @NonNull Class<T> resultSetRowType,
-																	 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
-																	 Object @Nullable ... parameters) {
+	private <T> List<@Nullable T> queryForList(@NonNull Statement statement,
+																			 @NonNull Class<T> resultSetRowType,
+																			 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
+																			 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
@@ -1199,7 +1199,7 @@ public final class Database {
 	private <T, R> R queryForStream(@NonNull Statement statement,
 																	@NonNull Class<T> resultSetRowType,
 																	@Nullable PreparedStatementCustomizer preparedStatementCustomizer,
-																	@NonNull Function<Stream<T>, R> streamFunction,
+																	@NonNull Function<Stream<@Nullable T>, R> streamFunction,
 																	Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
@@ -1213,7 +1213,7 @@ public final class Database {
 		List<Object> parametersAsList = parameters == null ? List.of() : Arrays.asList(parameters);
 		StreamingResultSet<T> iterator = new StreamingResultSet<>(this, statementContext, parametersAsList, preparedStatementCustomizer);
 
-		try (Stream<T> stream = StreamSupport.stream(Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED), false)
+		try (Stream<@Nullable T> stream = StreamSupport.stream(Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED), false)
 				.onClose(iterator::close)) {
 			return streamFunction.apply(stream);
 		}
@@ -1357,9 +1357,9 @@ public final class Database {
 	 * @return a list of results
 	 */
 	@NonNull
-	private <T> List<T> executeForList(@NonNull String sql,
-																		 @NonNull Class<T> resultSetRowType,
-																		 Object @Nullable ... parameters) {
+	private <T> List<@Nullable T> executeForList(@NonNull String sql,
+																			 @NonNull Class<T> resultSetRowType,
+																			 Object @Nullable ... parameters) {
 		requireNonNull(sql);
 		requireNonNull(resultSetRowType);
 
@@ -1377,19 +1377,19 @@ public final class Database {
 	 * @return a list of results
 	 */
 	@NonNull
-	private <T> List<T> executeForList(@NonNull Statement statement,
-																		 @NonNull Class<T> resultSetRowType,
-																		 Object @Nullable ... parameters) {
+	private <T> List<@Nullable T> executeForList(@NonNull Statement statement,
+																			 @NonNull Class<T> resultSetRowType,
+																			 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
 		return executeForList(statement, resultSetRowType, null, parameters);
 	}
 
-	private <T> List<T> executeForList(@NonNull Statement statement,
-																		 @NonNull Class<T> resultSetRowType,
-																		 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
-																		 Object @Nullable ... parameters) {
+	private <T> List<@Nullable T> executeForList(@NonNull Statement statement,
+																			 @NonNull Class<T> resultSetRowType,
+																			 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
+																			 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 

@@ -86,7 +86,7 @@ public interface Query {
 	 * @return this builder, for chaining
 	 */
 	@NonNull
-	Query bindAll(@NonNull Map<String, Object> parameters);
+	Query bindAll(@NonNull Map<@NonNull String, @Nullable Object> parameters);
 
 	/**
 	 * Associates an identifier with this query for logging/diagnostics.
@@ -129,7 +129,7 @@ public interface Query {
 	 * @return list of results (empty if no rows)
 	 */
 	@NonNull
-	<T> List<T> fetchList(@NonNull Class<T> resultType);
+	<T> List<@Nullable T> fetchList(@NonNull Class<T> resultType);
 
 	/**
 	 * Executes the query and provides a {@link Stream} backed by the underlying {@link java.sql.ResultSet}.
@@ -149,7 +149,7 @@ public interface Query {
 	 */
 	@Nullable
 	<T, R> R fetchStream(@NonNull Class<T> resultType,
-											 @NonNull Function<Stream<T>, R> streamFunction);
+											 @NonNull Function<Stream<@Nullable T>, R> streamFunction);
 
 
 	/**
@@ -169,7 +169,7 @@ public interface Query {
 	 * @return the number of rows affected by the SQL statement per-group
 	 */
 	@NonNull
-	List<Long> executeBatch(@NonNull List<Map<String, Object>> parameterGroups);
+	List<Long> executeBatch(@NonNull List<@NonNull Map<@NonNull String, @Nullable Object>> parameterGroups);
 
 	/**
 	 * Executes a DML statement that returns a single row (e.g., with {@code RETURNING} clause).
@@ -190,5 +190,5 @@ public interface Query {
 	 * @return list of results
 	 */
 	@NonNull
-	<T> List<T> executeForList(@NonNull Class<T> resultType);
+	<T> List<@Nullable T> executeForList(@NonNull Class<T> resultType);
 }
