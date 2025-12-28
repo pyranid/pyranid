@@ -19,7 +19,6 @@ package com.pyranid;
 import org.jspecify.annotations.NonNull;
 
 import javax.annotation.concurrent.ThreadSafe;
-import java.util.Optional;
 
 /**
  * Encapsulates a parameter intended for SQL {@code IN} list expansion.
@@ -35,10 +34,11 @@ import java.util.Optional;
 @ThreadSafe
 public interface InListParameter {
 	/**
-	 * Gets the elements to be expanded into {@code ?} placeholders.
+	 * Gets the elements to be expanded into SQL {@code IN} list placeholders.
+	 * Elements must be non-empty.
 	 *
 	 * @return the elements for the {@code IN} list
 	 */
 	@NonNull
-	Optional<Object[]> getElements();
+	Object @NonNull [] getElements();
 }

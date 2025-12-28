@@ -687,10 +687,8 @@ public final class Database {
 				Object value = unwrapOptionalValue(bindings.get(parameterName));
 
 				if (value instanceof InListParameter inListParameter) {
-					Object[] elements = inListParameter.getElements().orElse(null);
+					Object[] elements = inListParameter.getElements();
 
-					if (elements == null)
-						throw new IllegalArgumentException(format("IN-list parameter '%s' for SQL: %s is null", parameterName, this.originalSql));
 					if (elements.length == 0)
 						throw new IllegalArgumentException(format("IN-list parameter '%s' for SQL: %s is empty", parameterName, this.originalSql));
 

@@ -132,8 +132,9 @@ public final class Parameters {
 
 	/**
 	 * Acquires a parameter for SQL {@code IN} list expansion using a {@link Collection}.
+	 * Elements must be non-empty.
 	 *
-	 * @param elements the elements to expand into {@code ?} placeholders
+	 * @param elements the elements to expand into SQL {@code IN} list placeholders
 	 * @param <E>      the element type
 	 * @return an IN-list parameter for the given elements
 	 */
@@ -145,8 +146,9 @@ public final class Parameters {
 
 	/**
 	 * Acquires a parameter for SQL {@code IN} list expansion using a Java array.
+	 * Elements must be non-empty.
 	 *
-	 * @param elements the elements to expand into {@code ?} placeholders
+	 * @param elements the elements to expand into SQL {@code IN} list placeholders
 	 * @param <E>      the element type
 	 * @return an IN-list parameter for the given elements
 	 */
@@ -158,8 +160,9 @@ public final class Parameters {
 
 	/**
 	 * Acquires a parameter for SQL {@code IN} list expansion using a {@code byte[]} array.
+	 * Elements must be non-empty.
 	 *
-	 * @param elements the elements to expand into {@code ?} placeholders
+	 * @param elements the elements to expand into SQL {@code IN} list placeholders
 	 * @return an IN-list parameter for the given elements
 	 */
 	@NonNull
@@ -173,8 +176,9 @@ public final class Parameters {
 
 	/**
 	 * Acquires a parameter for SQL {@code IN} list expansion using a {@code short[]} array.
+	 * Elements must be non-empty.
 	 *
-	 * @param elements the elements to expand into {@code ?} placeholders
+	 * @param elements the elements to expand into SQL {@code IN} list placeholders
 	 * @return an IN-list parameter for the given elements
 	 */
 	@NonNull
@@ -188,8 +192,9 @@ public final class Parameters {
 
 	/**
 	 * Acquires a parameter for SQL {@code IN} list expansion using an {@code int[]} array.
+	 * Elements must be non-empty.
 	 *
-	 * @param elements the elements to expand into {@code ?} placeholders
+	 * @param elements the elements to expand into SQL {@code IN} list placeholders
 	 * @return an IN-list parameter for the given elements
 	 */
 	@NonNull
@@ -203,8 +208,9 @@ public final class Parameters {
 
 	/**
 	 * Acquires a parameter for SQL {@code IN} list expansion using a {@code long[]} array.
+	 * Elements must be non-empty.
 	 *
-	 * @param elements the elements to expand into {@code ?} placeholders
+	 * @param elements the elements to expand into SQL {@code IN} list placeholders
 	 * @return an IN-list parameter for the given elements
 	 */
 	@NonNull
@@ -218,8 +224,9 @@ public final class Parameters {
 
 	/**
 	 * Acquires a parameter for SQL {@code IN} list expansion using a {@code float[]} array.
+	 * Elements must be non-empty.
 	 *
-	 * @param elements the elements to expand into {@code ?} placeholders
+	 * @param elements the elements to expand into SQL {@code IN} list placeholders
 	 * @return an IN-list parameter for the given elements
 	 */
 	@NonNull
@@ -233,8 +240,9 @@ public final class Parameters {
 
 	/**
 	 * Acquires a parameter for SQL {@code IN} list expansion using a {@code double[]} array.
+	 * Elements must be non-empty.
 	 *
-	 * @param elements the elements to expand into {@code ?} placeholders
+	 * @param elements the elements to expand into SQL {@code IN} list placeholders
 	 * @return an IN-list parameter for the given elements
 	 */
 	@NonNull
@@ -248,8 +256,9 @@ public final class Parameters {
 
 	/**
 	 * Acquires a parameter for SQL {@code IN} list expansion using a {@code boolean[]} array.
+	 * Elements must be non-empty.
 	 *
-	 * @param elements the elements to expand into {@code ?} placeholders
+	 * @param elements the elements to expand into SQL {@code IN} list placeholders
 	 * @return an IN-list parameter for the given elements
 	 */
 	@NonNull
@@ -263,8 +272,9 @@ public final class Parameters {
 
 	/**
 	 * Acquires a parameter for SQL {@code IN} list expansion using a {@code char[]} array.
+	 * Elements must be non-empty.
 	 *
-	 * @param elements the elements to expand into {@code ?} placeholders
+	 * @param elements the elements to expand into SQL {@code IN} list placeholders
 	 * @return an IN-list parameter for the given elements
 	 */
 	@NonNull
@@ -294,9 +304,9 @@ public final class Parameters {
 
 		@NonNull
 		@Override
-		public Optional<Object[]> getElements() {
+		public Object @NonNull [] getElements() {
 			// Defensive copy
-			return Optional.of(this.elements.clone());
+			return this.elements.clone();
 		}
 	}
 
