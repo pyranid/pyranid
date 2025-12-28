@@ -55,7 +55,7 @@ import static java.util.Objects.requireNonNull;
  *     @NonNull Class<T> resultSetRowType,
  *     @NonNull InstanceProvider instanceProvider
  *   ) throws SQLException {
- *     // TODO: pull data from resultSet and apply to a new instance of T
+ *     // Pull data from resultSet and apply to a new instance of T
  *     return Optional.empty();
  *   }
  * };}</pre>

@@ -46,7 +46,7 @@ import static java.util.Objects.requireNonNull;
  *     @NonNull Integer parameterIndex,
  *     @NonNull Object parameter
  *   ) throws SQLException {
- *     // TODO: your own code that binds the parameter at the specified index to the PreparedStatement
+ *     // Bind the parameter at the specified index to the PreparedStatement
  *   }
  * };}</pre>
  *
