@@ -78,9 +78,14 @@
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-javadoc-plugin</artifactId>
-				<version>3.11.3</version>
+				<version>3.12.0</version>
 				<configuration>
 					<quiet>true</quiet>
+					<links>
+						<link>https://docs.oracle.com/en/java/javase/25/docs/api/</link>
+						<link>https://javadoc.io/doc/com.google.code.findbugs/jsr305/3.0.2/</link>
+						<link>https://javadoc.io/doc/org.jspecify/jspecify/1.0.0/</link>
+					</links>
 					<notimestamp>true</notimestamp>
 					<encoding>UTF-8</encoding>
 					<docencoding>UTF-8</docencoding>
