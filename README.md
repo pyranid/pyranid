@@ -216,6 +216,8 @@ DataSource pgBouncerDataSource = new PGSimpleDataSource() {{
 
 ## Queries
 
+Pyranid supports named parameters (e.g. `:id`) only; positional `?` parameters are not supported.
+
 Suppose we have a custom `Car` like this:
 
 ```java
@@ -272,6 +274,24 @@ Optional<Employee> employee = database.query("""
 ```
 
 By default, Pyranid will invoke the canonical constructor for `Record` types. 
+
+### Streaming Results
+
+If you'd like to process large resultsets without loading everything into memory, use `Query::fetchStream(Class<T>, Function<Stream<T>, R>)`. The `Stream<T>` passed to your callback is backed by the underlying `ResultSet`, and Pyranid closes JDBC resources automatically when the callback returns (or throws).
+
+```java
+List<Employee> employees = database.query("""
+  SELECT *
+  FROM employee
+  WHERE department_id=:departmentId
+  """)
+  .bind("departmentId", 42)
+  .fetchStream(Employee.class, stream ->
+    stream.filter(employee -> employee.departmentId() == 42)
+      .toList());
+```
+
+The stream must be consumed within the scope of the transaction or connection that created it. Do not let the stream escape from the callback.
 
 ## Statements
 
@@ -334,10 +354,10 @@ database.transaction(() -> {
   // Pull initial account balances
   BigDecimal balance1 = database.query("SELECT balance FROM account WHERE id=:id")
     .bind("id", 1)
-    .fetchObject(BigDecimal.class).get();
+    .fetchObject(BigDecimal.class).orElseThrow();
   BigDecimal balance2 = database.query("SELECT balance FROM account WHERE id=:id")
     .bind("id", 2)
-    .fetchObject(BigDecimal.class).get();
+    .fetchObject(BigDecimal.class).orElseThrow();
   
   // Debit one and credit the other 
   balance1 = balance1.subtract(amount);
@@ -399,7 +419,7 @@ database.transaction(() -> {
     .execute();
 
   // Get a handle to the current transaction
-  Transaction transaction = database.currentTransaction().get();
+  Transaction transaction = database.currentTransaction().orElseThrow();
 
   new Thread(() -> {
     // In a different thread and participating in the existing transaction.
@@ -434,13 +454,13 @@ database.transaction(() -> {
     .execute();
 
   // Hmm...I changed my mind
-  Transaction transaction = database.currentTransaction().get();
+  Transaction transaction = database.currentTransaction().orElseThrow();
   transaction.setRollbackOnly(true);
 });
 
 // You may roll back to a savepoint
 database.transaction(() -> {
-  Transaction transaction = database.currentTransaction().get();
+  Transaction transaction = database.currentTransaction().orElseThrow();
   Savepoint savepoint = transaction.createSavepoint();
 
   database.query("UPDATE account SET balance=balance - 10 WHERE id=1")
@@ -504,7 +524,7 @@ class EmployeeService {
     payrollSystem.startLengthyWarmupProcess();
 
     // Only send emails after the current transaction ends
-    database.currentTransaction().get().addPostTransactionOperation((transactionResult) -> {
+    database.currentTransaction().orElseThrow().addPostTransactionOperation((transactionResult) -> {
       if(transactionResult == TransactionResult.COMMITTED) {
         // Successful commit? email everyone with the good news
         for(Employee employee : findAllEmployees())
@@ -555,7 +575,7 @@ There's no need to create a custom "row" type to hold the result.
 ```java
 // Returns Optional<Long>, which we immediately unwrap because COUNT(*) is never null
 Long count = database.query("SELECT COUNT(*) FROM car")
-  .fetchObject(Long.class).get();
+  .fetchObject(Long.class).orElseThrow();
 
 // Standard primitives and JDK types are supported by default
 Optional<UUID> id = database.query("SELECT id FROM employee LIMIT 1")
@@ -598,7 +618,7 @@ class Car {
 }
 
 Car car = database.query("SELECT car_id, color, systok FROM car LIMIT 1")
-  .fetchObject(Car.class).get();
+  .fetchObject(Car.class).orElseThrow();
 
 // Output might be "Car ID is 123 and color is BLUE. Token is d73c523a-8344-44ef-819c-40467662d619"
 out.printf("Car ID is %s and color is %s. Token is %s\n",
@@ -606,11 +626,11 @@ out.printf("Car ID is %s and color is %s. Token is %s\n",
 
 // Column names will work with wildcard queries as well
 car = database.query("SELECT * FROM car LIMIT 1")
-  .fetchObject(Car.class).get();
+  .fetchObject(Car.class).orElseThrow();
 
 // Column aliases work too
 car = database.query("SELECT some_id AS car_id, some_color AS color FROM car LIMIT 1")
-  .fetchObject(Car.class).get();
+  .fetchObject(Car.class).orElseThrow();
 ```
 
 ### Supported Primitives
@@ -780,9 +800,26 @@ database.query("""
   .execute();
 ```
 
+### PreparedStatementCustomizer
+
+If you need to tweak the JDBC `PreparedStatement` before execution (for example, to set query hints), use `Query::customize(...)`.
+
+```java
+List<Employee> employees = database.query("""
+  SELECT *
+  FROM employee
+  WHERE department_id=:departmentId
+  """)
+  .bind("departmentId", departmentId)
+  .customize((statementContext, preparedStatement) -> {
+    preparedStatement.setFetchSize(500);
+  })
+  .fetchList(Employee.class);
+```
+
 ### IN-list parameters
 
-Use `Parameters.inList(...)` to expand values into multiple `?` placeholders.
+Use `Parameters.inList(...)` to expand values into a SQL `IN (...)` list.
 This is useful for SQL `IN` lists:
 
 ```java
@@ -1159,7 +1196,7 @@ We then handle that case specially by rolling back to a known-good savepoint.
 ```java
 // Gives someone at most one big award
 database.transaction(() -> {
-  Transaction transaction = database.currentTransaction().get();
+  Transaction transaction = database.currentTransaction().orElseThrow();
   Savepoint savepoint = transaction.createSavepoint();
 
   try {
