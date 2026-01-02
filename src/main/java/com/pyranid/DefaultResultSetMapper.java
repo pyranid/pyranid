@@ -203,6 +203,40 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		return Optional.empty();
 	}
 
+	@ThreadSafe
+	private static final class CustomMappingOutcome {
+		@NonNull
+		private static final CustomMappingOutcome NOT_APPLIED = new CustomMappingOutcome(false, null);
+		private final boolean applied;
+		@Nullable
+		private final Object value;
+
+		private CustomMappingOutcome(boolean applied,
+																 @Nullable Object value) {
+			this.applied = applied;
+			this.value = value;
+		}
+
+		@NonNull
+		private static CustomMappingOutcome notApplied() {
+			return NOT_APPLIED;
+		}
+
+		@NonNull
+		private static CustomMappingOutcome applied(@Nullable Object value) {
+			return new CustomMappingOutcome(true, value);
+		}
+
+		private boolean isApplied() {
+			return this.applied;
+		}
+
+		@Nullable
+		private Object getValue() {
+			return this.value;
+		}
+	}
+
 	@NonNull
 	protected Class<?> boxedClass(@NonNull Class<?> type) {
 		requireNonNull(type);
@@ -210,7 +244,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@NonNull
-	protected <T> Optional<Object> tryCustomColumnMappers(@NonNull StatementContext<T> statementContext,
+	protected <T> CustomMappingOutcome tryCustomColumnMappers(@NonNull StatementContext<T> statementContext,
 																												@NonNull ResultSet resultSet,
 																												@NonNull Object resultSetValue,
 																												@NonNull TargetType targetType,
@@ -228,7 +262,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@NonNull
-	protected <T> Optional<Object> tryCustomColumnMappers(@NonNull StatementContext<T> statementContext,
+	protected <T> CustomMappingOutcome tryCustomColumnMappers(@NonNull StatementContext<T> statementContext,
 																												@NonNull ResultSet resultSet,
 																												@NonNull Object resultSetValue,
 																												@NonNull TargetType targetType,
@@ -243,7 +277,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(mappers);
 		requireNonNull(instanceProvider);
 
-		if (mappers.isEmpty()) return Optional.empty();
+		if (mappers.isEmpty())
+			return CustomMappingOutcome.notApplied();
 
 		Class<?> sourceClass = resultSetValue.getClass();
 		SourceTargetKey key = new SourceTargetKey(sourceClass, targetType);
@@ -257,7 +292,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 			if (mappingApplied(mappingResult))
 				// Keep the preference (it applied); return its (possibly null) value
-				return mappedValue(mappingResult);
+				return CustomMappingOutcome.applied(mappedValue(mappingResult).orElse(null));
 			// If it didn’t apply this time, fall through to try others; retain hint for future rows.
 		}
 
@@ -271,12 +306,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			if (mappingApplied(mappingResult)) {
 				// Learn the winner for (sourceClass, targetType) even if it produced null
 				getPreferredColumnMapperBySourceTargetKey().put(key, mapper);
-				return mappedValue(mappingResult);
+				return CustomMappingOutcome.applied(mappedValue(mappingResult).orElse(null));
 			}
 		}
 
 		// 3) No custom mapper applied
-		return Optional.empty();
+		return CustomMappingOutcome.notApplied();
 	}
 
 	/**
@@ -699,7 +734,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			}
 
 			if (resultSetValue != null) {
-				Optional<Object> maybe =
+				CustomMappingOutcome outcome =
 						tryCustomColumnMappers(statementContext,
 								resultSet,
 								resultSetValue,
@@ -708,7 +743,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 								resultSetMetaData.getColumnLabel(1),
 								instanceProvider);
 
-				if (maybe.isPresent()) {
+				if (outcome.isApplied()) {
 					// Enforce the single-column invariant, just like the normal fast path does
 					if (columnCount != 1) {
 						List<String> labels = new ArrayList<>(columnCount);
@@ -722,7 +757,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 					// Return exactly like the fast path: Optional.ofNullable(value), standardType=true
 					@SuppressWarnings("unchecked")
-					T cast = (T) maybe.orElse(null);
+					T cast = (T) outcome.getValue();
 					return new StandardTypeResult<>(cast, true);
 				}
 
@@ -909,12 +944,15 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				Object rawValue = columnLabelsToValues.get(potentialPropertyName);
 
 				Integer columnIndex = requireNonNull(columnLabelsToIndexes.get(potentialPropertyName));
-				Object value = rawValue == null
-						? null
-						: // Try custom mappers first; if none apply, fall back to built-ins
-						tryCustomColumnMappers(statementContext, resultSet, rawValue, targetType, columnIndex, potentialPropertyName, instanceProvider)
-								.or(() -> convertResultSetValueToPropertyType(statementContext, rawValue, recordComponentType))
-								.orElse(null);
+				Object value;
+				if (rawValue == null) {
+					value = null;
+				} else {
+					CustomMappingOutcome outcome = tryCustomColumnMappers(statementContext, resultSet, rawValue, targetType, columnIndex, potentialPropertyName, instanceProvider);
+					value = outcome.isApplied()
+							? outcome.getValue()
+							: convertResultSetValueToPropertyType(statementContext, rawValue, recordComponentType).orElse(null);
+				}
 
 				// It's considered programmer error to have a NULL value in the ResultSet and map it to a primitive (which does not support null)
 				if (value == null && recordComponentType.isPrimitive())
@@ -1003,12 +1041,15 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				Object rawValue = columnLabelsToValues.get(propertyName);
 
 				Integer columnIndex = requireNonNull(columnLabelsToIndexes.get(propertyName));
-				Object value = (rawValue == null)
-						? null
-						: // Try custom mappers first; if none apply, fall back to built-ins
-						tryCustomColumnMappers(statementContext, resultSet, rawValue, targetType, columnIndex, propertyName, instanceProvider)
-								.or(() -> convertResultSetValueToPropertyType(statementContext, rawValue, writeMethodParameterType))
-								.orElse(null);
+				Object value;
+				if (rawValue == null) {
+					value = null;
+				} else {
+					CustomMappingOutcome outcome = tryCustomColumnMappers(statementContext, resultSet, rawValue, targetType, columnIndex, propertyName, instanceProvider);
+					value = outcome.isApplied()
+							? outcome.getValue()
+							: convertResultSetValueToPropertyType(statementContext, rawValue, writeMethodParameterType).orElse(null);
+				}
 
 				// It's considered programmer error to have a NULL value in the ResultSet and map it to a primitive (which does not support null)
 				if (value == null && writeMethodParameterType.isPrimitive())
@@ -2083,9 +2124,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					if (raw == null) return null;
 					try {
 						if (!customMappers.isEmpty()) {
-							Optional<Object> mapped = tryCustomColumnMappers(cctx, rrs, raw, targetTypeFinal, customMappers, colIndexFinal, labelFinal, ip);
-							if (mapped.isPresent())
-								return mapped.get();
+							CustomMappingOutcome outcome = tryCustomColumnMappers(cctx, rrs, raw, targetTypeFinal, customMappers, colIndexFinal, labelFinal, ip);
+							if (outcome.isApplied())
+								return outcome.getValue();
 						}
 
 						if (rawTargetClassBoxed.isInstance(raw))

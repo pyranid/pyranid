@@ -66,8 +66,8 @@ public class MemoryLeakTests {
 				.resultSetMapper(mapper)
 				.build();
 
-		TestQueries.execute(db, "CREATE TABLE t (id INT, value INT)");
-		TestQueries.execute(db, "INSERT INTO t (id, value) VALUES (1, 10)");
+				db.query("CREATE TABLE t (id INT, value INT)").execute();
+				db.query("INSERT INTO t (id, value) VALUES (1, 10)").execute();
 
 		for (int i = 0; i < 50; i++) {
 			String sql = "SELECT id, value AS extra_" + i + " FROM t";
@@ -128,8 +128,8 @@ public class MemoryLeakTests {
 				.resultSetMapper(mapper)
 				.build();
 
-		TestQueries.execute(db, "CREATE TABLE t (s VARCHAR(50), i INT, l BIGINT, d DECIMAL(12,2), dt DATE)");
-		TestQueries.execute(db, "INSERT INTO t VALUES ('s', 1, 2, 3.14, DATE '2023-01-01')");
+				db.query("CREATE TABLE t (s VARCHAR(50), i INT, l BIGINT, d DECIMAL(12,2), dt DATE)").execute();
+				db.query("INSERT INTO t VALUES ('s', 1, 2, 3.14, DATE '2023-01-01')").execute();
 
 		List<String> columns = List.of("s", "i", "l", "d", "dt");
 

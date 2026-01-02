@@ -595,7 +595,7 @@ public class DatabasePerformanceTests {
 	}
 
 	private void createWideSchema(@NonNull Database db) {
-		TestQueries.execute(db, """
+				db.query("""
 				CREATE TABLE wide_table (
 				  id BIGINT PRIMARY KEY,
 				  c_varchar_1 VARCHAR(128),
@@ -643,7 +643,8 @@ public class DatabasePerformanceTests {
 				  c_int_9 INT,
 				  c_int_10 INT
 				)
-				""");
+				""")
+			.execute();
 	}
 
 	private void insertWideRows(@NonNull Database db, int n) {
@@ -684,7 +685,7 @@ public class DatabasePerformanceTests {
 
 				int i6 = i + 1, i7 = i + 2, i8 = i + 3, i9 = i + 4, i10 = i + 5;
 
-				TestQueries.execute(db, """
+								db.query("""
 								INSERT INTO wide_table (
 								  id,
 								  c_varchar_1, c_varchar_2, c_varchar_3, c_varchar_4, c_varchar_5,
@@ -698,32 +699,55 @@ public class DatabasePerformanceTests {
 								  c_locale, c_currency,
 								  c_text_1, c_text_2, c_text_3, c_text_4, c_text_5,
 								  c_int_6, c_int_7, c_int_8, c_int_9, c_int_10
-								) VALUES (?,
-								          ?,?,?,?,?,
-								          ?,?,?,?,?,
-								          ?,?,
-								          ?,?,
-								          ?,?,
-								          ?,?,
-								          ?,?,
-								          ?,?,
-								          ?,?,
-								          ?,?,?,?,?,
-								          ?,?,?,?,?)
-								""",
-						id,
-						v, v2, v3, v4, v5,
-						i1, i2, i3, i4, i5,
-						b1, b2,
-						d1, d2,
-						ld1, ld2,
-						ts1, ts2,
-						bo1, bo2,
-						u1.toString(), u2.toString(),
-						locale, currency,
-						t1, t2, t3, t4, t5,
-						i6, i7, i8, i9, i10
-				);
+								) VALUES (:p1,
+								          :p2,:p3,:p4,:p5,:p6,
+								          :p7,:p8,:p9,:p10,:p11,
+								          :p12,:p13,
+								          :p14,:p15,
+								          :p16,:p17,
+								          :p18,:p19,
+								          :p20,:p21,
+								          :p22,:p23,
+								          :p24,:p25,
+								          :p26,:p27,:p28,:p29,:p30,
+								          :p31,:p32,:p33,:p34,:p35)
+								""")
+					.bind("p1", id)
+					.bind("p2", v)
+					.bind("p3", v2)
+					.bind("p4", v3)
+					.bind("p5", v4)
+					.bind("p6", v5)
+					.bind("p7", i1)
+					.bind("p8", i2)
+					.bind("p9", i3)
+					.bind("p10", i4)
+					.bind("p11", i5)
+					.bind("p12", b1)
+					.bind("p13", b2)
+					.bind("p14", d1)
+					.bind("p15", d2)
+					.bind("p16", ld1)
+					.bind("p17", ld2)
+					.bind("p18", ts1)
+					.bind("p19", ts2)
+					.bind("p20", bo1)
+					.bind("p21", bo2)
+					.bind("p22", u1.toString())
+					.bind("p23", u2.toString())
+					.bind("p24", locale)
+					.bind("p25", currency)
+					.bind("p26", t1)
+					.bind("p27", t2)
+					.bind("p28", t3)
+					.bind("p29", t4)
+					.bind("p30", t5)
+					.bind("p31", i6)
+					.bind("p32", i7)
+					.bind("p33", i8)
+					.bind("p34", i9)
+					.bind("p35", i10)
+					.execute();
 			}
 		});
 	}

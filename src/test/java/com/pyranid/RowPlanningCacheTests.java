@@ -40,14 +40,14 @@ public class RowPlanningCacheTests {
 	private Database db(boolean planCachingEnabled, String schema) {
 		DataSource ds = createInMemoryDataSource(schema);
 		return Database.withDataSource(ds)
-				.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(true).build())
+				.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(planCachingEnabled).build())
 				.build();
 	}
 
 	private Database dbWithInstanceProvider(boolean planCachingEnabled, String schema, InstanceProvider ip) {
 		DataSource ds = createInMemoryDataSource(schema);
 		return Database.withDataSource(ds)
-				.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(true).build())
+				.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(planCachingEnabled).build())
 				.instanceProvider(ip)
 				.build();
 	}
@@ -89,8 +89,8 @@ public class RowPlanningCacheTests {
 	@Test
 	public void testBeanPrimitiveNonNullMapping_NonPlanned() {
 		Database db = db(false, "prim_nonplanned_ok");
-		TestQueries.execute(db, "CREATE TABLE t (n INT)");
-		TestQueries.execute(db, "INSERT INTO t (n) VALUES (1)");
+				db.query("CREATE TABLE t (n INT)").execute();
+				db.query("INSERT INTO t (n) VALUES (1)").execute();
 
 		BeanWithPrimitive row = db.query("SELECT n FROM t")
 				.fetchObject(BeanWithPrimitive.class)
@@ -101,8 +101,8 @@ public class RowPlanningCacheTests {
 	@Test
 	public void testBeanPrimitiveNonNullMapping_Planned() {
 		Database db = db(true, "prim_planned_ok");
-		TestQueries.execute(db, "CREATE TABLE t (n INT)");
-		TestQueries.execute(db, "INSERT INTO t (n) VALUES (1)");
+				db.query("CREATE TABLE t (n INT)").execute();
+				db.query("INSERT INTO t (n) VALUES (1)").execute();
 
 		BeanWithPrimitive row = db.query("SELECT n FROM t")
 				.fetchObject(BeanWithPrimitive.class)
@@ -113,8 +113,8 @@ public class RowPlanningCacheTests {
 	@Test
 	public void testBeanNullToPrimitiveThrows_NonPlanned() {
 		Database db = db(false, "null_to_prim_nonplanned");
-		TestQueries.execute(db, "CREATE TABLE t (n INT)");
-		TestQueries.execute(db, "INSERT INTO t (n) VALUES (NULL)");
+				db.query("CREATE TABLE t (n INT)").execute();
+				db.query("INSERT INTO t (n) VALUES (NULL)").execute();
 
 		DatabaseException ex = Assertions.assertThrows(
 				DatabaseException.class,
@@ -131,8 +131,8 @@ public class RowPlanningCacheTests {
 	@Test
 	public void testBeanNullToPrimitiveThrows_Planned() {
 		Database db = db(true, "null_to_prim_planned");
-		TestQueries.execute(db, "CREATE TABLE t (n INT)");
-		TestQueries.execute(db, "INSERT INTO t (n) VALUES (NULL)");
+				db.query("CREATE TABLE t (n INT)").execute();
+				db.query("INSERT INTO t (n) VALUES (NULL)").execute();
 
 		DatabaseException ex = Assertions.assertThrows(
 				DatabaseException.class,
@@ -148,8 +148,8 @@ public class RowPlanningCacheTests {
 	@Test
 	public void testBeanNullSetterCalledClearsPreinitializedValue_NonPlanned() {
 		Database db = db(false, "null_setter_nonplanned");
-		TestQueries.execute(db, "CREATE TABLE t (name VARCHAR(64))");
-		TestQueries.execute(db, "INSERT INTO t (name) VALUES (NULL)");
+				db.query("CREATE TABLE t (name VARCHAR(64))").execute();
+				db.query("INSERT INTO t (name) VALUES (NULL)").execute();
 
 		BeanWithPreinit row = db.query("SELECT name FROM t")
 				.fetchObject(BeanWithPreinit.class)
@@ -161,8 +161,8 @@ public class RowPlanningCacheTests {
 	@Test
 	public void testBeanNullSetterCalledClearsPreinitializedValue_Planned() {
 		Database db = db(true, "null_setter_planned");
-		TestQueries.execute(db, "CREATE TABLE t (name VARCHAR(64))");
-		TestQueries.execute(db, "INSERT INTO t (name) VALUES (NULL)");
+				db.query("CREATE TABLE t (name VARCHAR(64))").execute();
+				db.query("INSERT INTO t (name) VALUES (NULL)").execute();
 
 		BeanWithPreinit row = db.query("SELECT name FROM t")
 				.fetchObject(BeanWithPreinit.class)
@@ -176,8 +176,8 @@ public class RowPlanningCacheTests {
 	@Test
 	public void testRecordNullToPrimitiveThrows_Planned() {
 		Database db = db(true, "rec_null_prim_planned");
-		TestQueries.execute(db, "CREATE TABLE t (n INT)");
-		TestQueries.execute(db, "INSERT INTO t (n) VALUES (NULL)");
+				db.query("CREATE TABLE t (n INT)").execute();
+				db.query("INSERT INTO t (n) VALUES (NULL)").execute();
 
 		Assertions.assertThrows(
 				DatabaseException.class,
@@ -221,8 +221,8 @@ public class RowPlanningCacheTests {
 		};
 
 		Database db = dbWithInstanceProvider(true, "rec_provider_planned", countingProvider);
-		TestQueries.execute(db, "CREATE TABLE t (n INT)");
-		TestQueries.execute(db, "INSERT INTO t (n) VALUES (5)");
+				db.query("CREATE TABLE t (n INT)").execute();
+				db.query("INSERT INTO t (n) VALUES (5)").execute();
 
 		RecWithPrimitive row = db.query("SELECT n FROM t")
 				.fetchObject(RecWithPrimitive.class)
@@ -238,8 +238,8 @@ public class RowPlanningCacheTests {
 	@Test
 	public void testCharacterTooLong_ThrowsDatabaseException() {
 		Database db = db(true, "char_too_long");
-		TestQueries.execute(db, "CREATE TABLE t (c VARCHAR(10))");
-		TestQueries.execute(db, "INSERT INTO t (c) VALUES ('AB')"); // two characters
+				db.query("CREATE TABLE t (c VARCHAR(10))").execute();
+				db.query("INSERT INTO t (c) VALUES ('AB')").execute(); // two characters
 
 		Assertions.assertThrows(
 				DatabaseException.class,
@@ -255,8 +255,8 @@ public class RowPlanningCacheTests {
 	@Test
 	public void testTimeWithoutTzToOffsetTime_StableOffset() {
 		Database db = db(true, "time_to_offsettime");
-		TestQueries.execute(db, "CREATE TABLE t (clock TIME)");
-		TestQueries.execute(db, "INSERT INTO t (clock) VALUES (TIME '12:34:56')");
+				db.query("CREATE TABLE t (clock TIME)").execute();
+				db.query("INSERT INTO t (clock) VALUES (TIME '12:34:56')").execute();
 		// Expect a deterministic offset choice; exact value depends on DB zone but should be stable across runs
 		OffsetTime ot = db.query("SELECT clock FROM t")
 				.fetchObject(OffsetTime.class)

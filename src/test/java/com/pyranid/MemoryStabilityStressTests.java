@@ -83,19 +83,23 @@ public class MemoryStabilityStressTests {
 				.resultSetMapper(mapper)
 				.build();
 
-		TestQueries.execute(db, """
+				db.query("""
 				CREATE TABLE t (
 				  id INT PRIMARY KEY,
 				  name VARCHAR(64),
 				  amount DECIMAL(12,2),
 				  created_at DATE
 				)
-				""");
+				""")
+			.execute();
 
 		for (int i = 1; i <= 500; i++) {
-			TestQueries.execute(db,
-					"INSERT INTO t (id, name, amount, created_at) VALUES (?, ?, ?, ?)",
-					i, "name-" + i, new BigDecimal("123.45"), java.sql.Date.valueOf(LocalDate.now()));
+						db.query("INSERT INTO t (id, name, amount, created_at) VALUES (:p1, :p2, :p3, :p4)")
+				.bind("p1", i)
+				.bind("p2", "name-" + i)
+				.bind("p3", new BigDecimal("123.45"))
+				.bind("p4", java.sql.Date.valueOf(LocalDate.now()))
+				.execute();
 		}
 
 		runWorkload(db, WARMUP_DURATION);

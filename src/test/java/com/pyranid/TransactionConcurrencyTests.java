@@ -52,7 +52,7 @@ public class TransactionConcurrencyTests {
 		DataSource dataSource = new GuardedDataSource(createInMemoryDataSource(databaseName), guard);
 		Database database = Database.withDataSource(dataSource).build();
 
-		TestQueries.execute(database, "CREATE TABLE t (id INT)");
+				database.query("CREATE TABLE t (id INT)").execute();
 
 		guard.enable();
 
@@ -113,7 +113,9 @@ public class TransactionConcurrencyTests {
 			database.participate(transaction, () -> {
 				try {
 					barrier.await(1, TimeUnit.SECONDS);
-					TestQueries.execute(database, "INSERT INTO t (id) VALUES (?)", id);
+										database.query("INSERT INTO t (id) VALUES (:p1)")
+						.bind("p1", id)
+						.execute();
 				} catch (Exception e) {
 					throw new RuntimeException(e);
 				}
