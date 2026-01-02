@@ -291,6 +291,14 @@ public class DatabaseTests {
 	}
 
 	@Test
+	public void testQueryAllowsQuestionMarkOperators() {
+		Database db = Database.withDataSource(createInMemoryDataSource("testQueryAllowsQuestionMarkOperators")).build();
+
+		Assertions.assertDoesNotThrow(() ->
+				db.query("SELECT data ? 'a' AND data ?| 'b' AND data ?& 'c' FROM t"));
+	}
+
+	@Test
 	public void testNamedParameterParsingSkipsQuotesCommentsAndDollarQuotes() {
 		String sql = """
 				SELECT ':ignored' AS s,

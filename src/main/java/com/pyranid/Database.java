@@ -40,6 +40,7 @@ import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalDouble;
@@ -970,9 +971,16 @@ public final class Database {
 					}
 				}
 
-				if (c == '?')
+				if (c == '?') {
+					if (isAllowedQuestionMarkOperator(sql, i)) {
+						sqlFragment.append(c);
+						++i;
+						continue;
+					}
+
 					throw new IllegalArgumentException(format("Positional parameters ('?') are not supported. Use named parameters (e.g. ':id') and %s#bind. SQL: %s",
 							Query.class.getSimpleName(), sql));
+				}
 
 				if (c == ':' && i + 1 < sql.length() && sql.charAt(i + 1) == ':') {
 					// Postgres type-cast operator (::), do not treat second ':' as a parameter prefix.
@@ -1032,6 +1040,114 @@ public final class Database {
 			}
 
 			return null;
+		}
+
+		@NonNull
+		private static final Set<@NonNull String> QUESTION_MARK_PREFIX_KEYWORDS = Set.of(
+				"SELECT", "WHERE", "AND", "OR", "ON", "HAVING", "WHEN", "THEN", "ELSE", "IN",
+				"VALUES", "SET", "RETURNING", "USING", "LIKE", "BETWEEN", "IS", "NOT", "NULL",
+				"JOIN", "FROM"
+		);
+
+		@NonNull
+		private static final Set<@NonNull String> QUESTION_MARK_SUFFIX_KEYWORDS = Set.of(
+				"FROM", "WHERE", "AND", "OR", "GROUP", "ORDER", "HAVING", "LIMIT", "OFFSET",
+				"UNION", "EXCEPT", "INTERSECT", "RETURNING", "JOIN", "ON"
+		);
+
+		private static boolean isAllowedQuestionMarkOperator(@NonNull String sql,
+																												 int questionMarkIndex) {
+			requireNonNull(sql);
+
+			if (questionMarkIndex + 1 < sql.length()) {
+				char nextChar = sql.charAt(questionMarkIndex + 1);
+				if (nextChar == '|' || nextChar == '&')
+					return true;
+			}
+
+			int previousIndex = previousNonWhitespaceIndex(sql, questionMarkIndex - 1);
+			int nextIndex = nextNonWhitespaceIndex(sql, questionMarkIndex + 1);
+
+			if (previousIndex < 0 || nextIndex < 0)
+				return false;
+
+			char previousChar = sql.charAt(previousIndex);
+			char nextChar = sql.charAt(nextIndex);
+
+			if (isOperatorBeforeQuestionMark(previousChar))
+				return false;
+
+			if (isTerminatorAfterQuestionMark(nextChar))
+				return false;
+
+			String previousKeyword = keywordBefore(sql, previousIndex);
+			if (previousKeyword != null && QUESTION_MARK_PREFIX_KEYWORDS.contains(previousKeyword))
+				return false;
+
+			String nextKeyword = keywordAfter(sql, nextIndex);
+			if (nextKeyword != null && QUESTION_MARK_SUFFIX_KEYWORDS.contains(nextKeyword))
+				return false;
+
+			return true;
+		}
+
+		private static boolean isOperatorBeforeQuestionMark(char c) {
+			return switch (c) {
+				case '=', '<', '>', '!', '+', '-', '*', '/', '%', ',', '(' -> true;
+				default -> false;
+			};
+		}
+
+		private static boolean isTerminatorAfterQuestionMark(char c) {
+			return switch (c) {
+				case ')', ',', ';' -> true;
+				default -> false;
+			};
+		}
+
+		private static int previousNonWhitespaceIndex(@NonNull String sql,
+																									int startIndex) {
+			for (int i = startIndex; i >= 0; i--)
+				if (!Character.isWhitespace(sql.charAt(i)))
+					return i;
+			return -1;
+		}
+
+		private static int nextNonWhitespaceIndex(@NonNull String sql,
+																							int startIndex) {
+			for (int i = startIndex; i < sql.length(); i++)
+				if (!Character.isWhitespace(sql.charAt(i)))
+					return i;
+			return -1;
+		}
+
+		@Nullable
+		private static String keywordBefore(@NonNull String sql,
+																				int index) {
+			char c = sql.charAt(index);
+			if (!Character.isJavaIdentifierPart(c))
+				return null;
+
+			int endIndex = index + 1;
+			int startIndex = index;
+			while (startIndex >= 0 && Character.isJavaIdentifierPart(sql.charAt(startIndex)))
+				--startIndex;
+
+			return sql.substring(startIndex + 1, endIndex).toUpperCase(Locale.ROOT);
+		}
+
+		@Nullable
+		private static String keywordAfter(@NonNull String sql,
+																			 int index) {
+			char c = sql.charAt(index);
+			if (!Character.isJavaIdentifierPart(c))
+				return null;
+
+			int endIndex = index + 1;
+			while (endIndex < sql.length() && Character.isJavaIdentifierPart(sql.charAt(endIndex)))
+				++endIndex;
+
+			return sql.substring(index, endIndex).toUpperCase(Locale.ROOT);
 		}
 	}
 

@@ -896,11 +896,16 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			TargetType targetType = propertyTargetTypes.get(propertyName);
 			if (targetType == null) targetType = TargetType.of(recordComponent.getGenericType());
 
-			// Set the value for the Record ctor
-			for (String potentialPropertyName : potentialPropertyNames) {
-				if (!columnLabelsToValues.containsKey(potentialPropertyName))
-					continue;
+			// Set the value for the Record ctor (apply in column order for deterministic results)
+			List<String> orderedPropertyNames = new ArrayList<>(potentialPropertyNames.size());
+			for (String potentialPropertyName : potentialPropertyNames)
+				if (columnLabelsToValues.containsKey(potentialPropertyName))
+					orderedPropertyNames.add(potentialPropertyName);
 
+			orderedPropertyNames.sort((left, right) ->
+					Integer.compare(columnLabelsToIndexes.get(left), columnLabelsToIndexes.get(right)));
+
+			for (String potentialPropertyName : orderedPropertyNames) {
 				Object rawValue = columnLabelsToValues.get(potentialPropertyName);
 
 				Integer columnIndex = requireNonNull(columnLabelsToIndexes.get(potentialPropertyName));
@@ -986,10 +991,15 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			TargetType targetType = propertyTargetTypes.get(propertyDescriptor.getName());
 			if (targetType == null) targetType = TargetType.of(parameter.getParameterizedType());
 
-			for (String propertyName : propertyNames) {
-				if (!columnLabelsToValues.containsKey(propertyName))
-					continue;
+			List<String> orderedPropertyNames = new ArrayList<>(propertyNames.size());
+			for (String propertyName : propertyNames)
+				if (columnLabelsToValues.containsKey(propertyName))
+					orderedPropertyNames.add(propertyName);
 
+			orderedPropertyNames.sort((left, right) ->
+					Integer.compare(columnLabelsToIndexes.get(left), columnLabelsToIndexes.get(right)));
+
+			for (String propertyName : orderedPropertyNames) {
 				Object rawValue = columnLabelsToValues.get(propertyName);
 
 				Integer columnIndex = requireNonNull(columnLabelsToIndexes.get(propertyName));
