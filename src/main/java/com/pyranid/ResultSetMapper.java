@@ -131,6 +131,8 @@ public interface ResultSetMapper {
 
 	/**
 	 * Acquires a builder for a concrete implementation of this interface, specifying whether an internal "mapping plan" cache should be used to speed up {@link ResultSet} mapping.
+	 * <p>
+	 * Disabling plan caching is primarily useful for highly dynamic schemas; the non-planned path allocates per-row maps and does more reflection.
 	 *
 	 * @param planCachingEnabled whether an internal "mapping plan" cache should be used to speed up {@link ResultSet} mapping
 	 * @return a {@code Builder} for a concrete implementation
@@ -210,6 +212,8 @@ public interface ResultSetMapper {
 
 		/**
 		 * Specifies whether an internal "mapping plan" cache should be used to speed up {@link ResultSet} mapping.
+		 * <p>
+		 * Disabling plan caching is primarily useful for highly dynamic schemas; the non-planned path allocates per-row maps and does more reflection.
 		 *
 		 * @param planCachingEnabled whether an internal "mapping plan" cache should be used to speed up {@link ResultSet} mapping
 		 * @return this {@code Builder}, for chaining

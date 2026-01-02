@@ -871,7 +871,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		RecordComponent[] recordComponents = determineRecordComponents(resultSetRowType);
 		Map<String, Set<String>> columnLabelsByRecordComponentName = determineColumnLabelsByRecordComponentName(resultSetRowType);
-		Map<String, Object> columnLabelsToValues = extractColumnLabelsToValues(statementContext, resultSet, resultSetMetaData);
+		ColumnLabelMaps columnLabelMaps = extractColumnLabelsToValues(statementContext, resultSet, resultSetMetaData);
+		Map<String, Object> columnLabelsToValues = columnLabelMaps.getValuesByLabel();
+		Map<String, Integer> columnLabelsToIndexes = columnLabelMaps.getIndexesByLabel();
 
 		Map<String, TargetType> propertyTargetTypes = determinePropertyTargetTypes(resultSetRowType);
 
@@ -901,10 +903,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 				Object rawValue = columnLabelsToValues.get(potentialPropertyName);
 
+				Integer columnIndex = requireNonNull(columnLabelsToIndexes.get(potentialPropertyName));
 				Object value = rawValue == null
 						? null
 						: // Try custom mappers first; if none apply, fall back to built-ins
-						tryCustomColumnMappers(statementContext, resultSet, rawValue, targetType, null, potentialPropertyName, instanceProvider)
+						tryCustomColumnMappers(statementContext, resultSet, rawValue, targetType, columnIndex, potentialPropertyName, instanceProvider)
 								.or(() -> convertResultSetValueToPropertyType(statementContext, rawValue, recordComponentType))
 								.orElse(null);
 
@@ -959,7 +962,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		T object = instanceProvider.provide(statementContext, resultSetRowType);
 		PropertyDescriptor[] propertyDescriptors = determinePropertyDescriptors(resultSetRowType);
-		Map<String, Object> columnLabelsToValues = extractColumnLabelsToValues(statementContext, resultSet, resultSetMetaData);
+		ColumnLabelMaps columnLabelMaps = extractColumnLabelsToValues(statementContext, resultSet, resultSetMetaData);
+		Map<String, Object> columnLabelsToValues = columnLabelMaps.getValuesByLabel();
+		Map<String, Integer> columnLabelsToIndexes = columnLabelMaps.getIndexesByLabel();
 		Map<String, Set<String>> normalizedColumnLabelsByPropertyName = determineNormalizedColumnLabelsByPropertyName(resultSetRowType);
 
 		// Compute once per class (generic-aware)
@@ -987,10 +992,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 				Object rawValue = columnLabelsToValues.get(propertyName);
 
+				Integer columnIndex = requireNonNull(columnLabelsToIndexes.get(propertyName));
 				Object value = (rawValue == null)
 						? null
 						: // Try custom mappers first; if none apply, fall back to built-ins
-						tryCustomColumnMappers(statementContext, resultSet, rawValue, targetType, null, propertyName, instanceProvider)
+						tryCustomColumnMappers(statementContext, resultSet, rawValue, targetType, columnIndex, propertyName, instanceProvider)
 								.or(() -> convertResultSetValueToPropertyType(statementContext, rawValue, writeMethodParameterType))
 								.orElse(null);
 
@@ -1042,15 +1048,39 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@NonNull
-	protected <T> Map<@NonNull String, @Nullable Object> extractColumnLabelsToValues(@NonNull StatementContext<T> statementContext,
-																																								 @NonNull ResultSet resultSet,
-																																								 @NonNull ResultSetMetaData resultSetMetaData) throws SQLException {
+	private static final class ColumnLabelMaps {
+		@NonNull
+		private final Map<@NonNull String, @Nullable Object> valuesByLabel;
+		@NonNull
+		private final Map<@NonNull String, @NonNull Integer> indexesByLabel;
+
+		private ColumnLabelMaps(@NonNull Map<@NonNull String, @Nullable Object> valuesByLabel,
+														@NonNull Map<@NonNull String, @NonNull Integer> indexesByLabel) {
+			this.valuesByLabel = requireNonNull(valuesByLabel);
+			this.indexesByLabel = requireNonNull(indexesByLabel);
+		}
+
+		@NonNull
+		private Map<@NonNull String, @Nullable Object> getValuesByLabel() {
+			return this.valuesByLabel;
+		}
+
+		@NonNull
+		private Map<@NonNull String, @NonNull Integer> getIndexesByLabel() {
+			return this.indexesByLabel;
+		}
+	}
+
+	protected <T> ColumnLabelMaps extractColumnLabelsToValues(@NonNull StatementContext<T> statementContext,
+																													 @NonNull ResultSet resultSet,
+																													 @NonNull ResultSetMetaData resultSetMetaData) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(resultSetMetaData);
 
 		int columnCount = resultSetMetaData.getColumnCount();
 		Map<String, Object> columnLabelsToValues = new HashMap<>(columnCount);
+		Map<String, Integer> columnLabelsToIndexes = new HashMap<>(columnCount);
 		Map<String, String> normalizedLabelsToRawLabels = new HashMap<>(columnCount);
 
 		for (int i = 1; i <= columnCount; i++) {
@@ -1067,9 +1097,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			Object resultSetValue = extractColumnValue(resultSetMetaData, statementContext, resultSet, i).orElse(null);
 
 			columnLabelsToValues.put(label, resultSetValue);
+			columnLabelsToIndexes.put(label, i);
 		}
 
-		return columnLabelsToValues;
+		return new ColumnLabelMaps(columnLabelsToValues, columnLabelsToIndexes);
 	}
 
 	@NonNull
@@ -1595,6 +1626,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			if (raw == null) return null;
 
 			if (raw instanceof Timestamp ts) {
+				if (withTz)
+					return toMillis(ts.toInstant());
 				// DO NOT use ts.toInstant() for WITHOUT TZ; interpret using DB zone
 				LocalDateTime ldt = ts.toLocalDateTime();
 				return toMillis(ldt.atZone(ctx.getTimeZone()).toInstant());
@@ -1616,6 +1649,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			// Last resort: try classic getter
 			Timestamp ts = rs.getTimestamp(col);
 			if (ts != null) {
+				if (withTz)
+					return toMillis(ts.toInstant());
 				LocalDateTime ldt = ts.toLocalDateTime();
 				return toMillis(ldt.atZone(ctx.getTimeZone()).toInstant());
 			}

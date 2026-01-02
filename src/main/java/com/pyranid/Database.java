@@ -49,7 +49,7 @@ import java.util.Queue;
 import java.util.Set;
 import java.util.Spliterator;
 import java.util.Spliterators;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -93,7 +93,7 @@ public final class Database {
 	@NonNull
 	private final StatementLogger statementLogger;
 	@NonNull
-	private final AtomicInteger defaultIdGenerator;
+	private final AtomicLong defaultIdGenerator;
 	@NonNull
 	private final Logger logger;
 
@@ -112,7 +112,7 @@ public final class Database {
 		this.preparedStatementBinder = builder.preparedStatementBinder == null ? PreparedStatementBinder.withDefaultConfiguration() : builder.preparedStatementBinder;
 		this.resultSetMapper = builder.resultSetMapper == null ? ResultSetMapper.withDefaultConfiguration() : builder.resultSetMapper;
 		this.statementLogger = builder.statementLogger == null ? (statementLog) -> {} : builder.statementLogger;
-		this.defaultIdGenerator = new AtomicInteger();
+		this.defaultIdGenerator = new AtomicLong();
 		this.logger = Logger.getLogger(getClass().getName());
 		this.executeLargeBatchSupported = DatabaseOperationSupportStatus.UNKNOWN;
 		this.executeLargeUpdateSupported = DatabaseOperationSupportStatus.UNKNOWN;
@@ -1562,7 +1562,7 @@ public final class Database {
 						} else {
 							preparedStatement.setNull(i + 1, Types.NULL);
 						}
-					} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
+					} catch (SQLException | AbstractMethodError e) {
 						preparedStatement.setNull(i + 1, Types.NULL);
 					}
 				}
