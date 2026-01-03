@@ -70,6 +70,7 @@ import java.util.UUID;
 import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.regex.Pattern;
 
 import static java.lang.String.format;
 import static java.util.Arrays.asList;
@@ -91,6 +92,10 @@ import static java.util.stream.Collectors.toSet;
 class DefaultResultSetMapper implements ResultSetMapper {
 	@NonNull
 	private static final Map<Class<?>, Class<?>> WRAPPER_CLASSES_BY_PRIMITIVE_CLASS;
+	@NonNull
+	private static final Pattern CAMEL_CASE_PATTERN = Pattern.compile("([a-z])([A-Z]+)");
+	@NonNull
+	private static final Pattern LETTER_FOLLOWED_BY_NUMBER_PATTERN = Pattern.compile("(\\D)(\\d)");
 
 	@NonNull
 	private final Locale normalizationLocale;
@@ -765,21 +770,21 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			}
 		}
 
-		if (resultClass.isAssignableFrom(Byte.class) || resultClass.isAssignableFrom(byte.class)) {
+		if (resultClass == Byte.class || resultClass == byte.class) {
 			value = getNullableByte(resultSet, 1);
-		} else if (resultClass.isAssignableFrom(Short.class) || resultClass.isAssignableFrom(short.class)) {
+		} else if (resultClass == Short.class || resultClass == short.class) {
 			value = getNullableShort(resultSet, 1);
-		} else if (resultClass.isAssignableFrom(Integer.class) || resultClass.isAssignableFrom(int.class)) {
+		} else if (resultClass == Integer.class || resultClass == int.class) {
 			value = getNullableInt(resultSet, 1);
-		} else if (resultClass.isAssignableFrom(Long.class) || resultClass.isAssignableFrom(long.class)) {
+		} else if (resultClass == Long.class || resultClass == long.class) {
 			value = getNullableLong(resultSet, 1);
-		} else if (resultClass.isAssignableFrom(Float.class) || resultClass.isAssignableFrom(float.class)) {
+		} else if (resultClass == Float.class || resultClass == float.class) {
 			value = getNullableFloat(resultSet, 1);
-		} else if (resultClass.isAssignableFrom(Double.class) || resultClass.isAssignableFrom(double.class)) {
+		} else if (resultClass == Double.class || resultClass == double.class) {
 			value = getNullableDouble(resultSet, 1);
-		} else if (resultClass.isAssignableFrom(Boolean.class) || resultClass.isAssignableFrom(boolean.class)) {
+		} else if (resultClass == Boolean.class || resultClass == boolean.class) {
 			value = getNullableBoolean(resultSet, 1);
-		} else if (resultClass.isAssignableFrom(Character.class) || resultClass.isAssignableFrom(char.class)) {
+		} else if (resultClass == Character.class || resultClass == char.class) {
 			String string = resultSet.getString(1);
 
 			if (string != null) {
@@ -788,9 +793,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				else
 					throw new DatabaseException(format("Cannot map String value '%s' to %s", string, resultClass.getSimpleName()));
 			}
-		} else if (resultClass.isAssignableFrom(String.class)) {
+		} else if (resultClass == String.class) {
 			value = resultSet.getString(1);
-		} else if (resultClass.isAssignableFrom(byte[].class)) {
+		} else if (resultClass == byte[].class) {
 			value = resultSet.getBytes(1);
 		} else if (resultClass.isEnum()) {
 			Object raw = resultSet.getObject(1);
@@ -798,7 +803,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				value = null; // -> Optional.empty()
 			else
 				value = extractEnumValue(resultClass, raw);
-		} else if (resultClass.isAssignableFrom(UUID.class)) {
+		} else if (resultClass == UUID.class) {
 			String string = resultSet.getString(1);
 			if (string != null) {
 				try {
@@ -807,27 +812,37 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					throw new DatabaseException(format("Unable to convert value '%s' to UUID", string), e);
 				}
 			}
-		} else if (resultClass.isAssignableFrom(BigDecimal.class)) {
+		} else if (resultClass == BigDecimal.class) {
 			value = resultSet.getBigDecimal(1);
-		} else if (resultClass.isAssignableFrom(BigInteger.class)) {
+		} else if (resultClass == BigInteger.class) {
 			BigDecimal bd = resultSet.getBigDecimal(1);
 			if (bd != null) value = bd.toBigInteger();
-		} else if (resultClass.isAssignableFrom(Date.class)) {
+		} else if (resultClass == Number.class) {
+			Object raw = resultSet.getObject(1);
+			if (raw == null) {
+				value = null;
+			} else if (raw instanceof Number) {
+				value = raw;
+			} else {
+				throw new DatabaseException(format("Cannot map value '%s' (%s) to %s",
+						raw, raw.getClass().getName(), resultClass.getSimpleName()));
+			}
+		} else if (resultClass == Date.class) {
 			Instant inst = TemporalReaders.asInstant(resultSet, 1, statementContext, resultSetMetaData);
 			value = (inst == null) ? null : Date.from(inst);
-		} else if (resultClass.isAssignableFrom(Instant.class)) {
+		} else if (resultClass == Instant.class) {
 			value = TemporalReaders.asInstant(resultSet, 1, statementContext, resultSetMetaData);
-		} else if (resultClass.isAssignableFrom(LocalDate.class)) {
+		} else if (resultClass == LocalDate.class) {
 			value = TemporalReaders.asLocalDate(resultSet, 1);
-		} else if (resultClass.isAssignableFrom(LocalTime.class)) {
+		} else if (resultClass == LocalTime.class) {
 			value = TemporalReaders.asLocalTime(resultSet, 1);
-		} else if (resultClass.isAssignableFrom(LocalDateTime.class)) {
+		} else if (resultClass == LocalDateTime.class) {
 			value = TemporalReaders.asLocalDateTime(resultSet, 1, statementContext, resultSetMetaData);
-		} else if (resultClass.isAssignableFrom(OffsetTime.class)) {
+		} else if (resultClass == OffsetTime.class) {
 			value = TemporalReaders.asOffsetTime(resultSet, 1, statementContext, resultSetMetaData);
-		} else if (resultClass.isAssignableFrom(OffsetDateTime.class)) {
+		} else if (resultClass == OffsetDateTime.class) {
 			value = TemporalReaders.asOffsetDateTime(resultSet, 1, statementContext, resultSetMetaData);
-		} else if (resultClass.isAssignableFrom(java.sql.Timestamp.class)) {
+		} else if (resultClass == java.sql.Timestamp.class) {
 			boolean withTz = TemporalReaders.isTimestampWithTimeZone(resultSetMetaData, 1, statementContext.getDatabaseType());
 
 			if (withTz) {
@@ -837,10 +852,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				LocalDateTime ldt = TemporalReaders.asLocalDateTime(resultSet, 1, statementContext, resultSetMetaData);
 				value = (ldt == null) ? null : Timestamp.valueOf(ldt);
 			}
-		} else if (resultClass.isAssignableFrom(java.sql.Date.class)) {
+		} else if (resultClass == java.sql.Date.class) {
 			LocalDate ld = TemporalReaders.asLocalDate(resultSet, 1);
 			value = (ld == null) ? null : java.sql.Date.valueOf(ld);
-		} else if (resultClass.isAssignableFrom(ZoneId.class)) {
+		} else if (resultClass == ZoneId.class) {
 			String zoneId = resultSet.getString(1);
 			if (zoneId != null) {
 				try {
@@ -849,13 +864,13 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					throw new DatabaseException(format("Unable to convert value '%s' to ZoneId", zoneId), e);
 				}
 			}
-		} else if (resultClass.isAssignableFrom(TimeZone.class)) {
+		} else if (resultClass == TimeZone.class) {
 			String tz = resultSet.getString(1);
 			if (tz != null) value = timeZoneFromId(tz);
-		} else if (resultClass.isAssignableFrom(Locale.class)) {
+		} else if (resultClass == Locale.class) {
 			String locale = resultSet.getString(1);
 			if (locale != null) value = localeFromLanguageTag(locale);
-		} else if (resultClass.isAssignableFrom(Currency.class)) {
+		} else if (resultClass == Currency.class) {
 			String currency = resultSet.getString(1);
 			if (currency != null) {
 				try {
@@ -864,6 +879,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					throw new DatabaseException(format("Unable to convert value '%s' to Currency", currency), e);
 				}
 			}
+		} else if (resultClass == Object.class) {
+			value = resultSet.getObject(1);
 		} else {
 			standardType = false;
 		}
@@ -1532,16 +1549,14 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		Set<String> normalizedPropertyNames = new HashSet<>(2);
 
 		// Converts camelCase to camel_case
-		String camelCaseRegex = "([a-z])([A-Z]+)";
 		String replacement = "$1_$2";
 
 		String normalizedPropertyName =
-				propertyName.replaceAll(camelCaseRegex, replacement).toLowerCase(getNormalizationLocale());
+				CAMEL_CASE_PATTERN.matcher(propertyName).replaceAll(replacement).toLowerCase(getNormalizationLocale());
 		normalizedPropertyNames.add(normalizedPropertyName);
 
 		// Converts address1 to address_1
-		String letterFollowedByNumberRegex = "(\\D)(\\d)";
-		String normalizedNumberPropertyName = normalizedPropertyName.replaceAll(letterFollowedByNumberRegex, replacement);
+		String normalizedNumberPropertyName = LETTER_FOLLOWED_BY_NUMBER_PATTERN.matcher(normalizedPropertyName).replaceAll(replacement);
 		normalizedPropertyNames.add(normalizedNumberPropertyName);
 
 		return normalizedPropertyNames;

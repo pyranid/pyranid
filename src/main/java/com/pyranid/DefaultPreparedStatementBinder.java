@@ -314,7 +314,34 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			return true;
 		} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
 			return false;
+		} catch (SQLException e) {
+			if (isUnsupportedSqlFeature(e))
+				return false;
+			throw e;
 		}
+	}
+
+	private static boolean isUnsupportedSqlFeature(@NonNull SQLException e) {
+		requireNonNull(e);
+
+		String sqlState = e.getSQLState();
+		if (sqlState != null && (sqlState.startsWith("0A") || "HYC00".equals(sqlState)))
+			return true;
+
+		SQLException next = e.getNextException();
+		if (next != null && isUnsupportedSqlFeature(next))
+			return true;
+
+		Throwable cause = e.getCause();
+		if (cause instanceof SQLException se && isUnsupportedSqlFeature(se))
+			return true;
+
+		String message = e.getMessage();
+		if (message == null)
+			return false;
+
+		String lower = message.toLowerCase(Locale.ROOT);
+		return lower.contains("not supported") || lower.contains("not implemented") || lower.contains("unsupported");
 	}
 
 	@NonNull
@@ -331,6 +358,10 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			return true;
 		} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
 			return false;
+		} catch (SQLException e) {
+			if (isUnsupportedSqlFeature(e))
+				return false;
+			throw e;
 		}
 	}
 
@@ -444,7 +475,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			BindingResult bindingResult = requireNonNull(customParameterBinder.bind(statementContext, preparedStatement, parameterIndex, parameter));
 
 			if (bindingResult instanceof BindingResult.Handled) {
-				getPreferredBinderByInboundKey().putIfAbsent(key, customParameterBinder);
+				getPreferredBinderByInboundKey().put(key, customParameterBinder);
 				return true;
 			}
 		}
