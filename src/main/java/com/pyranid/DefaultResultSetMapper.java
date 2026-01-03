@@ -109,22 +109,71 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	@NonNull
 	private final ConcurrentMap<TargetType, List<CustomColumnMapper>> customColumnMappersByTargetTypeCache;
 	@NonNull
-	private final Map<SourceTargetKey, CustomColumnMapper> preferredColumnMapperBySourceTargetKey;
+	private final ClassValue<Map<TargetType, CustomColumnMapper>> preferredColumnMapperBySourceClass =
+			new ClassValue<>() {
+				@Override
+				protected Map<TargetType, CustomColumnMapper> computeValue(Class<?> type) {
+					return createCache(DefaultResultSetMapper.this.preferredColumnMapperCacheCapacity);
+				}
+			};
 	@NonNull
-	private final ConcurrentMap<Class<?>, Map<String, TargetType>> propertyTargetTypeCache = new ConcurrentHashMap<>();
+	private final ClassValue<Map<String, TargetType>> propertyTargetTypeCache =
+			new ClassValue<>() {
+				@Override
+				protected Map<String, TargetType> computeValue(Class<?> type) {
+					return computePropertyTargetTypes(type);
+				}
+			};
 	@NonNull
-	private final ConcurrentMap<Class<?>, Map<String, Set<String>>> columnLabelAliasesByPropertyNameCache;
+	private final ClassValue<Map<String, Set<String>>> columnLabelAliasesByPropertyNameCache =
+			new ClassValue<>() {
+				@Override
+				protected Map<String, Set<String>> computeValue(Class<?> type) {
+					return computeColumnLabelAliasesByPropertyName(type);
+				}
+			};
 	@NonNull
-	private final ConcurrentMap<Class<?>, PropertyDescriptor[]> propertyDescriptorsCache = new ConcurrentHashMap<>();
+	private final ClassValue<PropertyDescriptor[]> propertyDescriptorsCache =
+			new ClassValue<>() {
+				@Override
+				protected PropertyDescriptor[] computeValue(Class<?> type) {
+					return computePropertyDescriptors(type);
+				}
+			};
 	@NonNull
-	private final ConcurrentMap<Class<?>, Map<String, Set<String>>> normalizedColumnLabelsByPropertyNameCache = new ConcurrentHashMap<>();
+	private final ClassValue<Map<String, Set<String>>> normalizedColumnLabelsByPropertyNameCache =
+			new ClassValue<>() {
+				@Override
+				protected Map<String, Set<String>> computeValue(Class<?> type) {
+					return computeNormalizedColumnLabelsByPropertyName(type);
+				}
+			};
 	@NonNull
-	private final ConcurrentMap<Class<?>, Map<String, Set<String>>> columnLabelsByRecordComponentNameCache = new ConcurrentHashMap<>();
+	private final ClassValue<Map<String, Set<String>>> columnLabelsByRecordComponentNameCache =
+			new ClassValue<>() {
+				@Override
+				protected Map<String, Set<String>> computeValue(Class<?> type) {
+					return computeColumnLabelsByRecordComponentName(type);
+				}
+			};
 	@NonNull
-	private final ConcurrentMap<Class<?>, RecordComponent[]> recordComponentsCache = new ConcurrentHashMap<>();
+	private final ClassValue<RecordComponent[]> recordComponentsCache =
+			new ClassValue<>() {
+				@Override
+				protected RecordComponent[] computeValue(Class<?> type) {
+					RecordComponent[] components = type.getRecordComponents();
+					return components == null ? new RecordComponent[0] : components;
+				}
+			};
 	// Only used if row-planning is enabled
 	@NonNull
-	private final Map<PlanKey, RowPlan<?>> rowPlanningCache;
+	private final ClassValue<Map<String, RowPlan<?>>> rowPlanningCacheByResultClass =
+			new ClassValue<>() {
+				@Override
+				protected Map<String, RowPlan<?>> computeValue(Class<?> type) {
+					return createCache(DefaultResultSetMapper.this.planCacheCapacity);
+				}
+			};
 	@NonNull
 	private final Map<ResultSetMetaData, String> schemaSignatureByResultSetMetaData;
 
@@ -139,35 +188,6 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				double.class, Double.class,
 				char.class, Character.class
 		);
-	}
-
-	// Internal cache key for column mapper applicability cache
-	@ThreadSafe
-	protected static final class SourceTargetKey {
-		private final Class<?> sourceClass;
-		private final TargetType targetType;
-
-		public SourceTargetKey(@NonNull Class<?> sourceClass,
-													 @NonNull TargetType targetType) {
-			requireNonNull(sourceClass);
-			requireNonNull(targetType);
-
-			this.sourceClass = sourceClass;
-			this.targetType = targetType;
-		}
-
-		@Override
-		public boolean equals(Object o) {
-			if (this == o) return true;
-			if (o == null || getClass() != o.getClass()) return false;
-			SourceTargetKey that = (SourceTargetKey) o;
-			return sourceClass.equals(that.sourceClass) && targetType.equals(that.targetType);
-		}
-
-		@Override
-		public int hashCode() {
-			return 31 * sourceClass.hashCode() + targetType.hashCode();
-		}
 	}
 
 	@NonNull
@@ -286,9 +306,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			return CustomMappingOutcome.notApplied();
 
 		Class<?> sourceClass = resultSetValue.getClass();
-		SourceTargetKey key = new SourceTargetKey(sourceClass, targetType);
-
-		CustomColumnMapper preferred = getPreferredColumnMapperBySourceTargetKey().get(key);
+		Map<TargetType, CustomColumnMapper> preferredByTargetType = getPreferredColumnMapperCacheForSourceClass(sourceClass);
+		CustomColumnMapper preferred = preferredByTargetType.get(targetType);
 
 		// 1) Try the preferred mapper first, if any
 		if (preferred != null) {
@@ -310,7 +329,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 			if (mappingApplied(mappingResult)) {
 				// Learn the winner for (sourceClass, targetType) even if it produced null
-				getPreferredColumnMapperBySourceTargetKey().put(key, mapper);
+				preferredByTargetType.put(targetType, mapper);
 				return CustomMappingOutcome.applied(mappedValue(mappingResult).orElse(null));
 			}
 		}
@@ -327,106 +346,123 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	protected Map<@NonNull String, @NonNull TargetType> determinePropertyTargetTypes(@NonNull Class<?> resultClass) {
 		requireNonNull(resultClass);
 
-		return getPropertyTargetTypeCache().computeIfAbsent(resultClass, rc -> {
-			Map<String, TargetType> types = new HashMap<>();
+		return this.propertyTargetTypeCache.get(resultClass);
+	}
 
-			// JavaBean setters (preserve generics like List<UUID>)
-			try {
-				BeanInfo beanInfo = Introspector.getBeanInfo(rc);
-				for (PropertyDescriptor propertyDescriptor : beanInfo.getPropertyDescriptors()) {
-					Method writeMethod = propertyDescriptor.getWriteMethod();
+	@NonNull
+	private Map<String, TargetType> computePropertyTargetTypes(@NonNull Class<?> resultClass) {
+		requireNonNull(resultClass);
 
-					if (writeMethod == null)
-						continue;
+		Map<String, TargetType> types = new HashMap<>();
 
-					Type genericParameterType = writeMethod.getGenericParameterTypes()[0];
-					types.put(propertyDescriptor.getName(), TargetType.of(genericParameterType));
-				}
-			} catch (IntrospectionException e) {
-				throw new RuntimeException(format("Unable to introspect properties for %s", rc.getName()), e);
+		// JavaBean setters (preserve generics like List<UUID>)
+		try {
+			BeanInfo beanInfo = Introspector.getBeanInfo(resultClass);
+			for (PropertyDescriptor propertyDescriptor : beanInfo.getPropertyDescriptors()) {
+				Method writeMethod = propertyDescriptor.getWriteMethod();
+
+				if (writeMethod == null)
+					continue;
+
+				Type genericParameterType = writeMethod.getGenericParameterTypes()[0];
+				types.put(propertyDescriptor.getName(), TargetType.of(genericParameterType));
 			}
+		} catch (IntrospectionException e) {
+			throw new RuntimeException(format("Unable to introspect properties for %s", resultClass.getName()), e);
+		}
 
-			// Java records (preserve generics)
-			if (rc.isRecord())
-				for (RecordComponent recordComponent : rc.getRecordComponents())
-					types.put(recordComponent.getName(), TargetType.of(recordComponent.getGenericType()));
+		// Java records (preserve generics)
+		if (resultClass.isRecord())
+			for (RecordComponent recordComponent : resultClass.getRecordComponents())
+				types.put(recordComponent.getName(), TargetType.of(recordComponent.getGenericType()));
 
-			return Collections.unmodifiableMap(types);
-		});
+		return Collections.unmodifiableMap(types);
 	}
 
 	@NonNull
 	protected PropertyDescriptor[] determinePropertyDescriptors(@NonNull Class<?> resultClass) {
 		requireNonNull(resultClass);
 
-		return getPropertyDescriptorsCache().computeIfAbsent(resultClass, rc -> {
-			try {
-				BeanInfo beanInfo = Introspector.getBeanInfo(rc);
-				PropertyDescriptor[] descriptors = beanInfo.getPropertyDescriptors();
-				return descriptors == null ? new PropertyDescriptor[0] : descriptors;
-			} catch (IntrospectionException e) {
-				throw new RuntimeException(format("Unable to introspect properties for %s", rc.getName()), e);
-			}
-		});
+		return this.propertyDescriptorsCache.get(resultClass);
+	}
+
+	@NonNull
+	private PropertyDescriptor[] computePropertyDescriptors(@NonNull Class<?> resultClass) {
+		requireNonNull(resultClass);
+
+		try {
+			BeanInfo beanInfo = Introspector.getBeanInfo(resultClass);
+			PropertyDescriptor[] descriptors = beanInfo.getPropertyDescriptors();
+			return descriptors == null ? new PropertyDescriptor[0] : descriptors;
+		} catch (IntrospectionException e) {
+			throw new RuntimeException(format("Unable to introspect properties for %s", resultClass.getName()), e);
+		}
 	}
 
 	@NonNull
 	protected RecordComponent[] determineRecordComponents(@NonNull Class<?> resultClass) {
 		requireNonNull(resultClass);
 
-		return getRecordComponentsCache().computeIfAbsent(resultClass, rc -> {
-			RecordComponent[] components = rc.getRecordComponents();
-			return components == null ? new RecordComponent[0] : components;
-		});
+		return this.recordComponentsCache.get(resultClass);
 	}
 
 	@NonNull
 	protected Map<@NonNull String, @NonNull Set<@NonNull String>> determineNormalizedColumnLabelsByPropertyName(@NonNull Class<?> resultClass) {
 		requireNonNull(resultClass);
 
-		return getNormalizedColumnLabelsByPropertyNameCache().computeIfAbsent(resultClass, rc -> {
-			Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(rc);
-			Map<String, Set<String>> normalizedLabelsByPropertyName = new HashMap<>();
+		return this.normalizedColumnLabelsByPropertyNameCache.get(resultClass);
+	}
 
-			for (PropertyDescriptor propertyDescriptor : determinePropertyDescriptors(rc)) {
-				if (propertyDescriptor.getWriteMethod() == null)
-					continue;
+	@NonNull
+	private Map<String, Set<String>> computeNormalizedColumnLabelsByPropertyName(@NonNull Class<?> resultClass) {
+		requireNonNull(resultClass);
 
-				String propertyName = propertyDescriptor.getName();
-				Set<String> baseNames = columnLabelAliasesByPropertyName.get(propertyName);
-				if (baseNames == null || baseNames.isEmpty())
-					baseNames = Set.of(propertyName);
+		Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(resultClass);
+		Map<String, Set<String>> normalizedLabelsByPropertyName = new HashMap<>();
 
-				Set<String> normalized = new HashSet<>();
-				for (String baseName : baseNames)
-					normalized.addAll(databaseColumnNamesForPropertyName(baseName));
+		for (PropertyDescriptor propertyDescriptor : determinePropertyDescriptors(resultClass)) {
+			if (propertyDescriptor.getWriteMethod() == null)
+				continue;
 
-				normalizedLabelsByPropertyName.put(propertyName, Collections.unmodifiableSet(normalized));
-			}
+			String propertyName = propertyDescriptor.getName();
+			Set<String> baseNames = columnLabelAliasesByPropertyName.get(propertyName);
+			if (baseNames == null || baseNames.isEmpty())
+				baseNames = Set.of(propertyName);
 
-			return Collections.unmodifiableMap(normalizedLabelsByPropertyName);
-		});
+			Set<String> normalized = new HashSet<>();
+			for (String baseName : baseNames)
+				normalized.addAll(databaseColumnNamesForPropertyName(baseName));
+
+			normalizedLabelsByPropertyName.put(propertyName, Collections.unmodifiableSet(normalized));
+		}
+
+		return Collections.unmodifiableMap(normalizedLabelsByPropertyName);
 	}
 
 	@NonNull
 	protected Map<@NonNull String, @NonNull Set<@NonNull String>> determineColumnLabelsByRecordComponentName(@NonNull Class<?> resultClass) {
 		requireNonNull(resultClass);
 
-		return getColumnLabelsByRecordComponentNameCache().computeIfAbsent(resultClass, rc -> {
-			Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(rc);
-			Map<String, Set<String>> labelsByComponentName = new HashMap<>();
+		return this.columnLabelsByRecordComponentNameCache.get(resultClass);
+	}
 
-			for (RecordComponent recordComponent : determineRecordComponents(rc)) {
-				String propertyName = recordComponent.getName();
-				Set<String> labels = columnLabelAliasesByPropertyName.get(propertyName);
-				if (labels == null || labels.isEmpty())
-					labels = databaseColumnNamesForPropertyName(propertyName);
+	@NonNull
+	private Map<String, Set<String>> computeColumnLabelsByRecordComponentName(@NonNull Class<?> resultClass) {
+		requireNonNull(resultClass);
 
-				labelsByComponentName.put(propertyName, Collections.unmodifiableSet(labels));
-			}
+		Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(resultClass);
+		Map<String, Set<String>> labelsByComponentName = new HashMap<>();
 
-			return Collections.unmodifiableMap(labelsByComponentName);
-		});
+		for (RecordComponent recordComponent : determineRecordComponents(resultClass)) {
+			String propertyName = recordComponent.getName();
+			Set<String> labels = columnLabelAliasesByPropertyName.get(propertyName);
+			if (labels == null || labels.isEmpty())
+				labels = databaseColumnNamesForPropertyName(propertyName);
+
+			labelsByComponentName.put(propertyName, Collections.unmodifiableSet(labels));
+		}
+
+		return Collections.unmodifiableMap(labelsByComponentName);
 	}
 
 	DefaultResultSetMapper(@NonNull Builder builder) {
@@ -438,10 +474,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		this.customColumnMappersByTargetTypeCache = new ConcurrentHashMap<>();
 		this.preferredColumnMapperCacheCapacity = builder.preferredColumnMapperCacheCapacity;
-		this.preferredColumnMapperBySourceTargetKey = createCache(this.preferredColumnMapperCacheCapacity);
-		this.columnLabelAliasesByPropertyNameCache = new ConcurrentHashMap<>();
 		this.planCacheCapacity = builder.planCacheCapacity;
-		this.rowPlanningCache = createCache(this.planCacheCapacity);
 		this.schemaSignatureByResultSetMetaData = Collections.synchronizedMap(new WeakHashMap<>());
 	}
 
@@ -1096,25 +1129,28 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	protected Map<@NonNull String, @NonNull Set<@NonNull String>> determineColumnLabelAliasesByPropertyName(@NonNull Class<?> resultClass) {
 		requireNonNull(resultClass);
 
-		return getColumnLabelAliasesByPropertyNameCache().computeIfAbsent(
-				resultClass,
-				(key) -> {
-					Map<String, Set<String>> cachedColumnLabelAliasesByPropertyName = new HashMap<>();
+		return this.columnLabelAliasesByPropertyNameCache.get(resultClass);
+	}
 
-					for (Class<?> current = resultClass; current != null && current != Object.class; current = current.getSuperclass()) {
-						for (Field field : current.getDeclaredFields()) {
-							DatabaseColumn databaseColumn = field.getAnnotation(DatabaseColumn.class);
+	@NonNull
+	private Map<String, Set<String>> computeColumnLabelAliasesByPropertyName(@NonNull Class<?> resultClass) {
+		requireNonNull(resultClass);
 
-							if (databaseColumn != null)
-								cachedColumnLabelAliasesByPropertyName.putIfAbsent(
-										field.getName(),
-										unmodifiableSet(asList(databaseColumn.value()).stream()
-												.map(columnLabel -> normalizeColumnLabel(columnLabel)).collect(toSet())));
-						}
-					}
+		Map<String, Set<String>> cachedColumnLabelAliasesByPropertyName = new HashMap<>();
 
-					return unmodifiableMap(cachedColumnLabelAliasesByPropertyName);
-				});
+		for (Class<?> current = resultClass; current != null && current != Object.class; current = current.getSuperclass()) {
+			for (Field field : current.getDeclaredFields()) {
+				DatabaseColumn databaseColumn = field.getAnnotation(DatabaseColumn.class);
+
+				if (databaseColumn != null)
+					cachedColumnLabelAliasesByPropertyName.putIfAbsent(
+							field.getName(),
+							unmodifiableSet(asList(databaseColumn.value()).stream()
+									.map(columnLabel -> normalizeColumnLabel(columnLabel)).collect(toSet())));
+			}
+		}
+
+		return unmodifiableMap(cachedColumnLabelAliasesByPropertyName);
 	}
 
 	@NonNull
@@ -1887,30 +1923,6 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		return resultSet.wasNull() ? null : v;
 	}
 
-	@ThreadSafe
-	protected static final class PlanKey {
-		final Class<?> resultClass;
-		final String schemaSignature;
-
-		PlanKey(@NonNull Class<?> resultClass, @NonNull String schemaSignature) {
-			this.resultClass = requireNonNull(resultClass);
-			this.schemaSignature = requireNonNull(schemaSignature);
-		}
-
-		@Override
-		public boolean equals(@Nullable Object o) {
-			if (this == o) return true;
-			if (o == null || getClass() != o.getClass()) return false;
-			PlanKey that = (PlanKey) o;
-			return resultClass.equals(that.resultClass) && schemaSignature.equals(that.schemaSignature);
-		}
-
-		@Override
-		public int hashCode() {
-			return 31 * resultClass.hashCode() + schemaSignature.hashCode();
-		}
-	}
-
 	/**
 	 * Reads a single column value, using the right temporal/native getter decided at plan time.
 	 */
@@ -1999,8 +2011,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		int cols = resultSetMetaData.getColumnCount();
 
-		PlanKey key = new PlanKey(resultClass, schemaSignature);
-		RowPlan<?> cached = getRowPlanningCache().get(key);
+		Map<String, RowPlan<?>> planCache = getRowPlanningCacheForResultClass(resultClass);
+		RowPlan<?> cached = planCache.get(schemaSignature);
 		if (cached != null) return (RowPlan<T>) cached;
 
 		// Precompute property metadata for this class
@@ -2162,7 +2174,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		RowPlan<T> plan = new RowPlan<>(isRecord, cols, hasFanOut, bindings);
-		getRowPlanningCache().putIfAbsent(key, plan);
+		planCache.putIfAbsent(schemaSignature, plan);
 		return plan;
 	}
 
@@ -2182,43 +2194,15 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@NonNull
-	protected Map<@NonNull SourceTargetKey, @NonNull CustomColumnMapper> getPreferredColumnMapperBySourceTargetKey() {
-		return this.preferredColumnMapperBySourceTargetKey;
+	protected Map<@NonNull TargetType, @NonNull CustomColumnMapper> getPreferredColumnMapperCacheForSourceClass(@NonNull Class<?> sourceClass) {
+		requireNonNull(sourceClass);
+		return this.preferredColumnMapperBySourceClass.get(sourceClass);
 	}
 
 	@NonNull
-	protected ConcurrentMap<@NonNull Class<?>, @NonNull Map<@NonNull String, @NonNull TargetType>> getPropertyTargetTypeCache() {
-		return this.propertyTargetTypeCache;
-	}
-
-	@NonNull
-	protected ConcurrentMap<@NonNull Class<?>, @NonNull Map<@NonNull String, @NonNull Set<@NonNull String>>> getColumnLabelAliasesByPropertyNameCache() {
-		return this.columnLabelAliasesByPropertyNameCache;
-	}
-
-	@NonNull
-	protected ConcurrentMap<Class<?>, PropertyDescriptor[]> getPropertyDescriptorsCache() {
-		return this.propertyDescriptorsCache;
-	}
-
-	@NonNull
-	protected ConcurrentMap<@NonNull Class<?>, @NonNull Map<@NonNull String, @NonNull Set<@NonNull String>>> getNormalizedColumnLabelsByPropertyNameCache() {
-		return this.normalizedColumnLabelsByPropertyNameCache;
-	}
-
-	@NonNull
-	protected ConcurrentMap<@NonNull Class<?>, @NonNull Map<@NonNull String, @NonNull Set<@NonNull String>>> getColumnLabelsByRecordComponentNameCache() {
-		return this.columnLabelsByRecordComponentNameCache;
-	}
-
-	@NonNull
-	protected ConcurrentMap<Class<?>, RecordComponent[]> getRecordComponentsCache() {
-		return this.recordComponentsCache;
-	}
-
-	@NonNull
-	protected Map<@NonNull PlanKey, @NonNull RowPlan<?>> getRowPlanningCache() {
-		return this.rowPlanningCache;
+	protected Map<@NonNull String, @NonNull RowPlan<?>> getRowPlanningCacheForResultClass(@NonNull Class<?> resultClass) {
+		requireNonNull(resultClass);
+		return this.rowPlanningCacheByResultClass.get(resultClass);
 	}
 
 	@NonNull

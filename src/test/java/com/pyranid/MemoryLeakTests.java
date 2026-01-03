@@ -24,6 +24,8 @@ import org.junit.jupiter.api.Test;
 
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
+import java.math.BigDecimal;
+import java.sql.Date;
 import java.sql.ResultSet;
 import java.util.List;
 
@@ -77,7 +79,7 @@ public class MemoryLeakTests {
 		}
 
 		DefaultResultSetMapper defaultMapper = (DefaultResultSetMapper) db.getResultSetMapper();
-		int size = defaultMapper.getRowPlanningCache().size();
+		int size = defaultMapper.getRowPlanningCacheForResultClass(IdRow.class).size();
 
 		Assertions.assertTrue(size <= PLAN_CACHE_CAPACITY,
 				"Row planning cache should remain bounded after varied schemas");
@@ -140,9 +142,12 @@ public class MemoryLeakTests {
 		}
 
 		DefaultResultSetMapper defaultMapper = (DefaultResultSetMapper) db.getResultSetMapper();
-		int size = defaultMapper.getPreferredColumnMapperBySourceTargetKey().size();
+		List<Class<?>> sourceClasses = List.of(String.class, Integer.class, Long.class, BigDecimal.class, Date.class);
 
-		Assertions.assertTrue(size <= PREFERRED_MAPPER_CACHE_CAPACITY,
-				"Preferred custom mapper cache should remain bounded across varied source types");
+		for (Class<?> sourceClass : sourceClasses) {
+			int size = defaultMapper.getPreferredColumnMapperCacheForSourceClass(sourceClass).size();
+			Assertions.assertTrue(size <= PREFERRED_MAPPER_CACHE_CAPACITY,
+					"Preferred custom mapper cache should remain bounded across varied source types");
+		}
 	}
 }

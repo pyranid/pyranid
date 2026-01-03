@@ -1036,9 +1036,9 @@ public class DatabaseTests {
 	public void testDefaultRowPlanAndPreferredMapperCachesUseLru() {
 		DefaultResultSetMapper resultSetMapper = (DefaultResultSetMapper) ResultSetMapper.withDefaultConfiguration();
 
-		Assertions.assertTrue(resultSetMapper.getRowPlanningCache() instanceof ConcurrentLruMap,
+		Assertions.assertTrue(resultSetMapper.getRowPlanningCacheForResultClass(EmployeeClass.class) instanceof ConcurrentLruMap,
 				"Row-plan cache should use LRU by default");
-		Assertions.assertTrue(resultSetMapper.getPreferredColumnMapperBySourceTargetKey() instanceof ConcurrentLruMap,
+		Assertions.assertTrue(resultSetMapper.getPreferredColumnMapperCacheForSourceClass(String.class) instanceof ConcurrentLruMap,
 				"Preferred mapper cache should use LRU by default");
 	}
 
@@ -1096,7 +1096,7 @@ public class DatabaseTests {
 		db.query("SELECT currency FROM cache_types").fetchObject(CurrencyHolder.class);
 		db.query("SELECT zone_id FROM cache_types").fetchObject(ZoneIdHolder.class);
 
-		Map<?, ?> cache = resultSetMapper.getPreferredColumnMapperBySourceTargetKey();
+		Map<?, ?> cache = resultSetMapper.getPreferredColumnMapperCacheForSourceClass(String.class);
 		Assertions.assertTrue(cache instanceof ConcurrentLruMap, "Preferred mapper cache should use LRU when capacity is set");
 		ConcurrentLruMap<?, ?> lru = (ConcurrentLruMap<?, ?>) cache;
 		lru.drain();
@@ -1126,7 +1126,7 @@ public class DatabaseTests {
 		db.query("SELECT name, email_address FROM employee").fetchList(EmployeeClass.class);
 		db.query("SELECT name, locale FROM employee").fetchList(EmployeeClass.class);
 
-		Map<?, ?> cache = resultSetMapper.getRowPlanningCache();
+		Map<?, ?> cache = resultSetMapper.getRowPlanningCacheForResultClass(EmployeeClass.class);
 		Assertions.assertTrue(cache instanceof ConcurrentLruMap, "Row-plan cache should use LRU when capacity is set");
 		ConcurrentLruMap<?, ?> lru = (ConcurrentLruMap<?, ?>) cache;
 		lru.drain();

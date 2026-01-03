@@ -83,12 +83,12 @@ public interface ResultSetMapper {
 											@NonNull InstanceProvider instanceProvider) throws SQLException;
 
 	/**
-	 * Default maximum number of cached row-mapping plans.
+	 * Default maximum number of cached row-mapping plans per result class.
 	 */
 	int DEFAULT_PLAN_CACHE_CAPACITY = 1024;
 
 	/**
-	 * Default maximum number of cached preferred custom column mappers.
+	 * Default maximum number of cached preferred custom column mappers per source class.
 	 */
 	int DEFAULT_PREFERRED_COLUMN_MAPPER_CACHE_CAPACITY = 256;
 
@@ -226,11 +226,12 @@ public interface ResultSetMapper {
 		}
 
 		/**
-		 * Specifies the maximum number of row-mapping plans to cache when plan caching is enabled.
+		 * Specifies the maximum number of row-mapping plans to cache per result class when plan caching is enabled.
 		 * <p>
 		 * Use {@code 0} for an unbounded cache.
 		 *
-		 * @param planCacheCapacity maximum number of cached plans, or {@code 0} for unbounded. Defaults to {@link #DEFAULT_PLAN_CACHE_CAPACITY}.
+		 * @param planCacheCapacity maximum number of cached plans per result class, or {@code 0} for unbounded.
+		 *                          Defaults to {@link #DEFAULT_PLAN_CACHE_CAPACITY}.
 		 * @return this {@code Builder}, for chaining
 		 */
 		@NonNull
@@ -243,11 +244,12 @@ public interface ResultSetMapper {
 		}
 
 		/**
-		 * Specifies the maximum number of cached preferred custom column mappers.
+		 * Specifies the maximum number of cached preferred custom column mappers per source class.
 		 * <p>
 		 * Use {@code 0} for an unbounded cache.
 		 *
-		 * @param preferredColumnMapperCacheCapacity maximum number of cached preferred custom column mappers, or {@code 0} for unbounded.
+		 * @param preferredColumnMapperCacheCapacity maximum number of cached preferred custom column mappers per source class,
+		 *                                           or {@code 0} for unbounded.
 		 *                                           Defaults to {@link #DEFAULT_PREFERRED_COLUMN_MAPPER_CACHE_CAPACITY}.
 		 * @return this {@code Builder}, for chaining
 		 */
