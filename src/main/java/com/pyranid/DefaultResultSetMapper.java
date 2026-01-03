@@ -1101,14 +1101,16 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				(key) -> {
 					Map<String, Set<String>> cachedColumnLabelAliasesByPropertyName = new HashMap<>();
 
-					for (Field field : resultClass.getDeclaredFields()) {
-						DatabaseColumn databaseColumn = field.getAnnotation(DatabaseColumn.class);
+					for (Class<?> current = resultClass; current != null && current != Object.class; current = current.getSuperclass()) {
+						for (Field field : current.getDeclaredFields()) {
+							DatabaseColumn databaseColumn = field.getAnnotation(DatabaseColumn.class);
 
-						if (databaseColumn != null)
-							cachedColumnLabelAliasesByPropertyName.put(
-									field.getName(),
-									unmodifiableSet(asList(databaseColumn.value()).stream()
-											.map(columnLabel -> normalizeColumnLabel(columnLabel)).collect(toSet())));
+							if (databaseColumn != null)
+								cachedColumnLabelAliasesByPropertyName.putIfAbsent(
+										field.getName(),
+										unmodifiableSet(asList(databaseColumn.value()).stream()
+												.map(columnLabel -> normalizeColumnLabel(columnLabel)).collect(toSet())));
+						}
 					}
 
 					return unmodifiableMap(cachedColumnLabelAliasesByPropertyName);

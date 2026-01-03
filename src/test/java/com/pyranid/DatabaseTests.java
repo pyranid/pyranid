@@ -113,6 +113,30 @@ public class DatabaseTests {
 		}
 	}
 
+	public static class EmployeeBase {
+		private @DatabaseColumn("name") String displayName;
+
+		public String getDisplayName() {
+			return this.displayName;
+		}
+
+		public void setDisplayName(String displayName) {
+			this.displayName = displayName;
+		}
+	}
+
+	public static class EmployeeSubclass extends EmployeeBase {
+		private String emailAddress;
+
+		public String getEmailAddress() {
+			return this.emailAddress;
+		}
+
+		public void setEmailAddress(String emailAddress) {
+			this.emailAddress = emailAddress;
+		}
+	}
+
 	public static class LocaleHolder {
 		private Locale locale;
 
@@ -209,6 +233,21 @@ public class DatabaseTests {
 				.fetchList(EmployeeClass.class);
 		Assertions.assertEquals(2, employeeClasses.size(), "Wrong number of employees");
 		Assertions.assertEquals("Employee One", employeeClasses.get(0).getDisplayName(), "Didn't detect DB column name override");
+	}
+
+	@Test
+	public void testDatabaseColumnInheritance() {
+		Database database = Database.withDataSource(createInMemoryDataSource("testDatabaseColumnInheritance")).build();
+
+		createTestSchema(database);
+
+		database.query("INSERT INTO employee VALUES (1, 'Employee One', 'employee-one@company.com', NULL)").execute();
+
+		EmployeeSubclass employee = database.query("SELECT * FROM employee WHERE employee_id=1")
+				.fetchObject(EmployeeSubclass.class)
+				.orElseThrow(() -> new AssertionError("Expected a result"));
+
+		Assertions.assertEquals("Employee One", employee.getDisplayName(), "Didn't detect DB column name override on superclass field");
 	}
 
 	@Test
