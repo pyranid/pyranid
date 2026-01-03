@@ -474,6 +474,32 @@ public final class Database {
 		return cleanupFailure;
 	}
 
+	private static boolean isUnsupportedSqlFeature(@NonNull SQLException e) {
+		requireNonNull(e);
+
+		String sqlState = e.getSQLState();
+		if (sqlState != null) {
+			if (sqlState.startsWith("0A") || "HYC00".equals(sqlState))
+				return true;
+		}
+
+		Throwable cause = e.getCause();
+		if (cause instanceof SQLFeatureNotSupportedException
+				|| cause instanceof UnsupportedOperationException
+				|| cause instanceof AbstractMethodError)
+			return true;
+
+		String message = e.getMessage();
+		if (message == null)
+			return false;
+
+		String lower = message.toLowerCase(Locale.ROOT);
+		return lower.contains("not supported")
+				|| lower.contains("unsupported")
+				|| lower.contains("not implemented")
+				|| lower.contains("feature not supported");
+	}
+
 	/**
 	 * Default internal implementation of {@link Query}.
 	 * <p>
@@ -593,6 +619,8 @@ public final class Database {
 		@Override
 		public List<Long> executeBatch(@NonNull List<@NonNull Map<@NonNull String, @Nullable Object>> parameterGroups) {
 			requireNonNull(parameterGroups);
+			if (parameterGroups.isEmpty())
+				return List.of();
 
 			List<List<Object>> parametersAsList = new ArrayList<>(parameterGroups.size());
 			Object statementId = this.id == null ? this.database.generateId() : this.id;
@@ -1398,6 +1426,13 @@ public final class Database {
 				} catch (SQLFeatureNotSupportedException | UnsupportedOperationException | AbstractMethodError e) {
 					setExecuteLargeUpdateSupported(DatabaseOperationSupportStatus.NO);
 					resultHolder.value = (long) preparedStatement.executeUpdate();
+				} catch (SQLException e) {
+					if (isUnsupportedSqlFeature(e)) {
+						setExecuteLargeUpdateSupported(DatabaseOperationSupportStatus.NO);
+						resultHolder.value = (long) preparedStatement.executeUpdate();
+					} else {
+						throw e;
+					}
 				}
 			}
 
@@ -1560,6 +1595,8 @@ public final class Database {
 																	@Nullable PreparedStatementCustomizer preparedStatementCustomizer) {
 		requireNonNull(statement);
 		requireNonNull(parameterGroups);
+		if (parameterGroups.isEmpty())
+			return List.of();
 
 		ResultHolder<List<Long>> resultHolder = new ResultHolder<>();
 		StatementContext<List<Long>> statementContext = StatementContext.with(statement, this)
@@ -1600,6 +1637,14 @@ public final class Database {
 					setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.NO);
 					int[] resultArray = preparedStatement.executeBatch();
 					result = Arrays.stream(resultArray).asLongStream().boxed().collect(Collectors.toList());
+				} catch (SQLException e) {
+					if (isUnsupportedSqlFeature(e)) {
+						setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.NO);
+						int[] resultArray = preparedStatement.executeBatch();
+						result = Arrays.stream(resultArray).asLongStream().boxed().collect(Collectors.toList());
+					} else {
+						throw e;
+					}
 				}
 			}
 

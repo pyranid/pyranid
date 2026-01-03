@@ -451,6 +451,132 @@ public class DatabaseTests {
 		Assertions.assertThrows(IllegalArgumentException.class, () -> query.executeBatch(parameterGroups));
 	}
 
+	@Test
+	public void testExecuteBatchWithNoGroupsReturnsEmptyList() {
+		DataSource dataSource = new DataSource() {
+			@Override
+			public Connection getConnection() throws SQLException {
+				throw new SQLException("unexpected connection usage");
+			}
+
+			@Override
+			public Connection getConnection(String username, String password) throws SQLException {
+				throw new SQLException("unexpected connection usage");
+			}
+
+			@Override
+			public java.io.PrintWriter getLogWriter() throws SQLException {
+				return null;
+			}
+
+			@Override
+			public void setLogWriter(java.io.PrintWriter out) throws SQLException {
+			}
+
+			@Override
+			public void setLoginTimeout(int seconds) throws SQLException {
+			}
+
+			@Override
+			public int getLoginTimeout() throws SQLException {
+				return 0;
+			}
+
+			@Override
+			public java.util.logging.Logger getParentLogger() throws java.sql.SQLFeatureNotSupportedException {
+				throw new java.sql.SQLFeatureNotSupportedException();
+			}
+
+			@Override
+			public <T> T unwrap(Class<T> iface) throws SQLException {
+				throw new SQLException("unwrap");
+			}
+
+			@Override
+			public boolean isWrapperFor(Class<?> iface) {
+				return false;
+			}
+		};
+
+		Database db = Database.withDataSource(dataSource)
+				.databaseType(DatabaseType.GENERIC)
+				.build();
+
+		Query query = db.query("UPDATE t SET flag = :flag WHERE id = :id");
+		List<Long> result = query.executeBatch(List.of());
+
+		Assertions.assertEquals(List.of(), result);
+	}
+
+	@Test
+	public void testExecuteLargeUpdateFallsBackOnSqlException() {
+		AtomicInteger largeUpdateCalls = new AtomicInteger();
+		AtomicInteger updateCalls = new AtomicInteger();
+
+		PreparedStatement preparedStatement = (PreparedStatement) Proxy.newProxyInstance(
+				PreparedStatement.class.getClassLoader(),
+				new Class<?>[]{PreparedStatement.class},
+				(proxy, method, args) -> {
+					String name = method.getName();
+					if ("executeLargeUpdate".equals(name)) {
+						largeUpdateCalls.incrementAndGet();
+						throw new SQLException("feature not supported", "0A000");
+					}
+					if ("executeUpdate".equals(name)) {
+						updateCalls.incrementAndGet();
+						return 1;
+					}
+					if ("setObject".equals(name) || "setNull".equals(name) || "close".equals(name))
+						return null;
+					return defaultValue(method.getReturnType());
+				});
+
+		Database db = Database.withDataSource(dataSourceForPreparedStatement(preparedStatement))
+				.databaseType(DatabaseType.GENERIC)
+				.build();
+
+		Long result = db.query("UPDATE t SET flag = 1").execute();
+
+		Assertions.assertEquals(1L, result);
+		Assertions.assertEquals(1, largeUpdateCalls.get());
+		Assertions.assertEquals(1, updateCalls.get());
+	}
+
+	@Test
+	public void testExecuteLargeBatchFallsBackOnSqlException() {
+		AtomicInteger largeBatchCalls = new AtomicInteger();
+		AtomicInteger batchCalls = new AtomicInteger();
+
+		PreparedStatement preparedStatement = (PreparedStatement) Proxy.newProxyInstance(
+				PreparedStatement.class.getClassLoader(),
+				new Class<?>[]{PreparedStatement.class},
+				(proxy, method, args) -> {
+					String name = method.getName();
+					if ("executeLargeBatch".equals(name)) {
+						largeBatchCalls.incrementAndGet();
+						throw new SQLException("feature not supported", "0A000");
+					}
+					if ("executeBatch".equals(name)) {
+						batchCalls.incrementAndGet();
+						return new int[]{1, 1};
+					}
+					if ("addBatch".equals(name) || "setObject".equals(name) || "setNull".equals(name) || "close".equals(name))
+						return null;
+					return defaultValue(method.getReturnType());
+				});
+
+		Database db = Database.withDataSource(dataSourceForPreparedStatement(preparedStatement))
+				.databaseType(DatabaseType.GENERIC)
+				.build();
+
+		Query query = db.query("INSERT INTO t (id) VALUES (:id)");
+		List<Long> result = query.executeBatch(List.of(Map.of("id", 1), Map.of("id", 2)));
+
+		Assertions.assertEquals(List.of(1L, 1L), result);
+		Assertions.assertEquals(1, largeBatchCalls.get());
+		Assertions.assertEquals(1, batchCalls.get());
+	}
+
 	public record Product(Long productId, String name, BigDecimal price) {}
 
 	@Test
@@ -2933,6 +3059,77 @@ public class DatabaseTests {
 						return null;
 					if ("toString".equals(name))
 						return "PreparedStatement<null-capture>";
+					return defaultValue(method.getReturnType());
+				});
+	}
+
+	@NonNull
+	private DataSource dataSourceForPreparedStatement(@NonNull PreparedStatement preparedStatement) {
+		requireNonNull(preparedStatement);
+
+		return new DataSource() {
+			@Override
+			public Connection getConnection() {
+				return connectionForPreparedStatement(preparedStatement);
+			}
+
+			@Override
+			public Connection getConnection(String username, String password) {
+				return connectionForPreparedStatement(preparedStatement);
+			}
+
+			@Override
+			public java.io.PrintWriter getLogWriter() throws SQLException {
+				return null;
+			}
+
+			@Override
+			public void setLogWriter(java.io.PrintWriter out) throws SQLException {
+			}
+
+			@Override
+			public void setLoginTimeout(int seconds) throws SQLException {
+			}
+
+			@Override
+			public int getLoginTimeout() throws SQLException {
+				return 0;
+			}
+
+			@Override
+			public java.util.logging.Logger getParentLogger() throws java.sql.SQLFeatureNotSupportedException {
+				throw new java.sql.SQLFeatureNotSupportedException();
+			}
+
+			@Override
+			public <T> T unwrap(Class<T> iface) throws SQLException {
+				throw new SQLException("unwrap");
+			}
+
+			@Override
+			public boolean isWrapperFor(Class<?> iface) {
+				return false;
+			}
+		};
+	}
+
+	@NonNull
+	private Connection connectionForPreparedStatement(@NonNull PreparedStatement preparedStatement) {
+		requireNonNull(preparedStatement);
+
+		return (Connection) Proxy.newProxyInstance(
+				Connection.class.getClassLoader(),
+				new Class<?>[]{Connection.class},
+				(proxy, method, args) -> {
+					String name = method.getName();
+					if ("prepareStatement".equals(name))
+						return preparedStatement;
+					if ("close".equals(name))
+						return null;
+					if ("isClosed".equals(name))
+						return false;
+					if ("toString".equals(name))
+						return "Connection<prepared-statement>";
 					return defaultValue(method.getReturnType());
 				});
 	}
