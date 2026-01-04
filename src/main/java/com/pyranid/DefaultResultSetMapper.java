@@ -27,6 +27,7 @@ import java.beans.Introspector;
 import java.beans.PropertyDescriptor;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
@@ -114,10 +115,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				}
 			};
 	@NonNull
-	private final ClassValue<Map<TargetType, CustomColumnMapper>> preferredColumnMapperBySourceClass =
+	private final ClassValue<Map<PreferredColumnMapperKey, CustomColumnMapper>> preferredColumnMapperBySourceClass =
 			new ClassValue<>() {
 				@Override
-				protected Map<TargetType, CustomColumnMapper> computeValue(Class<?> type) {
+				protected Map<PreferredColumnMapperKey, CustomColumnMapper> computeValue(Class<?> type) {
 					return createCache(DefaultResultSetMapper.this.preferredColumnMapperCacheCapacity);
 				}
 			};
@@ -321,8 +322,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			return CustomMappingOutcome.notApplied();
 
 		Class<?> sourceClass = resultSetValue.getClass();
-		Map<TargetType, CustomColumnMapper> preferredByTargetType = getPreferredColumnMapperCacheForSourceClass(sourceClass);
-		CustomColumnMapper preferred = preferredByTargetType.get(targetType);
+		PreferredColumnMapperKey preferredKey = preferredColumnMapperKeyFor(targetType);
+		Map<PreferredColumnMapperKey, CustomColumnMapper> preferredByTargetType =
+				preferredKey == null ? null : getPreferredColumnMapperCacheForSourceClass(sourceClass);
+		CustomColumnMapper preferred = preferredByTargetType == null ? null : preferredByTargetType.get(preferredKey);
 
 		// 1) Try the preferred mapper first, if any
 		if (preferred != null) {
@@ -344,7 +347,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 			if (mappingApplied(mappingResult)) {
 				// Learn the winner for (sourceClass, targetType) even if it produced null
-				preferredByTargetType.put(targetType, mapper);
+				if (preferredByTargetType != null && preferredKey != null)
+					preferredByTargetType.put(preferredKey, mapper);
 				return CustomMappingOutcome.applied(mappedValue(mappingResult).orElse(null));
 			}
 		}
@@ -2219,9 +2223,53 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@NonNull
-	protected Map<@NonNull TargetType, @NonNull CustomColumnMapper> getPreferredColumnMapperCacheForSourceClass(@NonNull Class<?> sourceClass) {
+	protected Map<@NonNull PreferredColumnMapperKey, @NonNull CustomColumnMapper> getPreferredColumnMapperCacheForSourceClass(@NonNull Class<?> sourceClass) {
 		requireNonNull(sourceClass);
 		return this.preferredColumnMapperBySourceClass.get(sourceClass);
+	}
+
+	@Nullable
+	private PreferredColumnMapperKey preferredColumnMapperKeyFor(@NonNull TargetType targetType) {
+		requireNonNull(targetType);
+
+		if (!targetType.getTypeArguments().isEmpty())
+			return null;
+
+		return PreferredColumnMapperKey.of(targetType);
+	}
+
+	@ThreadSafe
+	protected static final class PreferredColumnMapperKey {
+		@NonNull
+		private final WeakReference<Class<?>> rawClassRef;
+		private final int rawClassHash;
+
+		private PreferredColumnMapperKey(@NonNull Class<?> rawClass) {
+			requireNonNull(rawClass);
+			this.rawClassRef = new WeakReference<>(rawClass);
+			this.rawClassHash = System.identityHashCode(rawClass);
+		}
+
+		@NonNull
+		static PreferredColumnMapperKey of(@NonNull TargetType targetType) {
+			requireNonNull(targetType);
+			return new PreferredColumnMapperKey(targetType.getRawClass());
+		}
+
+		@Override
+		public boolean equals(Object o) {
+			if (this == o) return true;
+			if (o == null || getClass() != o.getClass()) return false;
+			PreferredColumnMapperKey that = (PreferredColumnMapperKey) o;
+			Class<?> lhs = rawClassRef.get();
+			Class<?> rhs = that.rawClassRef.get();
+			return lhs != null && lhs == rhs;
+		}
+
+		@Override
+		public int hashCode() {
+			return rawClassHash;
+		}
 	}
 
 	@NonNull
