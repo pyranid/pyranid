@@ -187,6 +187,8 @@ Database customDatabase = Database.withDataSource(dataSource)
   .resultSetMapper(resultSetMapper)
   .preparedStatementBinder(preparedStatementBinder)
   .statementLogger(statementLogger)
+  // Cache parsed SQL strings (0 disables caching).
+  .parsedSqlCacheCapacity(1024)
   .build();
 ```
 

@@ -29,7 +29,6 @@ import javax.sql.DataSource;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -3042,10 +3041,7 @@ public class DatabaseTests {
 		requireNonNull(sql);
 
 		try {
-			Class<?> defaultQueryClass = Class.forName("com.pyranid.Database$DefaultQuery");
-			Method parseMethod = defaultQueryClass.getDeclaredMethod("parseNamedParameterSql", String.class);
-			parseMethod.setAccessible(true);
-			Object parsedSql = parseMethod.invoke(null, sql);
+			Database.ParsedSql parsedSql = Database.parseNamedParameterSql(sql);
 			Field parameterNamesField = parsedSql.getClass().getDeclaredField("parameterNames");
 			parameterNamesField.setAccessible(true);
 			return (List<String>) parameterNamesField.get(parsedSql);
