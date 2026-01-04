@@ -2888,22 +2888,18 @@ public class DatabaseTests {
 	}
 
 	@Test
-	public void testTypedParameterNullBindsAsSqlNull() {
+	public void testTypedParameterNullRequiresCustomBinder() {
 		Database db = Database.withDataSource(createInMemoryDataSource("typed_param_null")).build();
 				db.query("CREATE TABLE t (v VARCHAR(50))").execute();
 
-				db.query("INSERT INTO t(v) VALUES (:p1)")
-			.bind("p1", Parameters.listOf(String.class, null))
-			.execute();
-
-		Long count = db.query("SELECT COUNT(*) FROM t")
-				.fetchObject(Long.class)
-				.orElse(0L);
-		Assertions.assertEquals(1L, count, "Expected one row inserted");
-
-		Optional<String> value = db.query("SELECT v FROM t")
-				.fetchObject(String.class);
-		Assertions.assertTrue(value.isEmpty(), "Expected NULL when binding TypedParameter with null");
+		DatabaseException thrown = Assertions.assertThrows(DatabaseException.class, () ->
+						db.query("INSERT INTO t(v) VALUES (:p1)")
+				.bind("p1", Parameters.listOf(String.class, null))
+				.execute());
+		Assertions.assertTrue(thrown.getMessage().contains("CustomParameterBinder"),
+				"Expected a CustomParameterBinder requirement for typed nulls");
+		Assertions.assertTrue(thrown.getMessage().contains("even when null"),
+				"Expected the error to clarify typed null behavior");
 	}
 
 	@Test

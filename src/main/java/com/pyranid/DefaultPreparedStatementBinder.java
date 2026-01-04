@@ -41,14 +41,13 @@ import java.util.Currency;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.TimeZone;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
@@ -61,16 +60,30 @@ import static java.util.Objects.requireNonNull;
  */
 @ThreadSafe
 class DefaultPreparedStatementBinder implements PreparedStatementBinder {
+	private static final int DEFAULT_PREFERRED_BINDER_CACHE_CAPACITY = 256;
+
 	@NonNull
 	private final List<CustomParameterBinder> customParameterBinders;
 
 	// Cache: which binders apply for a given target type?
 	@NonNull
-	private final ConcurrentMap<TargetType, List<CustomParameterBinder>> bindersByTargetTypeCache;
+	private final ClassValue<List<CustomParameterBinder>> bindersByRawClassCache =
+			new ClassValue<>() {
+				@Override
+				protected List<CustomParameterBinder> computeValue(Class<?> type) {
+					return computeCustomBindersFor(TargetType.of(type));
+				}
+			};
 
-	// Cache: which binder last won for (valueClass, sqlType)?
+	// Cache: which binder last won for a given value class?
 	@NonNull
-	private final ConcurrentMap<InboundKey, CustomParameterBinder> preferredBinderByInboundKey;
+	private final ClassValue<Map<InboundKey, CustomParameterBinder>> preferredBinderByValueClass =
+			new ClassValue<>() {
+				@Override
+				protected Map<InboundKey, CustomParameterBinder> computeValue(Class<?> type) {
+					return new ConcurrentLruMap<>(DEFAULT_PREFERRED_BINDER_CACHE_CAPACITY);
+				}
+			};
 
 
 	DefaultPreparedStatementBinder() {
@@ -80,8 +93,6 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	DefaultPreparedStatementBinder(@NonNull List<CustomParameterBinder> customParameterBinders) {
 		requireNonNull(customParameterBinders);
 		this.customParameterBinders = Collections.unmodifiableList(customParameterBinders);
-		this.bindersByTargetTypeCache = new ConcurrentHashMap<>();
-		this.preferredBinderByInboundKey = new ConcurrentHashMap<>();
 	}
 
 	@Override
@@ -115,6 +126,13 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 					&& !getCustomParameterBinders().isEmpty()
 					&& tryCustomNullBinders(statementContext, preparedStatement, parameterIndex, sqlType, explicitTargetType))
 				return;
+
+			if (parameter instanceof TypedParameter typedParameter)
+				throw new DatabaseException(format("This parameter requires a CustomParameterBinder (even when null): %s. "
+								+ "Parameters.listOf/setOf/mapOf/arrayOf(Class, ...) are typed wrappers intended for use with custom binders. "
+								+ "Register a CustomParameterBinder that appliesTo(%s), "
+								+ "or use a concrete parameter type supported by the binder/driver (e.g. Parameters.sqlArrayOf(...) or Parameters.json(...)).",
+						typedParameter.getExplicitType(), typedParameter.getExplicitType()));
 
 			preparedStatement.setNull(parameterIndex, sqlType);
 
@@ -457,8 +475,12 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		if (candidates.isEmpty())
 			return false;
 
-		InboundKey key = new InboundKey(parameter.getClass(), sqlType, targetType);
-		CustomParameterBinder cached = getPreferredBinderByInboundKey().get(key);
+		Class<?> valueClass = parameter.getClass();
+		boolean cachePreferredBinder = shouldCachePreferredBinder(valueClass, targetType);
+		InboundKey key = cachePreferredBinder ? new InboundKey(sqlType, targetType.getRawClass()) : null;
+		CustomParameterBinder cached = cachePreferredBinder
+				? getPreferredBinderCacheForValueClass(valueClass).get(key)
+				: null;
 
 		// Fast path: try cached binder first
 		if (cached != null) {
@@ -475,7 +497,8 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			BindingResult bindingResult = requireNonNull(customParameterBinder.bind(statementContext, preparedStatement, parameterIndex, parameter));
 
 			if (bindingResult instanceof BindingResult.Handled) {
-				getPreferredBinderByInboundKey().put(key, customParameterBinder);
+				if (cachePreferredBinder)
+					getPreferredBinderCacheForValueClass(valueClass).put(key, customParameterBinder);
 				return true;
 			}
 		}
@@ -523,33 +546,66 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		if (getCustomParameterBinders().isEmpty())
 			return List.of();
 
-		return getBindersByTargetTypeCache().computeIfAbsent(targetType, tt -> {
-			// Evaluate once per unique TargetType instance (equals/hash provided by DefaultTargetType)
-			return getCustomParameterBinders().stream()
-					.filter(b -> b.appliesTo(tt))
-					.toList();
-		});
+		if (targetType.getTypeArguments().isEmpty())
+			return this.bindersByRawClassCache.get(targetType.getRawClass());
+
+		// Avoid caching parameterized types to prevent holding user classes under system raw types.
+		return computeCustomBindersFor(targetType);
+	}
+
+	@NonNull
+	private List<CustomParameterBinder> computeCustomBindersFor(@NonNull TargetType targetType) {
+		requireNonNull(targetType);
+
+		if (getCustomParameterBinders().isEmpty())
+			return List.of();
+
+		return getCustomParameterBinders().stream()
+				.filter(b -> b.appliesTo(targetType))
+				.toList();
+	}
+
+	private static boolean isSystemClass(@NonNull Class<?> rawClass) {
+		requireNonNull(rawClass);
+		ClassLoader loader = rawClass.getClassLoader();
+		return loader == null || loader == ClassLoader.getPlatformClassLoader();
+	}
+
+	private static boolean shouldCachePreferredBinder(@NonNull Class<?> valueClass,
+																									 @NonNull TargetType targetType) {
+		requireNonNull(valueClass);
+		requireNonNull(targetType);
+
+		if (!targetType.getTypeArguments().isEmpty())
+			return false;
+
+		Class<?> targetClass = targetType.getRawClass();
+		if (!isSystemClass(valueClass))
+			return true;
+
+		return isSystemClass(targetClass);
+	}
+
+	@NonNull
+	protected Map<@NonNull InboundKey, @NonNull CustomParameterBinder> getPreferredBinderCacheForValueClass(@NonNull Class<?> valueClass) {
+		requireNonNull(valueClass);
+		return this.preferredBinderByValueClass.get(valueClass);
 	}
 
 	@ThreadSafe
 	protected static final class InboundKey {
 		@NonNull
-		private final Class<?> valueClass;
-		@NonNull
 		private final Integer sqlType;
 		@NonNull
-		private final TargetType targetType;
+		private final Class<?> targetClass;
 
-		InboundKey(@NonNull Class<?> valueClass,
-							 @NonNull Integer sqlType,
-							 @NonNull TargetType targetType) {
-			requireNonNull(valueClass);
+		InboundKey(@NonNull Integer sqlType,
+							 @NonNull Class<?> targetClass) {
 			requireNonNull(sqlType);
-			requireNonNull(targetType);
+			requireNonNull(targetClass);
 
-			this.valueClass = valueClass;
 			this.sqlType = sqlType;
-			this.targetType = targetType;
+			this.targetClass = targetClass;
 		}
 
 		@Override
@@ -557,16 +613,14 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			if (this == o) return true;
 			if (o == null || getClass() != o.getClass()) return false;
 			InboundKey that = (InboundKey) o;
-			return valueClass.equals(that.valueClass) &&
-					(sqlType == null ? that.sqlType == null : sqlType.equals(that.sqlType)) &&
-					targetType.equals(that.targetType);
+			return (sqlType == null ? that.sqlType == null : sqlType.equals(that.sqlType)) &&
+					targetClass.equals(that.targetClass);
 		}
 
 		@Override
 		public int hashCode() {
-			int result = valueClass.hashCode();
-			result = 31 * result + (sqlType == null ? 0 : sqlType.hashCode());
-			result = 31 * result + targetType.hashCode();
+			int result = sqlType == null ? 0 : sqlType.hashCode();
+			result = 31 * result + targetClass.hashCode();
 			return result;
 		}
 	}
@@ -671,15 +725,5 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	@NonNull
 	protected List<@NonNull CustomParameterBinder> getCustomParameterBinders() {
 		return this.customParameterBinders;
-	}
-
-	@NonNull
-	protected ConcurrentMap<@NonNull TargetType, @NonNull List<@NonNull CustomParameterBinder>> getBindersByTargetTypeCache() {
-		return this.bindersByTargetTypeCache;
-	}
-
-	@NonNull
-	protected ConcurrentMap<@NonNull InboundKey, @NonNull CustomParameterBinder> getPreferredBinderByInboundKey() {
-		return this.preferredBinderByInboundKey;
 	}
 }

@@ -69,7 +69,6 @@ import java.util.TimeZone;
 import java.util.UUID;
 import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 import java.util.regex.Pattern;
 
 import static java.lang.String.format;
@@ -107,7 +106,13 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	private final int preferredColumnMapperCacheCapacity;
 	// Enables faster lookup of CustomColumnMapper instances by remembering which TargetType they've been used with before.
 	@NonNull
-	private final ConcurrentMap<TargetType, List<CustomColumnMapper>> customColumnMappersByTargetTypeCache;
+	private final ClassValue<List<CustomColumnMapper>> customColumnMappersByRawClassCache =
+			new ClassValue<>() {
+				@Override
+				protected List<CustomColumnMapper> computeValue(Class<?> type) {
+					return computeCustomColumnMappersFor(TargetType.of(type));
+				}
+			};
 	@NonNull
 	private final ClassValue<Map<TargetType, CustomColumnMapper>> preferredColumnMapperBySourceClass =
 			new ClassValue<>() {
@@ -194,20 +199,30 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	protected List<@NonNull CustomColumnMapper> customColumnMappersFor(@NonNull TargetType targetType) {
 		requireNonNull(targetType);
 
-		return getCustomColumnMappersByTargetTypeCache().computeIfAbsent(targetType, applicableTargetType -> {
-			requireNonNull(applicableTargetType);
+		if (getCustomColumnMappers().isEmpty())
+			return List.of();
 
-			if (getCustomColumnMappers().isEmpty())
-				return List.of();
+		if (targetType.getTypeArguments().isEmpty())
+			return this.customColumnMappersByRawClassCache.get(targetType.getRawClass());
 
-			List<CustomColumnMapper> filtered = new ArrayList<>(getCustomColumnMappers().size());
+		// Avoid caching parameterized types to prevent holding user classes under system raw types.
+		return computeCustomColumnMappersFor(targetType);
+	}
 
-			for (CustomColumnMapper customColumnMapper : getCustomColumnMappers())
-				if (customColumnMapper.appliesTo(applicableTargetType))
-					filtered.add(customColumnMapper);
+	@NonNull
+	private List<CustomColumnMapper> computeCustomColumnMappersFor(@NonNull TargetType targetType) {
+		requireNonNull(targetType);
 
-			return Collections.unmodifiableList(filtered);
-		});
+		if (getCustomColumnMappers().isEmpty())
+			return List.of();
+
+		List<CustomColumnMapper> filtered = new ArrayList<>(getCustomColumnMappers().size());
+
+		for (CustomColumnMapper customColumnMapper : getCustomColumnMappers())
+			if (customColumnMapper.appliesTo(targetType))
+				filtered.add(customColumnMapper);
+
+		return Collections.unmodifiableList(filtered);
 	}
 
 	@NonNull
@@ -472,7 +487,6 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		this.customColumnMappers = Collections.unmodifiableList(requireNonNull(builder.customColumnMappers));
 		this.planCachingEnabled = requireNonNull(builder.planCachingEnabled);
 
-		this.customColumnMappersByTargetTypeCache = new ConcurrentHashMap<>();
 		this.preferredColumnMapperCacheCapacity = builder.preferredColumnMapperCacheCapacity;
 		this.planCacheCapacity = builder.planCacheCapacity;
 		this.schemaSignatureByResultSetMetaData = Collections.synchronizedMap(new WeakHashMap<>());
@@ -604,6 +618,15 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					}
 
 					args[b.recordArgIndexOrMinusOne] = val;
+				}
+
+				for (int i = 0; i < rc.length; i++) {
+					if (rc[i].getType().isPrimitive() && args[i] == null) {
+						throw new DatabaseException(format(
+								"No column matches record component '%s' of %s, but the component is primitive (%s). "
+										+ "Ensure the column is selected/aliased or use a non-primitive type.",
+								rc[i].getName(), resultSetRowType.getSimpleName(), rc[i].getType().getSimpleName()));
+					}
 				}
 
 				// Construct via InstanceProvider to keep semantics consistent with non-planned path
@@ -986,6 +1009,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			for (String potentialPropertyName : potentialPropertyNames)
 				if (columnLabelsToValues.containsKey(potentialPropertyName))
 					orderedPropertyNames.add(potentialPropertyName);
+
+			if (orderedPropertyNames.isEmpty() && recordComponentType.isPrimitive())
+				throw new DatabaseException(format(
+						"No column matches record component '%s' of %s, but the component is primitive (%s). "
+								+ "Ensure the column is selected/aliased or use a non-primitive type.",
+						recordComponent.getName(), resultSetRowType.getSimpleName(), recordComponentType.getSimpleName()));
 
 			orderedPropertyNames.sort((left, right) ->
 					Integer.compare(columnLabelsToIndexes.get(left), columnLabelsToIndexes.get(right)));
@@ -2186,11 +2215,6 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	@NonNull
 	protected Boolean getPlanCachingEnabled() {
 		return this.planCachingEnabled;
-	}
-
-	@NonNull
-	protected ConcurrentMap<@NonNull TargetType, @NonNull List<@NonNull CustomColumnMapper>> getCustomColumnMappersByTargetTypeCache() {
-		return this.customColumnMappersByTargetTypeCache;
 	}
 
 	@NonNull

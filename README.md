@@ -1142,6 +1142,7 @@ PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCu
 ##### Heads Up!
 
 If you use [`Parameters::listOf(Class<E>, List<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#listOf(java.lang.Class,java.util.List)), [`Parameters::setOf(Class<E>, Set<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#setOf(java.lang.Class,java.util.List)), or [`Parameters::mapOf(Class<K>, Class<V>, Map<K,V>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#mapOf(java.lang.Class,java.lang.Class,java.util.Map)), you must define a corresponding [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) to handle them.  These special parameter types do not automatically work out-of-the-box because Pyranid cannot reliably guess how you intend to bind them.
+This applies even when the wrapped value is `null`; implement `CustomParameterBinder#bindNull(...)` if you want typed nulls to bind successfully.
 
 Pyranid will detect this missing-binder scenario and throw an exception to indicate programmer error.
 
@@ -1150,6 +1151,7 @@ Pyranid will detect this missing-binder scenario and throw an exception to indic
 If you need array component types at runtime for a custom binder, use `Parameters.arrayOf(Class, ...)`.
 This captures the array element type (including primitives) so your binder can match via `TargetType.isArray()`/`getArrayComponentType()`.
 Typed arrays require a corresponding [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html); otherwise binding fails fast.
+This applies even when the wrapped value is `null`; implement `CustomParameterBinder#bindNull(...)` if you want typed nulls to bind successfully.
 For SQL ARRAY binding, use `Parameters.sqlArrayOf(...)`.
 
 ```java

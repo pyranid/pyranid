@@ -320,7 +320,8 @@ public final class Parameters {
 	 * If you need a formal SQL {@code ARRAY} parameter for JDBC array binding, do not use this method.
 	 * <p>
 	 * <strong>Note:</strong> this kind of parameter requires a corresponding {@link CustomParameterBinder}
-	 * to be registered; otherwise, binding will fail-fast.
+	 * to be registered, even when the wrapped value is {@code null}; implement {@link CustomParameterBinder#bindNull}
+	 * if you want typed nulls to bind successfully.
 	 *
 	 * @param elementType the element type of the array
 	 * @param array       the array value to wrap; may be {@code null}
@@ -344,7 +345,8 @@ public final class Parameters {
 	 * If you need a formal SQL {@code ARRAY} parameter for JDBC array binding, do not use this method.
 	 * <p>
 	 * <strong>Note:</strong> this kind of parameter requires a corresponding {@link CustomParameterBinder}
-	 * to be registered; otherwise, binding will fail-fast.
+	 * to be registered, even when the wrapped value is {@code null}; implement {@link CustomParameterBinder#bindNull}
+	 * if you want typed nulls to bind successfully.
 	 *
 	 * @param elementType the element type of the array (may be primitive)
 	 * @param array       the array value to wrap; may be {@code null}
@@ -561,7 +563,8 @@ public final class Parameters {
 	 * {@link CustomParameterBinder#appliesTo(TargetType)} can match against the element type.
 	 * <p>
 	 * <strong>Note:</strong> this kind of parameter requires a corresponding {@link CustomParameterBinder}
-	 * to be registered; otherwise, binding will fail-fast.
+	 * to be registered, even when the wrapped value is {@code null}; implement {@link CustomParameterBinder#bindNull}
+	 * if you want typed nulls to bind successfully.
 	 *
 	 * @param elementType the {@link Class} representing the type of elements contained in the list;
 	 *                    used to preserve generic type information
@@ -588,7 +591,8 @@ public final class Parameters {
 	 * {@link CustomParameterBinder#appliesTo(TargetType)} can match against the element type.
 	 * <p>
 	 * <strong>Note:</strong> this kind of parameter requires a corresponding {@link CustomParameterBinder}
-	 * to be registered; otherwise, binding will fail-fast.
+	 * to be registered, even when the wrapped value is {@code null}; implement {@link CustomParameterBinder#bindNull}
+	 * if you want typed nulls to bind successfully.
 	 *
 	 * @param elementType the {@link Class} representing the type of elements contained in the set;
 	 *                    used to preserve generic type information
@@ -616,7 +620,8 @@ public final class Parameters {
 	 * {@link CustomParameterBinder#appliesTo(TargetType)} can match against the element type.
 	 * <p>
 	 * <strong>Note:</strong> this kind of parameter requires a corresponding {@link CustomParameterBinder}
-	 * to be registered; otherwise, binding will fail-fast.
+	 * to be registered, even when the wrapped value is {@code null}; implement {@link CustomParameterBinder#bindNull}
+	 * if you want typed nulls to bind successfully.
 	 *
 	 * @param keyType   the type of the map keys
 	 * @param valueType the type of the map values
