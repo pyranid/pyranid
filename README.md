@@ -44,7 +44,7 @@ Java 17+
 <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid</artifactId>
-  <version>4.0.1</version>
+  <version>4.0.2</version>
 </dependency>
 ```
 
@@ -60,7 +60,7 @@ Java 8+ (legacy; only critical fixes will be applied)
 
 ### Direct Download
 
-If you don't use Maven, you can drop [pyranid-4.0.1.jar](https://repo1.maven.org/maven2/com/pyranid/pyranid/4.0.1/pyranid-4.0.1.jar) directly into your project.  No other dependencies are required.
+If you don't use Maven, you can drop [pyranid-4.0.2.jar](https://repo1.maven.org/maven2/com/pyranid/pyranid/4.0.2/pyranid-4.0.2.jar) directly into your project.  No other dependencies are required.
 
 ## Configuration
 
