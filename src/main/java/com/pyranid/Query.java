@@ -164,6 +164,8 @@ public interface Query {
 	 * Executes a DML statement in batch over groups of named parameters.
 	 * <p>
 	 * Any parameters already bound on this {@code Query} apply to all groups; group values override them.
+	 * Each group must provide a complete set of parameter values after merging; groups must be non-null and
+	 * expand to the same number of JDBC parameters (for example, IN-list sizes must match).
 	 *
 	 * @param parameterGroups groups of named parameter values (without the leading {@code :})
 	 * @return the number of rows affected by the SQL statement per-group

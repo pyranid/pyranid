@@ -1598,6 +1598,24 @@ public final class Database {
 		if (parameterGroups.isEmpty())
 			return List.of();
 
+		Integer expectedParameterCount = null;
+
+		for (int i = 0; i < parameterGroups.size(); i++) {
+			List<Object> parameterGroup = parameterGroups.get(i);
+
+			if (parameterGroup == null)
+				throw new IllegalArgumentException(format("Parameter group at index %s is null", i));
+
+			int parameterCount = parameterGroup.size();
+			if (expectedParameterCount == null) {
+				expectedParameterCount = parameterCount;
+			} else if (parameterCount != expectedParameterCount) {
+				throw new IllegalArgumentException(format(
+						"Inconsistent parameter group size at index %s: expected %s but found %s",
+						i, expectedParameterCount, parameterCount));
+			}
+		}
+
 		ResultHolder<List<Long>> resultHolder = new ResultHolder<>();
 		StatementContext<List<Long>> statementContext = StatementContext.with(statement, this)
 				.parameters((List) parameterGroups)
@@ -1608,7 +1626,7 @@ public final class Database {
 			applyPreparedStatementCustomizer(statementContext, preparedStatement, preparedStatementCustomizer);
 
 			for (List<Object> parameterGroup : parameterGroups) {
-				if (parameterGroup != null && parameterGroup.size() > 0)
+				if (parameterGroup.size() > 0)
 					performPreparedStatementBinding(statementContext, preparedStatement, parameterGroup);
 
 				preparedStatement.addBatch();

@@ -333,6 +333,8 @@ List<Long> updateCounts = database.query("INSERT INTO car VALUES (:id, :color)")
   .executeBatch(parameterGroups);
 ```
 
+Each parameter group must provide a complete set of values after merging with any values bound on the query, and all groups must expand to the same number of JDBC parameters (e.g., IN-list sizes must match).
+
 Pyranid will automatically determine if your JDBC driver supports "large" updates and batch operations
 and uses them if available.
 

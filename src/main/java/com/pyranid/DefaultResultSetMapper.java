@@ -795,13 +795,14 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			}
 
 			if (resultSetValue != null) {
+				String columnLabel = normalizeColumnLabel(resultSetMetaData.getColumnLabel(1));
 				CustomMappingOutcome outcome =
 						tryCustomColumnMappers(statementContext,
 								resultSet,
 								resultSetValue,
 								targetType,
 								1,
-								resultSetMetaData.getColumnLabel(1),
+								columnLabel,
 								instanceProvider);
 
 				if (outcome.isApplied()) {
