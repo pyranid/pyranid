@@ -417,6 +417,8 @@ database.transaction(() -> {
 
 Internally, Database manages a threadlocal stack of [`Transaction`](https://javadoc.pyranid.com/com/pyranid/Transaction.html) instances to simplify single-threaded usage.  Should you need to share the same transaction across multiple threads, use the [`Database::participate`](https://javadoc.pyranid.com/com/pyranid/Database.html#participate(com.pyranid.Transaction,com.pyranid.TransactionalOperation)) API.
 
+On Java 21+, a clean way to do this is with a virtual-thread executor:
+
 ```java
 database.transaction(() -> {
   database.query("UPDATE account SET balance=balance - 10 WHERE id=1")
@@ -425,19 +427,17 @@ database.transaction(() -> {
   // Get a handle to the current transaction
   Transaction transaction = database.currentTransaction().orElseThrow();
 
-  new Thread(() -> {
-    // In a different thread and participating in the existing transaction.
-    // No commit or rollback will occur when the closure completes, but if an 
-    // exception bubbles out the transaction will be marked as rollback-only
-    database.participate(transaction, () -> {
-      database.query("UPDATE account SET balance=balance + 10 WHERE id=2")
-        .execute();
-    });
-  }).run();
-
-  // Wait a bit for the other thread to finish
-  // (Don't do this in real systems)
-  sleep(1000);
+  try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+    CompletableFuture.runAsync(() -> {
+      // In a different thread and participating in the existing transaction.
+      // No commit or rollback will occur when the closure completes, but if an 
+      // exception bubbles out the transaction will be marked as rollback-only
+      database.participate(transaction, () -> {
+        database.query("UPDATE account SET balance=balance + 10 WHERE id=2")
+          .execute();
+      });
+    }, executor).join();
+  }
 });
 ```
 
