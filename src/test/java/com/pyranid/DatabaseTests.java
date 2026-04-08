@@ -32,9 +32,11 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.nio.ByteBuffer;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.sql.Types;
@@ -45,6 +47,7 @@ import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.OffsetTime;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.Currency;
@@ -181,6 +184,30 @@ public class DatabaseTests {
 
 		public void setId(Integer id) {
 			this.id = id;
+		}
+	}
+
+	public static class UuidHolder {
+		private UUID v;
+
+		public UUID getV() {
+			return this.v;
+		}
+
+		public void setV(UUID v) {
+			this.v = v;
+		}
+	}
+
+	public static class ZonedDateTimeHolder {
+		private ZonedDateTime zonedAt;
+
+		public ZonedDateTime getZonedAt() {
+			return this.zonedAt;
+		}
+
+		public void setZonedAt(ZonedDateTime zonedAt) {
+			this.zonedAt = zonedAt;
 		}
 	}
 
@@ -345,7 +372,7 @@ public class DatabaseTests {
 				       [col:ignored] AS sq,
 				       $$:ignored$$ AS dq1,
 				       $tag$:ignored$tag$ AS dq2,
-				       $tag-1$:ignored$tag-1$ AS dq3,
+				       $tag_1$:ignored$tag_1$ AS dq3,
 				       E'it\\'s :ignored' AS es,
 				       U&'\\0041:ignored' AS us
 				FROM t -- :ignored
@@ -356,6 +383,50 @@ public class DatabaseTests {
 		List<String> parameterNames = parseNamedParameters(sql);
 
 		Assertions.assertEquals(List.of("id", "name", "type"), parameterNames);
+	}
+
+	@Test
+	public void testNamedParameterParsingSkipsNestedBlockComments() {
+		String sql = """
+				SELECT *
+				FROM t
+				WHERE id = :id
+				/* outer :ignored
+				   /* inner :ignored_too */
+				   still outer :ignored
+				*/
+				AND name = :name
+				""";
+
+		List<String> parameterNames = parseNamedParameters(sql);
+
+		Assertions.assertEquals(List.of("id", "name"), parameterNames);
+	}
+
+	@Test
+	public void testNamedParameterParsingAllowsDollarSignsInsideIdentifiers() {
+		String sql = """
+				SELECT audit$tenant$id
+				FROM t
+				WHERE id = :id AND name = :name
+				""";
+
+		List<String> parameterNames = parseNamedParameters(sql);
+
+		Assertions.assertEquals(List.of("id", "name"), parameterNames);
+	}
+
+	@Test
+	public void testNamedParameterParsingRejectsDollarQuoteTagStartingWithDigit() {
+		String sql = """
+				SELECT $1$:param_inside,$1$ AS not_a_quote
+				FROM t
+				WHERE id = :id
+				""";
+
+		List<String> parameterNames = parseNamedParameters(sql);
+
+		Assertions.assertEquals(List.of("param_inside", "id"), parameterNames);
 	}
 
 	@Test
@@ -832,6 +903,42 @@ public class DatabaseTests {
 				.fetchObject(LocalDateTime.class)
 				.orElseThrow();
 		Assertions.assertEquals(truncate(expectedLdtFromOdt, ChronoUnit.MICROS), truncate(ldtFromOdt, ChronoUnit.MICROS), "OffsetDateTime→LocalDateTime mapping mismatch");
+	}
+
+	@Test
+	public void testZonedDateTimeMappingSupportsStandardAndBeanTargets() throws SQLException {
+		ZoneId zone = ZoneId.of("America/New_York");
+		Database db = Database.withDataSource(createInMemoryDataSource("zoned_datetime_mapping"))
+				.databaseType(DatabaseType.GENERIC)
+				.timeZone(zone)
+				.build();
+
+		OffsetDateTime rawValue = OffsetDateTime.parse("2020-01-02T08:09:10.123-03:00");
+		ZonedDateTime expected = rawValue.toInstant().atZone(zone);
+
+		ZonedDateTime zonedDateTime = mapSingleColumn(db, "zoned_at", Types.TIMESTAMP_WITH_TIMEZONE,
+				"TIMESTAMP WITH TIME ZONE", rawValue, ZonedDateTime.class).orElseThrow();
+		Assertions.assertEquals(expected, zonedDateTime, "Expected standard ZonedDateTime mapping to preserve the instant in DB zone");
+
+		ZonedDateTimeHolder holder = mapSingleColumn(db, "zoned_at", Types.TIMESTAMP_WITH_TIMEZONE,
+				"TIMESTAMP WITH TIME ZONE", rawValue, ZonedDateTimeHolder.class).orElseThrow();
+		Assertions.assertEquals(expected, holder.getZonedAt(), "Expected bean ZonedDateTime property mapping to preserve the instant in DB zone");
+	}
+
+	@Test
+	public void testUuidBytesMapToUuidForStandardAndBeanTargets() throws SQLException {
+		Database db = Database.withDataSource(createInMemoryDataSource("uuid_bytes_mapping"))
+				.databaseType(DatabaseType.ORACLE)
+				.build();
+
+		UUID uuid = UUID.fromString("f81d4fae-7dec-11d0-a765-00a0c91e6bf6");
+		byte[] rawValue = uuidBytes(uuid);
+
+		UUID mappedUuid = mapSingleColumn(db, "v", Types.BINARY, "RAW", rawValue, UUID.class).orElseThrow();
+		Assertions.assertEquals(uuid, mappedUuid, "Expected RAW(16) bytes to map to UUID");
+
+		UuidHolder holder = mapSingleColumn(db, "v", Types.BINARY, "RAW", rawValue, UuidHolder.class).orElseThrow();
+		Assertions.assertEquals(uuid, holder.getV(), "Expected bean UUID property mapping to accept RAW(16) bytes");
 	}
 
 	@Test
@@ -1473,6 +1580,113 @@ public class DatabaseTests {
 		List<Integer> ids = db.query("SELECT id FROM prod ORDER BY id")
 				.fetchList(Integer.class);
 		Assertions.assertEquals(List.of(1, 2), ids);
+	}
+
+	@Test
+	public void testCleanupFailurePreservesConnectionCloseAsSuppressed() {
+		RuntimeException cleanupFailure = new RuntimeException("cleanup failure");
+		SQLException connectionCloseFailure = new SQLException("connection close failure");
+
+		PreparedStatement preparedStatement = (PreparedStatement) Proxy.newProxyInstance(
+				PreparedStatement.class.getClassLoader(),
+				new Class<?>[]{PreparedStatement.class},
+				(proxy, method, args) -> {
+					String name = method.getName();
+					if ("executeQuery".equals(name))
+						return singleColumnResultSet("value", Types.INTEGER, "INTEGER", 7);
+					if ("setInt".equals(name) || "close".equals(name))
+						return null;
+					if ("toString".equals(name))
+						return "PreparedStatement<cleanup-suppression>";
+					return defaultValue(method.getReturnType());
+				});
+
+		DataSource dataSource = new DataSource() {
+			@Override
+			public Connection getConnection() {
+				return (Connection) Proxy.newProxyInstance(
+						Connection.class.getClassLoader(),
+						new Class<?>[]{Connection.class},
+						(proxy, method, args) -> {
+							String name = method.getName();
+							if ("prepareStatement".equals(name))
+								return preparedStatement;
+							if ("close".equals(name))
+								throw connectionCloseFailure;
+							if ("isClosed".equals(name))
+								return false;
+							if ("toString".equals(name))
+								return "Connection<cleanup-suppression>";
+							return defaultValue(method.getReturnType());
+						});
+			}
+
+			@Override
+			public Connection getConnection(String username, String password) {
+				return getConnection();
+			}
+
+			@Override
+			public java.io.PrintWriter getLogWriter() throws SQLException {
+				return null;
+			}
+
+			@Override
+			public void setLogWriter(java.io.PrintWriter out) throws SQLException {
+			}
+
+			@Override
+			public void setLoginTimeout(int seconds) throws SQLException {
+			}
+
+			@Override
+			public int getLoginTimeout() throws SQLException {
+				return 0;
+			}
+
+			@Override
+			public java.util.logging.Logger getParentLogger() throws java.sql.SQLFeatureNotSupportedException {
+				throw new java.sql.SQLFeatureNotSupportedException();
+			}
+
+			@Override
+			public <T> T unwrap(Class<T> iface) throws SQLException {
+				throw new SQLException("unwrap");
+			}
+
+			@Override
+			public boolean isWrapperFor(Class<?> iface) {
+				return false;
+			}
+		};
+
+		PreparedStatementBinder binder = new PreparedStatementBinder() {
+			@Override
+			public <T> void bindParameter(@NonNull StatementContext<T> statementContext,
+																		@NonNull PreparedStatement statement,
+																		@NonNull Integer parameterIndex,
+																		@NonNull Object parameter) throws SQLException {
+				statementContext.addCleanupOperation(() -> {
+					throw cleanupFailure;
+				});
+				statement.setInt(parameterIndex, ((Number) parameter).intValue());
+			}
+		};
+
+		Database db = Database.withDataSource(dataSource)
+				.databaseType(DatabaseType.GENERIC)
+				.preparedStatementBinder(binder)
+				.build();
+
+		RuntimeException thrown = Assertions.assertThrows(RuntimeException.class, () ->
+				db.query("SELECT :value")
+						.bind("value", 7)
+						.fetchObject(Integer.class));
+
+		Assertions.assertSame(cleanupFailure, thrown, "Expected the original cleanup failure to be thrown");
+		Assertions.assertEquals(1, thrown.getSuppressed().length, "Expected the connection close failure to be suppressed");
+		Assertions.assertTrue(thrown.getSuppressed()[0] instanceof DatabaseException, "Expected connection close suppression to preserve DatabaseException wrapping");
+		Assertions.assertSame(connectionCloseFailure, thrown.getSuppressed()[0].getCause(), "Expected the wrapped connection close failure to be suppressed");
 	}
 
 	public static class Prefs {
@@ -2163,6 +2377,35 @@ public class DatabaseTests {
 		Assertions.assertEquals(1, capture.setNullCalls, "Expected one setNull call");
 		Assertions.assertEquals(Integer.valueOf(Types.LONGVARCHAR), capture.sqlType, "Expected Types.LONGVARCHAR for non-Postgres JSON null binding");
 		Assertions.assertNull(capture.typeName, "Expected no type name for non-Postgres JSON null binding");
+	}
+
+	@Test
+	public void testOracleUuidBindingNormalizesToRawBytes() throws SQLException {
+		PreparedStatementBinder binder = PreparedStatementBinder.withDefaultConfiguration();
+		StatementContext<?> ctx = statementContextFor(DatabaseType.ORACLE);
+		UUID uuid = UUID.fromString("f81d4fae-7dec-11d0-a765-00a0c91e6bf6");
+		AtomicReference<Object> boundValue = new AtomicReference<>();
+
+		PreparedStatement preparedStatement = (PreparedStatement) Proxy.newProxyInstance(
+				PreparedStatement.class.getClassLoader(),
+				new Class<?>[]{PreparedStatement.class},
+				(proxy, method, args) -> {
+					String name = method.getName();
+					if ("setObject".equals(name)) {
+						boundValue.set(args[1]);
+						return null;
+					}
+					if ("getParameterMetaData".equals(name))
+						return null;
+					if ("toString".equals(name))
+						return "PreparedStatement<oracle-uuid>";
+					return defaultValue(method.getReturnType());
+				});
+
+		binder.bindParameter(ctx, preparedStatement, 1, uuid);
+
+		Assertions.assertTrue(boundValue.get() instanceof byte[], "Expected Oracle UUID binding to normalize to byte[]");
+		Assertions.assertArrayEquals(uuidBytes(uuid), (byte[]) boundValue.get(), "Expected Oracle UUID binding to use RFC-4122 bytes");
 	}
 
 	@Test
@@ -3062,6 +3305,113 @@ public class DatabaseTests {
 	}
 
 	@NonNull
+	private <T> Optional<T> mapSingleColumn(@NonNull Database db,
+																					@NonNull String label,
+																					int jdbcType,
+																					@Nullable String typeName,
+																					@Nullable Object value,
+																					@NonNull Class<T> resultType) throws SQLException {
+		requireNonNull(db);
+		requireNonNull(label);
+		requireNonNull(resultType);
+
+		StatementContext<T> statementContext = StatementContext.<T>with(Statement.of("single-column-" + resultType.getSimpleName(), "SELECT " + label), db)
+				.resultSetRowType(resultType)
+				.build();
+
+		return db.getResultSetMapper().map(statementContext,
+				singleColumnResultSet(label, jdbcType, typeName, value),
+				resultType,
+				db.getInstanceProvider());
+	}
+
+	@NonNull
+	private ResultSet singleColumnResultSet(@NonNull String label,
+																					int jdbcType,
+																					@Nullable String typeName,
+																					@Nullable Object value) {
+		requireNonNull(label);
+
+		ResultSetMetaData resultSetMetaData = singleColumnResultSetMetaData(label, jdbcType, typeName);
+		AtomicBoolean hasNext = new AtomicBoolean(true);
+		AtomicBoolean wasNull = new AtomicBoolean(value == null);
+
+		return (ResultSet) Proxy.newProxyInstance(
+				ResultSet.class.getClassLoader(),
+				new Class<?>[]{ResultSet.class},
+				(proxy, method, args) -> {
+					String name = method.getName();
+					if ("next".equals(name))
+						return hasNext.getAndSet(false);
+					if ("getMetaData".equals(name))
+						return resultSetMetaData;
+					if ("wasNull".equals(name))
+						return wasNull.get();
+					if ("getObject".equals(name)) {
+						Object typedValue = args != null && args.length == 2 && args[1] instanceof Class<?> targetType
+								? coerceResultSetValueForType(value, targetType)
+								: value;
+						wasNull.set(typedValue == null);
+						return typedValue;
+					}
+					if ("getString".equals(name)) {
+						wasNull.set(value == null);
+						return value == null ? null : value.toString();
+					}
+					if ("getBytes".equals(name)) {
+						wasNull.set(value == null);
+						return value instanceof byte[] ? value : null;
+					}
+					if ("getInt".equals(name)) {
+						wasNull.set(value == null);
+						return value == null ? 0 : ((Number) value).intValue();
+					}
+					if ("close".equals(name))
+						return null;
+					if ("toString".equals(name))
+						return "ResultSet<single-column>";
+					return defaultValue(method.getReturnType());
+				});
+	}
+
+	@NonNull
+	private ResultSetMetaData singleColumnResultSetMetaData(@NonNull String label,
+																											int jdbcType,
+																											@Nullable String typeName) {
+		requireNonNull(label);
+
+		return (ResultSetMetaData) Proxy.newProxyInstance(
+				ResultSetMetaData.class.getClassLoader(),
+				new Class<?>[]{ResultSetMetaData.class},
+				(proxy, method, args) -> {
+					String name = method.getName();
+					if ("getColumnCount".equals(name))
+						return 1;
+					if ("getColumnLabel".equals(name))
+						return label;
+					if ("getColumnType".equals(name))
+						return jdbcType;
+					if ("getColumnTypeName".equals(name))
+						return typeName;
+					if ("toString".equals(name))
+						return "ResultSetMetaData<single-column>";
+					return defaultValue(method.getReturnType());
+				});
+	}
+
+	@Nullable
+	private static Object coerceResultSetValueForType(@Nullable Object value,
+																										@NonNull Class<?> targetType) {
+		requireNonNull(targetType);
+
+		if (value == null)
+			return null;
+		if (targetType.isInstance(value))
+			return value;
+		return null;
+	}
+
+	@NonNull
 	private PreparedStatement preparedStatementCapturingNull(@NonNull NullBindingCapture capture) {
 		requireNonNull(capture);
 
@@ -3315,6 +3665,16 @@ public class DatabaseTests {
 		dataSource.setPassword("");
 
 		return dataSource;
+	}
+
+	@NonNull
+	private static byte[] uuidBytes(@NonNull UUID uuid) {
+		requireNonNull(uuid);
+
+		ByteBuffer byteBuffer = ByteBuffer.wrap(new byte[16]);
+		byteBuffer.putLong(uuid.getMostSignificantBits());
+		byteBuffer.putLong(uuid.getLeastSignificantBits());
+		return byteBuffer.array();
 	}
 
 	@NonNull

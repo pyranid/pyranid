@@ -844,7 +844,7 @@ public final class Database {
 		boolean inBacktickQuote = false;
 		boolean inBracketQuote = false;
 		boolean inLineComment = false;
-		boolean inBlockComment = false;
+		int blockCommentDepth = 0;
 		String dollarQuoteDelimiter = null;
 
 		for (int i = 0; i < sql.length(); ) {
@@ -873,14 +873,17 @@ public final class Database {
 				continue;
 			}
 
-			if (inBlockComment) {
-				sqlFragment.append(c);
-
-				if (c == '*' && i + 1 < sql.length() && sql.charAt(i + 1) == '/') {
-					sqlFragment.append('/');
+			if (blockCommentDepth > 0) {
+				if (c == '/' && i + 1 < sql.length() && sql.charAt(i + 1) == '*') {
+					sqlFragment.append("/*");
 					i += 2;
-					inBlockComment = false;
+					++blockCommentDepth;
+				} else if (c == '*' && i + 1 < sql.length() && sql.charAt(i + 1) == '/') {
+					sqlFragment.append("*/");
+					i += 2;
+					--blockCommentDepth;
 				} else {
+					sqlFragment.append(c);
 					++i;
 				}
 
@@ -961,7 +964,7 @@ public final class Database {
 			if (c == '/' && i + 1 < sql.length() && sql.charAt(i + 1) == '*') {
 				sqlFragment.append("/*");
 				i += 2;
-				inBlockComment = true;
+				blockCommentDepth = 1;
 				continue;
 			}
 
@@ -1010,7 +1013,7 @@ public final class Database {
 				continue;
 			}
 
-			if (c == '$') {
+			if (c == '$' && !isIdentifierContinuation(sql, i)) {
 				String delimiter = parseDollarQuoteDelimiter(sql, i);
 
 				if (delimiter != null) {
@@ -1077,19 +1080,50 @@ public final class Database {
 
 		int i = startIndex + 1;
 
+		if (i >= sql.length())
+			return null;
+
+		char firstTagCharacter = sql.charAt(i);
+
+		if (firstTagCharacter == '$')
+			return "$$";
+
+		if (!isDollarQuoteTagStart(firstTagCharacter))
+			return null;
+
+		++i;
+
 		while (i < sql.length()) {
 			char c = sql.charAt(i);
 
 			if (c == '$')
 				return sql.substring(startIndex, i + 1);
 
-			if (Character.isWhitespace(c))
+			if (!isDollarQuoteTagPart(c))
 				return null;
 
 			++i;
 		}
 
 		return null;
+	}
+
+	private static boolean isDollarQuoteTagStart(char character) {
+		return Character.isLetter(character) || character == '_';
+	}
+
+	private static boolean isDollarQuoteTagPart(char character) {
+		return Character.isLetterOrDigit(character) || character == '_';
+	}
+
+	private static boolean isIdentifierContinuation(@NonNull String sql,
+																								 int startIndex) {
+		requireNonNull(sql);
+
+		if (startIndex <= 0)
+			return false;
+
+		return Character.isJavaIdentifierPart(sql.charAt(startIndex - 1));
 	}
 
 	@NonNull
@@ -1971,7 +2005,10 @@ public final class Database {
 					try {
 						closeConnection(connection);
 					} catch (Throwable cleanupException) {
-						cleanupFailure = cleanupException;
+						if (cleanupFailure == null)
+							cleanupFailure = cleanupException;
+						else
+							cleanupFailure.addSuppressed(cleanupException);
 					}
 				}
 			} finally {

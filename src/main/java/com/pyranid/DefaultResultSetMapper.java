@@ -35,6 +35,7 @@ import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.nio.ByteBuffer;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
@@ -865,14 +866,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			else
 				value = extractEnumValue(resultClass, raw);
 		} else if (resultClass == UUID.class) {
-			String string = resultSet.getString(1);
-			if (string != null) {
-				try {
-					value = UUID.fromString(string);
-				} catch (IllegalArgumentException e) {
-					throw new DatabaseException(format("Unable to convert value '%s' to UUID", string), e);
-				}
-			}
+			value = uuidFromValue(resultSet.getObject(1));
 		} else if (resultClass == BigDecimal.class) {
 			value = resultSet.getBigDecimal(1);
 		} else if (resultClass == BigInteger.class) {
@@ -903,6 +897,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			value = TemporalReaders.asOffsetTime(resultSet, 1, statementContext, resultSetMetaData);
 		} else if (resultClass == OffsetDateTime.class) {
 			value = TemporalReaders.asOffsetDateTime(resultSet, 1, statementContext, resultSetMetaData);
+		} else if (resultClass == ZonedDateTime.class) {
+			value = TemporalReaders.asZonedDateTime(resultSet, 1, statementContext, resultSetMetaData);
 		} else if (resultClass == java.sql.Timestamp.class) {
 			boolean withTz = TemporalReaders.isTimestampWithTimeZone(resultSetMetaData, 1, statementContext.getDatabaseType());
 
@@ -1348,6 +1344,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				return Optional.of(timestamp.toLocalDateTime());
 			if (OffsetDateTime.class.isAssignableFrom(targetType))
 				return Optional.of(timestamp.toInstant().atZone(statementContext.getTimeZone()).toOffsetDateTime());
+			if (ZonedDateTime.class.isAssignableFrom(targetType))
+				return Optional.of(timestamp.toInstant().atZone(statementContext.getTimeZone()));
 		}
 
 		if (resultSetValue instanceof java.sql.Date date) {
@@ -1378,6 +1376,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				return Optional.of(instant.atZone(statementContext.getTimeZone()).toLocalDate());
 			if (OffsetDateTime.class.isAssignableFrom(targetType))
 				return Optional.of(instant.atZone(statementContext.getTimeZone()).toOffsetDateTime());
+			if (ZonedDateTime.class.isAssignableFrom(targetType))
+				return Optional.of(instant.atZone(statementContext.getTimeZone()));
 			if (java.sql.Timestamp.class.isAssignableFrom(targetType))
 				return Optional.of(Timestamp.from(instant));
 			if (java.sql.Date.class.isAssignableFrom(targetType))
@@ -1395,6 +1395,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				return Optional.of(localDateTime.toLocalDate());
 			if (OffsetDateTime.class.isAssignableFrom(targetType))
 				return Optional.of(localDateTime.atZone(statementContext.getTimeZone()).toOffsetDateTime());
+			if (ZonedDateTime.class.isAssignableFrom(targetType))
+				return Optional.of(localDateTime.atZone(statementContext.getTimeZone()));
 			if (java.sql.Timestamp.class.isAssignableFrom(targetType))
 				return Optional.of(Timestamp.valueOf(localDateTime));
 			if (java.sql.Date.class.isAssignableFrom(targetType))
@@ -1410,6 +1412,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				return Optional.of(offsetDateTime.atZoneSameInstant(statementContext.getTimeZone()).toLocalDateTime());
 			if (Date.class.isAssignableFrom(targetType))
 				return Optional.of(Date.from(offsetDateTime.toInstant()));
+			if (ZonedDateTime.class.isAssignableFrom(targetType))
+				return Optional.of(offsetDateTime.atZoneSameInstant(statementContext.getTimeZone()));
 			if (java.sql.Timestamp.class.isAssignableFrom(targetType))
 				return Optional.of(Timestamp.from(offsetDateTime.toInstant()));
 		}
@@ -1419,6 +1423,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				return Optional.of(localDate);
 			if (LocalDateTime.class.isAssignableFrom(targetType))
 				return Optional.of(localDate.atStartOfDay());
+			if (ZonedDateTime.class.isAssignableFrom(targetType))
+				return Optional.of(localDate.atStartOfDay(statementContext.getTimeZone()));
 			if (Instant.class.isAssignableFrom(targetType))
 				return Optional.of(localDate.atStartOfDay(statementContext.getTimeZone()).toInstant());
 			if (java.sql.Date.class.isAssignableFrom(targetType))
@@ -1450,11 +1456,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		if (UUID.class.isAssignableFrom(targetType)) {
-			try {
-				return Optional.ofNullable(UUID.fromString(resultSetValue.toString()));
-			} catch (IllegalArgumentException e) {
-				throw new DatabaseException(format("Unable to convert value '%s' to UUID", resultSetValue), e);
-			}
+			return Optional.ofNullable(uuidFromValue(resultSetValue));
 		} else if (ZoneId.class.isAssignableFrom(targetType)) {
 			try {
 				return Optional.ofNullable(ZoneId.of(resultSetValue.toString()));
@@ -1516,6 +1518,33 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		return Optional.ofNullable(resultSetValue);
+	}
+
+	@Nullable
+	private static UUID uuidFromValue(@Nullable Object value) {
+		if (value == null)
+			return null;
+		if (value instanceof UUID uuid)
+			return uuid;
+		if (value instanceof byte[] bytes)
+			return uuidFromBytes(bytes);
+
+		try {
+			return UUID.fromString(value.toString());
+		} catch (IllegalArgumentException e) {
+			throw new DatabaseException(format("Unable to convert value '%s' to UUID", value), e);
+		}
+	}
+
+	@NonNull
+	private static UUID uuidFromBytes(byte @NonNull [] bytes) {
+		requireNonNull(bytes);
+
+		if (bytes.length != 16)
+			throw new DatabaseException(format("Unable to convert byte[] of length %s to UUID", bytes.length));
+
+		ByteBuffer byteBuffer = ByteBuffer.wrap(bytes);
+		return new UUID(byteBuffer.getLong(), byteBuffer.getLong());
 	}
 
 	/**
