@@ -50,11 +50,13 @@ import java.util.Queue;
 import java.util.Set;
 import java.util.Spliterator;
 import java.util.Spliterators;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.logging.Logger;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
@@ -62,7 +64,6 @@ import java.util.stream.StreamSupport;
 import static java.lang.String.format;
 import static java.lang.System.nanoTime;
 import static java.util.Objects.requireNonNull;
-import static java.util.logging.Level.WARNING;
 
 /**
  * Main class for performing database access operations.
@@ -75,6 +76,12 @@ public final class Database {
 	@NonNull
 	private static final ThreadLocal<Deque<Transaction>> TRANSACTION_STACK_HOLDER;
 	private static final int DEFAULT_PARSED_SQL_CACHE_CAPACITY = 1024;
+	private static final int MAX_DIAGNOSTIC_MESSAGE_LENGTH = 1024;
+	private static final int MAX_DIAGNOSTIC_SQL_LENGTH = 2048;
+	@NonNull
+	private static final String TRUNCATED_SUFFIX = "... (truncated)";
+	@NonNull
+	private static final Pattern DIAGNOSTIC_WHITESPACE_PATTERN = Pattern.compile("\\s+");
 
 	static {
 		TRANSACTION_STACK_HOLDER = ThreadLocal.withInitial(() -> new ArrayDeque<>());
@@ -83,7 +90,9 @@ public final class Database {
 	@NonNull
 	private final DataSource dataSource;
 	@NonNull
-	private final DatabaseType databaseType;
+	private final AtomicReference<@Nullable DatabaseType> databaseType;
+	@NonNull
+	private final ThreadLocal<Connection> databaseTypeDetectionConnectionHolder;
 	@NonNull
 	private final ZoneId timeZone;
 	@NonNull
@@ -110,7 +119,8 @@ public final class Database {
 		requireNonNull(builder);
 
 		this.dataSource = requireNonNull(builder.dataSource);
-		this.databaseType = builder.databaseType == null ? DatabaseType.fromDataSource(builder.dataSource) : builder.databaseType;
+		this.databaseType = new AtomicReference<>(builder.databaseType);
+		this.databaseTypeDetectionConnectionHolder = new ThreadLocal<>();
 		this.timeZone = builder.timeZone == null ? ZoneId.systemDefault() : builder.timeZone;
 		this.instanceProvider = builder.instanceProvider == null ? new InstanceProvider() {} : builder.instanceProvider;
 		this.preparedStatementBinder = builder.preparedStatementBinder == null ? PreparedStatementBinder.withDefaultConfiguration() : builder.preparedStatementBinder;
@@ -243,7 +253,7 @@ public final class Database {
 			try {
 				transaction.rollback();
 			} catch (Exception rollbackException) {
-				logger.log(WARNING, "Unable to roll back transaction", rollbackException);
+				e.addSuppressed(rollbackException);
 			}
 
 			restoreInterruptIfNeeded(e);
@@ -253,21 +263,21 @@ public final class Database {
 			try {
 				transaction.rollback();
 			} catch (Exception rollbackException) {
-				logger.log(WARNING, "Unable to roll back transaction", rollbackException);
+				e.addSuppressed(rollbackException);
 			}
 
 			restoreInterruptIfNeeded(e);
 			throw e;
 		} catch (Throwable t) {
+			RuntimeException wrapped = new RuntimeException(t);
+			thrown = wrapped;
 			try {
 				transaction.rollback();
 			} catch (Exception rollbackException) {
-				logger.log(WARNING, "Unable to roll back transaction", rollbackException);
+				wrapped.addSuppressed(rollbackException);
 			}
 
 			restoreInterruptIfNeeded(t);
-			RuntimeException wrapped = new RuntimeException(t);
-			thrown = wrapped;
 			throw wrapped;
 		} finally {
 			Deque<Transaction> transactionStack = TRANSACTION_STACK_HOLDER.get();
@@ -337,6 +347,66 @@ public final class Database {
 		} catch (SQLException e) {
 			throw new DatabaseException("Unable to close database connection", e);
 		}
+	}
+
+	@NonNull
+	private static DatabaseException databaseExceptionWithStatementContext(@NonNull StatementContext<?> statementContext,
+																																				@NonNull Throwable cause) {
+		requireNonNull(statementContext);
+		requireNonNull(cause);
+
+		String message = cause.getMessage();
+
+		if (message == null || message.trim().length() == 0)
+			message = "Database operation failed";
+
+		return databaseExceptionWithStatementContext(statementContext, message, cause);
+	}
+
+	@NonNull
+	private static DatabaseException databaseExceptionWithStatementContext(@NonNull StatementContext<?> statementContext,
+																																				@NonNull String message,
+																																				@NonNull Throwable cause) {
+		requireNonNull(statementContext);
+		requireNonNull(message);
+		requireNonNull(cause);
+
+		return new DatabaseException(format("%s [%s]", boundedDiagnosticMessage(message), statementDiagnostic(statementContext)), cause);
+	}
+
+	@NonNull
+	private static String statementDiagnostic(@NonNull StatementContext<?> statementContext) {
+		requireNonNull(statementContext);
+
+		Statement statement = statementContext.getStatement();
+		return format("statementId=%s, sql=%s, parameterCount=%s",
+				statement.getId(), boundedSql(statement.getSql()), statementContext.getParameters().size());
+	}
+
+	@NonNull
+	private static String boundedDiagnosticMessage(@NonNull String message) {
+		requireNonNull(message);
+
+		String compactMessage = DIAGNOSTIC_WHITESPACE_PATTERN.matcher(message).replaceAll(" ").trim();
+
+		if (compactMessage.length() <= MAX_DIAGNOSTIC_MESSAGE_LENGTH)
+			return compactMessage;
+
+		int prefixLength = Math.max(0, MAX_DIAGNOSTIC_MESSAGE_LENGTH - TRUNCATED_SUFFIX.length());
+		return compactMessage.substring(0, prefixLength) + TRUNCATED_SUFFIX;
+	}
+
+	@NonNull
+	private static String boundedSql(@NonNull String sql) {
+		requireNonNull(sql);
+
+		String compactSql = DIAGNOSTIC_WHITESPACE_PATTERN.matcher(sql).replaceAll(" ").trim();
+
+		if (compactSql.length() <= MAX_DIAGNOSTIC_SQL_LENGTH)
+			return compactSql;
+
+		int prefixLength = Math.max(0, MAX_DIAGNOSTIC_SQL_LENGTH - TRUNCATED_SUFFIX.length());
+		return compactSql.substring(0, prefixLength) + TRUNCATED_SUFFIX;
 	}
 
 	/**
@@ -1302,7 +1372,8 @@ public final class Database {
 						T value = getResultSetMapper().map(statementContext, resultSet, statementContext.getResultSetRowType().get(), getInstanceProvider()).orElse(null);
 						result = Optional.ofNullable(value);
 					} catch (SQLException e) {
-						throw new DatabaseException(format("Unable to map JDBC %s row to %s", ResultSet.class.getSimpleName(), statementContext.getResultSetRowType().get()), e);
+						throw databaseExceptionWithStatementContext(statementContext,
+								format("Unable to map JDBC %s row to %s", ResultSet.class.getSimpleName(), statementContext.getResultSetRowType().get()), e);
 					}
 
 					if (resultSet.next())
@@ -1383,7 +1454,8 @@ public final class Database {
 						T listElement = getResultSetMapper().map(statementContext, resultSet, statementContext.getResultSetRowType().get(), getInstanceProvider()).orElse(null);
 						list.add(listElement);
 					} catch (SQLException e) {
-						throw new DatabaseException(format("Unable to map JDBC %s row to %s", ResultSet.class.getSimpleName(), statementContext.getResultSetRowType().get()), e);
+						throw databaseExceptionWithStatementContext(statementContext,
+								format("Unable to map JDBC %s row to %s", ResultSet.class.getSimpleName(), statementContext.getResultSetRowType().get()), e);
 					}
 				}
 
@@ -1802,7 +1874,7 @@ public final class Database {
 				}
 			}
 		} catch (Exception e) {
-			throw new DatabaseException(e);
+			throw databaseExceptionWithStatementContext(statementContext, e);
 		}
 	}
 
@@ -1825,11 +1897,44 @@ public final class Database {
 	}
 
 	/**
+	 * Gets the database type for this database.
+	 * <p>
+	 * If {@link Builder#databaseType(DatabaseType)} was not configured and the database type has not already been detected,
+	 * this method may acquire a connection and inspect {@link DatabaseMetaData}.  Configure an explicit database type to avoid
+	 * runtime detection.
+	 *
+	 * @return the database type
+	 * @throws DatabaseException if automatic database type detection fails
 	 * @since 3.0.0
 	 */
 	@NonNull
 	public DatabaseType getDatabaseType() {
-		return this.databaseType;
+		return getDatabaseType(this.databaseTypeDetectionConnectionHolder.get());
+	}
+
+	@NonNull
+	private DatabaseType getDatabaseType(@Nullable Connection connection) {
+		DatabaseType cachedDatabaseType = this.databaseType.get();
+
+		if (cachedDatabaseType != null)
+			return cachedDatabaseType;
+
+		DatabaseType detectedDatabaseType;
+
+		try {
+			detectedDatabaseType = connection == null
+					? DatabaseType.fromDataSource(getDataSource())
+					: DatabaseType.fromConnection(connection);
+		} catch (DatabaseException e) {
+			throw new DatabaseException(format(
+					"Unable to determine database type automatically. Configure %s.%s(%s) explicitly to avoid runtime detection.",
+					Builder.class.getSimpleName(), "databaseType", DatabaseType.class.getSimpleName()), e);
+		}
+
+		if (this.databaseType.compareAndSet(null, detectedDatabaseType))
+			return detectedDatabaseType;
+
+		return this.databaseType.get();
 	}
 
 	/**
@@ -1974,24 +2079,34 @@ public final class Database {
 			startTime = nanoTime();
 
 			try (PreparedStatement preparedStatement = connection.prepareStatement(statementContext.getStatement().getSql())) {
-				preparedStatementBindingOperation.perform(preparedStatement);
-				preparationDuration = Duration.ofNanos(nanoTime() - startTime);
+				Connection previousDatabaseTypeDetectionConnection = this.databaseTypeDetectionConnectionHolder.get();
+				this.databaseTypeDetectionConnectionHolder.set(connection);
 
-				DatabaseOperationResult databaseOperationResult = databaseOperation.perform(preparedStatement);
-				executionDuration = databaseOperationResult.getExecutionDuration().orElse(null);
-				resultSetMappingDuration = databaseOperationResult.getResultSetMappingDuration().orElse(null);
+				try {
+					preparedStatementBindingOperation.perform(preparedStatement);
+					preparationDuration = Duration.ofNanos(nanoTime() - startTime);
+
+					DatabaseOperationResult databaseOperationResult = databaseOperation.perform(preparedStatement);
+					executionDuration = databaseOperationResult.getExecutionDuration().orElse(null);
+					resultSetMappingDuration = databaseOperationResult.getResultSetMappingDuration().orElse(null);
+				} finally {
+					if (previousDatabaseTypeDetectionConnection == null)
+						this.databaseTypeDetectionConnectionHolder.remove();
+					else
+						this.databaseTypeDetectionConnectionHolder.set(previousDatabaseTypeDetectionConnection);
+				}
 			}
 		} catch (DatabaseException e) {
 			exception = e;
 			thrown = e;
 			throw e;
 		} catch (Error e) {
-			exception = new DatabaseException(e);
+			exception = databaseExceptionWithStatementContext(statementContext, e);
 			thrown = e;
 			throw e;
 		} catch (Exception e) {
+			DatabaseException wrapped = databaseExceptionWithStatementContext(statementContext, e);
 			exception = e;
-			DatabaseException wrapped = new DatabaseException(e);
 			thrown = wrapped;
 			throw wrapped;
 		} finally {
@@ -2201,22 +2316,32 @@ public final class Database {
 				startTime = nanoTime();
 
 				this.preparedStatement = this.connection.prepareStatement(this.statementContext.getStatement().getSql());
-				this.database.applyPreparedStatementCustomizer(this.statementContext, this.preparedStatement, this.preparedStatementCustomizer);
-				if (this.parameters.size() > 0)
-					this.database.performPreparedStatementBinding(this.statementContext, this.preparedStatement, this.parameters);
-				this.preparationDuration = Duration.ofNanos(nanoTime() - startTime);
+				Connection previousDatabaseTypeDetectionConnection = this.database.databaseTypeDetectionConnectionHolder.get();
+				this.database.databaseTypeDetectionConnectionHolder.set(this.connection);
 
-				startTime = nanoTime();
-				this.resultSet = this.preparedStatement.executeQuery();
-				this.executionDuration = Duration.ofNanos(nanoTime() - startTime);
+				try {
+					this.database.applyPreparedStatementCustomizer(this.statementContext, this.preparedStatement, this.preparedStatementCustomizer);
+					if (this.parameters.size() > 0)
+						this.database.performPreparedStatementBinding(this.statementContext, this.preparedStatement, this.parameters);
+					this.preparationDuration = Duration.ofNanos(nanoTime() - startTime);
+
+					startTime = nanoTime();
+					this.resultSet = this.preparedStatement.executeQuery();
+					this.executionDuration = Duration.ofNanos(nanoTime() - startTime);
+				} finally {
+					if (previousDatabaseTypeDetectionConnection == null)
+						this.database.databaseTypeDetectionConnectionHolder.remove();
+					else
+						this.database.databaseTypeDetectionConnectionHolder.set(previousDatabaseTypeDetectionConnection);
+				}
 			} catch (DatabaseException e) {
 				this.exception = e;
 				this.thrown = e;
 				close();
 				throw e;
 			} catch (Exception e) {
+				DatabaseException wrapped = databaseExceptionWithStatementContext(this.statementContext, e);
 				this.exception = e;
-				DatabaseException wrapped = new DatabaseException(e);
 				this.thrown = wrapped;
 				close();
 				throw wrapped;
@@ -2235,10 +2360,11 @@ public final class Database {
 					if (!this.hasNext)
 						close();
 				} catch (SQLException e) {
+					DatabaseException wrapped = databaseExceptionWithStatementContext(this.statementContext, e);
 					this.exception = e;
-					this.thrown = new DatabaseException(e);
+					this.thrown = wrapped;
 					close();
-					throw (DatabaseException) this.thrown;
+					throw wrapped;
 				}
 			}
 
@@ -2254,16 +2380,30 @@ public final class Database {
 			long startTime = nanoTime();
 
 			try {
-				T value = this.database.getResultSetMapper()
-						.map(this.statementContext, requireNonNull(this.resultSet), this.statementContext.getResultSetRowType().get(), this.database.getInstanceProvider())
-						.orElse(null);
+				Connection previousDatabaseTypeDetectionConnection = this.database.databaseTypeDetectionConnectionHolder.get();
+				this.database.databaseTypeDetectionConnectionHolder.set(requireNonNull(this.connection));
+				T value;
+
+				try {
+					value = this.database.getResultSetMapper()
+							.map(this.statementContext, requireNonNull(this.resultSet), this.statementContext.getResultSetRowType().get(), this.database.getInstanceProvider())
+							.orElse(null);
+				} finally {
+					if (previousDatabaseTypeDetectionConnection == null)
+						this.database.databaseTypeDetectionConnectionHolder.remove();
+					else
+						this.database.databaseTypeDetectionConnectionHolder.set(previousDatabaseTypeDetectionConnection);
+				}
+
 				this.resultSetMappingNanos += nanoTime() - startTime;
 				return value;
 			} catch (SQLException e) {
+				DatabaseException wrapped = databaseExceptionWithStatementContext(this.statementContext,
+						format("Unable to map JDBC %s row to %s", ResultSet.class.getSimpleName(), this.statementContext.getResultSetRowType().get()), e);
 				this.exception = e;
-				this.thrown = new DatabaseException(format("Unable to map JDBC %s row to %s", ResultSet.class.getSimpleName(), this.statementContext.getResultSetRowType().get()), e);
+				this.thrown = wrapped;
 				close();
-				throw (DatabaseException) this.thrown;
+				throw wrapped;
 			} catch (DatabaseException e) {
 				this.exception = e;
 				this.thrown = e;
@@ -2401,6 +2541,9 @@ public final class Database {
 
 		/**
 		 * Overrides automatic database type detection.
+		 * <p>
+		 * If {@code null}, the database type is detected lazily when database-type-specific behavior is first needed.
+		 * Supplying a non-null value avoids automatic detection and its metadata lookup entirely.
 		 *
 		 * @param databaseType the database type to use (null to enable auto-detection)
 		 * @return this {@code Builder}, for chaining

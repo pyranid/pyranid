@@ -717,11 +717,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		int cols = resultSetMetaData.getColumnCount();
 		StringBuilder sig = new StringBuilder(64 + cols * 48).append(cols);
+		DatabaseType databaseType = statementContext.getDatabaseType();
 
 		for (int i = 1; i <= cols; i++) {
 			String labelNorm = normalizeColumnLabel(resultSetMetaData.getColumnLabel(i));
 			int jdbcType = resultSetMetaData.getColumnType(i);
-			boolean tsTz = TemporalReaders.isTimestampWithTimeZone(resultSetMetaData, i, statementContext.getDatabaseType());
+			boolean tsTz = TemporalReaders.isTimestampWithTimeZone(resultSetMetaData, i, databaseType);
 			boolean timeTz = TemporalReaders.isTimeWithTimeZone(resultSetMetaData, i);
 			String typeName = Objects.toString(resultSetMetaData.getColumnTypeName(i), "").toUpperCase(Locale.ROOT);
 			sig.append('|').append(labelNorm)
@@ -871,7 +872,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			value = resultSet.getBigDecimal(1);
 		} else if (resultClass == BigInteger.class) {
 			BigDecimal bd = resultSet.getBigDecimal(1);
-			if (bd != null) value = bd.toBigInteger();
+			if (bd != null) value = exactBigInteger(bd);
 		} else if (resultClass == Number.class) {
 			Object raw = resultSet.getObject(1);
 			if (raw == null) {
@@ -1297,7 +1298,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			if (BigDecimal.class.isAssignableFrom(targetType))
 				return Optional.of(bigDecimal);
 			if (BigInteger.class.isAssignableFrom(targetType))
-				return Optional.of(bigDecimal.toBigInteger());
+				return Optional.of(exactBigInteger(bigDecimal));
 		}
 
 		if (resultSetValue instanceof BigInteger bigInteger) {
@@ -1307,30 +1308,30 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				return Optional.of(bigInteger);
 		}
 
-			if (resultSetValue instanceof Number number) {
-				if (Byte.class.isAssignableFrom(targetType))
-					return Optional.of(number.byteValue());
-				if (Short.class.isAssignableFrom(targetType))
-					return Optional.of(number.shortValue());
+		if (resultSetValue instanceof Number number) {
+			if (Byte.class.isAssignableFrom(targetType))
+				return Optional.of(exactByte(number));
+			if (Short.class.isAssignableFrom(targetType))
+				return Optional.of(exactShort(number));
 			if (Integer.class.isAssignableFrom(targetType))
-				return Optional.of(number.intValue());
+				return Optional.of(exactInt(number));
 			if (Long.class.isAssignableFrom(targetType))
-				return Optional.of(number.longValue());
+				return Optional.of(exactLong(number));
 			if (Float.class.isAssignableFrom(targetType))
-				return Optional.of(number.floatValue());
-				if (Double.class.isAssignableFrom(targetType))
-					return Optional.of(number.doubleValue());
-				if (BigDecimal.class.isAssignableFrom(targetType)) {
-					if (number instanceof Byte || number instanceof Short || number instanceof Integer || number instanceof Long)
-						return Optional.of(BigDecimal.valueOf(number.longValue()));
-					return Optional.of(new BigDecimal(number.toString()));
-				}
-				if (BigInteger.class.isAssignableFrom(targetType)) {
-					if (number instanceof Byte || number instanceof Short || number instanceof Integer || number instanceof Long)
-						return Optional.of(BigInteger.valueOf(number.longValue()));
-					return Optional.of(new BigDecimal(number.toString()).toBigInteger());
-				}
+				return Optional.of(finiteFloat(number));
+			if (Double.class.isAssignableFrom(targetType))
+				return Optional.of(finiteDouble(number));
+			if (BigDecimal.class.isAssignableFrom(targetType)) {
+				if (number instanceof Byte || number instanceof Short || number instanceof Integer || number instanceof Long)
+					return Optional.of(BigDecimal.valueOf(number.longValue()));
+				return Optional.of(new BigDecimal(number.toString()));
 			}
+			if (BigInteger.class.isAssignableFrom(targetType)) {
+				if (number instanceof Byte || number instanceof Short || number instanceof Integer || number instanceof Long)
+					return Optional.of(BigInteger.valueOf(number.longValue()));
+				return Optional.of(exactBigInteger(decimalForNumericConversion(number)));
+			}
+		}
 
 		// Legacy java.sql.* coming from drivers
 		if (resultSetValue instanceof java.sql.Timestamp timestamp) {
@@ -1487,7 +1488,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 			// Numeric truthiness (0=false, nonzero=true)
 			if (resultSetValue instanceof Number number)
-				return Optional.of(number.intValue() != 0);
+				return Optional.of(decimalForNumericConversion(number).signum() != 0);
 
 			throw new DatabaseException(format("Cannot map value '%s' (%s) to boolean", resultSetValue, resultSetValue.getClass().getName()));
 		}
@@ -1506,7 +1507,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 			// Numeric -> Unicode code point (useful for some JDBC drivers / legacy schemas)
 			if (resultSetValue instanceof Number number) {
-				int code = number.intValue();
+				int code = exactInt(number);
 				if (code >= Character.MIN_VALUE && code <= Character.MAX_VALUE)
 					return Optional.of((char) code);
 
@@ -1518,6 +1519,117 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		return Optional.ofNullable(resultSetValue);
+	}
+
+	private static byte exactByte(@NonNull Number number) {
+		requireNonNull(number);
+
+		if (number instanceof Byte value)
+			return value;
+
+		try {
+			return decimalForNumericConversion(number).byteValueExact();
+		} catch (ArithmeticException e) {
+			throw new DatabaseException(format("Numeric value '%s' cannot be represented exactly as byte", number), e);
+		}
+	}
+
+	private static short exactShort(@NonNull Number number) {
+		requireNonNull(number);
+
+		if (number instanceof Byte || number instanceof Short)
+			return number.shortValue();
+
+		try {
+			return decimalForNumericConversion(number).shortValueExact();
+		} catch (ArithmeticException e) {
+			throw new DatabaseException(format("Numeric value '%s' cannot be represented exactly as short", number), e);
+		}
+	}
+
+	private static int exactInt(@NonNull Number number) {
+		requireNonNull(number);
+
+		if (number instanceof Byte || number instanceof Short || number instanceof Integer)
+			return number.intValue();
+
+		try {
+			return decimalForNumericConversion(number).intValueExact();
+		} catch (ArithmeticException e) {
+			throw new DatabaseException(format("Numeric value '%s' cannot be represented exactly as int", number), e);
+		}
+	}
+
+	private static long exactLong(@NonNull Number number) {
+		requireNonNull(number);
+
+		if (number instanceof Byte || number instanceof Short || number instanceof Integer || number instanceof Long)
+			return number.longValue();
+
+		try {
+			return decimalForNumericConversion(number).longValueExact();
+		} catch (ArithmeticException e) {
+			throw new DatabaseException(format("Numeric value '%s' cannot be represented exactly as long", number), e);
+		}
+	}
+
+	@NonNull
+	private static BigInteger exactBigInteger(@NonNull BigDecimal bigDecimal) {
+		requireNonNull(bigDecimal);
+
+		try {
+			return bigDecimal.toBigIntegerExact();
+		} catch (ArithmeticException e) {
+			throw new DatabaseException(format("Numeric value '%s' cannot be represented exactly as BigInteger", bigDecimal), e);
+		}
+	}
+
+	private static float finiteFloat(@NonNull Number number) {
+		requireNonNull(number);
+
+		float value = number.floatValue();
+
+		if (!Float.isFinite(value))
+			throw new DatabaseException(format("Numeric value '%s' cannot be represented as finite float", number));
+
+		return value;
+	}
+
+	private static double finiteDouble(@NonNull Number number) {
+		requireNonNull(number);
+
+		double value = number.doubleValue();
+
+		if (!Double.isFinite(value))
+			throw new DatabaseException(format("Numeric value '%s' cannot be represented as finite double", number));
+
+		return value;
+	}
+
+	@NonNull
+	private static BigDecimal decimalForNumericConversion(@NonNull Number number) {
+		requireNonNull(number);
+
+		try {
+			if (number instanceof BigDecimal bigDecimal)
+				return bigDecimal;
+			if (number instanceof BigInteger bigInteger)
+				return new BigDecimal(bigInteger);
+			if (number instanceof Byte || number instanceof Short || number instanceof Integer || number instanceof Long)
+				return BigDecimal.valueOf(number.longValue());
+			if (number instanceof Float || number instanceof Double) {
+				double value = number.doubleValue();
+
+				if (!Double.isFinite(value))
+					throw new DatabaseException(format("Numeric value '%s' is not finite", number));
+
+				return BigDecimal.valueOf(value);
+			}
+
+			return new BigDecimal(number.toString());
+		} catch (NumberFormatException e) {
+			throw new DatabaseException(format("Unable to interpret numeric value '%s'", number), e);
+		}
 	}
 
 	@Nullable
@@ -1946,44 +2058,71 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 	@Nullable
 	private Integer getNullableInt(@NonNull ResultSet resultSet, int columnIndex) throws SQLException {
-		int v = resultSet.getInt(columnIndex);
-		return resultSet.wasNull() ? null : v;
+		Number value = getNullableNumber(resultSet, columnIndex, Integer.class);
+		return value == null ? null : exactInt(value);
 	}
 
 	@Nullable
 	private Long getNullableLong(@NonNull ResultSet resultSet, int columnIndex) throws SQLException {
-		long v = resultSet.getLong(columnIndex);
-		return resultSet.wasNull() ? null : v;
+		Number value = getNullableNumber(resultSet, columnIndex, Long.class);
+		return value == null ? null : exactLong(value);
 	}
 
 	@Nullable
 	private Short getNullableShort(@NonNull ResultSet resultSet, int columnIndex) throws SQLException {
-		short v = resultSet.getShort(columnIndex);
-		return resultSet.wasNull() ? null : v;
+		Number value = getNullableNumber(resultSet, columnIndex, Short.class);
+		return value == null ? null : exactShort(value);
 	}
 
 	@Nullable
 	private Byte getNullableByte(@NonNull ResultSet resultSet, int columnIndex) throws SQLException {
-		byte v = resultSet.getByte(columnIndex);
-		return resultSet.wasNull() ? null : v;
+		Number value = getNullableNumber(resultSet, columnIndex, Byte.class);
+		return value == null ? null : exactByte(value);
 	}
 
 	@Nullable
 	private Float getNullableFloat(@NonNull ResultSet resultSet, int columnIndex) throws SQLException {
-		float v = resultSet.getFloat(columnIndex);
-		return resultSet.wasNull() ? null : v;
+		Number value = getNullableNumber(resultSet, columnIndex, Float.class);
+		return value == null ? null : finiteFloat(value);
 	}
 
 	@Nullable
 	private Double getNullableDouble(@NonNull ResultSet resultSet, int columnIndex) throws SQLException {
-		double v = resultSet.getDouble(columnIndex);
-		return resultSet.wasNull() ? null : v;
+		Number value = getNullableNumber(resultSet, columnIndex, Double.class);
+		return value == null ? null : finiteDouble(value);
 	}
 
 	@Nullable
 	private Boolean getNullableBoolean(@NonNull ResultSet resultSet, int columnIndex) throws SQLException {
+		Object value = resultSet.getObject(columnIndex);
+
+		if (value == null)
+			return null;
+		if (value instanceof Boolean b)
+			return b;
+		if (value instanceof Number number)
+			return decimalForNumericConversion(number).signum() != 0;
+
 		boolean v = resultSet.getBoolean(columnIndex);
 		return resultSet.wasNull() ? null : v;
+	}
+
+	@Nullable
+	private Number getNullableNumber(@NonNull ResultSet resultSet,
+																	 int columnIndex,
+																	 @NonNull Class<?> targetType) throws SQLException {
+		requireNonNull(resultSet);
+		requireNonNull(targetType);
+
+		Object value = resultSet.getObject(columnIndex);
+
+		if (value == null)
+			return null;
+		if (value instanceof Number number)
+			return number;
+
+		throw new DatabaseException(format("Cannot map value '%s' (%s) to %s",
+				value, value.getClass().getName(), targetType.getSimpleName()));
 	}
 
 	/**

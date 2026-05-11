@@ -112,9 +112,9 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		// Unwrap typed parameters if needed
 		Object rawParameter = (parameter instanceof TypedParameter typedParameter) ? typedParameter.getValue().orElse(null) : parameter;
 		Object unwrappedParameter = unwrapOptionalValue(rawParameter);
-		Optional<Integer> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
 
 		if (unwrappedParameter == null) {
+			Optional<Integer> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
 			Integer sqlType = sqlTypeOptional.orElse(null);
 			if (sqlType == null || sqlType == Types.NULL) {
 				sqlType = explicitTargetType == null
@@ -142,12 +142,13 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		if (explicitTargetType == null)
 			explicitTargetType = TargetType.of(unwrappedParameter.getClass());
 
-		Integer sqlType = sqlTypeOptional.orElse(Types.OTHER);
-
 		// Try custom binders first (if they exist) on the unwrapped value
-		if (!getCustomParameterBinders().isEmpty()
-				&& tryCustomBinders(statementContext, preparedStatement, parameterIndex, unwrappedParameter, sqlType, explicitTargetType))
-			return;
+		if (!getCustomParameterBinders().isEmpty() && !customBindersFor(explicitTargetType).isEmpty()) {
+			Integer sqlType = determineParameterSqlType(preparedStatement, parameterIndex).orElse(Types.OTHER);
+
+			if (tryCustomBinders(statementContext, preparedStatement, parameterIndex, unwrappedParameter, sqlType, explicitTargetType))
+				return;
+		}
 
 		// If this parameter was explicitly wrapped as a TypedParameter (e.g., Parameters.listOf/setOf/mapOf/arrayOf(Class, ...))
 		// and no CustomParameterBinder claimed it, fail fast with a clear message.
@@ -181,6 +182,8 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		if (normalizedParameter instanceof OffsetDateTime offsetDateTime) {
+			Integer sqlType = determineParameterSqlType(preparedStatement, parameterIndex).orElse(Types.OTHER);
+
 			if (sqlType == Types.TIMESTAMP) {
 				// Coerce to DB zone and drop the offset.
 				LocalDateTime localDateTime = offsetDateTime.atZoneSameInstant(statementContext.getTimeZone()).toLocalDateTime();
@@ -205,6 +208,8 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		if (normalizedParameter instanceof Instant instant) {
+			Integer sqlType = determineParameterSqlType(preparedStatement, parameterIndex).orElse(Types.OTHER);
+
 			if (sqlType == Types.TIMESTAMP) {
 				LocalDateTime localDateTime = LocalDateTime.ofInstant(instant, statementContext.getTimeZone());
 
@@ -233,6 +238,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			Object[] elements = sqlArrayParameter.getElements().orElse(null);
 
 			if (elements == null) {
+				Optional<Integer> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
 				setNullWithFallback(preparedStatement, parameterIndex, Types.ARRAY, sqlArrayParameter.getBaseTypeName(),
 						sqlTypeOptional.orElse(null));
 			} else {
@@ -262,6 +268,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			double[] elements = vectorParameter.getElements().orElse(null);
 
 			if (elements == null) {
+				Optional<Integer> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
 				setNullWithFallback(preparedStatement, parameterIndex, Types.OTHER, "vector", sqlTypeOptional.orElse(null));
 			} else {
 				org.postgresql.util.PGobject pg = new org.postgresql.util.PGobject();
@@ -277,6 +284,8 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			String json = jsonParameter.getJson().orElse(null);
 
 			if (json == null) {
+				Optional<Integer> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
+
 				if (statementContext.getDatabaseType() == DatabaseType.POSTGRESQL) {
 					String typeName = jsonParameter.getBindingPreference() == BindingPreference.TEXT ? "json" : "jsonb";
 					setNullWithFallback(preparedStatement, parameterIndex, Types.OTHER, typeName, sqlTypeOptional.orElse(null));
@@ -682,13 +691,11 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			return ((TimeZone) parameter).getID();
 
 		// Special handling for Oracle
-		if (statementContext.getDatabaseType() == DatabaseType.ORACLE) {
-			if (parameter instanceof java.util.UUID) {
-				ByteBuffer byteBuffer = ByteBuffer.wrap(new byte[16]);
-				byteBuffer.putLong(((UUID) parameter).getMostSignificantBits());
-				byteBuffer.putLong(((UUID) parameter).getLeastSignificantBits());
-				return byteBuffer.array();
-			}
+		if (parameter instanceof UUID uuid && statementContext.getDatabaseType() == DatabaseType.ORACLE) {
+			ByteBuffer byteBuffer = ByteBuffer.wrap(new byte[16]);
+			byteBuffer.putLong(uuid.getMostSignificantBits());
+			byteBuffer.putLong(uuid.getLeastSignificantBits());
+			return byteBuffer.array();
 		}
 
 		return parameter;

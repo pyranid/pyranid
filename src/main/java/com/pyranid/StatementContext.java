@@ -30,6 +30,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import static java.lang.String.format;
@@ -50,7 +51,7 @@ public final class StatementContext<T> {
 	@Nullable
 	private final Class<T> resultSetRowType;
 	@NonNull
-	private final DatabaseType databaseType;
+	private final Supplier<@NonNull DatabaseType> databaseTypeSupplier;
 	@NonNull
 	private final ZoneId timeZone;
 	@NonNull
@@ -64,7 +65,7 @@ public final class StatementContext<T> {
 				? List.of()
 				: Collections.unmodifiableList(new ArrayList<>(builder.parameters));
 		this.resultSetRowType = builder.resultSetRowType;
-		this.databaseType = builder.databaseType;
+		this.databaseTypeSupplier = builder.databaseTypeSupplier;
 		this.timeZone = builder.timeZone;
 		this.cleanupOperations = new ConcurrentLinkedQueue<>();
 	}
@@ -128,7 +129,7 @@ public final class StatementContext<T> {
 
 	@NonNull
 	public DatabaseType getDatabaseType() {
-		return this.databaseType;
+		return this.databaseTypeSupplier.get();
 	}
 
 	@NonNull
@@ -168,7 +169,7 @@ public final class StatementContext<T> {
 		@NonNull
 		private final Statement statement;
 		@NonNull
-		private final DatabaseType databaseType;
+		private final Supplier<@NonNull DatabaseType> databaseTypeSupplier;
 		@NonNull
 		private final ZoneId timeZone;
 		@Nullable
@@ -182,7 +183,7 @@ public final class StatementContext<T> {
 			requireNonNull(database);
 
 			this.statement = statement;
-			this.databaseType = database.getDatabaseType();
+			this.databaseTypeSupplier = database::getDatabaseType;
 			this.timeZone = database.getTimeZone();
 		}
 

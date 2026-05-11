@@ -1329,6 +1329,18 @@ Database database = Database.withDataSource(dataSource)
   }).build();
 ```
 
+## Development Verification
+
+Before cutting a release, run the local verification gates from the `pyranid/` project directory:
+
+```bash
+mvn -q test
+mvn -q javadoc:javadoc
+mvn -q -P integration verify
+```
+
+The `integration` Maven profile runs Docker-backed PostgreSQL integration tests with Testcontainers and requires a working local Docker environment. The initial PostgreSQL image is pinned to `postgres:17-alpine`.
+
 ## About
 
 Pyranid was created by [Mark Allen](https://www.revetkn.com) and sponsored by [Transmogrify LLC](https://www.xmog.com) and [Revetware LLC](https://www.revetware.com).

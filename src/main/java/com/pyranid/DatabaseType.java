@@ -60,6 +60,24 @@ public enum DatabaseType {
 		requireNonNull(dataSource);
 		
 		try (Connection connection = dataSource.getConnection()) {
+			return fromConnection(connection);
+		} catch (SQLException e) {
+			throw new DatabaseException("Unable to connect to database to determine its type", e);
+		}
+	}
+
+	/**
+	 * Determines the type of database represented by the given {@code connection}.
+	 *
+	 * @param connection an active database connection
+	 * @return the type of database
+	 * @throws DatabaseException if an exception occurs while attempting to read database metadata
+	 */
+	@NonNull
+	public static DatabaseType fromConnection(@NonNull Connection connection) {
+		requireNonNull(connection);
+
+		try {
 			DatabaseMetaData databaseMetaData = connection.getMetaData();
 			String databaseProductName = databaseMetaData.getDatabaseProductName();
 			String url = databaseMetaData.getURL();
@@ -84,7 +102,7 @@ public enum DatabaseType {
 
 			return DatabaseType.GENERIC;
 		} catch (SQLException e) {
-			throw new DatabaseException("Unable to connect to database to determine its type", e);
+			throw new DatabaseException("Unable to inspect database metadata to determine its type", e);
 		}
 	}
 }
