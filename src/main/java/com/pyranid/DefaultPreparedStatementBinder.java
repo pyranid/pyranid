@@ -35,6 +35,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.Collections;
 import java.util.Currency;
@@ -114,8 +115,8 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		Object unwrappedParameter = unwrapOptionalValue(rawParameter);
 
 		if (unwrappedParameter == null) {
-			Optional<Integer> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
-			Integer sqlType = sqlTypeOptional.orElse(null);
+			Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
+			Integer sqlType = sqlTypeOptional.map(ParameterSqlType::getSqlType).orElse(null);
 			if (sqlType == null || sqlType == Types.NULL) {
 				sqlType = explicitTargetType == null
 						? Types.NULL
@@ -144,7 +145,9 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 		// Try custom binders first (if they exist) on the unwrapped value
 		if (!getCustomParameterBinders().isEmpty() && !customBindersFor(explicitTargetType).isEmpty()) {
-			Integer sqlType = determineParameterSqlType(preparedStatement, parameterIndex).orElse(Types.OTHER);
+			Integer sqlType = determineParameterSqlType(preparedStatement, parameterIndex)
+					.map(ParameterSqlType::getSqlType)
+					.orElse(Types.OTHER);
 
 			if (tryCustomBinders(statementContext, preparedStatement, parameterIndex, unwrappedParameter, sqlType, explicitTargetType))
 				return;
@@ -182,9 +185,9 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		if (normalizedParameter instanceof OffsetDateTime offsetDateTime) {
-			Integer sqlType = determineParameterSqlType(preparedStatement, parameterIndex).orElse(Types.OTHER);
+			ParameterSqlType sqlType = determineParameterSqlType(preparedStatement, parameterIndex).orElse(ParameterSqlType.UNKNOWN);
 
-			if (sqlType == Types.TIMESTAMP) {
+			if (sqlType.isTimestampWithoutTimeZone()) {
 				// Coerce to DB zone and drop the offset.
 				LocalDateTime localDateTime = offsetDateTime.atZoneSameInstant(statementContext.getTimeZone()).toLocalDateTime();
 				if (!trySetObject(preparedStatement, parameterIndex, localDateTime, Types.TIMESTAMP))
@@ -193,7 +196,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 				return;
 			}
 
-			if (sqlType == Types.TIMESTAMP_WITH_TIMEZONE) {
+			if (sqlType.isTimestampWithTimeZone()) {
 				if (!trySetObject(preparedStatement, parameterIndex, offsetDateTime, Types.TIMESTAMP_WITH_TIMEZONE))
 					preparedStatement.setTimestamp(parameterIndex, java.sql.Timestamp.from(offsetDateTime.toInstant()));
 
@@ -208,9 +211,9 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		if (normalizedParameter instanceof Instant instant) {
-			Integer sqlType = determineParameterSqlType(preparedStatement, parameterIndex).orElse(Types.OTHER);
+			ParameterSqlType sqlType = determineParameterSqlType(preparedStatement, parameterIndex).orElse(ParameterSqlType.UNKNOWN);
 
-			if (sqlType == Types.TIMESTAMP) {
+			if (sqlType.isTimestampWithoutTimeZone()) {
 				LocalDateTime localDateTime = LocalDateTime.ofInstant(instant, statementContext.getTimeZone());
 
 				if (!trySetObject(preparedStatement, parameterIndex, localDateTime, Types.TIMESTAMP))
@@ -220,7 +223,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			}
 
 			// Default (and for TIMESTAMP WITH TIME ZONE): keep the instant.
-			if (!trySetObject(preparedStatement, parameterIndex, instant, Types.TIMESTAMP_WITH_TIMEZONE))
+			if (!trySetObject(preparedStatement, parameterIndex, OffsetDateTime.ofInstant(instant, ZoneOffset.UTC), Types.TIMESTAMP_WITH_TIMEZONE))
 				preparedStatement.setTimestamp(parameterIndex, java.sql.Timestamp.from(instant));
 
 			return;
@@ -238,9 +241,9 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			Object[] elements = sqlArrayParameter.getElements().orElse(null);
 
 			if (elements == null) {
-				Optional<Integer> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
+				Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
 				setNullWithFallback(preparedStatement, parameterIndex, Types.ARRAY, sqlArrayParameter.getBaseTypeName(),
-						sqlTypeOptional.orElse(null));
+						sqlTypeOptional.map(ParameterSqlType::getSqlType).orElse(null));
 			} else {
 				Object[] normalizedElements = normalizedArrayElements(statementContext, elements);
 				Array array = preparedStatement.getConnection().createArrayOf(sqlArrayParameter.getBaseTypeName(), normalizedElements);
@@ -268,8 +271,9 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			double[] elements = vectorParameter.getElements().orElse(null);
 
 			if (elements == null) {
-				Optional<Integer> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
-				setNullWithFallback(preparedStatement, parameterIndex, Types.OTHER, "vector", sqlTypeOptional.orElse(null));
+				Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
+				setNullWithFallback(preparedStatement, parameterIndex, Types.OTHER, "vector",
+						sqlTypeOptional.map(ParameterSqlType::getSqlType).orElse(null));
 			} else {
 				org.postgresql.util.PGobject pg = new org.postgresql.util.PGobject();
 				pg.setType("vector");
@@ -284,13 +288,15 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			String json = jsonParameter.getJson().orElse(null);
 
 			if (json == null) {
-				Optional<Integer> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
+				Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
 
 				if (statementContext.getDatabaseType() == DatabaseType.POSTGRESQL) {
 					String typeName = jsonParameter.getBindingPreference() == BindingPreference.TEXT ? "json" : "jsonb";
-					setNullWithFallback(preparedStatement, parameterIndex, Types.OTHER, typeName, sqlTypeOptional.orElse(null));
+					setNullWithFallback(preparedStatement, parameterIndex, Types.OTHER, typeName,
+							sqlTypeOptional.map(ParameterSqlType::getSqlType).orElse(null));
 				} else {
-					setNullWithFallback(preparedStatement, parameterIndex, Types.LONGVARCHAR, null, sqlTypeOptional.orElse(null));
+					setNullWithFallback(preparedStatement, parameterIndex, Types.LONGVARCHAR, null,
+							sqlTypeOptional.map(ParameterSqlType::getSqlType).orElse(null));
 				}
 			} else {
 				// For now, only special handling for PostgreSQL.
@@ -393,8 +399,8 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	}
 
 	@NonNull
-	protected Optional<Integer> determineParameterSqlType(@NonNull PreparedStatement preparedStatement,
-																												@NonNull Integer parameterIndex) throws SQLException {
+	protected Optional<ParameterSqlType> determineParameterSqlType(@NonNull PreparedStatement preparedStatement,
+																																 @NonNull Integer parameterIndex) throws SQLException {
 		requireNonNull(preparedStatement);
 		requireNonNull(parameterIndex);
 
@@ -404,11 +410,57 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			if (parameterMetaData == null)
 				return Optional.empty();
 
-			return Optional.of(parameterMetaData.getParameterType(parameterIndex));
+			Integer sqlType = parameterMetaData.getParameterType(parameterIndex);
+			String typeName = null;
+
+			try {
+				typeName = parameterMetaData.getParameterTypeName(parameterIndex);
+			} catch (SQLFeatureNotSupportedException | AbstractMethodError ignored) {
+			} catch (SQLException ignored) {
+			}
+
+			return Optional.of(new ParameterSqlType(sqlType, typeName));
 		} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
 			return Optional.empty();
 		} catch (SQLException e) {
 			return Optional.empty();
+		}
+	}
+
+	protected static final class ParameterSqlType {
+		@NonNull
+		private static final ParameterSqlType UNKNOWN = new ParameterSqlType(Types.OTHER, null);
+		@NonNull
+		private final Integer sqlType;
+		@Nullable
+		private final String typeName;
+
+		private ParameterSqlType(@NonNull Integer sqlType,
+														 @Nullable String typeName) {
+			this.sqlType = requireNonNull(sqlType);
+			this.typeName = typeName;
+		}
+
+		@NonNull
+		private Integer getSqlType() {
+			return this.sqlType;
+		}
+
+		private boolean isTimestampWithTimeZone() {
+			if (getSqlType() == Types.TIMESTAMP_WITH_TIMEZONE)
+				return true;
+
+			String typeName = this.typeName;
+
+			if (typeName == null)
+				return false;
+
+			String normalizedTypeName = typeName.toUpperCase(Locale.ROOT);
+			return normalizedTypeName.contains("WITH TIME ZONE") || normalizedTypeName.contains("TIMESTAMPTZ");
+		}
+
+		private boolean isTimestampWithoutTimeZone() {
+			return getSqlType() == Types.TIMESTAMP && !isTimestampWithTimeZone();
 		}
 	}
 

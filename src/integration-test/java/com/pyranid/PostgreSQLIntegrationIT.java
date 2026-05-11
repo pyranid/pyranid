@@ -25,6 +25,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import javax.sql.DataSource;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 
 /**
@@ -79,6 +83,55 @@ public class PostgreSQLIntegrationIT {
 				.orElseThrow();
 
 		Assertions.assertEquals("beta", secondTag);
+	}
+
+	@Test
+	public void testTimestampAndTimestampWithTimeZoneRoundTrip() {
+		Database db = Database.withDataSource(dataSource())
+				.timeZone(ZoneId.of("UTC"))
+				.build();
+		Instant instant = Instant.parse("2020-01-02T03:04:05.123Z");
+		OffsetDateTime offsetDateTime = OffsetDateTime.parse("2020-01-02T05:04:05.123+02:00");
+		Instant expectedInstant = instant.truncatedTo(ChronoUnit.MILLIS);
+		Instant expectedOffsetInstant = offsetDateTime.toInstant().truncatedTo(ChronoUnit.MILLIS);
+
+		db.query("""
+				CREATE TABLE IF NOT EXISTS pyranid_temporal_test (
+					id BIGSERIAL PRIMARY KEY,
+					instant_ts TIMESTAMP NOT NULL,
+					instant_tstz TIMESTAMPTZ NOT NULL,
+					offset_ts TIMESTAMP NOT NULL,
+					offset_tstz TIMESTAMPTZ NOT NULL
+				)
+				""").execute();
+		db.query("TRUNCATE TABLE pyranid_temporal_test").execute();
+		db.query("""
+				INSERT INTO pyranid_temporal_test(instant_ts, instant_tstz, offset_ts, offset_tstz)
+				VALUES (:instantTs, :instantTstz, :offsetTs, :offsetTstz)
+				""")
+				.bind("instantTs", instant)
+				.bind("instantTstz", instant)
+				.bind("offsetTs", offsetDateTime)
+				.bind("offsetTstz", offsetDateTime)
+				.execute();
+
+		Assertions.assertEquals(expectedInstant, db.query("SELECT instant_ts FROM pyranid_temporal_test")
+				.fetchObject(Instant.class)
+				.orElseThrow());
+		Assertions.assertEquals(expectedInstant, db.query("SELECT instant_tstz FROM pyranid_temporal_test")
+				.fetchObject(Instant.class)
+				.orElseThrow());
+		Assertions.assertEquals(expectedOffsetInstant, db.query("SELECT offset_ts FROM pyranid_temporal_test")
+				.fetchObject(Instant.class)
+				.orElseThrow());
+		Assertions.assertEquals(expectedOffsetInstant, db.query("SELECT offset_tstz FROM pyranid_temporal_test")
+				.fetchObject(Instant.class)
+				.orElseThrow());
+		Assertions.assertEquals(expectedOffsetInstant, db.query("SELECT offset_tstz FROM pyranid_temporal_test")
+				.fetchObject(OffsetDateTime.class)
+				.orElseThrow()
+				.toInstant()
+				.truncatedTo(ChronoUnit.MILLIS));
 	}
 
 	@Test

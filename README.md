@@ -413,6 +413,8 @@ database.transaction(() -> {
 });
 ```
 
+Transaction handles are scoped to the transaction closure. After the closure completes, mutating or JDBC-touching methods on a captured `Transaction` handle throw `IllegalStateException`.
+
 ### Multi-threaded Transactions
 
 Internally, Database manages a threadlocal stack of [`Transaction`](https://javadoc.pyranid.com/com/pyranid/Transaction.html) instances to simplify single-threaded usage.  Should you need to share the same transaction across multiple threads, use the [`Database::participate`](https://javadoc.pyranid.com/com/pyranid/Database.html#participate(com.pyranid.Transaction,com.pyranid.TransactionalOperation)) API.
@@ -462,18 +464,25 @@ database.transaction(() -> {
   transaction.setRollbackOnly(true);
 });
 
-// You may roll back to a savepoint
+// You may roll back part of a transaction with a savepoint
 database.transaction(() -> {
   Transaction transaction = database.currentTransaction().orElseThrow();
-  Savepoint savepoint = transaction.createSavepoint();
 
-  database.query("UPDATE account SET balance=balance - 10 WHERE id=1")
-    .execute();
+  try {
+    transaction.withSavepoint(() -> {
+      database.query("UPDATE account SET balance=balance - 10 WHERE id=1")
+        .execute();
 
-  // Hmm...I changed my mind
-  transaction.rollback(savepoint);
+      // Hmm...I changed my mind about this part of the transaction
+      throw new IllegalStateException("Undo the savepoint work");
+    });
+  } catch (IllegalStateException ignored) {
+    // Work inside the savepoint was rolled back, and the outer transaction continues
+  }
 });
 ```
+
+The lower-level `createSavepoint()`, `rollback(Savepoint)`, and `releaseSavepoint(Savepoint)` methods remain available for callers that need manual control. Prefer `withSavepoint(...)` for common partial-rollback workflows because it handles rollback, release, and suppressed cleanup failures consistently.
 
 ### Nesting
 
@@ -493,6 +502,8 @@ database.transaction(() -> {
   throw new IllegalStateException("I should not have used nested transactions here...");
 });
 ```
+
+Nested transactions borrow separate physical connections and can pressure small connection pools. If your intent is to join work to an existing transaction, pass the current `Transaction` handle to `Database::participate(...)` instead of calling `transaction(...)` again.
 
 ### Isolation
 
@@ -1340,6 +1351,8 @@ mvn -q -P integration verify
 ```
 
 The `integration` Maven profile runs Docker-backed PostgreSQL integration tests with Testcontainers and requires a working local Docker environment. The initial PostgreSQL image is pinned to `postgres:17-alpine`.
+
+The PostgreSQL integration profile currently covers core pgjdbc behavior such as JSONB, SQL arrays, `RETURNING`, temporal binding/mapping, and exception metadata. It does not run pgvector extension tests; verify pgvector manually if your release depends on that feature.
 
 ## About
 

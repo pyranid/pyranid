@@ -23,6 +23,7 @@ import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Savepoint;
 import java.util.Collections;
 import java.util.List;
@@ -71,6 +72,8 @@ public final class Transaction {
 
 	@NonNull
 	private final AtomicBoolean rollbackOnly;
+	@NonNull
+	private final AtomicBoolean completed;
 	@Nullable
 	private volatile Connection connection;
 	@Nullable
@@ -90,6 +93,7 @@ public final class Transaction {
 		this.transactionIsolation = transactionIsolation;
 		this.connection = null;
 		this.rollbackOnly = new AtomicBoolean(false);
+		this.completed = new AtomicBoolean(false);
 		this.initialAutoCommit = null;
 		this.transactionIsolationWasChanged = new AtomicBoolean(false);
 		this.postTransactionOperations = new CopyOnWriteArrayList();
@@ -107,11 +111,17 @@ public final class Transaction {
 
 	/**
 	 * Creates a transaction savepoint that can be rolled back to via {@link #rollback(Savepoint)}.
+	 * <p>
+	 * For most application code, prefer {@link #withSavepoint(TransactionalOperation)} or
+	 * {@link #withSavepoint(ReturningTransactionalOperation)} so rollback and release cleanup are handled automatically.
 	 *
 	 * @return a transaction savepoint
+	 * @throws IllegalStateException if this transaction has already completed
 	 */
 	@NonNull
 	public Savepoint createSavepoint() {
+		assertNotCompleted("create a savepoint");
+
 		try {
 			return getConnection().setSavepoint();
 		} catch (SQLException e) {
@@ -123,14 +133,99 @@ public final class Transaction {
 	 * Rolls back to the provided transaction savepoint.
 	 *
 	 * @param savepoint the savepoint to roll back to
+	 * @throws IllegalStateException if this transaction has already completed
 	 */
 	public void rollback(@NonNull Savepoint savepoint) {
 		requireNonNull(savepoint);
+		assertNotCompleted("roll back to a savepoint");
 
 		try {
 			getConnection().rollback(savepoint);
 		} catch (SQLException e) {
 			throw new DatabaseException("Unable to roll back to savepoint", e);
+		}
+	}
+
+	/**
+	 * Releases the provided transaction savepoint.
+	 * <p>
+	 * For most application code, prefer {@link #withSavepoint(TransactionalOperation)} or
+	 * {@link #withSavepoint(ReturningTransactionalOperation)} so rollback and release cleanup are handled automatically.
+	 *
+	 * @param savepoint the savepoint to release
+	 * @throws IllegalStateException if this transaction has already completed
+	 * @since 4.1.0
+	 */
+	public void releaseSavepoint(@NonNull Savepoint savepoint) {
+		requireNonNull(savepoint);
+		assertNotCompleted("release a savepoint");
+		releaseSavepointJdbc(savepoint);
+	}
+
+	/**
+	 * Performs an operation inside a transaction savepoint.
+	 * <p>
+	 * If {@code transactionalOperation} completes successfully, the savepoint is released when the driver supports release.
+	 * If an exception bubbles out, Pyranid rolls back to the savepoint, attempts to release it, and preserves cleanup failures
+	 * as suppressed exceptions on the thrown exception.
+	 * <p>
+	 * Nested savepoint usage should be stack-like: finish inner savepoints before manually releasing or rolling back outer
+	 * savepoints.
+	 *
+	 * @param transactionalOperation the operation to perform inside a savepoint
+	 * @throws IllegalStateException if this transaction has already completed
+	 * @since 4.1.0
+	 */
+	public void withSavepoint(@NonNull TransactionalOperation transactionalOperation) {
+		requireNonNull(transactionalOperation);
+
+		withSavepoint(() -> {
+			transactionalOperation.perform();
+			return Optional.empty();
+		});
+	}
+
+	/**
+	 * Performs an operation inside a transaction savepoint and optionally returns a value.
+	 * <p>
+	 * If {@code transactionalOperation} completes successfully, the savepoint is released when the driver supports release.
+	 * If an exception bubbles out, Pyranid rolls back to the savepoint, attempts to release it, and preserves cleanup failures
+	 * as suppressed exceptions on the thrown exception.
+	 * <p>
+	 * Nested savepoint usage should be stack-like: finish inner savepoints before manually releasing or rolling back outer
+	 * savepoints.
+	 *
+	 * @param transactionalOperation the operation to perform inside a savepoint
+	 * @param <T>                    the type to be returned
+	 * @return the result of the operation
+	 * @throws IllegalStateException if this transaction has already completed
+	 * @since 4.1.0
+	 */
+	@NonNull
+	public <T> Optional<T> withSavepoint(@NonNull ReturningTransactionalOperation<T> transactionalOperation) {
+		requireNonNull(transactionalOperation);
+		assertNotCompleted("run a savepoint operation");
+
+		Savepoint savepoint = createSavepoint();
+
+		try {
+			Optional<T> returnValue = transactionalOperation.perform();
+
+			if (returnValue == null)
+				returnValue = Optional.empty();
+
+			releaseSavepointAfterSuccess(savepoint);
+			return returnValue;
+		} catch (RuntimeException e) {
+			cleanupSavepointAfterFailure(savepoint, e);
+			throw e;
+		} catch (Error e) {
+			cleanupSavepointAfterFailure(savepoint, e);
+			throw e;
+		} catch (Throwable t) {
+			RuntimeException wrapped = new RuntimeException(t);
+			cleanupSavepointAfterFailure(savepoint, wrapped);
+			throw wrapped;
 		}
 	}
 
@@ -153,6 +248,7 @@ public final class Transaction {
 	 */
 	public void setRollbackOnly(@NonNull Boolean rollbackOnly) {
 		requireNonNull(rollbackOnly);
+		assertNotCompleted("set rollback-only state");
 		this.rollbackOnly.set(rollbackOnly);
 	}
 
@@ -163,6 +259,7 @@ public final class Transaction {
 	 */
 	public void addPostTransactionOperation(@NonNull Consumer<TransactionResult> postTransactionOperation) {
 		requireNonNull(postTransactionOperation);
+		assertNotCompleted("add a post-transaction operation");
 		this.postTransactionOperations.add(postTransactionOperation);
 	}
 
@@ -175,6 +272,7 @@ public final class Transaction {
 	@NonNull
 	public Boolean removePostTransactionOperation(@NonNull Consumer<TransactionResult> postTransactionOperation) {
 		requireNonNull(postTransactionOperation);
+		assertNotCompleted("remove a post-transaction operation");
 		return this.postTransactionOperations.remove(postTransactionOperation);
 	}
 
@@ -276,6 +374,8 @@ public final class Transaction {
 	 */
 	@NonNull
 	Connection getConnection() {
+		assertNotCompleted("get the transaction connection");
+
 		getConnectionLock().lock();
 
 		try {
@@ -339,8 +439,13 @@ public final class Transaction {
 		getConnectionLock().lock();
 
 		try {
+			Connection connection = this.connection;
+
+			if (connection == null)
+				throw new DatabaseException("Transaction has no connection");
+
 			try {
-				getConnection().setAutoCommit(autoCommit);
+				connection.setAutoCommit(autoCommit);
 			} catch (SQLException e) {
 				throw new DatabaseException(format("Unable to set database connection autocommit value to '%s'", autoCommit), e);
 			}
@@ -400,5 +505,84 @@ public final class Transaction {
 	@NonNull
 	protected ReentrantLock getConnectionLock() {
 		return this.connectionLock;
+	}
+
+	@NonNull
+	Optional<Connection> getExistingConnection() {
+		getConnectionLock().lock();
+
+		try {
+			return Optional.ofNullable(this.connection);
+		} finally {
+			getConnectionLock().unlock();
+		}
+	}
+
+	void clearConnection() {
+		getConnectionLock().lock();
+
+		try {
+			this.connection = null;
+		} finally {
+			getConnectionLock().unlock();
+		}
+	}
+
+	void markCompleted() {
+		this.completed.set(true);
+	}
+
+	@NonNull
+	Boolean isCompleted() {
+		return this.completed.get();
+	}
+
+	private void releaseSavepointAfterSuccess(@NonNull Savepoint savepoint) {
+		requireNonNull(savepoint);
+
+		try {
+			getConnection().releaseSavepoint(savepoint);
+		} catch (SQLFeatureNotSupportedException e) {
+			// Some drivers support rollback-to-savepoint but not release; successful closures should still succeed.
+		} catch (SQLException e) {
+			throw new DatabaseException("Unable to release savepoint", e);
+		}
+	}
+
+	private void cleanupSavepointAfterFailure(@NonNull Savepoint savepoint,
+																						@NonNull Throwable primary) {
+		requireNonNull(savepoint);
+		requireNonNull(primary);
+
+		try {
+			getConnection().rollback(savepoint);
+		} catch (Throwable rollbackException) {
+			primary.addSuppressed(new DatabaseException("Unable to roll back to savepoint", rollbackException));
+		}
+
+		try {
+			getConnection().releaseSavepoint(savepoint);
+		} catch (SQLFeatureNotSupportedException e) {
+			// Some drivers support rollback-to-savepoint but not release.
+		} catch (Throwable releaseException) {
+			primary.addSuppressed(new DatabaseException("Unable to release savepoint", releaseException));
+		}
+	}
+
+	private void releaseSavepointJdbc(@NonNull Savepoint savepoint) {
+		requireNonNull(savepoint);
+
+		try {
+			getConnection().releaseSavepoint(savepoint);
+		} catch (SQLException e) {
+			throw new DatabaseException("Unable to release savepoint", e);
+		}
+	}
+
+	private void assertNotCompleted(@NonNull String operation) {
+		requireNonNull(operation);
+
+		if (isCompleted())
+			throw new IllegalStateException(format("Transaction %s has already completed and cannot %s", id(), operation));
 	}
 }

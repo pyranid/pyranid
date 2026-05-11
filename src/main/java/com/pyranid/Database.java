@@ -166,6 +166,10 @@ public final class Database {
 	 * Performs an operation transactionally.
 	 * <p>
 	 * The transaction will be automatically rolled back if an exception bubbles out of {@code transactionalOperation}.
+	 * <p>
+	 * Nested calls to {@code transaction(...)} are independent transactions with independent JDBC connections; they do
+	 * not automatically join an outer transaction. Use {@link #participate(Transaction, TransactionalOperation)} to join an
+	 * existing transaction explicitly.
 	 *
 	 * @param transactionalOperation the operation to perform transactionally
 	 */
@@ -182,6 +186,10 @@ public final class Database {
 	 * Performs an operation transactionally with the given isolation level.
 	 * <p>
 	 * The transaction will be automatically rolled back if an exception bubbles out of {@code transactionalOperation}.
+	 * <p>
+	 * Nested calls to {@code transaction(...)} are independent transactions with independent JDBC connections; they do
+	 * not automatically join an outer transaction. Use {@link #participate(Transaction, TransactionalOperation)} to join an
+	 * existing transaction explicitly.
 	 *
 	 * @param transactionIsolation   the desired database transaction isolation level
 	 * @param transactionalOperation the operation to perform transactionally
@@ -201,6 +209,10 @@ public final class Database {
 	 * Performs an operation transactionally and optionally returns a value.
 	 * <p>
 	 * The transaction will be automatically rolled back if an exception bubbles out of {@code transactionalOperation}.
+	 * <p>
+	 * Nested calls to {@code transaction(...)} are independent transactions with independent JDBC connections; they do
+	 * not automatically join an outer transaction. Use {@link #participate(Transaction, ReturningTransactionalOperation)} to
+	 * join an existing transaction explicitly.
 	 *
 	 * @param transactionalOperation the operation to perform transactionally
 	 * @param <T>                    the type to be returned
@@ -216,6 +228,10 @@ public final class Database {
 	 * Performs an operation transactionally with the given isolation level, optionally returning a value.
 	 * <p>
 	 * The transaction will be automatically rolled back if an exception bubbles out of {@code transactionalOperation}.
+	 * <p>
+	 * Nested calls to {@code transaction(...)} are independent transactions with independent JDBC connections; they do
+	 * not automatically join an outer transaction. Use {@link #participate(Transaction, ReturningTransactionalOperation)} to
+	 * join an existing transaction explicitly.
 	 *
 	 * @param transactionIsolation   the desired database transaction isolation level
 	 * @param transactionalOperation the operation to perform transactionally
@@ -300,9 +316,12 @@ public final class Database {
 				} catch (Throwable cleanupException) {
 					cleanupFailure = cleanupException;
 				} finally {
-					if (transaction.hasConnection()) {
+					Connection connection = transaction.getExistingConnection().orElse(null);
+
+					if (connection != null) {
 						try {
-							closeConnection(transaction.getConnection());
+							closeConnection(connection);
+							transaction.clearConnection();
 						} catch (Throwable cleanupException) {
 							if (cleanupFailure == null)
 								cleanupFailure = cleanupException;
@@ -312,6 +331,8 @@ public final class Database {
 					}
 				}
 			} finally {
+				transaction.markCompleted();
+
 				// Execute any user-supplied post-execution hooks
 				for (Consumer<TransactionResult> postTransactionOperation : transaction.getPostTransactionOperations()) {
 					try {

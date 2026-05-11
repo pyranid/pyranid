@@ -12,6 +12,12 @@ All notable changes to Pyranid will be documented in this file.
 - Numeric mapping to `Boolean` now treats fractional values between `-1` and `1`, excluding zero, as `true`; these previously mapped to `false` due to integer truncation.
 - Database operation failures now include bounded SQL and parameter count context without logging raw parameter values.
 - Rollback failures are now attached as suppressed exceptions when user transaction code has already thrown.
+- Completed transaction handles now reject mutating and JDBC-touching operations with `IllegalStateException`.
+
+### Added
+
+- Added `Transaction.withSavepoint(...)` helpers for closure-scoped partial rollback.
+- Added `Transaction.releaseSavepoint(Savepoint)` for explicit raw-savepoint cleanup.
 
 ### Migration Notes
 
@@ -22,3 +28,4 @@ All notable changes to Pyranid will be documented in this file.
   - Fractional `NUMERIC`/`DECIMAL` values mapped to integer-like targets such as `Integer`, `Long`, or `BigInteger`.
   - Non-finite floating point values mapped to `Float` or `Double`.
   - Numeric-to-`Character` mappings outside the valid `char` range or with a fractional value.
+- Applications that retain `Transaction` handles beyond the transaction closure should stop doing so; mutating and JDBC-touching methods now fail after completion.
