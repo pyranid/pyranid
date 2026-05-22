@@ -88,6 +88,7 @@ class ConcurrentLruMap<K, V> implements Map<K, V> {
 	// ===================================================================================
 
 	private final int capacity;
+	private final int forcedMaintenanceThreshold;
 	private final ConcurrentHashMap<K, Node<K, V>> map;
 	private final BiConsumer<K, V> evictionListener;
 
@@ -164,6 +165,9 @@ class ConcurrentLruMap<K, V> implements Map<K, V> {
 			throw new IllegalArgumentException("Capacity must be greater than zero");
 
 		this.capacity = capacity;
+		this.forcedMaintenanceThreshold = capacity > Integer.MAX_VALUE - WRITE_BUFFER_DRAIN_THRESHOLD
+				? Integer.MAX_VALUE
+				: capacity + WRITE_BUFFER_DRAIN_THRESHOLD;
 		this.map = new ConcurrentHashMap<>(capacity);
 		this.evictionListener = evictionListener != null ? evictionListener : (k, v) -> {};
 
@@ -430,9 +434,14 @@ class ConcurrentLruMap<K, V> implements Map<K, V> {
 		int pending = writeBufferSize.incrementAndGet();
 		writeBuffer.offer(task);
 
-		// If we're over capacity, trigger maintenance immediately.
-		// Also trigger when the write backlog is getting large.
-		if (pending >= WRITE_BUFFER_DRAIN_THRESHOLD || map.size() > capacity)
+		// If admission pushes the map over capacity, attempt maintenance immediately.
+		// Once a small bounded overage is exceeded, force maintenance before returning.
+		// This keeps bursty unique-key workloads from growing arbitrarily when another
+		// thread already owns the maintenance lock, without serializing every cache miss.
+		int size = map.size();
+		if (size > forcedMaintenanceThreshold)
+			forceMaintenance();
+		else if (pending >= WRITE_BUFFER_DRAIN_THRESHOLD || size > capacity)
 			tryMaintenance();
 	}
 

@@ -13,6 +13,7 @@ All notable changes to Pyranid will be documented in this file.
 - Database operation failures now include bounded SQL and parameter count context without logging raw parameter values.
 - Rollback failures are now attached as suppressed exceptions when user transaction code has already thrown.
 - Completed transaction handles now reject mutating and JDBC-touching operations with `IllegalStateException`.
+- Internal LRU caches now force maintenance after a small bounded over-capacity window to avoid unbounded growth under bursty unique-key writes.
 
 ### Added
 
