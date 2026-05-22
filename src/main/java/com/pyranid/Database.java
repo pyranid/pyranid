@@ -1831,7 +1831,7 @@ public final class Database {
 	 * <p>
 	 * The connection is closed as soon as {@link DatabaseMetaDataReader#read(DatabaseMetaData)} completes.
 	 * <p>
-	 * See <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/DatabaseMetaData.html">{@code DatabaseMetaData} Javadoc</a> for details.
+	 * See <a href="https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/DatabaseMetaData.html">{@code DatabaseMetaData} Javadoc</a> for details.
 	 */
 	public void readDatabaseMetaData(@NonNull DatabaseMetaDataReader databaseMetaDataReader) {
 		requireNonNull(databaseMetaDataReader);

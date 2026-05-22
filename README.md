@@ -194,7 +194,7 @@ Database customDatabase = Database.withDataSource(dataSource)
 
 ### Obtaining a DataSource
 
-Pyranid works with any [`DataSource`](https://docs.oracle.com/en/java/javase/21/docs/api/java.sql/javax/sql/DataSource.html) implementation. If you have the freedom to choose, [HikariCP](https://github.com/brettwooldridge/HikariCP) (application-level) and [PgBouncer](https://www.pgbouncer.org/) (external; Postgres-only) are good options.
+Pyranid works with any [`DataSource`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/javax/sql/DataSource.html) implementation. If you have the freedom to choose, [HikariCP](https://github.com/brettwooldridge/HikariCP) (application-level) and [PgBouncer](https://www.pgbouncer.org/) (external; Postgres-only) are good options.
 
 ```java
 // HikariCP
@@ -295,6 +295,22 @@ List<Employee> employees = database.query("""
 
 The stream must be consumed within the scope of the transaction or connection that created it. Do not let the stream escape from the callback.
 
+For drivers that require server-side cursor configuration, run streaming reads inside an explicit transaction and set the JDBC fetch size on the [`PreparedStatement`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/PreparedStatement.html). PostgreSQL, for example, only streams large result sets when autocommit is disabled and a positive fetch size is configured.
+
+```java
+List<Employee> employees = database.transaction(() ->
+  database.query("""
+    SELECT *
+    FROM employee
+    ORDER BY employee_id
+    """)
+    .customize((statementContext, preparedStatement) ->
+      preparedStatement.setFetchSize(1_000))
+    .fetchStream(Employee.class, stream ->
+      stream.limit(10_000).toList())
+);
+```
+
 ## Statements
 
 ```java
@@ -346,7 +362,7 @@ and uses them if available.
 
 * Closure-based API: rollback if exception bubbles out, commit at end of closure otherwise
 * Data access APIs (e.g. [`Database::query`](https://javadoc.pyranid.com/com/pyranid/Database.html#query(java.lang.String))) automatically participate in transactions
-* No [`Connection`](https://docs.oracle.com/en/java/javase/21/docs/api/java.sql/java/sql/Connection.html) is fetched from the [`DataSource`](https://docs.oracle.com/en/java/javase/21/docs/api/java.sql/javax/sql/DataSource.html) until the first data access operation occurs
+* No [`Connection`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html) is fetched from the [`DataSource`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/javax/sql/DataSource.html) until the first data access operation occurs
 * Must be able to share a transaction across multiple threads
 
 ### Basics
@@ -603,7 +619,7 @@ List<String> names = database.query("SELECT name FROM employee")
 
 ### User-defined Types
 
-In the case of user-defined types and Records, the standard [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) examines the names of columns in the [`ResultSet`](https://docs.oracle.com/en/java/javase/21/docs/api/java.sql/javax/sql/ResultSet.html) and matches them to corresponding fields via reflection.  The [`@DatabaseColumn`](https://javadoc.pyranid.com/com/pyranid/DatabaseColumn.html) annotation allows per-field customization of mapping behavior.
+In the case of user-defined types and Records, the standard [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) examines the names of columns in the [`ResultSet`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/ResultSet.html) and matches them to corresponding fields via reflection.  The [`@DatabaseColumn`](https://javadoc.pyranid.com/com/pyranid/DatabaseColumn.html) annotation allows per-field customization of mapping behavior.
 
 By default, column names are assumed to be separated by `_` characters and are mapped to their camel-case equivalent.  For example:
 
@@ -650,36 +666,36 @@ car = database.query("SELECT some_id AS car_id, some_color AS color FROM car LIM
 
 ### Supported Primitives
 
-* `Byte`
-* `Short`
-* `Integer`
-* `Long`
-* `Float`
-* `Double`
-* `Boolean`
-* `Character`
-* `String`
-* `byte[]`
+* [`Byte`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Byte.html)
+* [`Short`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Short.html)
+* [`Integer`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Integer.html)
+* [`Long`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Long.html)
+* [`Float`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Float.html)
+* [`Double`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Double.html)
+* [`Boolean`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Boolean.html)
+* [`Character`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Character.html)
+* [`String`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/String.html)
+* [`byte[]`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Byte.html)
 
 ### Supported JDK Types
 
-* `Enum<E>`
-* `UUID`
-* `BigDecimal`
-* `BigInteger`
-* `Date`
-* `Instant`
-* `LocalDate` for `DATE`
-* `LocalTime` for `TIME`
-* `LocalDateTime` for `TIMESTAMP`
-* `OffsetTime` for `TIME WITH TIMEZONE`
-* `OffsetDateTime` for `TIMESTAMP WITH TIMEZONE`
-* `java.sql.Timestamp`
-* `java.sql.Date`
-* `ZoneId`
-* `TimeZone`
-* `Locale` (IETF BCP 47 "language tag" format)
-* `Currency`
+* [`Enum<E>`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Enum.html)
+* [`UUID`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/UUID.html)
+* [`BigDecimal`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/math/BigDecimal.html)
+* [`BigInteger`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/math/BigInteger.html)
+* [`Date`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Date.html)
+* [`Instant`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/Instant.html)
+* [`LocalDate`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/LocalDate.html) for `DATE`
+* [`LocalTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/LocalTime.html) for `TIME`
+* [`LocalDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/LocalDateTime.html) for `TIMESTAMP`
+* [`OffsetTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/OffsetTime.html) for `TIME WITH TIMEZONE`
+* [`OffsetDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/OffsetDateTime.html) for `TIMESTAMP WITH TIMEZONE`
+* [`java.sql.Timestamp`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Timestamp.html)
+* [`java.sql.Date`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Date.html)
+* [`ZoneId`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/ZoneId.html)
+* [`TimeZone`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/TimeZone.html)
+* [`Locale`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Locale.html) (IETF BCP 47 "language tag" format)
+* [`Currency`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Currency.html)
 
 ### Custom Mapping
 
@@ -860,37 +876,37 @@ Notes:
 
 ### Supported Primitives
 
-* `Byte`
-* `Short`
-* `Integer`
-* `Long`
-* `Float`
-* `Double`
-* `Boolean`
-* `Character`
-* `String`
-* `byte[]`
+* [`Byte`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Byte.html)
+* [`Short`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Short.html)
+* [`Integer`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Integer.html)
+* [`Long`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Long.html)
+* [`Float`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Float.html)
+* [`Double`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Double.html)
+* [`Boolean`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Boolean.html)
+* [`Character`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Character.html)
+* [`String`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/String.html)
+* [`byte[]`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Byte.html)
 
 ### Supported JDK Types
 
-* `Enum<E>`
-* `UUID`
-* `BigDecimal`
-* `BigInteger`
-* `Date`
-* `Instant`
-* `LocalDate`
-* `LocalTime`
-* `LocalDateTime`
-* `OffsetTime`
-* `OffsetDateTime`
-* `java.sql.Timestamp`
-* `java.sql.Date`
-* `java.sql.Time`
-* `ZoneId`
-* `TimeZone`
-* `Locale` (IETF BCP 47 "language tag" format)
-* `Currency`
+* [`Enum<E>`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Enum.html)
+* [`UUID`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/UUID.html)
+* [`BigDecimal`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/math/BigDecimal.html)
+* [`BigInteger`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/math/BigInteger.html)
+* [`Date`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Date.html)
+* [`Instant`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/Instant.html)
+* [`LocalDate`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/LocalDate.html)
+* [`LocalTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/LocalTime.html)
+* [`LocalDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/LocalDateTime.html)
+* [`OffsetTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/OffsetTime.html)
+* [`OffsetDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/OffsetDateTime.html)
+* [`java.sql.Timestamp`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Timestamp.html)
+* [`java.sql.Date`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Date.html)
+* [`java.sql.Time`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Time.html)
+* [`ZoneId`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/ZoneId.html)
+* [`TimeZone`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/TimeZone.html)
+* [`Locale`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Locale.html) (IETF BCP 47 "language tag" format)
+* [`Currency`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Currency.html)
 
 ### Special Parameters
 
@@ -1012,7 +1028,7 @@ If you need support for multidimensional array binding, implement a [`CustomPara
 
 ### Custom Parameters
 
-You may register instances of [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) to bind application-specific types to [`java.sql.PreparedStatement`](https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/PreparedStatement.html) however you like.
+You may register instances of [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) to bind application-specific types to [`java.sql.PreparedStatement`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/PreparedStatement.html) however you like.
 
 This allows you to use your objects as-is with Pyranid instead of sprinkling "convert this object to database format" code throughout your system.
 
@@ -1097,7 +1113,7 @@ database.query("""
 
 #### Standard Collections
 
-Runtime binding of generic types is made difficult by type erasure.  For convenience, Pyranid offers special parameters that perform type capture for standard [`List<E>`](https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/List.html), [`Set<E>)`](https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/Set.html), and [`Map<K,V>)`](https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/Map.html) types:
+Runtime binding of generic types is made difficult by type erasure.  For convenience, Pyranid offers special parameters that perform type capture for standard [`List<E>`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/List.html), [`Set<E>)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Set.html), and [`Map<K,V>)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Map.html) types:
 
 * [`Parameters::listOf(Class<E>, List<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#listOf(java.lang.Class,java.util.List))
 * [`Parameters::setOf(Class<E>, Set<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#setOf(java.lang.Class,java.util.List))
@@ -1179,9 +1195,9 @@ database.query("INSERT INTO t(v) VALUES (:v)")
 
 ## Error Handling
 
-In general, a runtime [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) will be thrown when errors occur.  Often this will wrap the checked [`java.sql.SQLException`](https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/SQLException.html).
+In general, a runtime [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) will be thrown when errors occur.  Often this will wrap the checked [`java.sql.SQLException`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/SQLException.html).
 
-For convenience, [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) exposes additional properties, which are populated if provided by the underlying [`java.sql.SQLException`](https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/SQLException.html):
+For convenience, [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) exposes additional properties, which are populated if provided by the underlying [`java.sql.SQLException`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/SQLException.html):
 
 * `errorCode` (optional)
 * `sqlState` (optional)
@@ -1247,7 +1263,7 @@ Examples of usage include:
 
 * Writing queries and timing information to your logging system
 * Picking out slow queries for special logging/reporting
-* Collecting a set of queries executed across a unit of work for bulk analysis (e.g. a [`ThreadLocal`](https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/ThreadLocal.html) scoped to a single web request)
+* Collecting a set of queries executed across a unit of work for bulk analysis (e.g. a [`ThreadLocal`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/ThreadLocal.html) scoped to a single web request)
 
 ```java
 Database database = Database.withDataSource(dataSource)
@@ -1353,6 +1369,22 @@ mvn -q -P integration verify
 The `integration` Maven profile runs Docker-backed PostgreSQL integration tests with Testcontainers and requires a working local Docker environment. The initial PostgreSQL image is pinned to `postgres:17-alpine`.
 
 The PostgreSQL integration profile currently covers core pgjdbc behavior such as JSONB, SQL arrays, `RETURNING`, temporal binding/mapping, and exception metadata. It does not run pgvector extension tests; verify pgvector manually if your release depends on that feature.
+
+## Production Notes
+
+Pyranid is a zero-runtime-dependency library, but applications still need to provide the JDBC driver for their database. PostgreSQL-specific helpers such as JSONB, `text[]`, and pgvector parameters require pgjdbc on the application classpath; pgvector also requires the database extension to be installed.
+
+[`Database.build()`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#build()) does not validate connectivity or inspect JDBC metadata. If you do not configure [`Database.Builder::databaseType(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#databaseType(com.pyranid.DatabaseType)), Pyranid detects the database type lazily when code first requests database-type-sensitive behavior. Calling [`Database::getDatabaseType()`](https://javadoc.pyranid.com/com/pyranid/Database.html#getDatabaseType()) outside an active query may acquire a fresh connection; configure `databaseType(...)` explicitly when using small pools, database proxies, or startup paths that must avoid surprise connection checkouts.
+
+A [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) instance has one effective [`DatabaseType`](https://javadoc.pyranid.com/com/pyranid/DatabaseType.html). If one application talks to multiple database products, create one `Database` per product and configure each explicitly.
+
+Each call to [`transaction(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transaction(com.pyranid.TransactionalOperation)) opens an independent transaction with its own physical connection. Nested `transaction(...)` calls do not auto-join an outer transaction and can pressure small pools. Use [`participate(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#participate(com.pyranid.Transaction,com.pyranid.TransactionalOperation)) to run work on an existing transaction from another thread, and make sure participating workers complete before the owning transaction closure returns; coordinate with application primitives such as [`CompletableFuture::join`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/CompletableFuture.html#join()), [`ExecutorService::awaitTermination`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/ExecutorService.html#awaitTermination(long,java.util.concurrent.TimeUnit)), or [`CountDownLatch`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/CountDownLatch.html).
+
+[`fetchStream(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchStream(java.lang.Class,java.util.function.Function)) streams rows only for as long as the callback is executing. Do not return the stream or consume it asynchronously after the callback returns. For PostgreSQL and similar cursor-based drivers, use an explicit transaction and set a positive fetch size with [`Query::customize(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#customize(com.pyranid.StatementCustomizer)).
+
+Savepoints are stack-like on most drivers. Prefer [`Transaction::withSavepoint(...)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#withSavepoint(com.pyranid.TransactionalOperation)) for nested savepoint workflows, and avoid manual out-of-order [`rollback(Savepoint)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#rollback(java.sql.Savepoint)) / [`releaseSavepoint(Savepoint)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#releaseSavepoint(java.sql.Savepoint)) calls unless your driver documents the behavior you need.
+
+Pyranid uses JDBC `executeLargeUpdate(...)` / `executeLargeBatch(...)` when supported and falls back to standard update APIs when the driver reports lack of support. That support decision is cached per `Database` instance.
 
 ## About
 

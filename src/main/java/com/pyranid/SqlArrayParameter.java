@@ -23,9 +23,9 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Encapsulates {@link java.sql.PreparedStatement} parameter data meant to be bound to a formal <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/Array.html" target="_blank">{@code java.sql.Array}</a> type by {@link PreparedStatementBinder}.
+ * Encapsulates {@link java.sql.PreparedStatement} parameter data meant to be bound to a formal <a href="https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Array.html" target="_blank">{@code java.sql.Array}</a> type by {@link PreparedStatementBinder}.
  * <p>
- * The {@code baseTypeName} corresponds to the value of <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/Array.html#getBaseTypeName()" target="_blank">{@code java.sql.Array#getBaseTypeName()}</a>
+ * The {@code baseTypeName} corresponds to the value of <a href="https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Array.html#getBaseTypeName()" target="_blank">{@code java.sql.Array#getBaseTypeName()}</a>
  * and is database-specific.
  * <p>
  * You may determine available {@code baseTypeName} values for your database by examining metadata exposed via {@link Database#readDatabaseMetaData(DatabaseMetaDataReader)}.
@@ -41,7 +41,7 @@ import java.util.Optional;
 @ThreadSafe
 public interface SqlArrayParameter<E> {
 	/**
-	 * Gets the element type of this SQL ARRAY, which corresponds to the value of <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.sql/java/sql/Array.html#getBaseTypeName()" target="_blank">{@code java.sql.Array#getBaseTypeName()}</a>
+	 * Gets the element type of this SQL ARRAY, which corresponds to the value of <a href="https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Array.html#getBaseTypeName()" target="_blank">{@code java.sql.Array#getBaseTypeName()}</a>
 	 * and is database-specific.
 	 *
 	 * @return the element type of this SQL ARRAY
