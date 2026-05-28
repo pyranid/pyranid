@@ -1404,7 +1404,7 @@ Use `com.pyranid:pyranid-otel` for OpenTelemetry export:
 <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid-otel</artifactId>
-  <version>4.2.0-SNAPSHOT</version>
+  <version>1.0.0-SNAPSHOT</version>
 </dependency>
 ```
 
