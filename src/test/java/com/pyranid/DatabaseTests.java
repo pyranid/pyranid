@@ -787,7 +787,7 @@ public class DatabaseTests {
 	public void testParticipatePreservesInterruptFlag() {
 		DataSource ds = createInMemoryDataSource("participate_interrupt");
 		Database db = Database.withDataSource(ds).build();
-		Transaction transaction = new Transaction(ds, TransactionIsolation.DEFAULT);
+		Transaction transaction = new Transaction(ds, TransactionIsolation.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
 
 		Thread.interrupted();
 
@@ -808,7 +808,7 @@ public class DatabaseTests {
 	public void testParticipateRethrowsError() {
 		DataSource ds = createInMemoryDataSource("participate_error");
 		Database db = Database.withDataSource(ds).build();
-		Transaction transaction = new Transaction(ds, TransactionIsolation.DEFAULT);
+		Transaction transaction = new Transaction(ds, TransactionIsolation.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
 		TestError error = new TestError("boom");
 
 		TestError thrown = Assertions.assertThrows(TestError.class, () ->

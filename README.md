@@ -44,7 +44,7 @@ Java 17+
 <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid</artifactId>
-  <version>4.1.0</version>
+  <version>4.2.0-SNAPSHOT</version>
 </dependency>
 ```
 
@@ -60,7 +60,7 @@ Java 8+ (legacy; only critical fixes will be applied)
 
 ### Direct Download
 
-If you don't use Maven, you can drop [pyranid-4.1.0.jar](https://repo1.maven.org/maven2/com/pyranid/pyranid/4.1.0/pyranid-4.1.0.jar) directly into your project.  No other dependencies are required.
+For released builds, you can download the Pyranid jar directly from [Maven Central](https://repo1.maven.org/maven2/com/pyranid/pyranid/).  No other dependencies are required by the core artifact.
 
 ## Configuration
 
@@ -1385,6 +1385,30 @@ Each call to [`transaction(...)`](https://javadoc.pyranid.com/com/pyranid/Databa
 Savepoints are stack-like on most drivers. Prefer [`Transaction::withSavepoint(...)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#withSavepoint(com.pyranid.TransactionalOperation)) for nested savepoint workflows, and avoid manual out-of-order [`rollback(Savepoint)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#rollback(java.sql.Savepoint)) / [`releaseSavepoint(Savepoint)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#releaseSavepoint(java.sql.Savepoint)) calls unless your driver documents the behavior you need.
 
 Pyranid uses JDBC `executeLargeUpdate(...)` / `executeLargeBatch(...)` when supported and falls back to standard update APIs when the driver reports lack of support. That support decision is cached per `Database` instance.
+
+### Metrics Collection
+
+Metrics collection is disabled by default. Configure a [`MetricsCollector`](https://javadoc.pyranid.com/com/pyranid/MetricsCollector.html) at build time to collect statement, transaction, connection, savepoint, stream, and post-transaction counters.
+
+```java
+MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
+
+Database database = Database.withDataSource(dataSource)
+  .metricsCollector(metricsCollector)
+  .build();
+```
+
+Use `com.pyranid:pyranid-otel` for OpenTelemetry export:
+
+```xml
+<dependency>
+  <groupId>com.pyranid</groupId>
+  <artifactId>pyranid-otel</artifactId>
+  <version>4.2.0-SNAPSHOT</version>
+</dependency>
+```
+
+OTel support is optional; the core Pyranid jar remains dependency-free.
 
 ## About
 

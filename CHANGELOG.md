@@ -2,6 +2,13 @@
 
 All notable changes to Pyranid will be documented in this file.
 
+## 4.2.0-SNAPSHOT
+
+### Added
+
+- Added the `MetricsCollector` API, disabled and in-memory collectors, statement result metadata, and build-time `Database.Builder.metricsCollector(...)` configuration.
+- Added metrics callbacks for statement execution, statement/transaction connection acquisition and release, logical and physical transaction lifecycle, savepoints, streaming result sets, and post-transaction operations.
+
 ## 4.1.0
 
 ### Changed

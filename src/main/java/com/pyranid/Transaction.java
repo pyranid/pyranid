@@ -25,6 +25,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Savepoint;
+import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -36,6 +37,7 @@ import java.util.function.Consumer;
 import java.util.logging.Logger;
 
 import static java.lang.String.format;
+import static java.lang.System.nanoTime;
 import static java.util.Objects.requireNonNull;
 
 /**
@@ -62,6 +64,10 @@ public final class Transaction {
 	@NonNull
 	private final TransactionIsolation transactionIsolation;
 	@NonNull
+	private final MetricsCollectorDispatcher metricsCollectorDispatcher;
+	@NonNull
+	private final DatabaseType databaseType;
+	@NonNull
 	private final List<@NonNull Consumer<TransactionResult>> postTransactionOperations;
 	@NonNull
 	private final ReentrantLock connectionLock;
@@ -80,21 +86,30 @@ public final class Transaction {
 	private volatile Boolean initialAutoCommit;
 	@Nullable
 	private volatile Integer initialTransactionIsolationJdbcLevel;
+	@Nullable
+	private volatile Long connectionAcquiredAtNanos;
 	@NonNull
 	private final AtomicBoolean transactionIsolationWasChanged;
 
 	Transaction(@NonNull DataSource dataSource,
-							@NonNull TransactionIsolation transactionIsolation) {
+							@NonNull TransactionIsolation transactionIsolation,
+							@NonNull MetricsCollectorDispatcher metricsCollectorDispatcher,
+							@NonNull DatabaseType databaseType) {
 		requireNonNull(dataSource);
 		requireNonNull(transactionIsolation);
+		requireNonNull(metricsCollectorDispatcher);
+		requireNonNull(databaseType);
 
 		this.id = generateId();
 		this.dataSource = dataSource;
 		this.transactionIsolation = transactionIsolation;
+		this.metricsCollectorDispatcher = metricsCollectorDispatcher;
+		this.databaseType = databaseType;
 		this.connection = null;
 		this.rollbackOnly = new AtomicBoolean(false);
 		this.completed = new AtomicBoolean(false);
 		this.initialAutoCommit = null;
+		this.connectionAcquiredAtNanos = null;
 		this.transactionIsolationWasChanged = new AtomicBoolean(false);
 		this.postTransactionOperations = new CopyOnWriteArrayList();
 		this.connectionLock = new ReentrantLock();
@@ -123,7 +138,9 @@ public final class Transaction {
 		assertNotCompleted("create a savepoint");
 
 		try {
-			return getConnection().setSavepoint();
+			Savepoint savepoint = getConnection().setSavepoint();
+			getMetricsCollectorDispatcher().didCreateSavepoint(this, getDatabaseType());
+			return savepoint;
 		} catch (SQLException e) {
 			throw new DatabaseException("Unable to create savepoint", e);
 		}
@@ -141,6 +158,7 @@ public final class Transaction {
 
 		try {
 			getConnection().rollback(savepoint);
+			getMetricsCollectorDispatcher().didRollbackToSavepoint(this, getDatabaseType());
 		} catch (SQLException e) {
 			throw new DatabaseException("Unable to roll back to savepoint", e);
 		}
@@ -331,11 +349,16 @@ public final class Transaction {
 
 			logger.finer("Committing transaction...");
 
+			long startTime = nanoTime();
+
 			try {
 				getConnection().commit();
+				getMetricsCollectorDispatcher().didCommitPhysicalTransaction(this, getDatabaseType(), Duration.ofNanos(nanoTime() - startTime));
 				logger.finer("Transaction committed.");
 			} catch (SQLException e) {
-				throw new DatabaseException("Unable to commit transaction", e);
+				DatabaseException wrapped = new DatabaseException("Unable to commit transaction", e);
+				getMetricsCollectorDispatcher().didFailToCommitPhysicalTransaction(this, getDatabaseType(), Duration.ofNanos(nanoTime() - startTime), wrapped);
+				throw wrapped;
 			}
 		} finally {
 			getConnectionLock().unlock();
@@ -353,11 +376,16 @@ public final class Transaction {
 
 			logger.finer("Rolling back transaction...");
 
+			long startTime = nanoTime();
+
 			try {
 				getConnection().rollback();
+				getMetricsCollectorDispatcher().didRollbackPhysicalTransaction(this, getDatabaseType(), Duration.ofNanos(nanoTime() - startTime));
 				logger.finer("Transaction rolled back.");
 			} catch (SQLException e) {
-				throw new DatabaseException("Unable to roll back transaction", e);
+				DatabaseException wrapped = new DatabaseException("Unable to roll back transaction", e);
+				getMetricsCollectorDispatcher().didFailToRollbackPhysicalTransaction(this, getDatabaseType(), Duration.ofNanos(nanoTime() - startTime), wrapped);
+				throw wrapped;
 			}
 		} finally {
 			getConnectionLock().unlock();
@@ -382,31 +410,55 @@ public final class Transaction {
 			if (hasConnection())
 				return this.connection;
 
+			long startTime = nanoTime();
+			getMetricsCollectorDispatcher().willAcquireTransactionConnection(this, getDatabaseType());
+
 			try {
 				this.connection = getDataSource().getConnection();
 			} catch (SQLException e) {
-				throw new DatabaseException("Unable to acquire database connection", e);
+				DatabaseException wrapped = new DatabaseException("Unable to acquire database connection", e);
+				Duration acquisitionDuration = Duration.ofNanos(nanoTime() - startTime);
+				getMetricsCollectorDispatcher().didFailToAcquireTransactionConnection(this, getDatabaseType(), acquisitionDuration, wrapped);
+				getMetricsCollectorDispatcher().didFailToBeginPhysicalTransaction(this, getTransactionIsolation(),
+						MetricsCollector.PhysicalTransactionBeginFailurePhase.ACQUIRE_CONNECTION, getDatabaseType(), wrapped);
+				throw wrapped;
 			}
+
+			this.connectionAcquiredAtNanos = nanoTime();
+			getMetricsCollectorDispatcher().didAcquireTransactionConnection(this, getDatabaseType(), Duration.ofNanos(this.connectionAcquiredAtNanos - startTime));
 
 			// Keep track of the initial setting for autocommit since it might need to get changed from "true" to "false" for
 			// the duration of the transaction and then back to "true" post-transaction.
 			try {
 				this.initialAutoCommit = this.connection.getAutoCommit();
 			} catch (SQLException e) {
-				throw new DatabaseException("Unable to determine database connection autocommit setting", e);
+				DatabaseException wrapped = new DatabaseException("Unable to determine database connection autocommit setting", e);
+				getMetricsCollectorDispatcher().didFailToBeginPhysicalTransaction(this, getTransactionIsolation(),
+						MetricsCollector.PhysicalTransactionBeginFailurePhase.READ_INITIAL_AUTOCOMMIT, getDatabaseType(), wrapped);
+				throw wrapped;
 			}
 
 			// Track initial isolation
 			try {
 				this.initialTransactionIsolationJdbcLevel = this.connection.getTransactionIsolation();
 			} catch (SQLException e) {
-				throw new DatabaseException("Unable to determine database connection transaction isolation", e);
+				DatabaseException wrapped = new DatabaseException("Unable to determine database connection transaction isolation", e);
+				getMetricsCollectorDispatcher().didFailToBeginPhysicalTransaction(this, getTransactionIsolation(),
+						MetricsCollector.PhysicalTransactionBeginFailurePhase.READ_INITIAL_ISOLATION, getDatabaseType(), wrapped);
+				throw wrapped;
 			}
 
 			// Immediately flip autocommit to false if needed...if initially true, it will get set back to true by Database at
 			// the end of the transaction
-			if (this.initialAutoCommit)
-				setAutoCommit(false);
+			if (this.initialAutoCommit) {
+				try {
+					setAutoCommit(false);
+				} catch (DatabaseException e) {
+					getMetricsCollectorDispatcher().didFailToBeginPhysicalTransaction(this, getTransactionIsolation(),
+							MetricsCollector.PhysicalTransactionBeginFailurePhase.SET_AUTOCOMMIT_FALSE, getDatabaseType(), e);
+					throw e;
+				}
+			}
 
 			// Apply requested isolation if not DEFAULT and different from current
 			TransactionIsolation desiredTransactionIsolation = getTransactionIsolation();
@@ -422,11 +474,15 @@ public final class Transaction {
 						this.connection.setTransactionIsolation(desiredJdbcLevel);
 						this.transactionIsolationWasChanged.set(true);
 					} catch (SQLException e) {
-						throw new DatabaseException(format("Unable to set transaction isolation to %s", desiredTransactionIsolation.name()), e);
+						DatabaseException wrapped = new DatabaseException(format("Unable to set transaction isolation to %s", desiredTransactionIsolation.name()), e);
+						getMetricsCollectorDispatcher().didFailToBeginPhysicalTransaction(this, getTransactionIsolation(),
+								MetricsCollector.PhysicalTransactionBeginFailurePhase.SET_ISOLATION, getDatabaseType(), wrapped);
+						throw wrapped;
 					}
 				}
 			}
 
+			getMetricsCollectorDispatcher().didBeginPhysicalTransaction(this, getTransactionIsolation(), getDatabaseType());
 			return this.connection;
 		} finally {
 			getConnectionLock().unlock();
@@ -542,6 +598,7 @@ public final class Transaction {
 
 		try {
 			getConnection().releaseSavepoint(savepoint);
+			getMetricsCollectorDispatcher().didReleaseSavepoint(this, getDatabaseType());
 		} catch (SQLFeatureNotSupportedException e) {
 			// Some drivers support rollback-to-savepoint but not release; successful closures should still succeed.
 		} catch (SQLException e) {
@@ -556,12 +613,14 @@ public final class Transaction {
 
 		try {
 			getConnection().rollback(savepoint);
+			getMetricsCollectorDispatcher().didRollbackToSavepoint(this, getDatabaseType());
 		} catch (Throwable rollbackException) {
 			primary.addSuppressed(new DatabaseException("Unable to roll back to savepoint", rollbackException));
 		}
 
 		try {
 			getConnection().releaseSavepoint(savepoint);
+			getMetricsCollectorDispatcher().didReleaseSavepoint(this, getDatabaseType());
 		} catch (SQLFeatureNotSupportedException e) {
 			// Some drivers support rollback-to-savepoint but not release.
 		} catch (Throwable releaseException) {
@@ -574,9 +633,25 @@ public final class Transaction {
 
 		try {
 			getConnection().releaseSavepoint(savepoint);
+			getMetricsCollectorDispatcher().didReleaseSavepoint(this, getDatabaseType());
 		} catch (SQLException e) {
 			throw new DatabaseException("Unable to release savepoint", e);
 		}
+	}
+
+	@NonNull
+	MetricsCollectorDispatcher getMetricsCollectorDispatcher() {
+		return this.metricsCollectorDispatcher;
+	}
+
+	@NonNull
+	DatabaseType getDatabaseType() {
+		return this.databaseType;
+	}
+
+	@NonNull
+	Optional<Long> getConnectionAcquiredAtNanos() {
+		return Optional.ofNullable(this.connectionAcquiredAtNanos);
 	}
 
 	private void assertNotCompleted(@NonNull String operation) {

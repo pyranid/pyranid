@@ -103,6 +103,8 @@ public final class Database {
 	private final ResultSetMapper resultSetMapper;
 	@NonNull
 	private final StatementLogger statementLogger;
+	@NonNull
+	private final MetricsCollectorDispatcher metricsCollectorDispatcher;
 	@Nullable
 	private final Map<String, ParsedSql> parsedSqlCache;
 	@NonNull
@@ -126,6 +128,7 @@ public final class Database {
 		this.preparedStatementBinder = builder.preparedStatementBinder == null ? PreparedStatementBinder.withDefaultConfiguration() : builder.preparedStatementBinder;
 		this.resultSetMapper = builder.resultSetMapper == null ? ResultSetMapper.withDefaultConfiguration() : builder.resultSetMapper;
 		this.statementLogger = builder.statementLogger == null ? (statementLog) -> {} : builder.statementLogger;
+		this.metricsCollectorDispatcher = new MetricsCollectorDispatcher(builder.metricsCollector);
 		if (builder.parsedSqlCacheCapacity != null && builder.parsedSqlCacheCapacity < 0)
 			throw new IllegalArgumentException("parsedSqlCacheCapacity must be >= 0");
 
@@ -244,10 +247,13 @@ public final class Database {
 		requireNonNull(transactionIsolation);
 		requireNonNull(transactionalOperation);
 
-		Transaction transaction = new Transaction(dataSource, transactionIsolation);
+		Transaction transaction = new Transaction(dataSource, transactionIsolation, getMetricsCollectorDispatcher(), peekDatabaseType());
 		TRANSACTION_STACK_HOLDER.get().push(transaction);
 		boolean committed = false;
+		boolean rollbackFailed = false;
 		Throwable thrown = null;
+		long transactionStartTime = nanoTime();
+		getMetricsCollectorDispatcher().didEnterTransactionClosure(transaction, transactionIsolation, transaction.getDatabaseType());
 
 		try {
 			Optional<T> returnValue = transactionalOperation.perform();
@@ -269,6 +275,7 @@ public final class Database {
 			try {
 				transaction.rollback();
 			} catch (Exception rollbackException) {
+				rollbackFailed = true;
 				e.addSuppressed(rollbackException);
 			}
 
@@ -279,6 +286,7 @@ public final class Database {
 			try {
 				transaction.rollback();
 			} catch (Exception rollbackException) {
+				rollbackFailed = true;
 				e.addSuppressed(rollbackException);
 			}
 
@@ -290,6 +298,7 @@ public final class Database {
 			try {
 				transaction.rollback();
 			} catch (Exception rollbackException) {
+				rollbackFailed = true;
 				wrapped.addSuppressed(rollbackException);
 			}
 
@@ -305,6 +314,7 @@ public final class Database {
 				TRANSACTION_STACK_HOLDER.remove();
 
 			Throwable cleanupFailure = null;
+			boolean hadPhysicalTransaction = transaction.hasConnection();
 
 			try {
 				try {
@@ -319,10 +329,16 @@ public final class Database {
 					Connection connection = transaction.getExistingConnection().orElse(null);
 
 					if (connection != null) {
+						Duration heldDuration = transaction.getConnectionAcquiredAtNanos()
+								.map(acquiredAtNanos -> Duration.ofNanos(nanoTime() - acquiredAtNanos))
+								.orElse(Duration.ZERO);
+
 						try {
 							closeConnection(connection);
+							getMetricsCollectorDispatcher().didReleaseTransactionConnection(transaction, transaction.getDatabaseType(), heldDuration);
 							transaction.clearConnection();
 						} catch (Throwable cleanupException) {
+							getMetricsCollectorDispatcher().didFailToReleaseTransactionConnection(transaction, transaction.getDatabaseType(), heldDuration, cleanupException);
 							if (cleanupFailure == null)
 								cleanupFailure = cleanupException;
 							else
@@ -335,16 +351,28 @@ public final class Database {
 
 				// Execute any user-supplied post-execution hooks
 				for (Consumer<TransactionResult> postTransactionOperation : transaction.getPostTransactionOperations()) {
+					long postTransactionStartTime = nanoTime();
+					Throwable postTransactionThrowable = null;
+					TransactionResult transactionResult = committed ? TransactionResult.COMMITTED : TransactionResult.ROLLED_BACK;
 					try {
-						postTransactionOperation.accept(committed ? TransactionResult.COMMITTED : TransactionResult.ROLLED_BACK);
+						postTransactionOperation.accept(transactionResult);
 					} catch (Throwable cleanupException) {
+						postTransactionThrowable = cleanupException;
 						if (cleanupFailure == null)
 							cleanupFailure = cleanupException;
 						else
 							cleanupFailure.addSuppressed(cleanupException);
+					} finally {
+						getMetricsCollectorDispatcher().didRunPostTransactionOperation(transaction, transactionResult, transaction.getDatabaseType(),
+								Duration.ofNanos(nanoTime() - postTransactionStartTime), postTransactionThrowable);
 					}
 				}
 			}
+
+			Throwable exitThrown = thrown == null ? cleanupFailure : thrown;
+			getMetricsCollectorDispatcher().didExitTransactionClosure(transaction,
+					transactionClosureOutcome(committed, hadPhysicalTransaction, rollbackFailed),
+					transaction.getDatabaseType(), Duration.ofNanos(nanoTime() - transactionStartTime), exitThrown);
 
 			if (cleanupFailure != null) {
 				if (thrown != null) {
@@ -402,6 +430,44 @@ public final class Database {
 		Statement statement = statementContext.getStatement();
 		return format("statementId=%s, sql=%s, parameterCount=%s",
 				statement.getId(), boundedSql(statement.getSql()), statementContext.getParameters().size());
+	}
+
+	private static MetricsCollector.TransactionClosureOutcome transactionClosureOutcome(@NonNull Boolean committed,
+																																										 @NonNull Boolean hadPhysicalTransaction,
+																																										 @NonNull Boolean rollbackFailed) {
+		requireNonNull(committed);
+		requireNonNull(hadPhysicalTransaction);
+		requireNonNull(rollbackFailed);
+
+		if (!hadPhysicalTransaction)
+			return MetricsCollector.TransactionClosureOutcome.NO_PHYSICAL_TX;
+
+		if (committed)
+			return MetricsCollector.TransactionClosureOutcome.COMMITTED;
+
+		return rollbackFailed
+				? MetricsCollector.TransactionClosureOutcome.FAILED
+				: MetricsCollector.TransactionClosureOutcome.ROLLED_BACK;
+	}
+
+	@Nullable
+	static Long sumBatchUpdateCounts(@NonNull List<Long> updateCounts) {
+		requireNonNull(updateCounts);
+
+		long total = 0L;
+
+		for (Long updateCount : updateCounts) {
+			if (updateCount == null || updateCount < 0L)
+				return null;
+
+			try {
+				total = Math.addExact(total, updateCount);
+			} catch (ArithmeticException e) {
+				return null;
+			}
+		}
+
+		return total;
 	}
 
 	@NonNull
@@ -1387,8 +1453,10 @@ public final class Database {
 				startTime = nanoTime();
 
 				Optional<T> result = Optional.empty();
+				long rowsReturned = 0L;
 
 				if (resultSet.next()) {
+					rowsReturned = 1L;
 					try {
 						T value = getResultSetMapper().map(statementContext, resultSet, statementContext.getResultSetRowType().get(), getInstanceProvider()).orElse(null);
 						result = Optional.ofNullable(value);
@@ -1403,7 +1471,10 @@ public final class Database {
 
 				resultHolder.value = result;
 				Duration resultSetMappingDuration = Duration.ofNanos(nanoTime() - startTime);
-				return new DatabaseOperationResult(executionDuration, resultSetMappingDuration);
+				StatementResult statementResult = getMetricsCollectorDispatcher().isEnabled()
+						? StatementResult.ofRowsReturned(rowsReturned)
+						: StatementResult.empty();
+				return new DatabaseOperationResult(executionDuration, resultSetMappingDuration, statementResult);
 			}
 		});
 
@@ -1481,7 +1552,10 @@ public final class Database {
 				}
 
 				Duration resultSetMappingDuration = Duration.ofNanos(nanoTime() - startTime);
-				return new DatabaseOperationResult(executionDuration, resultSetMappingDuration);
+				StatementResult statementResult = getMetricsCollectorDispatcher().isEnabled()
+						? StatementResult.ofRowsReturned((long) list.size())
+						: StatementResult.empty();
+				return new DatabaseOperationResult(executionDuration, resultSetMappingDuration, statementResult);
 			}
 		});
 
@@ -1506,9 +1580,22 @@ public final class Database {
 		List<Object> parametersAsList = parameters == null ? List.of() : Arrays.asList(parameters);
 		StreamingResultSet<T> iterator = new StreamingResultSet<>(this, statementContext, parametersAsList, preparedStatementCustomizer);
 
-		try (Stream<@Nullable T> stream = StreamSupport.stream(Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED), false)
-				.onClose(iterator::close)) {
-			return streamFunction.apply(stream);
+		try {
+			try (Stream<@Nullable T> stream = StreamSupport.stream(Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED), false)
+					.onClose(iterator::close)) {
+				try {
+					return streamFunction.apply(stream);
+				} catch (Throwable throwable) {
+					iterator.callbackFailed(throwable);
+					if (throwable instanceof RuntimeException runtimeException)
+						throw runtimeException;
+					if (throwable instanceof Error error)
+						throw error;
+					throw new RuntimeException(throwable);
+				}
+			}
+		} finally {
+			iterator.emitTerminalMetrics();
 		}
 	}
 
@@ -1585,7 +1672,10 @@ public final class Database {
 			}
 
 			Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);
-			return new DatabaseOperationResult(executionDuration, null);
+			StatementResult statementResult = getMetricsCollectorDispatcher().isEnabled()
+					? StatementResult.ofRowsAffected(resultHolder.value)
+					: StatementResult.empty();
+			return new DatabaseOperationResult(executionDuration, null, statementResult);
 		});
 
 		return resultHolder.value;
@@ -1816,7 +1906,12 @@ public final class Database {
 
 			resultHolder.value = result;
 			Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);
-			return new DatabaseOperationResult(executionDuration, null);
+			StatementResult statementResult = StatementResult.empty();
+			if (getMetricsCollectorDispatcher().isEnabled()) {
+				Long rowsAffected = sumBatchUpdateCounts(result);
+				statementResult = rowsAffected == null ? StatementResult.empty() : StatementResult.ofRowsAffected(rowsAffected);
+			}
+			return new DatabaseOperationResult(executionDuration, null, statementResult);
 		}, parameterGroups.size());
 
 		return resultHolder.value;
@@ -1931,6 +2026,41 @@ public final class Database {
 	@NonNull
 	public DatabaseType getDatabaseType() {
 		return getDatabaseType(this.databaseTypeDetectionConnectionHolder.get());
+	}
+
+	@NonNull
+	DatabaseType peekDatabaseType() {
+		DatabaseType cachedDatabaseType = this.databaseType.get();
+		return cachedDatabaseType == null ? DatabaseType.GENERIC : cachedDatabaseType;
+	}
+
+	private void warmDatabaseTypeCacheForMetricsIfNeeded(@NonNull StatementContext<?> statementContext) {
+		requireNonNull(statementContext);
+
+		if (!getMetricsCollectorDispatcher().isEnabled())
+			return;
+
+		// Trigger lazy database-type detection while the statement's JDBC connection is active so later
+		// transaction-scope metrics can report an accurate db.system.name without opening a second metadata connection.
+		statementContext.getDatabaseType();
+	}
+
+	private void dispatchWithDatabaseTypeDetectionConnection(@NonNull Connection connection,
+																													 @NonNull Runnable operation) {
+		requireNonNull(connection);
+		requireNonNull(operation);
+
+		Connection previousDatabaseTypeDetectionConnection = this.databaseTypeDetectionConnectionHolder.get();
+		this.databaseTypeDetectionConnectionHolder.set(connection);
+
+		try {
+			operation.run();
+		} finally {
+			if (previousDatabaseTypeDetectionConnection == null)
+				this.databaseTypeDetectionConnectionHolder.remove();
+			else
+				this.databaseTypeDetectionConnectionHolder.set(previousDatabaseTypeDetectionConnection);
+		}
 	}
 
 	@NonNull
@@ -2084,9 +2214,11 @@ public final class Database {
 		Duration preparationDuration = null;
 		Duration executionDuration = null;
 		Duration resultSetMappingDuration = null;
+		StatementResult statementResult = StatementResult.empty();
 		Exception exception = null;
 		Throwable thrown = null;
 		Connection connection = null;
+		long connectionHeldStartTime = 0L;
 		Optional<Transaction> transaction = currentTransaction();
 		ReentrantLock connectionLock = transaction.isPresent() ? transaction.get().getConnectionLock() : null;
 
@@ -2095,8 +2227,29 @@ public final class Database {
 
 		try {
 			boolean alreadyHasConnection = transaction.isPresent() && transaction.get().hasConnection();
-			connection = transaction.isPresent() ? transaction.get().getConnection() : acquireConnection();
+			if (transaction.isPresent()) {
+				connection = transaction.get().getConnection();
+			} else {
+				getMetricsCollectorDispatcher().willAcquireStatementConnection(statementContext);
+				try {
+					connection = getDataSource().getConnection();
+				} catch (SQLException e) {
+					DatabaseException wrapped = new DatabaseException("Unable to acquire database connection", e);
+					connectionAcquisitionDuration = Duration.ofNanos(nanoTime() - startTime);
+					getMetricsCollectorDispatcher().didFailToAcquireStatementConnection(statementContext, connectionAcquisitionDuration, wrapped);
+					throw wrapped;
+				}
+			}
+
 			connectionAcquisitionDuration = alreadyHasConnection ? null : Duration.ofNanos(nanoTime() - startTime);
+			if (!transaction.isPresent()) {
+				connectionHeldStartTime = nanoTime();
+				Duration acquiredDuration = connectionAcquisitionDuration;
+				MetricsCollectorDispatcher metricsCollectorDispatcher = getMetricsCollectorDispatcher();
+				if (metricsCollectorDispatcher.isEnabled())
+					dispatchWithDatabaseTypeDetectionConnection(connection, () ->
+							metricsCollectorDispatcher.didAcquireStatementConnection(statementContext, acquiredDuration));
+			}
 			startTime = nanoTime();
 
 			try (PreparedStatement preparedStatement = connection.prepareStatement(statementContext.getStatement().getSql())) {
@@ -2107,9 +2260,12 @@ public final class Database {
 					preparedStatementBindingOperation.perform(preparedStatement);
 					preparationDuration = Duration.ofNanos(nanoTime() - startTime);
 
+					getMetricsCollectorDispatcher().willExecuteStatement(statementContext);
 					DatabaseOperationResult databaseOperationResult = databaseOperation.perform(preparedStatement);
 					executionDuration = databaseOperationResult.getExecutionDuration().orElse(null);
 					resultSetMappingDuration = databaseOperationResult.getResultSetMappingDuration().orElse(null);
+					statementResult = databaseOperationResult.getStatementResult();
+					warmDatabaseTypeCacheForMetricsIfNeeded(statementContext);
 				} finally {
 					if (previousDatabaseTypeDetectionConnection == null)
 						this.databaseTypeDetectionConnectionHolder.remove();
@@ -2138,9 +2294,12 @@ public final class Database {
 
 				// If this was a single-shot operation (not in a transaction), close the connection
 				if (connection != null && !transaction.isPresent()) {
+					Duration heldDuration = Duration.ofNanos(nanoTime() - connectionHeldStartTime);
 					try {
 						closeConnection(connection);
+						getMetricsCollectorDispatcher().didReleaseStatementConnection(statementContext, heldDuration);
 					} catch (Throwable cleanupException) {
+						getMetricsCollectorDispatcher().didFailToReleaseStatementConnection(statementContext, heldDuration, cleanupException);
 						if (cleanupFailure == null)
 							cleanupFailure = cleanupException;
 						else
@@ -2160,6 +2319,13 @@ public final class Database {
 								.batchSize(batchSize)
 								.exception(exception)
 								.build();
+
+				if (thrown == null && exception == null) {
+					getMetricsCollectorDispatcher().didExecuteStatement(statementContext, statementLog, statementResult);
+				} else {
+					Throwable statementThrowable = thrown == null ? exception : thrown;
+					getMetricsCollectorDispatcher().didFailToExecuteStatement(statementContext, statementLog, requireNonNull(statementThrowable));
+				}
 
 				try {
 					getStatementLogger().log(statementLog);
@@ -2242,6 +2408,16 @@ public final class Database {
 	}
 
 	@NonNull
+	public MetricsCollector getMetricsCollector() {
+		return getMetricsCollectorDispatcher().getMetricsCollector();
+	}
+
+	@NonNull
+	MetricsCollectorDispatcher getMetricsCollectorDispatcher() {
+		return this.metricsCollectorDispatcher;
+	}
+
+	@NonNull
 	protected DatabaseOperationSupportStatus getExecuteLargeBatchSupported() {
 		return this.executeLargeBatchSupported;
 	}
@@ -2309,6 +2485,18 @@ public final class Database {
 		private Exception exception;
 		@Nullable
 		private Throwable thrown;
+		private long rowsConsumed;
+		private long openStartTime;
+		private boolean exhausted;
+		private boolean openFailed;
+		private boolean terminalMetricsEmitted;
+		@Nullable
+		private Throwable callbackThrowable;
+		@Nullable
+		private Throwable iterationThrowable;
+		@Nullable
+		private Throwable cleanupFailure;
+		private long connectionHeldStartTime;
 
 		private StreamingResultSet(@NonNull Database database,
 															 @NonNull StatementContext<T> statementContext,
@@ -2326,14 +2514,35 @@ public final class Database {
 
 		private void open() {
 			long startTime = nanoTime();
+			this.openStartTime = startTime;
+			this.database.getMetricsCollectorDispatcher().willOpenStream(this.statementContext);
 
 			if (this.connectionLock != null)
 				this.connectionLock.lock();
 
 			try {
 				boolean alreadyHasConnection = this.transaction.isPresent() && this.transaction.get().hasConnection();
-				this.connection = this.transaction.isPresent() ? this.transaction.get().getConnection() : this.database.acquireConnection();
+				if (this.transaction.isPresent()) {
+					this.connection = this.transaction.get().getConnection();
+				} else {
+					this.database.getMetricsCollectorDispatcher().willAcquireStatementConnection(this.statementContext);
+					try {
+						this.connection = this.database.getDataSource().getConnection();
+					} catch (SQLException e) {
+						DatabaseException wrapped = new DatabaseException("Unable to acquire database connection", e);
+						this.connectionAcquisitionDuration = Duration.ofNanos(nanoTime() - startTime);
+						this.database.getMetricsCollectorDispatcher().didFailToAcquireStatementConnection(this.statementContext, this.connectionAcquisitionDuration, wrapped);
+						throw wrapped;
+					}
+				}
 				this.connectionAcquisitionDuration = alreadyHasConnection ? null : Duration.ofNanos(nanoTime() - startTime);
+				if (this.transaction.isEmpty()) {
+					this.connectionHeldStartTime = nanoTime();
+					MetricsCollectorDispatcher metricsCollectorDispatcher = this.database.getMetricsCollectorDispatcher();
+					if (metricsCollectorDispatcher.isEnabled())
+						this.database.dispatchWithDatabaseTypeDetectionConnection(requireNonNull(this.connection), () ->
+								metricsCollectorDispatcher.didAcquireStatementConnection(this.statementContext, this.connectionAcquisitionDuration));
+				}
 				startTime = nanoTime();
 
 				this.preparedStatement = this.connection.prepareStatement(this.statementContext.getStatement().getSql());
@@ -2349,6 +2558,8 @@ public final class Database {
 					startTime = nanoTime();
 					this.resultSet = this.preparedStatement.executeQuery();
 					this.executionDuration = Duration.ofNanos(nanoTime() - startTime);
+					this.database.warmDatabaseTypeCacheForMetricsIfNeeded(this.statementContext);
+					this.database.getMetricsCollectorDispatcher().didOpenStream(this.statementContext, Duration.ofNanos(nanoTime() - this.openStartTime));
 				} finally {
 					if (previousDatabaseTypeDetectionConnection == null)
 						this.database.databaseTypeDetectionConnectionHolder.remove();
@@ -2358,12 +2569,18 @@ public final class Database {
 			} catch (DatabaseException e) {
 				this.exception = e;
 				this.thrown = e;
+				this.openFailed = true;
+				this.database.getMetricsCollectorDispatcher().didFailToOpenStream(this.statementContext,
+						Duration.ofNanos(nanoTime() - this.openStartTime), e);
 				close();
 				throw e;
 			} catch (Exception e) {
 				DatabaseException wrapped = databaseExceptionWithStatementContext(this.statementContext, e);
 				this.exception = e;
 				this.thrown = wrapped;
+				this.openFailed = true;
+				this.database.getMetricsCollectorDispatcher().didFailToOpenStream(this.statementContext,
+						Duration.ofNanos(nanoTime() - this.openStartTime), wrapped);
 				close();
 				throw wrapped;
 			}
@@ -2378,12 +2595,15 @@ public final class Database {
 				try {
 					this.hasNext = this.resultSet != null && this.resultSet.next();
 					this.hasNextEvaluated = true;
-					if (!this.hasNext)
+					if (!this.hasNext) {
+						this.exhausted = true;
 						close();
+					}
 				} catch (SQLException e) {
 					DatabaseException wrapped = databaseExceptionWithStatementContext(this.statementContext, e);
 					this.exception = e;
 					this.thrown = wrapped;
+					this.iterationThrowable = wrapped;
 					close();
 					throw wrapped;
 				}
@@ -2417,20 +2637,28 @@ public final class Database {
 				}
 
 				this.resultSetMappingNanos += nanoTime() - startTime;
+				this.rowsConsumed++;
 				return value;
 			} catch (SQLException e) {
 				DatabaseException wrapped = databaseExceptionWithStatementContext(this.statementContext,
 						format("Unable to map JDBC %s row to %s", ResultSet.class.getSimpleName(), this.statementContext.getResultSetRowType().get()), e);
 				this.exception = e;
 				this.thrown = wrapped;
+				this.iterationThrowable = wrapped;
 				close();
 				throw wrapped;
 			} catch (DatabaseException e) {
 				this.exception = e;
 				this.thrown = e;
+				this.iterationThrowable = e;
 				close();
 				throw e;
 			}
+		}
+
+		private void callbackFailed(@NonNull Throwable throwable) {
+			requireNonNull(throwable);
+			this.callbackThrowable = throwable;
 		}
 
 		@Override
@@ -2461,9 +2689,14 @@ public final class Database {
 				}
 
 				if (this.connection != null && this.transaction.isEmpty()) {
+					Duration heldDuration = this.connectionHeldStartTime == 0L
+							? Duration.ZERO
+							: Duration.ofNanos(nanoTime() - this.connectionHeldStartTime);
 					try {
 						this.database.closeConnection(this.connection);
+						this.database.getMetricsCollectorDispatcher().didReleaseStatementConnection(this.statementContext, heldDuration);
 					} catch (Throwable cleanupException) {
+						this.database.getMetricsCollectorDispatcher().didFailToReleaseStatementConnection(this.statementContext, heldDuration, cleanupException);
 						cleanupFailure = cleanupFailure == null ? cleanupException : addSuppressed(cleanupFailure, cleanupException);
 					}
 				}
@@ -2481,6 +2714,13 @@ public final class Database {
 								.resultSetMappingDuration(mappingDuration)
 								.exception(this.exception)
 								.build();
+
+				if (this.thrown == null && this.exception == null) {
+					this.database.getMetricsCollectorDispatcher().didExecuteStatement(this.statementContext, statementLog, StatementResult.empty());
+				} else {
+					Throwable statementThrowable = this.thrown == null ? this.exception : this.thrown;
+					this.database.getMetricsCollectorDispatcher().didFailToExecuteStatement(this.statementContext, statementLog, requireNonNull(statementThrowable));
+				}
 
 				try {
 					this.database.getStatementLogger().log(statementLog);
@@ -2506,6 +2746,8 @@ public final class Database {
 				}
 			}
 
+			this.cleanupFailure = cleanupFailure;
+
 			if (cleanupFailure != null) {
 				if (this.thrown != null) {
 					this.thrown.addSuppressed(cleanupFailure);
@@ -2517,6 +2759,36 @@ public final class Database {
 					throw new RuntimeException(cleanupFailure);
 				}
 			}
+		}
+
+		private void emitTerminalMetrics() {
+			if (this.terminalMetricsEmitted)
+				return;
+
+			this.terminalMetricsEmitted = true;
+
+			if (this.openFailed)
+				return;
+
+			MetricsCollector.StreamTerminalOutcome outcome;
+			Throwable throwable;
+
+			if (this.iterationThrowable != null) {
+				outcome = MetricsCollector.StreamTerminalOutcome.ITERATION_FAILURE;
+				throwable = this.iterationThrowable;
+			} else if (this.callbackThrowable != null) {
+				outcome = MetricsCollector.StreamTerminalOutcome.CALLBACK_FAILURE;
+				throwable = this.callbackThrowable;
+			} else if (this.exhausted) {
+				outcome = MetricsCollector.StreamTerminalOutcome.COMPLETED_NORMALLY;
+				throwable = this.cleanupFailure;
+			} else {
+				outcome = MetricsCollector.StreamTerminalOutcome.EARLY_CLOSE;
+				throwable = this.cleanupFailure;
+			}
+
+			this.database.getMetricsCollectorDispatcher().didCloseStream(this.statementContext, outcome, this.rowsConsumed,
+					Duration.ofNanos(nanoTime() - this.openStartTime), throwable);
 		}
 
 		@NonNull
@@ -2552,11 +2824,14 @@ public final class Database {
 		@Nullable
 		private StatementLogger statementLogger;
 		@Nullable
+		private MetricsCollector metricsCollector;
+		@Nullable
 		private Integer parsedSqlCacheCapacity;
 
 		private Builder(@NonNull DataSource dataSource) {
 			this.dataSource = requireNonNull(dataSource);
 			this.databaseType = null;
+			this.metricsCollector = null;
 			this.parsedSqlCacheCapacity = null;
 		}
 
@@ -2607,6 +2882,22 @@ public final class Database {
 		}
 
 		/**
+		 * Configures the metrics collector for the {@link Database} being built.
+		 * <p>
+		 * Like all {@code Database} configuration, this value is fixed at {@link #build()} time. Specify {@code null}
+		 * or omit this setter to disable metrics collection.
+		 *
+		 * @param metricsCollector metrics collector to use, or {@code null} to disable
+		 * @return this {@code Builder}, for chaining
+		 * @since 4.2.0
+		 */
+		@NonNull
+		public Builder metricsCollector(@Nullable MetricsCollector metricsCollector) {
+			this.metricsCollector = metricsCollector;
+			return this;
+		}
+
+		/**
 		 * Configures the size of the parsed SQL cache.
 		 * <p>
 		 * A value of {@code 0} disables caching. A value of {@code null} uses the default size.
@@ -2635,11 +2926,20 @@ public final class Database {
 		private final Duration executionDuration;
 		@Nullable
 		private final Duration resultSetMappingDuration;
+		@NonNull
+		private final StatementResult statementResult;
 
 		public DatabaseOperationResult(@Nullable Duration executionDuration,
 																	 @Nullable Duration resultSetMappingDuration) {
+			this(executionDuration, resultSetMappingDuration, StatementResult.empty());
+		}
+
+		public DatabaseOperationResult(@Nullable Duration executionDuration,
+																	 @Nullable Duration resultSetMappingDuration,
+																	 @NonNull StatementResult statementResult) {
 			this.executionDuration = executionDuration;
 			this.resultSetMappingDuration = resultSetMappingDuration;
+			this.statementResult = requireNonNull(statementResult);
 		}
 
 		@NonNull
@@ -2650,6 +2950,11 @@ public final class Database {
 		@NonNull
 		public Optional<Duration> getResultSetMappingDuration() {
 			return Optional.ofNullable(this.resultSetMappingDuration);
+		}
+
+		@NonNull
+		public StatementResult getStatementResult() {
+			return this.statementResult;
 		}
 	}
 
