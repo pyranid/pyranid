@@ -220,6 +220,12 @@ DataSource pgBouncerDataSource = new PGSimpleDataSource() {{
 
 Pyranid supports named parameters (e.g. `:id`) only; positional `?` parameters are not supported.
 
+### SQL Parsing Rules
+
+Pyranid scans SQL before handing it to JDBC so it can translate named parameters into `PreparedStatement` placeholders. It ignores parameter-looking text inside string literals, quoted identifiers, comments, PostgreSQL dollar-quoted strings, and SQL Server-style bracket-quoted identifiers. Unterminated quotes, dollar-quoted strings, and block comments fail fast with an `IllegalArgumentException`.
+
+PostgreSQL JSONB/hstore `?`, `?|`, and `?&` operators are supported. When the `Database` is configured or detected as PostgreSQL, Pyranid automatically emits pgjdbc's escaped `??` form for those operators while preserving named-parameter binding.
+
 Suppose we have a custom `Car` like this:
 
 ```java
@@ -867,6 +873,7 @@ List<Employee> employees = database.query("""
 
 Notes:
 * Empty collections/arrays throw `IllegalArgumentException`.
+* `null` elements and empty `Optional` elements throw `IllegalArgumentException`. SQL `IN` does not match `NULL`; use an explicit `IS NULL` predicate when null matching is required.
 * Expansion is context-agnostic; using it outside of `IN (...)` is allowed but may produce invalid SQL.
 * Raw `Collection`/array values are rejected; use `Parameters.inList(...)`.
 * Primitive arrays are supported via overloads (e.g. `int[]`, `long[]`).

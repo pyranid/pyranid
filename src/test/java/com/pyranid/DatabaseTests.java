@@ -364,6 +364,24 @@ public class DatabaseTests {
 	}
 
 	@Test
+	public void testQueryAllowsQuestionMarkOperatorAfterBlockComment() {
+		Database db = Database.withDataSource(createInMemoryDataSource("testQueryAllowsQuestionMarkOperatorAfterBlockComment")).build();
+
+		Assertions.assertDoesNotThrow(() ->
+				db.query("SELECT data /* note */ ? 'a' FROM t"));
+	}
+
+	@Test
+	public void testQueryRejectsQuestionMarkWithoutLeftOperandBeforePipeOperator() {
+		Database db = Database.withDataSource(createInMemoryDataSource("testQueryRejectsQuestionMarkWithoutLeftOperandBeforePipeOperator")).build();
+
+		IllegalArgumentException exception = Assertions.assertThrows(IllegalArgumentException.class,
+				() -> db.query("SELECT ?|| 'x'"));
+
+		Assertions.assertTrue(exception.getMessage().contains("Positional"));
+	}
+
+	@Test
 	public void testNamedParameterParsingSkipsQuotesCommentsAndDollarQuotes() {
 		String sql = """
 				SELECT ':ignored' AS s,
@@ -401,6 +419,44 @@ public class DatabaseTests {
 		List<String> parameterNames = parseNamedParameters(sql);
 
 		Assertions.assertEquals(List.of("id", "name"), parameterNames);
+	}
+
+	@Test
+	public void testNamedParameterParsingAllowsParametersInsideSubscripts() {
+		String sql = "SELECT tags[:idx] FROM t WHERE id = :id";
+
+		List<String> parameterNames = parseNamedParameters(sql);
+
+		Assertions.assertEquals(List.of("idx", "id"), parameterNames);
+	}
+
+	@Test
+	public void testNamedParameterParsingSkipsEscapedBracketIdentifiers() {
+		String sql = "SELECT [a]]b:ignored] FROM t WHERE id = :id";
+
+		List<String> parameterNames = parseNamedParameters(sql);
+
+		Assertions.assertEquals(List.of("id"), parameterNames);
+	}
+
+	@Test
+	public void testNamedParameterParsingDoesNotTreatLikeAsEscapedStringPrefix() {
+		String sql = "SELECT * FROM t WHERE name LIKE'%\\' AND id = :id";
+
+		List<String> parameterNames = parseNamedParameters(sql);
+
+		Assertions.assertEquals(List.of("id"), parameterNames);
+	}
+
+	@Test
+	public void testNamedParameterParsingRejectsUnterminatedConstructs() {
+		assertUnterminatedSql("SELECT 'abc FROM t WHERE id = :id", "single-quoted string");
+		assertUnterminatedSql("SELECT \"abc FROM t WHERE id = :id", "double-quoted identifier");
+		assertUnterminatedSql("SELECT `abc FROM t WHERE id = :id", "backtick-quoted identifier");
+		assertUnterminatedSql("SELECT [abc FROM t WHERE id = :id", "bracket-quoted identifier");
+		assertUnterminatedSql("SELECT /* abc WHERE id = :id", "block comment");
+		assertUnterminatedSql("SELECT $$abc WHERE id = :id", "dollar-quoted string $$");
+		assertUnterminatedSql("SELECT $tag$abc WHERE id = :id", "dollar-quoted string $tag$");
 	}
 
 	@Test
@@ -539,6 +595,48 @@ public class DatabaseTests {
 				db.query("SELECT id FROM t WHERE email IN (:emails)")
 						.bind("emails", Parameters.inList(List.of()))
 						.fetchList(Integer.class));
+	}
+
+	@Test
+	public void testQueryInListRejectsNullElements() {
+		Database db = Database.withDataSource(createInMemoryDataSource("testQueryInListRejectsNullElements")).build();
+
+		IllegalArgumentException exception = Assertions.assertThrows(IllegalArgumentException.class, () ->
+				db.query("SELECT id FROM t WHERE email IN (:emails)")
+						.bind("emails", Parameters.inList(Arrays.asList("a@example.com", null)))
+						.fetchList(Integer.class));
+
+		Assertions.assertTrue(exception.getMessage().contains("contains null element at index 1"),
+				"Expected null element index in exception message");
+	}
+
+	@Test
+	public void testQueryInListRejectsOptionalEmptyElements() {
+		Database db = Database.withDataSource(createInMemoryDataSource("testQueryInListRejectsOptionalEmptyElements")).build();
+
+		IllegalArgumentException exception = Assertions.assertThrows(IllegalArgumentException.class, () ->
+				db.query("SELECT id FROM t WHERE email IN (:emails)")
+						.bind("emails", Parameters.inList(List.of(Optional.of("a@example.com"), Optional.empty())))
+						.fetchList(Integer.class));
+
+		Assertions.assertTrue(exception.getMessage().contains("contains null element at index 1"),
+				"Expected empty Optional element index in exception message");
+	}
+
+	@Test
+	public void testQueryInListUnwrapsOptionalElements() {
+		Database db = Database.withDataSource(createInMemoryDataSource("testQueryInListUnwrapsOptionalElements")).build();
+
+				db.query("CREATE TABLE t (id INT, email VARCHAR(255))").execute();
+				db.query("INSERT INTO t VALUES (1, 'a@example.com')").execute();
+				db.query("INSERT INTO t VALUES (2, 'b@example.com')").execute();
+				db.query("INSERT INTO t VALUES (3, 'c@example.com')").execute();
+
+		List<Integer> ids = db.query("SELECT id FROM t WHERE email IN (:emails) ORDER BY id")
+				.bind("emails", Parameters.inList(List.of(Optional.of("a@example.com"), Optional.of("c@example.com"))))
+				.fetchList(Integer.class);
+
+		Assertions.assertEquals(List.of(1, 3), ids);
 	}
 
 	@Test
@@ -2182,24 +2280,97 @@ public class DatabaseTests {
 	}
 
 	@Test
-	public void testLocalTime_bindsAsString_onDriversWithoutSafeTimeHandling() {
-		// DefaultPreparedStatementBinder writes LocalTime as string for maximum safety.
+	public void testLocalTime_bindsAsJdbcTime() throws SQLException {
+		PreparedStatementBinder binder = PreparedStatementBinder.withDefaultConfiguration();
+		StatementContext<?> ctx = statementContextFor(DatabaseType.GENERIC);
+		LocalTime input = LocalTime.of(8, 9, 10, 123_000_000);
+		AtomicReference<Object[]> setObjectArgs = new AtomicReference<>();
+		AtomicBoolean setStringCalled = new AtomicBoolean(false);
+
+		PreparedStatement preparedStatement = (PreparedStatement) Proxy.newProxyInstance(
+				PreparedStatement.class.getClassLoader(),
+				new Class<?>[]{PreparedStatement.class},
+				(proxy, method, args) -> {
+					String name = method.getName();
+					if ("setObject".equals(name)) {
+						setObjectArgs.set(args.clone());
+						return null;
+					}
+					if ("setString".equals(name)) {
+						setStringCalled.set(true);
+						return null;
+					}
+					if ("getParameterMetaData".equals(name))
+						return null;
+					if ("toString".equals(name))
+						return "PreparedStatement<local-time>";
+					return defaultValue(method.getReturnType());
+				});
+
+		binder.bindParameter(ctx, preparedStatement, 1, input);
+
+		Assertions.assertNotNull(setObjectArgs.get(), "Expected LocalTime to bind with setObject");
+		Assertions.assertEquals(1, setObjectArgs.get()[0]);
+		Assertions.assertEquals(input, setObjectArgs.get()[1]);
+		Assertions.assertEquals(Types.TIME, setObjectArgs.get()[2]);
+		Assertions.assertFalse(setStringCalled.get(), "LocalTime should not bind as VARCHAR text");
+	}
+
+	@Test
+	public void testLocalTime_fallsBackToSetTimeWhenTypedSetObjectUnsupported() throws SQLException {
+		PreparedStatementBinder binder = PreparedStatementBinder.withDefaultConfiguration();
+		StatementContext<?> ctx = statementContextFor(DatabaseType.GENERIC);
+		LocalTime input = LocalTime.of(8, 9, 10);
+		AtomicReference<java.sql.Time> setTimeValue = new AtomicReference<>();
+		AtomicBoolean setStringCalled = new AtomicBoolean(false);
+
+		PreparedStatement preparedStatement = (PreparedStatement) Proxy.newProxyInstance(
+				PreparedStatement.class.getClassLoader(),
+				new Class<?>[]{PreparedStatement.class},
+				(proxy, method, args) -> {
+					String name = method.getName();
+					if ("setObject".equals(name))
+						throw new java.sql.SQLFeatureNotSupportedException("typed setObject unsupported");
+					if ("setTime".equals(name)) {
+						setTimeValue.set((java.sql.Time) args[1]);
+						return null;
+					}
+					if ("setString".equals(name)) {
+						setStringCalled.set(true);
+						return null;
+					}
+					if ("getParameterMetaData".equals(name))
+						return null;
+					if ("toString".equals(name))
+						return "PreparedStatement<local-time-fallback>";
+					return defaultValue(method.getReturnType());
+				});
+
+		binder.bindParameter(ctx, preparedStatement, 1, input);
+
+		Assertions.assertEquals(java.sql.Time.valueOf(input), setTimeValue.get(),
+				"Expected fallback to JDBC TIME binding");
+		Assertions.assertFalse(setStringCalled.get(), "LocalTime fallback should not bind as VARCHAR text");
+	}
+
+	@Test
+	public void testLocalTime_bindsToTimeColumn_roundTrips() {
 		Database db = Database
 				.withDataSource(createInMemoryDataSource("it_psb_localtime"))
 				.preparedStatementBinder(PreparedStatementBinder.withDefaultConfiguration())
 				.build();
 
-				db.query("CREATE TABLE t_time (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, t LONGVARCHAR)").execute();
+				db.query("CREATE TABLE t_time (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, t TIME)").execute();
 
-		LocalTime input = LocalTime.of(8, 9, 10, 123_456_789);
+		LocalTime input = LocalTime.of(8, 9, 10);
 				db.query("INSERT INTO t_time(t) VALUES (:p1)")
 			.bind("p1", input)
 			.execute();
 
-		String stored = db.query("SELECT t FROM t_time")
-				.fetchObject(String.class)
+		LocalTime stored = db.query("SELECT t FROM t_time")
+				.fetchObject(LocalTime.class)
 				.orElseThrow();
-		Assertions.assertEquals(input.toString(), stored, "LocalTime should be stored as ISO-8601 string");
+		Assertions.assertEquals(input, stored, "LocalTime should round-trip through a TIME column");
 	}
 
 	@Test
@@ -3291,6 +3462,18 @@ public class DatabaseTests {
 		} catch (Exception e) {
 			throw new RuntimeException("Unable to parse named parameters for test", e);
 		}
+	}
+
+	private static void assertUnterminatedSql(@NonNull String sql,
+																						@NonNull String expectedConstruct) {
+		requireNonNull(sql);
+		requireNonNull(expectedConstruct);
+
+		IllegalArgumentException exception = Assertions.assertThrows(IllegalArgumentException.class,
+				() -> Database.parseNamedParameterSql(sql));
+
+		Assertions.assertTrue(exception.getMessage().contains("Unterminated " + expectedConstruct),
+				format("Expected unterminated construct '%s' in message: %s", expectedConstruct, exception.getMessage()));
 	}
 
 	@NonNull

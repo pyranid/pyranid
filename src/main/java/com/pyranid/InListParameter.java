@@ -35,10 +35,9 @@ import javax.annotation.concurrent.ThreadSafe;
 public interface InListParameter {
 	/**
 	 * Gets the elements to be expanded into SQL {@code IN} list placeholders.
-	 * Elements must be non-empty.
+	 * Elements must be non-empty and must not contain {@code null} or empty {@link java.util.Optional} values.
 	 *
 	 * @return the elements for the {@code IN} list
 	 */
-	@NonNull
-	Object @NonNull [] getElements();
+	@NonNull Object @NonNull [] getElements();
 }

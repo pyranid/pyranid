@@ -172,8 +172,9 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		if (normalizedParameter instanceof LocalTime localTime) {
-			// Some drivers used to offset LocalTime; safest is a tz-free string.
-			preparedStatement.setString(parameterIndex, localTime.toString());
+			if (!trySetObject(preparedStatement, parameterIndex, localTime, Types.TIME))
+				preparedStatement.setTime(parameterIndex, java.sql.Time.valueOf(localTime));
+
 			return;
 		}
 

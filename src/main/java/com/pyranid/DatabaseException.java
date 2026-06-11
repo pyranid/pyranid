@@ -123,6 +123,11 @@ public class DatabaseException extends RuntimeException {
 		String table = null;
 		String where = null;
 
+		if (cause instanceof SQLException sqlException) {
+			errorCode = sqlException.getErrorCode();
+			sqlState = sqlException.getSQLState();
+		}
+
 		if (cause != null) {
 			// Special handling for Postgres
 			if ("org.postgresql.util.PSQLException".equals(cause.getClass().getName())) {
@@ -130,7 +135,6 @@ public class DatabaseException extends RuntimeException {
 				org.postgresql.util.ServerErrorMessage serverErrorMessage = psqlException.getServerErrorMessage();
 
 				if (serverErrorMessage != null) {
-					errorCode = psqlException.getErrorCode();
 					column = serverErrorMessage.getColumn();
 					constraint = serverErrorMessage.getConstraint();
 					datatype = serverErrorMessage.getDatatype();
@@ -142,17 +146,14 @@ public class DatabaseException extends RuntimeException {
 					routine = serverErrorMessage.getRoutine();
 					schema = serverErrorMessage.getSchema();
 					severity = serverErrorMessage.getSeverity();
-					sqlState = serverErrorMessage.getSQLState();
+					if (serverErrorMessage.getSQLState() != null)
+						sqlState = serverErrorMessage.getSQLState();
 					table = serverErrorMessage.getTable();
 					where = serverErrorMessage.getWhere();
 					internalPosition = serverErrorMessage.getInternalPosition();
 					line = serverErrorMessage.getLine();
 					position = serverErrorMessage.getPosition();
 				}
-			} else if (cause instanceof SQLException) {
-				SQLException sqlException = (SQLException) cause;
-				errorCode = sqlException.getErrorCode();
-				sqlState = sqlException.getSQLState();
 			}
 		}
 

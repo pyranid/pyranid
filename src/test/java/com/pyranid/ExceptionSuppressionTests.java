@@ -20,6 +20,8 @@ import org.hsqldb.jdbc.JDBCDataSource;
 import org.jspecify.annotations.NonNull;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.postgresql.util.PSQLException;
+import org.postgresql.util.PSQLState;
 
 import javax.sql.DataSource;
 import java.io.PrintWriter;
@@ -134,6 +136,20 @@ public class ExceptionSuppressionTests {
 				"Expected statement context to remain available after truncating cause message");
 		Assertions.assertTrue(ex.getMessage().length() < 4096,
 				"Expected bounded exception message length");
+	}
+
+	@Test
+	public void testDatabaseExceptionPreservesPostgresqlMetadataWithoutServerErrorMessage() {
+		PSQLException cause = new PSQLException("connection failed", PSQLState.CONNECTION_FAILURE);
+
+		DatabaseException ex = new DatabaseException("Unable to connect", cause);
+
+		Assertions.assertEquals(cause.getSQLState(), ex.getSqlState().orElseThrow(),
+				"Expected SQLState from the PostgreSQL exception itself");
+		Assertions.assertEquals(cause.getErrorCode(), ex.getErrorCode().orElseThrow(),
+				"Expected vendor error code from the PostgreSQL exception itself");
+		Assertions.assertTrue(ex.getConstraint().isEmpty(),
+				"Expected no server-error fields when PostgreSQL did not provide ServerErrorMessage");
 	}
 
 	@Test

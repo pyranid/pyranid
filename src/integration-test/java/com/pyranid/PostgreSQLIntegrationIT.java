@@ -108,6 +108,38 @@ public class PostgreSQLIntegrationIT {
 	}
 
 	@Test
+	public void testJsonbQuestionMarkOperatorsRoundTrip() {
+		Database db = Database.withDataSource(dataSource())
+				.databaseType(DatabaseType.POSTGRESQL)
+				.build();
+
+		db.query("CREATE TABLE IF NOT EXISTS pyranid_jsonb_operator_test (id BIGSERIAL PRIMARY KEY, payload JSONB NOT NULL)")
+				.execute();
+		db.query("TRUNCATE TABLE pyranid_jsonb_operator_test").execute();
+
+		Long id = db.query("INSERT INTO pyranid_jsonb_operator_test(payload) VALUES (:payload) RETURNING id")
+				.bind("payload", Parameters.json("{\"kind\":\"integration\",\"count\":3}"))
+				.fetchObject(Long.class)
+				.orElseThrow();
+
+		Assertions.assertTrue(db.query("SELECT '{\"kind\":1}'::jsonb ? 'kind'")
+				.fetchObject(Boolean.class)
+				.orElseThrow());
+		Assertions.assertTrue(db.query("SELECT payload ? 'kind' FROM pyranid_jsonb_operator_test WHERE id = :id")
+				.bind("id", id)
+				.fetchObject(Boolean.class)
+				.orElseThrow());
+		Assertions.assertTrue(db.query("SELECT payload ?| ARRAY['missing', 'kind'] FROM pyranid_jsonb_operator_test WHERE id = :id")
+				.bind("id", id)
+				.fetchObject(Boolean.class)
+				.orElseThrow());
+		Assertions.assertTrue(db.query("SELECT payload ?& ARRAY['kind', 'count'] FROM pyranid_jsonb_operator_test WHERE id = :id")
+				.bind("id", id)
+				.fetchObject(Boolean.class)
+				.orElseThrow());
+	}
+
+	@Test
 	public void testTextArrayParameterAndReturningRoundTrip() {
 		Database db = Database.withDataSource(dataSource()).build();
 

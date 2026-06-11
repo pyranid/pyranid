@@ -132,28 +132,34 @@ public final class Parameters {
 
 	/**
 	 * Acquires a parameter for SQL {@code IN} list expansion using a {@link Collection}.
-	 * Elements must be non-empty.
+	 * Elements must be non-empty and must not contain {@code null} or empty {@link Optional} values.
+	 * <p>
+	 * SQL {@code IN} does not match {@code NULL}; use an explicit {@code IS NULL} predicate when null matching
+	 * is required.
 	 *
 	 * @param elements the elements to expand into SQL {@code IN} list placeholders
 	 * @param <E>      the element type
 	 * @return an IN-list parameter for the given elements
 	 */
 	@NonNull
-	public static <E> InListParameter inList(@NonNull Collection<@Nullable E> elements) {
+	public static <E> InListParameter inList(@NonNull Collection<@NonNull E> elements) {
 		requireNonNull(elements);
 		return new DefaultInListParameter(elements.toArray());
 	}
 
 	/**
 	 * Acquires a parameter for SQL {@code IN} list expansion using a Java array.
-	 * Elements must be non-empty.
+	 * Elements must be non-empty and must not contain {@code null} or empty {@link Optional} values.
+	 * <p>
+	 * SQL {@code IN} does not match {@code NULL}; use an explicit {@code IS NULL} predicate when null matching
+	 * is required.
 	 *
 	 * @param elements the elements to expand into SQL {@code IN} list placeholders
 	 * @param <E>      the element type
 	 * @return an IN-list parameter for the given elements
 	 */
 	@NonNull
-	public static <E> InListParameter inList(@NonNull E @Nullable [] elements) {
+	public static <E> InListParameter inList(@NonNull E @NonNull [] elements) {
 		requireNonNull(elements);
 		return new DefaultInListParameter(elements);
 	}
@@ -294,17 +300,15 @@ public final class Parameters {
 	 */
 	@ThreadSafe
 	static class DefaultInListParameter implements InListParameter {
-		@NonNull
-		private final Object[] elements;
+		private final @NonNull Object @NonNull [] elements;
 
-		DefaultInListParameter(Object @NonNull [] elements) {
+		DefaultInListParameter(@NonNull Object @NonNull [] elements) {
 			requireNonNull(elements);
 			this.elements = elements.clone(); // Always perform a defensive copy
 		}
 
-		@NonNull
 		@Override
-		public Object @NonNull [] getElements() {
+		public @NonNull Object @NonNull [] getElements() {
 			// Defensive copy
 			return this.elements.clone();
 		}

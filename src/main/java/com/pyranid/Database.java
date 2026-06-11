@@ -711,6 +711,10 @@ public final class Database {
 	 * <p>
 	 * Named parameters use the {@code :paramName} syntax and are bound via {@link Query#bind(String, Object)}.
 	 * Positional parameters via {@code ?} are not supported.
+	 * Pyranid ignores parameter-looking text inside SQL string literals, quoted identifiers, comments, PostgreSQL
+	 * dollar-quoted strings, and SQL Server-style bracket-quoted identifiers. PostgreSQL JSONB/hstore {@code ?},
+	 * {@code ?|}, and {@code ?&} operators are supported; when running against {@link DatabaseType#POSTGRESQL}, Pyranid
+	 * emits pgjdbc's escaped {@code ??} form automatically. Unterminated quotes and comments fail fast.
 	 * <p>
 	 * Example:
 	 * <pre>{@code
@@ -831,6 +835,8 @@ public final class Database {
 		@NonNull
 		private final String originalSql;
 		@NonNull
+		private final ParsedSql parsedSql;
+		@NonNull
 		private final List<String> sqlFragments;
 		@NonNull
 		private final List<String> parameterNames;
@@ -852,6 +858,7 @@ public final class Database {
 			this.originalSql = sql;
 
 			ParsedSql parsedSql = database.getParsedSql(sql);
+			this.parsedSql = parsedSql;
 			this.sqlFragments = parsedSql.sqlFragments;
 			this.parameterNames = parsedSql.parameterNames;
 			this.distinctParameterNames = parsedSql.distinctParameterNames;
@@ -1012,8 +1019,10 @@ public final class Database {
 			requireNonNull(bindings);
 			requireNonNull(statementId);
 
+			List<String> sqlFragments = sqlFragmentsForDatabaseType();
+
 			if (this.parameterNames.isEmpty())
-				return new PreparedQuery(Statement.of(statementId, this.originalSql), new Object[0]);
+				return new PreparedQuery(Statement.of(statementId, sqlFragments.get(0)), new Object[0]);
 
 			StringBuilder sql = new StringBuilder(this.originalSql.length() + this.parameterNames.size() * 2);
 			List<String> missingParameterNames = null;
@@ -1021,7 +1030,7 @@ public final class Database {
 
 			for (int i = 0; i < this.parameterNames.size(); ++i) {
 				String parameterName = this.parameterNames.get(i);
-				sql.append(this.sqlFragments.get(i));
+				sql.append(sqlFragments.get(i));
 
 				if (!bindings.containsKey(parameterName)) {
 					if (missingParameterNames == null)
@@ -1041,7 +1050,18 @@ public final class Database {
 						throw new IllegalArgumentException(format("IN-list parameter '%s' for SQL: %s is empty", parameterName, this.originalSql));
 
 					appendPlaceholders(sql, elements.length);
-					parameters.addAll(Arrays.asList(elements));
+
+					for (int j = 0; j < elements.length; ++j) {
+						Object element = unwrapOptionalValue(elements[j]);
+
+						if (element == null)
+							throw new IllegalArgumentException(format(
+									"IN-list parameter '%s' for SQL: %s contains null element at index %d. "
+											+ "SQL IN does not match NULL values; use an explicit IS NULL predicate instead.",
+									parameterName, this.originalSql, j));
+
+						parameters.add(element);
+					}
 				} else if (value instanceof Collection<?>) {
 					throw new IllegalArgumentException(format(
 							"Collection parameter '%s' for SQL: %s must be wrapped with %s.inList(...) or %s.listOf/%s.setOf(...)",
@@ -1059,7 +1079,7 @@ public final class Database {
 				}
 			}
 
-			sql.append(this.sqlFragments.get(this.sqlFragments.size() - 1));
+			sql.append(sqlFragments.get(sqlFragments.size() - 1));
 
 			if (missingParameterNames != null)
 				throw new IllegalArgumentException(format("Missing required named parameters %s for SQL: %s", missingParameterNames, this.originalSql));
@@ -1069,16 +1089,28 @@ public final class Database {
 
 		@NonNull
 		private String buildPlaceholderSql() {
+			List<String> sqlFragments = sqlFragmentsForDatabaseType();
+
 			if (this.parameterNames.isEmpty())
-				return this.originalSql;
+				return sqlFragments.get(0);
 
 			StringBuilder sql = new StringBuilder(this.originalSql.length() + this.parameterNames.size() * 2);
 
 			for (int i = 0; i < this.parameterNames.size(); ++i)
-				sql.append(this.sqlFragments.get(i)).append('?');
+				sql.append(sqlFragments.get(i)).append('?');
 
-			sql.append(this.sqlFragments.get(this.sqlFragments.size() - 1));
+			sql.append(sqlFragments.get(sqlFragments.size() - 1));
 			return sql.toString();
+		}
+
+		@NonNull
+		private List<String> sqlFragmentsForDatabaseType() {
+			if (!this.parsedSql.hasQuestionMarkOperators)
+				return this.sqlFragments;
+
+			return this.database.getDatabaseType() == DatabaseType.POSTGRESQL
+					? this.parsedSql.postgresqlSqlFragments
+					: this.sqlFragments;
 		}
 
 		private void appendPlaceholders(@NonNull StringBuilder sql,
@@ -1111,20 +1143,70 @@ public final class Database {
 		@NonNull
 		private final List<String> sqlFragments;
 		@NonNull
+		private final List<String> postgresqlSqlFragments;
+		private final boolean hasQuestionMarkOperators;
+		@NonNull
 		private final List<String> parameterNames;
 		@NonNull
 		private final Set<String> distinctParameterNames;
 
 		private ParsedSql(@NonNull List<String> sqlFragments,
+											@NonNull List<@NonNull List<@NonNull Integer>> questionMarkOperatorFragmentIndexes,
 											@NonNull List<String> parameterNames,
 											@NonNull Set<String> distinctParameterNames) {
 			requireNonNull(sqlFragments);
+			requireNonNull(questionMarkOperatorFragmentIndexes);
 			requireNonNull(parameterNames);
 			requireNonNull(distinctParameterNames);
 
 			this.sqlFragments = sqlFragments;
+			this.postgresqlSqlFragments = postgresqlSqlFragments(sqlFragments, questionMarkOperatorFragmentIndexes);
+			this.hasQuestionMarkOperators = questionMarkOperatorFragmentIndexes.stream().anyMatch(indexes -> !indexes.isEmpty());
 			this.parameterNames = parameterNames;
 			this.distinctParameterNames = distinctParameterNames;
+		}
+
+		@NonNull
+		private static List<String> postgresqlSqlFragments(@NonNull List<String> sqlFragments,
+																											 @NonNull List<@NonNull List<@NonNull Integer>> questionMarkOperatorFragmentIndexes) {
+			requireNonNull(sqlFragments);
+			requireNonNull(questionMarkOperatorFragmentIndexes);
+
+			if (sqlFragments.size() != questionMarkOperatorFragmentIndexes.size())
+				throw new IllegalArgumentException("SQL fragments and question-mark operator indexes must have the same size");
+
+			List<String> postgresqlSqlFragments = new ArrayList<>(sqlFragments.size());
+
+			for (int i = 0; i < sqlFragments.size(); ++i)
+				postgresqlSqlFragments.add(postgresqlSqlFragment(sqlFragments.get(i), questionMarkOperatorFragmentIndexes.get(i)));
+
+			return List.copyOf(postgresqlSqlFragments);
+		}
+
+		@NonNull
+		private static String postgresqlSqlFragment(@NonNull String sqlFragment,
+																							 @NonNull List<@NonNull Integer> questionMarkOperatorIndexes) {
+			requireNonNull(sqlFragment);
+			requireNonNull(questionMarkOperatorIndexes);
+
+			if (questionMarkOperatorIndexes.isEmpty())
+				return sqlFragment;
+
+			StringBuilder postgresqlSqlFragment = new StringBuilder(sqlFragment.length() + questionMarkOperatorIndexes.size());
+			int previousIndex = 0;
+
+			for (Integer questionMarkOperatorIndex : questionMarkOperatorIndexes) {
+				if (questionMarkOperatorIndex == null || questionMarkOperatorIndex < previousIndex || questionMarkOperatorIndex >= sqlFragment.length()
+						|| sqlFragment.charAt(questionMarkOperatorIndex) != '?')
+					throw new IllegalArgumentException("Invalid question-mark operator index");
+
+				postgresqlSqlFragment.append(sqlFragment, previousIndex, questionMarkOperatorIndex);
+				postgresqlSqlFragment.append("??");
+				previousIndex = questionMarkOperatorIndex + 1;
+			}
+
+			postgresqlSqlFragment.append(sqlFragment, previousIndex, sqlFragment.length());
+			return postgresqlSqlFragment.toString();
 		}
 	}
 
@@ -1134,24 +1216,35 @@ public final class Database {
 
 		List<String> sqlFragments = new ArrayList<>();
 		StringBuilder sqlFragment = new StringBuilder(sql.length());
+		List<List<Integer>> questionMarkOperatorFragmentIndexes = new ArrayList<>();
+		List<Integer> currentQuestionMarkOperatorIndexes = new ArrayList<>();
 		List<String> parameterNames = new ArrayList<>();
 		Set<String> distinctParameterNames = new HashSet<>();
 
 		boolean inSingleQuote = false;
 		boolean inSingleQuoteEscapesBackslash = false;
+		int singleQuoteStartIndex = -1;
 		boolean inDoubleQuote = false;
+		int doubleQuoteStartIndex = -1;
 		boolean inBacktickQuote = false;
+		int backtickQuoteStartIndex = -1;
 		boolean inBracketQuote = false;
+		int bracketQuoteStartIndex = -1;
 		boolean inLineComment = false;
 		int blockCommentDepth = 0;
+		int blockCommentStartIndex = -1;
 		String dollarQuoteDelimiter = null;
+		int dollarQuoteStartIndex = -1;
+		int previousMeaningfulIndex = -1;
 
 		for (int i = 0; i < sql.length(); ) {
 			if (dollarQuoteDelimiter != null) {
 				if (sql.startsWith(dollarQuoteDelimiter, i)) {
 					sqlFragment.append(dollarQuoteDelimiter);
+					previousMeaningfulIndex = i + dollarQuoteDelimiter.length() - 1;
 					i += dollarQuoteDelimiter.length();
 					dollarQuoteDelimiter = null;
+					dollarQuoteStartIndex = -1;
 				} else {
 					sqlFragment.append(sql.charAt(i));
 					++i;
@@ -1181,6 +1274,8 @@ public final class Database {
 					sqlFragment.append("*/");
 					i += 2;
 					--blockCommentDepth;
+					if (blockCommentDepth == 0)
+						blockCommentStartIndex = -1;
 				} else {
 					sqlFragment.append(c);
 					++i;
@@ -1208,6 +1303,8 @@ public final class Database {
 
 					inSingleQuote = false;
 					inSingleQuoteEscapesBackslash = false;
+					singleQuoteStartIndex = -1;
+					previousMeaningfulIndex = i;
 				}
 
 				++i;
@@ -1226,6 +1323,8 @@ public final class Database {
 					}
 
 					inDoubleQuote = false;
+					doubleQuoteStartIndex = -1;
+					previousMeaningfulIndex = i;
 				}
 
 				++i;
@@ -1235,8 +1334,11 @@ public final class Database {
 			if (inBacktickQuote) {
 				sqlFragment.append(c);
 
-				if (c == '`')
+				if (c == '`') {
 					inBacktickQuote = false;
+					backtickQuoteStartIndex = -1;
+					previousMeaningfulIndex = i;
+				}
 
 				++i;
 				continue;
@@ -1245,8 +1347,17 @@ public final class Database {
 			if (inBracketQuote) {
 				sqlFragment.append(c);
 
-				if (c == ']')
+				if (c == ']' && i + 1 < sql.length() && sql.charAt(i + 1) == ']') {
+					sqlFragment.append(']');
+					i += 2;
+					continue;
+				}
+
+				if (c == ']') {
 					inBracketQuote = false;
+					bracketQuoteStartIndex = -1;
+					previousMeaningfulIndex = i;
+				}
 
 				++i;
 				continue;
@@ -1264,20 +1375,25 @@ public final class Database {
 				sqlFragment.append("/*");
 				i += 2;
 				blockCommentDepth = 1;
+				blockCommentStartIndex = i - 2;
 				continue;
 			}
 
-			if ((c == 'U' || c == 'u') && i + 2 < sql.length() && sql.charAt(i + 1) == '&' && sql.charAt(i + 2) == '\'') {
+			if ((c == 'U' || c == 'u') && !isIdentifierContinuation(sql, i)
+					&& i + 2 < sql.length() && sql.charAt(i + 1) == '&' && sql.charAt(i + 2) == '\'') {
 				inSingleQuote = true;
 				inSingleQuoteEscapesBackslash = true;
+				singleQuoteStartIndex = i;
 				sqlFragment.append(c).append("&'");
 				i += 3;
 				continue;
 			}
 
-			if ((c == 'E' || c == 'e') && i + 1 < sql.length() && sql.charAt(i + 1) == '\'') {
+			if ((c == 'E' || c == 'e') && !isIdentifierContinuation(sql, i)
+					&& i + 1 < sql.length() && sql.charAt(i + 1) == '\'') {
 				inSingleQuote = true;
 				inSingleQuoteEscapesBackslash = true;
+				singleQuoteStartIndex = i;
 				sqlFragment.append(c).append('\'');
 				i += 2;
 				continue;
@@ -1286,6 +1402,7 @@ public final class Database {
 			if (c == '\'') {
 				inSingleQuote = true;
 				inSingleQuoteEscapesBackslash = false;
+				singleQuoteStartIndex = i;
 				sqlFragment.append(c);
 				++i;
 				continue;
@@ -1293,6 +1410,7 @@ public final class Database {
 
 			if (c == '"') {
 				inDoubleQuote = true;
+				doubleQuoteStartIndex = i;
 				sqlFragment.append(c);
 				++i;
 				continue;
@@ -1300,13 +1418,15 @@ public final class Database {
 
 			if (c == '`') {
 				inBacktickQuote = true;
+				backtickQuoteStartIndex = i;
 				sqlFragment.append(c);
 				++i;
 				continue;
 			}
 
-			if (c == '[') {
+			if (c == '[' && !isBracketSubscriptStart(sql, i)) {
 				inBracketQuote = true;
+				bracketQuoteStartIndex = i;
 				sqlFragment.append(c);
 				++i;
 				continue;
@@ -1319,12 +1439,14 @@ public final class Database {
 					sqlFragment.append(delimiter);
 					i += delimiter.length();
 					dollarQuoteDelimiter = delimiter;
+					dollarQuoteStartIndex = i - delimiter.length();
 					continue;
 				}
 			}
 
 			if (c == '?') {
-				if (isAllowedQuestionMarkOperator(sql, i)) {
+				if (isAllowedQuestionMarkOperator(sql, i, previousMeaningfulIndex)) {
+					currentQuestionMarkOperatorIndexes.add(sqlFragment.length());
 					sqlFragment.append(c);
 					++i;
 					continue;
@@ -1352,18 +1474,29 @@ public final class Database {
 				parameterNames.add(parameterName);
 				distinctParameterNames.add(parameterName);
 				sqlFragments.add(sqlFragment.toString());
+				questionMarkOperatorFragmentIndexes.add(List.copyOf(currentQuestionMarkOperatorIndexes));
+				currentQuestionMarkOperatorIndexes.clear();
 				sqlFragment.setLength(0);
 				i = nameEndIndex;
+				previousMeaningfulIndex = nameEndIndex - 1;
 				continue;
 			}
 
 			sqlFragment.append(c);
+			if (!Character.isWhitespace(c))
+				previousMeaningfulIndex = i;
 			++i;
 		}
 
-		sqlFragments.add(sqlFragment.toString());
+		validateParserTerminalState(sql, inSingleQuote, singleQuoteStartIndex, inDoubleQuote, doubleQuoteStartIndex,
+				inBacktickQuote, backtickQuoteStartIndex, inBracketQuote, bracketQuoteStartIndex,
+				blockCommentDepth, blockCommentStartIndex, dollarQuoteDelimiter, dollarQuoteStartIndex);
 
-		return new ParsedSql(List.copyOf(sqlFragments), List.copyOf(parameterNames), Set.copyOf(distinctParameterNames));
+		sqlFragments.add(sqlFragment.toString());
+		questionMarkOperatorFragmentIndexes.add(List.copyOf(currentQuestionMarkOperatorIndexes));
+
+		return new ParsedSql(List.copyOf(sqlFragments), List.copyOf(questionMarkOperatorFragmentIndexes),
+				List.copyOf(parameterNames), Set.copyOf(distinctParameterNames));
 	}
 
 	@Nullable
@@ -1425,6 +1558,58 @@ public final class Database {
 		return Character.isJavaIdentifierPart(sql.charAt(startIndex - 1));
 	}
 
+	private static boolean isBracketSubscriptStart(@NonNull String sql,
+																								 int startIndex) {
+		requireNonNull(sql);
+
+		if (startIndex <= 0)
+			return false;
+
+		char previousChar = sql.charAt(startIndex - 1);
+		return Character.isJavaIdentifierPart(previousChar)
+				|| previousChar == ')'
+				|| previousChar == ']'
+				|| previousChar == '"';
+	}
+
+	private static void validateParserTerminalState(@NonNull String sql,
+																									boolean inSingleQuote,
+																									int singleQuoteStartIndex,
+																									boolean inDoubleQuote,
+																									int doubleQuoteStartIndex,
+																									boolean inBacktickQuote,
+																									int backtickQuoteStartIndex,
+																									boolean inBracketQuote,
+																									int bracketQuoteStartIndex,
+																									int blockCommentDepth,
+																									int blockCommentStartIndex,
+																									@Nullable String dollarQuoteDelimiter,
+																									int dollarQuoteStartIndex) {
+		requireNonNull(sql);
+
+		if (inSingleQuote)
+			throw unterminatedSqlConstructException("single-quoted string", singleQuoteStartIndex, sql);
+		if (inDoubleQuote)
+			throw unterminatedSqlConstructException("double-quoted identifier", doubleQuoteStartIndex, sql);
+		if (inBacktickQuote)
+			throw unterminatedSqlConstructException("backtick-quoted identifier", backtickQuoteStartIndex, sql);
+		if (inBracketQuote)
+			throw unterminatedSqlConstructException("bracket-quoted identifier", bracketQuoteStartIndex, sql);
+		if (blockCommentDepth > 0)
+			throw unterminatedSqlConstructException("block comment", blockCommentStartIndex, sql);
+		if (dollarQuoteDelimiter != null)
+			throw unterminatedSqlConstructException(format("dollar-quoted string %s", dollarQuoteDelimiter), dollarQuoteStartIndex, sql);
+	}
+
+	@NonNull
+	private static IllegalArgumentException unterminatedSqlConstructException(@NonNull String construct,
+																																			 int startIndex,
+																																			 @NonNull String sql) {
+		requireNonNull(construct);
+		requireNonNull(sql);
+		return new IllegalArgumentException(format("Unterminated %s starting at index %s. SQL: %s", construct, startIndex, sql));
+	}
+
 	@NonNull
 	private static final Set<@NonNull String> QUESTION_MARK_PREFIX_KEYWORDS = Set.of(
 			"SELECT", "WHERE", "AND", "OR", "ON", "HAVING", "WHEN", "THEN", "ELSE", "IN",
@@ -1439,16 +1624,11 @@ public final class Database {
 	);
 
 	private static boolean isAllowedQuestionMarkOperator(@NonNull String sql,
-																											 int questionMarkIndex) {
+																											 int questionMarkIndex,
+																											 int previousMeaningfulIndex) {
 		requireNonNull(sql);
 
-		if (questionMarkIndex + 1 < sql.length()) {
-			char nextChar = sql.charAt(questionMarkIndex + 1);
-			if (nextChar == '|' || nextChar == '&')
-				return true;
-		}
-
-		int previousIndex = previousNonWhitespaceIndex(sql, questionMarkIndex - 1);
+		int previousIndex = previousMeaningfulIndex;
 		int nextIndex = nextNonWhitespaceIndex(sql, questionMarkIndex + 1);
 
 		if (previousIndex < 0 || nextIndex < 0)
@@ -1471,6 +1651,12 @@ public final class Database {
 		if (nextKeyword != null && QUESTION_MARK_SUFFIX_KEYWORDS.contains(nextKeyword))
 			return false;
 
+		if (questionMarkIndex + 1 < sql.length()) {
+			char immediateNextChar = sql.charAt(questionMarkIndex + 1);
+			if (immediateNextChar == '|' || immediateNextChar == '&')
+				return true;
+		}
+
 		return true;
 	}
 
@@ -1486,14 +1672,6 @@ public final class Database {
 			case ')', ',', ';' -> true;
 			default -> false;
 		};
-	}
-
-	private static int previousNonWhitespaceIndex(@NonNull String sql,
-																								int startIndex) {
-		for (int i = startIndex; i >= 0; i--)
-			if (!Character.isWhitespace(sql.charAt(i)))
-				return i;
-		return -1;
 	}
 
 	private static int nextNonWhitespaceIndex(@NonNull String sql,
