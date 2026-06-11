@@ -76,6 +76,7 @@ public final class Database {
 	@NonNull
 	private static final ThreadLocal<Deque<Transaction>> TRANSACTION_STACK_HOLDER;
 	private static final int DEFAULT_PARSED_SQL_CACHE_CAPACITY = 1024;
+	private static final int DEFAULT_POSTGRESQL_STREAM_FETCH_SIZE = 256;
 	private static final int MAX_DIAGNOSTIC_MESSAGE_LENGTH = 1024;
 	private static final int MAX_DIAGNOSTIC_SQL_LENGTH = 2048;
 	@NonNull
@@ -162,7 +163,41 @@ public final class Database {
 	@NonNull
 	public Optional<Transaction> currentTransaction() {
 		Deque<Transaction> transactionStack = TRANSACTION_STACK_HOLDER.get();
-		return Optional.ofNullable(transactionStack.isEmpty() ? null : transactionStack.peek());
+		Transaction transaction = transactionStack.isEmpty() ? null : transactionStack.peek();
+
+		if (transaction == null || !isTransactionOwnedByThisDatabase(transaction))
+			return Optional.empty();
+
+		return Optional.of(transaction);
+	}
+
+	@NonNull
+	private Optional<Transaction> currentTransactionForDatabaseOperation() {
+		Deque<Transaction> transactionStack = TRANSACTION_STACK_HOLDER.get();
+		Transaction transaction = transactionStack.isEmpty() ? null : transactionStack.peek();
+
+		if (transaction == null)
+			return Optional.empty();
+
+		if (!isTransactionOwnedByThisDatabase(transaction))
+			throw wrongDatabaseTransactionException(transaction);
+
+		return Optional.of(transaction);
+	}
+
+	private boolean isTransactionOwnedByThisDatabase(@NonNull Transaction transaction) {
+		requireNonNull(transaction);
+		return transaction.isOwnedBy(getDataSource());
+	}
+
+	@NonNull
+	private DatabaseException wrongDatabaseTransactionException(@NonNull Transaction transaction) {
+		requireNonNull(transaction);
+		return new DatabaseException(format("Transaction %s belongs to a different %s than this %s. "
+						+ "Use the %s instance that created the transaction, or explicitly participate only with a transaction "
+						+ "created from the same %s.",
+				transaction.id(), DataSource.class.getSimpleName(), Database.class.getSimpleName(),
+				Database.class.getSimpleName(), DataSource.class.getSimpleName()));
 	}
 
 	/**
@@ -172,7 +207,8 @@ public final class Database {
 	 * <p>
 	 * Nested calls to {@code transaction(...)} are independent transactions with independent JDBC connections; they do
 	 * not automatically join an outer transaction. Use {@link #participate(Transaction, TransactionalOperation)} to join an
-	 * existing transaction explicitly.
+	 * existing transaction explicitly. A transaction is scoped to the {@link DataSource} instance that created it; a
+	 * {@link Database} using a different {@link DataSource} fails fast instead of joining it.
 	 *
 	 * @param transactionalOperation the operation to perform transactionally
 	 */
@@ -192,7 +228,8 @@ public final class Database {
 	 * <p>
 	 * Nested calls to {@code transaction(...)} are independent transactions with independent JDBC connections; they do
 	 * not automatically join an outer transaction. Use {@link #participate(Transaction, TransactionalOperation)} to join an
-	 * existing transaction explicitly.
+	 * existing transaction explicitly. A transaction is scoped to the {@link DataSource} instance that created it; a
+	 * {@link Database} using a different {@link DataSource} fails fast instead of joining it.
 	 *
 	 * @param transactionIsolation   the desired database transaction isolation level
 	 * @param transactionalOperation the operation to perform transactionally
@@ -215,7 +252,8 @@ public final class Database {
 	 * <p>
 	 * Nested calls to {@code transaction(...)} are independent transactions with independent JDBC connections; they do
 	 * not automatically join an outer transaction. Use {@link #participate(Transaction, ReturningTransactionalOperation)} to
-	 * join an existing transaction explicitly.
+	 * join an existing transaction explicitly. A transaction is scoped to the {@link DataSource} instance that created it; a
+	 * {@link Database} using a different {@link DataSource} fails fast instead of joining it.
 	 *
 	 * @param transactionalOperation the operation to perform transactionally
 	 * @param <T>                    the type to be returned
@@ -234,7 +272,8 @@ public final class Database {
 	 * <p>
 	 * Nested calls to {@code transaction(...)} are independent transactions with independent JDBC connections; they do
 	 * not automatically join an outer transaction. Use {@link #participate(Transaction, ReturningTransactionalOperation)} to
-	 * join an existing transaction explicitly.
+	 * join an existing transaction explicitly. A transaction is scoped to the {@link DataSource} instance that created it; a
+	 * {@link Database} using a different {@link DataSource} fails fast instead of joining it.
 	 *
 	 * @param transactionIsolation   the desired database transaction isolation level
 	 * @param transactionalOperation the operation to perform transactionally
@@ -251,6 +290,7 @@ public final class Database {
 		TRANSACTION_STACK_HOLDER.get().push(transaction);
 		boolean committed = false;
 		boolean rollbackFailed = false;
+		boolean rollbackAttempted = false;
 		Throwable thrown = null;
 		long transactionStartTime = nanoTime();
 		getMetricsCollectorDispatcher().didEnterTransactionClosure(transaction, transactionIsolation, transaction.getDatabaseType());
@@ -262,32 +302,41 @@ public final class Database {
 			if (returnValue == null)
 				returnValue = Optional.empty();
 
-			if (transaction.isRollbackOnly()) {
-				transaction.rollback();
-			} else {
-				transaction.commit();
-				committed = true;
+			transaction.getConnectionLock().lock();
+
+			try {
+				if (transaction.isRollbackOnly()) {
+					rollbackAttempted = true;
+					transaction.rollback();
+				} else {
+					transaction.commit();
+					committed = true;
+				}
+
+				transaction.markCompleted();
+			} finally {
+				transaction.getConnectionLock().unlock();
 			}
 
 			return returnValue;
 		} catch (RuntimeException e) {
 			thrown = e;
-			try {
-				transaction.rollback();
-			} catch (Exception rollbackException) {
+			if (rollbackAttempted) {
 				rollbackFailed = true;
-				e.addSuppressed(rollbackException);
+				markTransactionCompleted(transaction);
+			} else {
+				rollbackFailed = rollbackTransactionAfterFailure(transaction, e);
 			}
 
 			restoreInterruptIfNeeded(e);
 			throw e;
 		} catch (Error e) {
 			thrown = e;
-			try {
-				transaction.rollback();
-			} catch (Exception rollbackException) {
+			if (rollbackAttempted) {
 				rollbackFailed = true;
-				e.addSuppressed(rollbackException);
+				markTransactionCompleted(transaction);
+			} else {
+				rollbackFailed = rollbackTransactionAfterFailure(transaction, e);
 			}
 
 			restoreInterruptIfNeeded(e);
@@ -295,11 +344,11 @@ public final class Database {
 		} catch (Throwable t) {
 			RuntimeException wrapped = new RuntimeException(t);
 			thrown = wrapped;
-			try {
-				transaction.rollback();
-			} catch (Exception rollbackException) {
+			if (rollbackAttempted) {
 				rollbackFailed = true;
-				wrapped.addSuppressed(rollbackException);
+				markTransactionCompleted(transaction);
+			} else {
+				rollbackFailed = rollbackTransactionAfterFailure(transaction, wrapped);
 			}
 
 			restoreInterruptIfNeeded(t);
@@ -314,41 +363,22 @@ public final class Database {
 				TRANSACTION_STACK_HOLDER.remove();
 
 			Throwable cleanupFailure = null;
-			boolean hadPhysicalTransaction = transaction.hasConnection();
+			boolean hadPhysicalTransaction = false;
 
 			try {
+				transaction.getConnectionLock().lock();
+
 				try {
-					transaction.restoreTransactionIsolationIfNeeded();
+					hadPhysicalTransaction = transaction.hasConnection();
 
-					if (transaction.getInitialAutoCommit().isPresent() && transaction.getInitialAutoCommit().get())
-						// Autocommit was true initially, so restoring to true now that transaction has completed
-						transaction.setAutoCommit(true);
-				} catch (Throwable cleanupException) {
-					cleanupFailure = cleanupException;
+					if (!transaction.isCompleted())
+						transaction.markCompleted();
+
+					cleanupFailure = cleanupCompletedTransactionConnection(transaction, cleanupFailure);
 				} finally {
-					Connection connection = transaction.getExistingConnection().orElse(null);
-
-					if (connection != null) {
-						Duration heldDuration = transaction.getConnectionAcquiredAtNanos()
-								.map(acquiredAtNanos -> Duration.ofNanos(nanoTime() - acquiredAtNanos))
-								.orElse(Duration.ZERO);
-
-						try {
-							closeConnection(connection);
-							getMetricsCollectorDispatcher().didReleaseTransactionConnection(transaction, transaction.getDatabaseType(), heldDuration);
-							transaction.clearConnection();
-						} catch (Throwable cleanupException) {
-							getMetricsCollectorDispatcher().didFailToReleaseTransactionConnection(transaction, transaction.getDatabaseType(), heldDuration, cleanupException);
-							if (cleanupFailure == null)
-								cleanupFailure = cleanupException;
-							else
-								cleanupFailure.addSuppressed(cleanupException);
-						}
-					}
+					transaction.getConnectionLock().unlock();
 				}
 			} finally {
-				transaction.markCompleted();
-
 				// Execute any user-supplied post-execution hooks
 				for (Consumer<TransactionResult> postTransactionOperation : transaction.getPostTransactionOperations()) {
 					long postTransactionStartTime = nanoTime();
@@ -386,6 +416,93 @@ public final class Database {
 				}
 			}
 		}
+	}
+
+	private boolean rollbackTransactionAfterFailure(@NonNull Transaction transaction,
+																								 @NonNull Throwable primary) {
+		requireNonNull(transaction);
+		requireNonNull(primary);
+
+		boolean rollbackFailed = false;
+		transaction.getConnectionLock().lock();
+
+		try {
+			try {
+				transaction.rollback();
+			} catch (Throwable rollbackException) {
+				rollbackFailed = true;
+				primary.addSuppressed(rollbackException);
+			} finally {
+				transaction.markCompleted();
+			}
+		} finally {
+			transaction.getConnectionLock().unlock();
+		}
+
+		return rollbackFailed;
+	}
+
+	private void markTransactionCompleted(@NonNull Transaction transaction) {
+		requireNonNull(transaction);
+		transaction.getConnectionLock().lock();
+
+		try {
+			transaction.markCompleted();
+		} finally {
+			transaction.getConnectionLock().unlock();
+		}
+	}
+
+	@Nullable
+	private Throwable cleanupCompletedTransactionConnection(@NonNull Transaction transaction,
+																												 @Nullable Throwable cleanupFailure) {
+		requireNonNull(transaction);
+
+		try {
+			transaction.restoreTransactionIsolationIfNeeded();
+		} catch (Throwable cleanupException) {
+			cleanupFailure = appendSuppressed(cleanupFailure, cleanupException);
+		}
+
+		if (transaction.getInitialAutoCommit().isPresent() && transaction.getInitialAutoCommit().get()) {
+			try {
+				// Autocommit was true initially, so restoring to true now that transaction has completed
+				transaction.setAutoCommit(true);
+			} catch (Throwable cleanupException) {
+				cleanupFailure = appendSuppressed(cleanupFailure, cleanupException);
+			}
+		}
+
+		Connection connection = transaction.getExistingConnection().orElse(null);
+
+		if (connection != null) {
+			Duration heldDuration = transaction.getConnectionAcquiredAtNanos()
+					.map(acquiredAtNanos -> Duration.ofNanos(nanoTime() - acquiredAtNanos))
+					.orElse(Duration.ZERO);
+
+			try {
+				closeConnection(connection);
+				getMetricsCollectorDispatcher().didReleaseTransactionConnection(transaction, transaction.getDatabaseType(), heldDuration);
+				transaction.clearConnection();
+			} catch (Throwable cleanupException) {
+				getMetricsCollectorDispatcher().didFailToReleaseTransactionConnection(transaction, transaction.getDatabaseType(), heldDuration, cleanupException);
+				cleanupFailure = appendSuppressed(cleanupFailure, cleanupException);
+			}
+		}
+
+		return cleanupFailure;
+	}
+
+	@NonNull
+	private static Throwable appendSuppressed(@Nullable Throwable existing,
+																						@NonNull Throwable additional) {
+		requireNonNull(additional);
+
+		if (existing == null)
+			return additional;
+
+		existing.addSuppressed(additional);
+		return existing;
 	}
 
 	protected void closeConnection(@NonNull Connection connection) {
@@ -502,6 +619,9 @@ public final class Database {
 	 * No commit or rollback on the transaction will occur when {@code transactionalOperation} completes.
 	 * <p>
 	 * However, if an exception bubbles out of {@code transactionalOperation}, the transaction will be marked as rollback-only.
+	 * <p>
+	 * The transaction must have been created by this {@link Database}, or by another {@link Database} using the same
+	 * {@link DataSource} instance.
 	 *
 	 * @param transaction            the transaction in which to participate
 	 * @param transactionalOperation the operation that should participate in the transaction
@@ -518,11 +638,14 @@ public final class Database {
 	}
 
 	/**
-	 * Performs an operation in the context of a pre-existing transaction, optionall returning a value.
+	 * Performs an operation in the context of a pre-existing transaction, optionally returning a value.
 	 * <p>
 	 * No commit or rollback on the transaction will occur when {@code transactionalOperation} completes.
 	 * <p>
 	 * However, if an exception bubbles out of {@code transactionalOperation}, the transaction will be marked as rollback-only.
+	 * <p>
+	 * The transaction must have been created by this {@link Database}, or by another {@link Database} using the same
+	 * {@link DataSource} instance.
 	 *
 	 * @param transaction            the transaction in which to participate
 	 * @param transactionalOperation the operation that should participate in the transaction
@@ -535,6 +658,12 @@ public final class Database {
 		requireNonNull(transaction);
 		requireNonNull(transactionalOperation);
 
+		if (!isTransactionOwnedByThisDatabase(transaction))
+			throw wrongDatabaseTransactionException(transaction);
+
+		if (transaction.isCompleted())
+			throw new IllegalStateException(format("Transaction %s has already completed and cannot participate", transaction.id()));
+
 		Deque<Transaction> transactionStack = TRANSACTION_STACK_HOLDER.get();
 		transactionStack.push(transaction);
 
@@ -543,17 +672,18 @@ public final class Database {
 			return returnValue == null ? Optional.empty() : returnValue;
 		} catch (RuntimeException e) {
 			if (!(e instanceof StatementLoggerFailureException))
-				transaction.setRollbackOnly(true);
+				setRollbackOnlyAfterParticipationFailure(transaction, e);
 			restoreInterruptIfNeeded(e);
 			throw e;
 		} catch (Error e) {
-			transaction.setRollbackOnly(true);
+			setRollbackOnlyAfterParticipationFailure(transaction, e);
 			restoreInterruptIfNeeded(e);
 			throw e;
 		} catch (Throwable t) {
-			transaction.setRollbackOnly(true);
+			RuntimeException wrapped = new RuntimeException(t);
+			setRollbackOnlyAfterParticipationFailure(transaction, wrapped);
 			restoreInterruptIfNeeded(t);
-			throw new RuntimeException(t);
+			throw wrapped;
 		} finally {
 			try {
 				transactionStack.pop();
@@ -561,6 +691,18 @@ public final class Database {
 				if (transactionStack.isEmpty())
 					TRANSACTION_STACK_HOLDER.remove();
 			}
+		}
+	}
+
+	private void setRollbackOnlyAfterParticipationFailure(@NonNull Transaction transaction,
+																												@NonNull Throwable primary) {
+		requireNonNull(transaction);
+		requireNonNull(primary);
+
+		try {
+			transaction.setRollbackOnly(true);
+		} catch (IllegalStateException e) {
+			primary.addSuppressed(e);
 		}
 	}
 
@@ -2108,7 +2250,7 @@ public final class Database {
 		requireNonNull(shouldParticipateInExistingTransactionIfPossible);
 
 		if (shouldParticipateInExistingTransactionIfPossible) {
-			Optional<Transaction> transaction = currentTransaction();
+			Optional<Transaction> transaction = currentTransactionForDatabaseOperation();
 			ReentrantLock connectionLock = transaction.isPresent() ? transaction.get().getConnectionLock() : null;
 			// Try to participate in txn if it's available
 			Connection connection = null;
@@ -2219,7 +2361,7 @@ public final class Database {
 		Throwable thrown = null;
 		Connection connection = null;
 		long connectionHeldStartTime = 0L;
-		Optional<Transaction> transaction = currentTransaction();
+		Optional<Transaction> transaction = currentTransactionForDatabaseOperation();
 		ReentrantLock connectionLock = transaction.isPresent() ? transaction.get().getConnectionLock() : null;
 
 		if (connectionLock != null)
@@ -2370,7 +2512,7 @@ public final class Database {
 
 	@NonNull
 	protected Connection acquireConnection() {
-		Optional<Transaction> transaction = currentTransaction();
+		Optional<Transaction> transaction = currentTransactionForDatabaseOperation();
 
 		if (transaction.isPresent())
 			return transaction.get().getConnection();
@@ -2497,6 +2639,9 @@ public final class Database {
 		@Nullable
 		private Throwable cleanupFailure;
 		private long connectionHeldStartTime;
+		@Nullable
+		private Boolean initialAutoCommit;
+		private boolean postgresqlStreamTransactionStarted;
 
 		private StreamingResultSet(@NonNull Database database,
 															 @NonNull StatementContext<T> statementContext,
@@ -2506,7 +2651,7 @@ public final class Database {
 			this.statementContext = requireNonNull(statementContext);
 			this.parameters = requireNonNull(parameters);
 			this.preparedStatementCustomizer = preparedStatementCustomizer;
-			this.transaction = database.currentTransaction();
+			this.transaction = database.currentTransactionForDatabaseOperation();
 			this.connectionLock = this.transaction.isPresent() ? this.transaction.get().getConnectionLock() : null;
 
 			open();
@@ -2545,7 +2690,12 @@ public final class Database {
 				}
 				startTime = nanoTime();
 
+				DatabaseType databaseType = databaseTypeForStreamingConnection();
+				configurePostgreSqlStreamingIfNeeded(databaseType);
+
 				this.preparedStatement = this.connection.prepareStatement(this.statementContext.getStatement().getSql());
+				if (databaseType == DatabaseType.POSTGRESQL)
+					this.preparedStatement.setFetchSize(DEFAULT_POSTGRESQL_STREAM_FETCH_SIZE);
 				Connection previousDatabaseTypeDetectionConnection = this.database.databaseTypeDetectionConnectionHolder.get();
 				this.database.databaseTypeDetectionConnectionHolder.set(this.connection);
 
@@ -2583,7 +2733,38 @@ public final class Database {
 						Duration.ofNanos(nanoTime() - this.openStartTime), wrapped);
 				close();
 				throw wrapped;
+			} catch (Error e) {
+				this.thrown = e;
+				this.openFailed = true;
+				this.database.getMetricsCollectorDispatcher().didFailToOpenStream(this.statementContext,
+						Duration.ofNanos(nanoTime() - this.openStartTime), e);
+				close();
+				throw e;
 			}
+		}
+
+		@NonNull
+		private DatabaseType databaseTypeForStreamingConnection() {
+			try {
+				return this.database.getDatabaseType(requireNonNull(this.connection));
+			} catch (DatabaseException e) {
+				return this.database.peekDatabaseType();
+			}
+		}
+
+		private void configurePostgreSqlStreamingIfNeeded(@NonNull DatabaseType databaseType) throws SQLException {
+			requireNonNull(databaseType);
+
+			if (databaseType != DatabaseType.POSTGRESQL || this.transaction.isPresent())
+				return;
+
+			Connection connection = requireNonNull(this.connection);
+			this.initialAutoCommit = connection.getAutoCommit();
+
+			if (Boolean.TRUE.equals(this.initialAutoCommit))
+				connection.setAutoCommit(false);
+
+			this.postgresqlStreamTransactionStarted = true;
 		}
 
 		@Override
@@ -2606,6 +2787,17 @@ public final class Database {
 					this.iterationThrowable = wrapped;
 					close();
 					throw wrapped;
+				} catch (RuntimeException e) {
+					this.exception = e;
+					this.thrown = e;
+					this.iterationThrowable = e;
+					close();
+					throw e;
+				} catch (Error e) {
+					this.thrown = e;
+					this.iterationThrowable = e;
+					close();
+					throw e;
 				}
 			}
 
@@ -2653,6 +2845,17 @@ public final class Database {
 				this.iterationThrowable = e;
 				close();
 				throw e;
+			} catch (RuntimeException e) {
+				this.exception = e;
+				this.thrown = e;
+				this.iterationThrowable = e;
+				close();
+				throw e;
+			} catch (Error e) {
+				this.thrown = e;
+				this.iterationThrowable = e;
+				close();
+				throw e;
 			}
 		}
 
@@ -2687,6 +2890,8 @@ public final class Database {
 						cleanupFailure = cleanupFailure == null ? cleanupException : addSuppressed(cleanupFailure, cleanupException);
 					}
 				}
+
+				cleanupFailure = completePostgreSqlStreamTransactionIfNeeded(cleanupFailure);
 
 				if (this.connection != null && this.transaction.isEmpty()) {
 					Duration heldDuration = this.connectionHeldStartTime == 0L
@@ -2759,6 +2964,34 @@ public final class Database {
 					throw new RuntimeException(cleanupFailure);
 				}
 			}
+		}
+
+		@Nullable
+		private Throwable completePostgreSqlStreamTransactionIfNeeded(@Nullable Throwable cleanupFailure) {
+			if (!this.postgresqlStreamTransactionStarted || this.connection == null)
+				return cleanupFailure;
+
+			boolean shouldCommit = this.thrown == null && this.exception == null && this.callbackThrowable == null && !this.openFailed;
+
+			try {
+				if (shouldCommit)
+					this.connection.commit();
+				else
+					this.connection.rollback();
+			} catch (Throwable cleanupException) {
+				cleanupFailure = cleanupFailure == null ? cleanupException : addSuppressed(cleanupFailure, cleanupException);
+			}
+
+			if (Boolean.TRUE.equals(this.initialAutoCommit)) {
+				try {
+					this.connection.setAutoCommit(true);
+				} catch (Throwable cleanupException) {
+					cleanupFailure = cleanupFailure == null ? cleanupException : addSuppressed(cleanupFailure, cleanupException);
+				}
+			}
+
+			this.postgresqlStreamTransactionStarted = false;
+			return cleanupFailure;
 		}
 
 		private void emitTerminalMetrics() {

@@ -16,6 +16,7 @@
 
 package com.pyranid;
 
+import org.jspecify.annotations.NonNull;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.postgresql.ds.PGSimpleDataSource;
@@ -25,11 +26,23 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import javax.sql.DataSource;
+import java.io.PrintWriter;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.logging.Logger;
+
+import static java.util.Objects.requireNonNull;
 
 /**
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
@@ -53,6 +66,30 @@ public class PostgreSQLIntegrationIT {
 		Database db = Database.withDataSource(dataSource()).build();
 
 		Assertions.assertEquals(DatabaseType.POSTGRESQL, db.getDatabaseType());
+	}
+
+	@Test
+	public void testFetchStreamConfiguresPostgreSqlCursorOutsideTransaction() {
+		TrackingPostgreSqlStreamDataSource trackingDataSource = new TrackingPostgreSqlStreamDataSource(dataSource());
+		Database db = Database.withDataSource(trackingDataSource)
+				.databaseType(DatabaseType.POSTGRESQL)
+				.build();
+		AtomicBoolean sawAutoCommitDisabled = new AtomicBoolean(false);
+		AtomicInteger fetchSize = new AtomicInteger(-1);
+
+		List<Integer> values = db.query("SELECT generate_series(1, 3)")
+				.customize((statementContext, preparedStatement) -> {
+					sawAutoCommitDisabled.set(!preparedStatement.getConnection().getAutoCommit());
+					fetchSize.set(preparedStatement.getFetchSize());
+				})
+				.fetchStream(Integer.class, stream -> stream.toList());
+
+		Assertions.assertEquals(List.of(1, 2, 3), values);
+		Assertions.assertTrue(sawAutoCommitDisabled.get());
+		Assertions.assertEquals(256, fetchSize.get());
+		Assertions.assertTrue(trackingDataSource.autoCommitDisabled.get());
+		Assertions.assertTrue(trackingDataSource.committed.get());
+		Assertions.assertTrue(trackingDataSource.autoCommitRestored.get());
 	}
 
 	@Test
@@ -161,5 +198,107 @@ public class PostgreSQLIntegrationIT {
 		dataSource.setUser(POSTGRES.getUsername());
 		dataSource.setPassword(POSTGRES.getPassword());
 		return dataSource;
+	}
+
+	private static final class TrackingPostgreSqlStreamDataSource implements DataSource {
+		@NonNull
+		private final DataSource delegate;
+		@NonNull
+		private final AtomicBoolean autoCommitDisabled;
+		@NonNull
+		private final AtomicBoolean autoCommitRestored;
+		@NonNull
+		private final AtomicBoolean committed;
+
+		private TrackingPostgreSqlStreamDataSource(@NonNull DataSource delegate) {
+			this.delegate = requireNonNull(delegate);
+			this.autoCommitDisabled = new AtomicBoolean(false);
+			this.autoCommitRestored = new AtomicBoolean(false);
+			this.committed = new AtomicBoolean(false);
+		}
+
+		@Override
+		public Connection getConnection() throws SQLException {
+			return wrapConnection(this.delegate.getConnection());
+		}
+
+		@Override
+		public Connection getConnection(String username, String password) throws SQLException {
+			return wrapConnection(this.delegate.getConnection(username, password));
+		}
+
+		@Override
+		public PrintWriter getLogWriter() throws SQLException {
+			return this.delegate.getLogWriter();
+		}
+
+		@Override
+		public void setLogWriter(PrintWriter out) throws SQLException {
+			this.delegate.setLogWriter(out);
+		}
+
+		@Override
+		public void setLoginTimeout(int seconds) throws SQLException {
+			this.delegate.setLoginTimeout(seconds);
+		}
+
+		@Override
+		public int getLoginTimeout() throws SQLException {
+			return this.delegate.getLoginTimeout();
+		}
+
+		@Override
+		public Logger getParentLogger() throws SQLFeatureNotSupportedException {
+			return this.delegate.getParentLogger();
+		}
+
+		@Override
+		public <T> T unwrap(Class<T> iface) throws SQLException {
+			if (iface.isInstance(this))
+				return iface.cast(this);
+
+			return this.delegate.unwrap(iface);
+		}
+
+		@Override
+		public boolean isWrapperFor(Class<?> iface) throws SQLException {
+			return iface.isInstance(this) || this.delegate.isWrapperFor(iface);
+		}
+
+		private Connection wrapConnection(@NonNull Connection connection) {
+			requireNonNull(connection);
+
+			return (Connection) Proxy.newProxyInstance(
+					Connection.class.getClassLoader(),
+					new Class<?>[]{Connection.class},
+					(proxy, method, args) -> {
+						Object result = invoke(method, connection, args);
+						String methodName = method.getName();
+
+						if ("setAutoCommit".equals(methodName) && args != null && args.length == 1) {
+							if (Boolean.FALSE.equals(args[0]))
+								this.autoCommitDisabled.set(true);
+							else if (Boolean.TRUE.equals(args[0]))
+								this.autoCommitRestored.set(true);
+						} else if ("commit".equals(methodName)) {
+							this.committed.set(true);
+						}
+
+						return result;
+					});
+		}
+
+		private Object invoke(@NonNull Method method,
+													@NonNull Object target,
+													Object[] args) throws Throwable {
+			requireNonNull(method);
+			requireNonNull(target);
+
+			try {
+				return method.invoke(target, args);
+			} catch (InvocationTargetException e) {
+				throw e.getCause();
+			}
+		}
 	}
 }

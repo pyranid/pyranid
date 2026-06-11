@@ -46,6 +46,70 @@ import static java.util.Objects.requireNonNull;
  */
 public class TransactionConcurrencyTests {
 	@Test
+	public void testImplicitTransactionParticipationRejectsDifferentDataSource() {
+		Database databaseA = Database.withDataSource(createInMemoryDataSource("txn_owner_a")).build();
+		Database databaseB = Database.withDataSource(createInMemoryDataSource("txn_owner_b")).build();
+
+		databaseA.query("CREATE TABLE t (id INT)").execute();
+		databaseB.query("CREATE TABLE t (id INT)").execute();
+
+		DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
+				databaseA.transaction(() -> {
+					Assertions.assertTrue(databaseA.currentTransaction().isPresent());
+					Assertions.assertTrue(databaseB.currentTransaction().isEmpty());
+					databaseB.query("INSERT INTO t (id) VALUES (:p1)")
+							.bind("p1", 1)
+							.execute();
+				}));
+
+		Assertions.assertTrue(exception.getMessage().contains("different DataSource"));
+		Assertions.assertEquals(0L, databaseA.query("SELECT COUNT(*) FROM t").fetchObject(Long.class).orElseThrow());
+		Assertions.assertEquals(0L, databaseB.query("SELECT COUNT(*) FROM t").fetchObject(Long.class).orElseThrow());
+	}
+
+	@Test
+	public void testImplicitTransactionParticipationAllowsSameDataSourceWrapper() {
+		DataSource dataSource = createInMemoryDataSource("txn_owner_same_datasource");
+		Database databaseA = Database.withDataSource(dataSource).build();
+		Database databaseB = Database.withDataSource(dataSource).build();
+
+		databaseA.query("CREATE TABLE t (id INT)").execute();
+
+		databaseA.transaction(() -> {
+			Assertions.assertTrue(databaseA.currentTransaction().isPresent());
+			Assertions.assertTrue(databaseB.currentTransaction().isPresent());
+			databaseB.query("INSERT INTO t (id) VALUES (:p1)")
+					.bind("p1", 1)
+					.execute();
+		});
+
+		Assertions.assertEquals(1L, databaseA.query("SELECT COUNT(*) FROM t").fetchObject(Long.class).orElseThrow());
+	}
+
+	@Test
+	public void testParticipateRejectsDifferentDataSourceTransaction() {
+		Database databaseA = Database.withDataSource(createInMemoryDataSource("txn_participate_owner_a")).build();
+		Database databaseB = Database.withDataSource(createInMemoryDataSource("txn_participate_owner_b")).build();
+
+		databaseA.query("CREATE TABLE t (id INT)").execute();
+		databaseB.query("CREATE TABLE t (id INT)").execute();
+
+		databaseA.transaction(() -> {
+			Transaction transaction = databaseA.currentTransaction().orElseThrow();
+			DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
+					databaseB.participate(transaction, () ->
+							databaseB.query("INSERT INTO t (id) VALUES (:p1)")
+									.bind("p1", 1)
+									.execute()));
+
+			Assertions.assertTrue(exception.getMessage().contains("different DataSource"));
+		});
+
+		Assertions.assertEquals(0L, databaseA.query("SELECT COUNT(*) FROM t").fetchObject(Long.class).orElseThrow());
+		Assertions.assertEquals(0L, databaseB.query("SELECT COUNT(*) FROM t").fetchObject(Long.class).orElseThrow());
+	}
+
+	@Test
 	public void testParticipateSerializesConnectionUsage() throws Exception {
 		String databaseName = "txn_concurrency";
 		ConcurrencyGuard guard = new ConcurrencyGuard();

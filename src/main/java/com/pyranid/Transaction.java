@@ -338,6 +338,12 @@ public final class Transaction {
 		return Thread.currentThread().getId() == this.ownerThreadId;
 	}
 
+	@NonNull
+	Boolean isOwnedBy(@NonNull DataSource dataSource) {
+		requireNonNull(dataSource);
+		return this.dataSource == dataSource;
+	}
+
 	void commit() {
 		getConnectionLock().lock();
 
@@ -402,11 +408,11 @@ public final class Transaction {
 	 */
 	@NonNull
 	Connection getConnection() {
-		assertNotCompleted("get the transaction connection");
-
 		getConnectionLock().lock();
 
 		try {
+			assertNotCompleted("get the transaction connection");
+
 			if (hasConnection())
 				return this.connection;
 

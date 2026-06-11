@@ -295,20 +295,18 @@ List<Employee> employees = database.query("""
 
 The stream must be consumed within the scope of the transaction or connection that created it. Do not let the stream escape from the callback.
 
-For drivers that require server-side cursor configuration, run streaming reads inside an explicit transaction and set the JDBC fetch size on the [`PreparedStatement`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/PreparedStatement.html). PostgreSQL, for example, only streams large result sets when autocommit is disabled and a positive fetch size is configured.
+For PostgreSQL, Pyranid automatically configures streaming reads with an autocommit-disabled connection and a positive JDBC fetch size when no Pyranid transaction is active. Use [`Query::customize(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#customize(com.pyranid.PreparedStatementCustomizer)) to override the fetch size when needed. Other cursor-based drivers may require driver-specific transaction or fetch-size setup.
 
 ```java
-List<Employee> employees = database.transaction(() ->
-  database.query("""
-    SELECT *
-    FROM employee
-    ORDER BY employee_id
-    """)
-    .customize((statementContext, preparedStatement) ->
-      preparedStatement.setFetchSize(1_000))
-    .fetchStream(Employee.class, stream ->
-      stream.limit(10_000).toList())
-);
+List<Employee> employees = database.query("""
+  SELECT *
+  FROM employee
+  ORDER BY employee_id
+  """)
+  .customize((statementContext, preparedStatement) ->
+    preparedStatement.setFetchSize(1_000))
+  .fetchStream(Employee.class, stream ->
+    stream.limit(10_000).toList());
 ```
 
 ## Statements
@@ -434,6 +432,8 @@ Transaction handles are scoped to the transaction closure. After the closure com
 ### Multi-threaded Transactions
 
 Internally, Database manages a threadlocal stack of [`Transaction`](https://javadoc.pyranid.com/com/pyranid/Transaction.html) instances to simplify single-threaded usage.  Should you need to share the same transaction across multiple threads, use the [`Database::participate`](https://javadoc.pyranid.com/com/pyranid/Database.html#participate(com.pyranid.Transaction,com.pyranid.TransactionalOperation)) API.
+
+Transactions are scoped to the `DataSource` instance that created them. A second `Database` built with the same `DataSource` instance can participate in the transaction; a `Database` built with a different `DataSource` fails fast instead of silently joining the wrong connection.
 
 On Java 21+, a clean way to do this is with a virtual-thread executor:
 
@@ -1382,7 +1382,7 @@ A [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) instance h
 
 Each call to [`transaction(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transaction(com.pyranid.TransactionalOperation)) opens an independent transaction with its own physical connection. Nested `transaction(...)` calls do not auto-join an outer transaction and can pressure small pools. Use [`participate(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#participate(com.pyranid.Transaction,com.pyranid.TransactionalOperation)) to run work on an existing transaction from another thread, and make sure participating workers complete before the owning transaction closure returns; coordinate with application primitives such as [`CompletableFuture::join`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/CompletableFuture.html#join()), [`ExecutorService::awaitTermination`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/ExecutorService.html#awaitTermination(long,java.util.concurrent.TimeUnit)), or [`CountDownLatch`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/CountDownLatch.html).
 
-[`fetchStream(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchStream(java.lang.Class,java.util.function.Function)) streams rows only for as long as the callback is executing. Do not return the stream or consume it asynchronously after the callback returns. For PostgreSQL and similar cursor-based drivers, use an explicit transaction and set a positive fetch size with [`Query::customize(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#customize(com.pyranid.StatementCustomizer)).
+[`fetchStream(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchStream(java.lang.Class,java.util.function.Function)) streams rows only for as long as the callback is executing. Do not return the stream or consume it asynchronously after the callback returns. PostgreSQL streams automatically use an autocommit-disabled connection and a positive fetch size outside explicit Pyranid transactions; [`Query::customize(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#customize(com.pyranid.PreparedStatementCustomizer)) can override that fetch size. For other cursor-based drivers, follow the driver's transaction and fetch-size requirements.
 
 Savepoints are stack-like on most drivers. Prefer [`Transaction::withSavepoint(...)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#withSavepoint(com.pyranid.TransactionalOperation)) for nested savepoint workflows, and avoid manual out-of-order [`rollback(Savepoint)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#rollback(java.sql.Savepoint)) / [`releaseSavepoint(Savepoint)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#releaseSavepoint(java.sql.Savepoint)) calls unless your driver documents the behavior you need.
 

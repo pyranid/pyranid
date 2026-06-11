@@ -31,6 +31,7 @@ import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Savepoint;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.logging.Logger;
@@ -70,6 +71,74 @@ public class TransactionLifecycleTests {
 		Assertions.assertThrows(IllegalStateException.class, () -> transaction.rollback(savepoint));
 		Assertions.assertThrows(IllegalStateException.class, () -> transaction.releaseSavepoint(savepoint));
 		Assertions.assertThrows(IllegalStateException.class, () -> transaction.withSavepoint(() -> {}));
+	}
+
+	@Test
+	public void testWaitingParticipantCannotAcquireFreshConnectionAfterTransactionCompletes() throws Exception {
+		DataSource dataSource = createInMemoryDataSource("transaction_waiting_participant_completion");
+		Database db = Database.withDataSource(dataSource).build();
+		Transaction transaction = new Transaction(dataSource, TransactionIsolation.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
+		AtomicBoolean acquiredConnection = new AtomicBoolean(false);
+		AtomicReference<Throwable> failure = new AtomicReference<>();
+
+		transaction.getConnectionLock().lock();
+
+		Thread participant = new Thread(() -> {
+			try {
+				transaction.getConnection();
+				acquiredConnection.set(true);
+			} catch (Throwable t) {
+				failure.set(t);
+			}
+		});
+
+		try {
+			participant.start();
+			awaitQueuedTransactionThread(transaction);
+			transaction.markCompleted();
+		} finally {
+			transaction.getConnectionLock().unlock();
+		}
+
+		participant.join(1_000L);
+
+		Assertions.assertFalse(participant.isAlive(), "Expected waiting participant to finish");
+		Assertions.assertFalse(acquiredConnection.get(), "Completed transaction must not open a fresh connection");
+		Assertions.assertInstanceOf(IllegalStateException.class, failure.get());
+		Assertions.assertFalse(transaction.hasConnection());
+	}
+
+	@Test
+	public void testParticipateRejectsCompletedTransactionBeforeRunningOperation() {
+		DataSource dataSource = createInMemoryDataSource("participate_completed_transaction");
+		Database db = Database.withDataSource(dataSource).build();
+		Transaction transaction = new Transaction(dataSource, TransactionIsolation.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
+		AtomicBoolean operationRan = new AtomicBoolean(false);
+
+		transaction.markCompleted();
+
+		IllegalStateException exception = Assertions.assertThrows(IllegalStateException.class, () ->
+				db.participate(transaction, () -> operationRan.set(true)));
+
+		Assertions.assertTrue(exception.getMessage().contains("cannot participate"));
+		Assertions.assertFalse(operationRan.get());
+	}
+
+	@Test
+	public void testParticipatePreservesOriginalExceptionWhenTransactionCompletesBeforeRollbackOnlyMark() {
+		DataSource dataSource = createInMemoryDataSource("participate_completion_race");
+		Database db = Database.withDataSource(dataSource).build();
+		Transaction transaction = new Transaction(dataSource, TransactionIsolation.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
+		RuntimeException boom = new RuntimeException("participant boom");
+
+		RuntimeException exception = Assertions.assertThrows(RuntimeException.class, () ->
+				db.participate(transaction, () -> {
+					transaction.markCompleted();
+					throw boom;
+				}));
+
+		Assertions.assertSame(boom, exception);
+		assertSuppressedMessageContains(exception, "already completed");
 	}
 
 	@Test
@@ -304,6 +373,25 @@ public class TransactionLifecycleTests {
 		Assertions.assertTrue(List.of(throwable.getSuppressed()).stream()
 						.anyMatch(suppressed -> message.equals(suppressed.getMessage())),
 				format("Expected suppressed exception message '%s'", message));
+	}
+
+	private void assertSuppressedMessageContains(@NonNull Throwable throwable,
+																							 @NonNull String message) {
+		requireNonNull(throwable);
+		requireNonNull(message);
+
+		Assertions.assertTrue(List.of(throwable.getSuppressed()).stream()
+						.anyMatch(suppressed -> suppressed.getMessage() != null && suppressed.getMessage().contains(message)),
+				format("Expected suppressed exception message containing '%s'", message));
+	}
+
+	private void awaitQueuedTransactionThread(@NonNull Transaction transaction) throws InterruptedException {
+		requireNonNull(transaction);
+
+		for (int i = 0; i < 100 && !transaction.getConnectionLock().hasQueuedThreads(); ++i)
+			Thread.sleep(10L);
+
+		Assertions.assertTrue(transaction.getConnectionLock().hasQueuedThreads(), "Expected participant thread to be waiting on transaction lock");
 	}
 
 	@NonNull

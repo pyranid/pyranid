@@ -140,6 +140,10 @@ public interface Query {
 	 * within that callback. Do not escape the stream from the function.
 	 * <p>
 	 * The stream must be consumed within the scope of the transaction or connection that created it.
+	 * <p>
+	 * PostgreSQL streams are configured automatically with a positive JDBC fetch size and an autocommit-disabled
+	 * connection when no Pyranid transaction is active. Use {@link #customize(PreparedStatementCustomizer)} to override
+	 * the fetch size when needed. Other cursor-based drivers may require driver-specific transaction or fetch-size setup.
 	 *
 	 * @param resultType     the type to marshal each row to
 	 * @param streamFunction function that consumes the stream and returns a result
