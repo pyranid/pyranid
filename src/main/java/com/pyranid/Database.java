@@ -55,6 +55,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -2362,7 +2363,11 @@ public final class Database {
 
 		// Trigger lazy database-type detection while the statement's JDBC connection is active so later
 		// transaction-scope metrics can report an accurate db.system.name without opening a second metadata connection.
-		statementContext.getDatabaseType();
+		try {
+			statementContext.getDatabaseType();
+		} catch (Throwable t) {
+			this.logger.log(Level.FINE, "Unable to warm database type cache for metrics", t);
+		}
 	}
 
 	private void dispatchWithDatabaseTypeDetectionConnection(@NonNull Connection connection,

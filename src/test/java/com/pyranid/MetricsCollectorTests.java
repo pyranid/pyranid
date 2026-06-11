@@ -220,6 +220,42 @@ public class MetricsCollectorTests {
 	}
 
 	@Test
+	public void databaseTypeWarmingFailureDoesNotFailSuccessfulStatement() {
+		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
+		Database database = Database.withDataSource(metadataFailingDataSource("metrics_warm_type_statement"))
+				.metricsCollector(metricsCollector)
+				.build();
+
+		Integer value = database.query("SELECT 1 FROM (VALUES (0)) AS t(x)")
+				.fetchObject(Integer.class)
+				.orElseThrow();
+
+		MetricsCollector.Snapshot snapshot = snapshot(metricsCollector);
+		Assertions.assertEquals(Integer.valueOf(1), value);
+		Assertions.assertEquals(1L, snapshot.statementsExecuted());
+		Assertions.assertEquals(0L, snapshot.statementsFailed());
+	}
+
+	@Test
+	public void databaseTypeWarmingFailureDoesNotFailSuccessfulStream() {
+		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
+		Database database = Database.withDataSource(metadataFailingDataSource("metrics_warm_type_stream"))
+				.metricsCollector(metricsCollector)
+				.build();
+
+		List<Integer> rows = database.query("SELECT id FROM (VALUES (1), (2)) AS t(id) ORDER BY id")
+				.fetchStream(Integer.class, stream -> stream.collect(Collectors.toList()));
+
+		MetricsCollector.Snapshot snapshot = snapshot(metricsCollector);
+		Assertions.assertEquals(List.of(1, 2), rows);
+		Assertions.assertEquals(1L, snapshot.streamsOpened());
+		Assertions.assertEquals(0L, snapshot.streamsOpenFailures());
+		Assertions.assertEquals(1L, snapshot.streamsClosedNormally());
+		Assertions.assertEquals(1L, snapshot.statementsExecuted());
+		Assertions.assertEquals(0L, snapshot.statementsFailed());
+	}
+
+	@Test
 	public void commitFailureFollowedByRollbackSuccessRecordsSingleRolledBackClosure() {
 		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
 		AtomicInteger rollbacks = new AtomicInteger();
@@ -376,6 +412,16 @@ public class MetricsCollectorTests {
 
 			if ("rollback".equals(method.getName()) && (args == null || args.length == 0))
 				rollbacks.incrementAndGet();
+
+			return invoke(delegate, method, args);
+		}));
+	}
+
+	@NonNull
+	private static DataSource metadataFailingDataSource(@NonNull String databaseName) {
+		return wrappingDataSource(databaseName, connection -> proxyConnection(connection, (delegate, method, args) -> {
+			if ("getMetaData".equals(method.getName()))
+				throw new SQLException("metadata unavailable");
 
 			return invoke(delegate, method, args);
 		}));
