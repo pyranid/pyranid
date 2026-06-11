@@ -1361,7 +1361,7 @@ Database database = Database.withDataSource(dataSource)
 Before cutting a release, run the local verification gates from the `pyranid/` project directory:
 
 ```bash
-mvn -q test
+mvn -q verify
 mvn -q javadoc:javadoc
 mvn -q -P integration verify
 ```
@@ -1369,6 +1369,8 @@ mvn -q -P integration verify
 The `integration` Maven profile runs Docker-backed PostgreSQL integration tests with Testcontainers and requires a working local Docker environment. The initial PostgreSQL image is pinned to `postgres:17-alpine`.
 
 The PostgreSQL integration profile currently covers core pgjdbc behavior such as JSONB, SQL arrays, `RETURNING`, temporal binding/mapping, and exception metadata. It does not run pgvector extension tests; verify pgvector manually if your release depends on that feature.
+
+Artifact signing and Maven Central publishing are isolated in the `release` profile. Use `mvn -P release deploy` only when publishing a release or snapshot; normal local and CI `verify` runs do not require GPG credentials.
 
 ## Production Notes
 

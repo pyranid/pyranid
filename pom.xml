@@ -50,8 +50,10 @@
 		<project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 		<project.build.outputTimestamp>2026-05-09T00:00:00Z</project.build.outputTimestamp>
 		<junit.jupiter.version>5.13.3</junit.jupiter.version>
+		<maven.enforcer.plugin.version>3.6.2</maven.enforcer.plugin.version>
 		<maven.surefire.plugin.version>3.5.4</maven.surefire.plugin.version>
 		<maven.failsafe.plugin.version>3.5.4</maven.failsafe.plugin.version>
+		<maven.jar.plugin.version>3.4.2</maven.jar.plugin.version>
 		<build.helper.maven.plugin.version>3.6.1</build.helper.maven.plugin.version>
 		<testcontainers.version>1.21.4</testcontainers.version>
 		<slf4j.version>1.7.36</slf4j.version>
@@ -60,6 +62,38 @@
 
 	<build>
 		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-enforcer-plugin</artifactId>
+				<version>${maven.enforcer.plugin.version}</version>
+				<executions>
+					<execution>
+						<id>enforce-build-contract</id>
+						<goals>
+							<goal>enforce</goal>
+						</goals>
+						<configuration>
+							<rules>
+								<requireMavenVersion>
+									<version>[3.9.0,)</version>
+								</requireMavenVersion>
+								<requireJavaVersion>
+									<version>[17,)</version>
+								</requireJavaVersion>
+								<dependencyConvergence/>
+								<bannedDependencies>
+									<searchTransitive>true</searchTransitive>
+									<excludes>
+										<exclude>*:*:*:*:compile</exclude>
+										<exclude>*:*:*:*:runtime</exclude>
+									</excludes>
+									<message>Pyranid core must not declare runtime dependencies; use provided or test scope instead.</message>
+								</bannedDependencies>
+							</rules>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-compiler-plugin</artifactId>
@@ -95,6 +129,21 @@
 			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-jar-plugin</artifactId>
+				<version>${maven.jar.plugin.version}</version>
+				<configuration>
+					<archive>
+						<manifest>
+							<addDefaultImplementationEntries>true</addDefaultImplementationEntries>
+						</manifest>
+						<manifestEntries>
+							<Automatic-Module-Name>com.pyranid</Automatic-Module-Name>
+						</manifestEntries>
+					</archive>
+				</configuration>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-javadoc-plugin</artifactId>
 				<version>3.12.0</version>
 				<configuration>
@@ -121,29 +170,6 @@
 						</goals>
 					</execution>
 				</executions>
-			</plugin>
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-gpg-plugin</artifactId>
-				<version>3.2.8</version>
-				<executions>
-					<execution>
-						<id>sign-artifacts</id>
-						<phase>verify</phase>
-						<goals>
-							<goal>sign</goal>
-						</goals>
-					</execution>
-				</executions>
-			</plugin>
-			<plugin>
-				<groupId>org.sonatype.central</groupId>
-				<artifactId>central-publishing-maven-plugin</artifactId>
-				<version>0.8.0</version>
-				<extensions>true</extensions>
-				<configuration>
-					<publishingServerId>central-portal</publishingServerId>
-				</configuration>
 			</plugin>
 		</plugins>
 	</build>
@@ -188,10 +214,6 @@
 	<profiles>
 		<profile>
 			<id>integration</id>
-			<properties>
-				<gpg.skip>true</gpg.skip>
-				<maven.javadoc.skip>true</maven.javadoc.skip>
-			</properties>
 			<dependencies>
 				<dependency>
 					<groupId>org.testcontainers</groupId>
@@ -253,6 +275,36 @@
 								</goals>
 							</execution>
 						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+		<profile>
+			<id>release</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-gpg-plugin</artifactId>
+						<version>3.2.8</version>
+						<executions>
+							<execution>
+								<id>sign-artifacts</id>
+								<phase>verify</phase>
+								<goals>
+									<goal>sign</goal>
+								</goals>
+							</execution>
+						</executions>
+					</plugin>
+					<plugin>
+						<groupId>org.sonatype.central</groupId>
+						<artifactId>central-publishing-maven-plugin</artifactId>
+						<version>0.8.0</version>
+						<extensions>true</extensions>
+						<configuration>
+							<publishingServerId>central-portal</publishingServerId>
+						</configuration>
 					</plugin>
 				</plugins>
 			</build>
