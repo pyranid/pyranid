@@ -1285,6 +1285,10 @@ Database database = Database.withDataSource(dataSource)
   }).build();
 ```
 
+`StatementLogger` failures are intentionally fail-fast. If your logger throws after a statement otherwise succeeds, that exception propagates to the caller. Inside a Pyranid transaction, logger failures participate in normal transaction failure handling and cause rollback. If the statement itself failed, the logger failure is attached as a suppressed exception to the primary failure.
+
+Keep logger implementations lightweight and failure-safe. If logging must never affect database writes, catch and handle exceptions inside your logger implementation, or use [`MetricsCollector`](https://javadoc.pyranid.com/com/pyranid/MetricsCollector.html) for best-effort observability.
+
 [`StatementLog`](https://javadoc.pyranid.com/com/pyranid/StatementLog.html) instances give you access to the following for each SQL statement executed:
 
 * `statementContext`

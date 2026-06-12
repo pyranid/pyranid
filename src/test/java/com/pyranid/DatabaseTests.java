@@ -1979,9 +1979,9 @@ public class DatabaseTests {
 	}
 
 	@Test
-	public void testStatementLoggerFailureDoesNotRollbackTransaction() {
+	public void testStatementLoggerFailureRollsBackTransaction() {
 		AtomicBoolean shouldThrow = new AtomicBoolean(false);
-		Database db = Database.withDataSource(createInMemoryDataSource("logger_no_rollback"))
+		Database db = Database.withDataSource(createInMemoryDataSource("logger_rollback"))
 				.statementLogger(statementLog -> {
 					if (shouldThrow.get())
 						throw new RuntimeException("logger boom");
@@ -1999,7 +1999,7 @@ public class DatabaseTests {
 				.fetchObject(Long.class)
 				.orElse(0L);
 
-		Assertions.assertEquals(1L, count, "Transaction should commit even if statement logger fails");
+		Assertions.assertEquals(0L, count, "Transaction should roll back when statement logger fails");
 	}
 
 	@Test
@@ -2068,13 +2068,12 @@ public class DatabaseTests {
 
 		Throwable thrown = failure.get();
 		Assertions.assertNotNull(thrown, "Expected logger failure on participating thread");
-		Assertions.assertNotNull(thrown.getCause(), "Expected logger failure to be wrapped");
-		Assertions.assertEquals("logger boom", thrown.getCause().getMessage());
+		Assertions.assertEquals("logger boom", thrown.getMessage());
 
 		Long count = db.query("SELECT COUNT(*) FROM t")
 				.fetchObject(Long.class)
 				.orElse(0L);
-		Assertions.assertEquals(1L, count, "Transaction should commit even if statement logger fails on participate thread");
+		Assertions.assertEquals(0L, count, "Transaction should roll back when statement logger fails on participate thread");
 	}
 
 	@Test

@@ -672,8 +672,7 @@ public final class Database {
 			Optional<T> returnValue = transactionalOperation.perform();
 			return returnValue == null ? Optional.empty() : returnValue;
 		} catch (RuntimeException e) {
-			if (!(e instanceof StatementLoggerFailureException))
-				setRollbackOnlyAfterParticipationFailure(transaction, e);
+			setRollbackOnlyAfterParticipationFailure(transaction, e);
 			restoreInterruptIfNeeded(e);
 			throw e;
 		} catch (Error e) {
@@ -2655,27 +2654,10 @@ public final class Database {
 				try {
 					getStatementLogger().log(statementLog);
 				} catch (Throwable cleanupException) {
-					if (transaction.isPresent() && thrown == null && cleanupFailure == null) {
-						Throwable loggerFailure = cleanupException;
-						Transaction currentTransaction = transaction.get();
-
-						if (!currentTransaction.isOwnedByCurrentThread()) {
-							cleanupFailure = new StatementLoggerFailureException(loggerFailure);
-						} else {
-							currentTransaction.addPostTransactionOperation(result -> {
-								if (loggerFailure instanceof RuntimeException runtimeException)
-									throw runtimeException;
-								if (loggerFailure instanceof Error error)
-									throw error;
-								throw new RuntimeException(loggerFailure);
-							});
-						}
-					} else {
-						if (cleanupFailure == null)
-							cleanupFailure = cleanupException;
-						else
-							cleanupFailure.addSuppressed(cleanupException);
-					}
+					if (cleanupFailure == null)
+						cleanupFailure = cleanupException;
+					else
+						cleanupFailure.addSuppressed(cleanupException);
 				}
 			}
 
@@ -3113,24 +3095,7 @@ public final class Database {
 				try {
 					this.database.getStatementLogger().log(statementLog);
 				} catch (Throwable cleanupException) {
-					if (this.transaction.isPresent() && this.thrown == null && cleanupFailure == null) {
-						Throwable loggerFailure = cleanupException;
-						Transaction currentTransaction = this.transaction.get();
-
-						if (!currentTransaction.isOwnedByCurrentThread()) {
-							cleanupFailure = new StatementLoggerFailureException(loggerFailure);
-						} else {
-							currentTransaction.addPostTransactionOperation(result -> {
-								if (loggerFailure instanceof RuntimeException runtimeException)
-									throw runtimeException;
-								if (loggerFailure instanceof Error error)
-									throw error;
-								throw new RuntimeException(loggerFailure);
-							});
-						}
-					} else {
-						cleanupFailure = cleanupFailure == null ? cleanupException : addSuppressed(cleanupFailure, cleanupException);
-					}
+					cleanupFailure = cleanupFailure == null ? cleanupException : addSuppressed(cleanupFailure, cleanupException);
 				}
 			}
 
@@ -3291,6 +3256,16 @@ public final class Database {
 			return this;
 		}
 
+		/**
+		 * Configures the statement logger for the {@link Database} being built.
+		 * <p>
+		 * {@link StatementLogger} failures are fail-fast: a logger exception can make a successful statement operation throw,
+		 * and inside a Pyranid transaction it participates in normal rollback handling. If the database statement itself failed,
+		 * logger failures are suppressed onto the primary statement failure.
+		 *
+		 * @param statementLogger statement logger to use, or {@code null} for a no-op logger
+		 * @return this {@code Builder}, for chaining
+		 */
 		@NonNull
 		public Builder statementLogger(@Nullable StatementLogger statementLogger) {
 			this.statementLogger = statementLogger;
@@ -3385,9 +3360,4 @@ public final class Database {
 		NO
 	}
 
-	private static final class StatementLoggerFailureException extends RuntimeException {
-		private StatementLoggerFailureException(@NonNull Throwable cause) {
-			super("Statement logger failed", cause);
-		}
-	}
 }

@@ -36,6 +36,11 @@ public interface StatementLogger {
 	 * <p>
 	 * Implementors might choose to no-op, write to stdout or a logging framework, send alerts about slow queries, and so
 	 * on.
+	 * <p>
+	 * Unlike {@link MetricsCollector} failures, {@code StatementLogger} failures are not silently discarded. If this method
+	 * throws after a statement has otherwise completed successfully, the thrown exception propagates to the caller. Inside a
+	 * Pyranid transaction, logger failures participate in normal transaction failure handling and cause rollback. If the
+	 * statement itself already failed, the logger failure is attached as a suppressed exception to the primary failure.
 	 *
 	 * @param statementLog The event to log
 	 */
