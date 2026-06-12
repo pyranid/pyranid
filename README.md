@@ -703,6 +703,8 @@ car = database.query("SELECT some_id AS car_id, some_color AS color FROM car LIM
 * [`Locale`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Locale.html) (IETF BCP 47 "language tag" format)
 * [`Currency`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Currency.html)
 
+Temporal result-set mapping preserves the fractional-second precision returned by your JDBC driver; Pyranid does not round or truncate `Instant`, `OffsetDateTime`, or `ZonedDateTime` values to milliseconds. The maximum precision is still determined by the database column and driver (for example, PostgreSQL timestamps are stored at microsecond precision).
+
 ### Custom Mapping
 
 Fine-grained control of mapping is supported by registering [`CustomColumnMapper`](https://javadoc.pyranid.com/com/pyranid/CustomColumnMapper.html) instances.  For example, you might want to "inflate" a `JSONB` column into a Java type:

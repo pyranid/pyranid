@@ -53,7 +53,6 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeParseException;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Currency;
@@ -1876,13 +1875,6 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			}
 		}
 
-		/**
-		 * Normalize to millisecond precision to avoid test flakiness across drivers.
-		 */
-		public static Instant toMillis(Instant inst) {
-			return inst == null ? null : inst.truncatedTo(ChronoUnit.MILLIS);
-		}
-
 		// ==== Targeted readers =====================================================
 
 		public static Instant asInstant(ResultSet rs, int col, StatementContext<?> ctx, ResultSetMetaData resultSetMetaData) throws SQLException {
@@ -1894,10 +1886,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			// Modern fast-path
 			if (withTz) {
 				OffsetDateTime odt = tryGet(rs, col, OffsetDateTime.class);
-				if (odt != null) return toMillis(odt.toInstant());
+				if (odt != null) return odt.toInstant();
 			} else {
 				LocalDateTime ldt = tryGet(rs, col, LocalDateTime.class);
-				if (ldt != null) return toMillis(ldt.atZone(ctx.getTimeZone()).toInstant());
+				if (ldt != null) return ldt.atZone(ctx.getTimeZone()).toInstant();
 			}
 
 			// Tolerant fallbacks
@@ -1906,21 +1898,21 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 			if (raw instanceof Timestamp ts) {
 				if (withTz)
-					return toMillis(ts.toInstant());
+					return ts.toInstant();
 				// DO NOT use ts.toInstant() for WITHOUT TZ; interpret using DB zone
 				LocalDateTime ldt = ts.toLocalDateTime();
-				return toMillis(ldt.atZone(ctx.getTimeZone()).toInstant());
+				return ldt.atZone(ctx.getTimeZone()).toInstant();
 			}
-			if (raw instanceof OffsetDateTime odt) return toMillis(odt.toInstant());
-			if (raw instanceof LocalDateTime ldt) return toMillis(ldt.atZone(ctx.getTimeZone()).toInstant());
+			if (raw instanceof OffsetDateTime odt) return odt.toInstant();
+			if (raw instanceof LocalDateTime ldt) return ldt.atZone(ctx.getTimeZone()).toInstant();
 			if (raw instanceof String s) {
 				// ISO-8601 string literal? Try parse to OffsetDateTime / LocalDateTime.
 				try {
-					return toMillis(OffsetDateTime.parse(s).toInstant());
+					return OffsetDateTime.parse(s).toInstant();
 				} catch (DateTimeParseException ignore) {
 				}
 				try {
-					return toMillis(LocalDateTime.parse(s).atZone(ctx.getTimeZone()).toInstant());
+					return LocalDateTime.parse(s).atZone(ctx.getTimeZone()).toInstant();
 				} catch (DateTimeParseException ignore) {
 				}
 			}
@@ -1929,9 +1921,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			Timestamp ts = rs.getTimestamp(col);
 			if (ts != null) {
 				if (withTz)
-					return toMillis(ts.toInstant());
+					return ts.toInstant();
 				LocalDateTime ldt = ts.toLocalDateTime();
-				return toMillis(ldt.atZone(ctx.getTimeZone()).toInstant());
+				return ldt.atZone(ctx.getTimeZone()).toInstant();
 			}
 			return null;
 		}

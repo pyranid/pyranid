@@ -961,12 +961,11 @@ public class DatabaseTests {
 				.orElseThrow();
 		Assertions.assertEquals(ldt, ldtRoundTrip, "LocalDateTime round-trip mismatch");
 		// LocalDateTime -> TIMESTAMP -> Instant (interpreted in DB zone)
-		Instant expectedFromLdt = ldt.atZone(zone).toInstant().truncatedTo(ChronoUnit.MILLIS);
+		Instant expectedFromLdt = ldt.atZone(zone).toInstant();
 		Instant instFromLdt = db.query("SELECT CAST(:ldt AS TIMESTAMP) FROM (VALUES (0)) AS t(x)")
 				.bind("ldt", ldt)
 				.fetchObject(Instant.class)
-				.orElseThrow()
-				.truncatedTo(ChronoUnit.MILLIS);
+				.orElseThrow();
 		Assertions.assertEquals(expectedFromLdt, instFromLdt, "LocalDateTime→Instant mapping mismatch");
 
 		// 2) Instant param
@@ -975,9 +974,8 @@ public class DatabaseTests {
 		Instant instRoundTrip = db.query("SELECT CAST(:instant AS TIMESTAMP) FROM (VALUES (0)) AS t(x)")
 				.bind("instant", instant)
 				.fetchObject(Instant.class)
-				.orElseThrow()
-				.truncatedTo(ChronoUnit.MILLIS);
-		Assertions.assertEquals(instant.truncatedTo(ChronoUnit.MILLIS), instRoundTrip, "Instant round-trip mismatch");
+				.orElseThrow();
+		Assertions.assertEquals(instant, instRoundTrip, "Instant round-trip mismatch");
 		// Instant -> TIMESTAMP -> LocalDateTime (in DB zone)
 		LocalDateTime expectedLdtFromInstant = LocalDateTime.ofInstant(instant, zone);
 		LocalDateTime ldtFromInstant = db.query("SELECT CAST(:instant AS TIMESTAMP) FROM (VALUES (0)) AS t(x)")
@@ -986,14 +984,13 @@ public class DatabaseTests {
 				.orElseThrow();
 		Assertions.assertEquals(expectedLdtFromInstant, ldtFromInstant, "Instant→LocalDateTime mapping mismatch");
 
-		// 3) OffsetDateTime param (use odd offset and nanos to ensure normalization)
-		OffsetDateTime odt = OffsetDateTime.parse("2020-01-02T08:09:10.123456789-03:00");
-		Instant expectedFromOdt = odt.toInstant().truncatedTo(ChronoUnit.MILLIS);
+		// 3) OffsetDateTime param (use odd offset and microseconds to ensure normalization)
+		OffsetDateTime odt = OffsetDateTime.parse("2020-01-02T08:09:10.123456-03:00");
+		Instant expectedFromOdt = odt.toInstant();
 		Instant instFromOdt = db.query("SELECT CAST(:odt AS TIMESTAMP) FROM (VALUES (0)) AS t(x)")
 				.bind("odt", odt)
 				.fetchObject(Instant.class)
-				.orElseThrow()
-				.truncatedTo(ChronoUnit.MILLIS);
+				.orElseThrow();
 		Assertions.assertEquals(expectedFromOdt, instFromOdt, "OffsetDateTime→Instant mapping mismatch");
 		LocalDateTime expectedLdtFromOdt = LocalDateTime.ofInstant(odt.toInstant(), zone);
 		LocalDateTime ldtFromOdt = db.query("SELECT CAST(:odt AS TIMESTAMP) FROM (VALUES (0)) AS t(x)")
@@ -1011,16 +1008,21 @@ public class DatabaseTests {
 				.timeZone(zone)
 				.build();
 
-		OffsetDateTime rawValue = OffsetDateTime.parse("2020-01-02T08:09:10.123-03:00");
+		OffsetDateTime rawValue = OffsetDateTime.parse("2020-01-02T08:09:10.123456789-03:00");
+		Instant expectedInstant = rawValue.toInstant();
 		ZonedDateTime expected = rawValue.toInstant().atZone(zone);
+
+		Instant instant = mapSingleColumn(db, "instant_at", Types.TIMESTAMP_WITH_TIMEZONE,
+				"TIMESTAMP WITH TIME ZONE", rawValue, Instant.class).orElseThrow();
+		Assertions.assertEquals(expectedInstant, instant, "Expected standard Instant mapping to preserve sub-millisecond precision");
 
 		ZonedDateTime zonedDateTime = mapSingleColumn(db, "zoned_at", Types.TIMESTAMP_WITH_TIMEZONE,
 				"TIMESTAMP WITH TIME ZONE", rawValue, ZonedDateTime.class).orElseThrow();
-		Assertions.assertEquals(expected, zonedDateTime, "Expected standard ZonedDateTime mapping to preserve the instant in DB zone");
+		Assertions.assertEquals(expected, zonedDateTime, "Expected standard ZonedDateTime mapping to preserve sub-millisecond precision in DB zone");
 
 		ZonedDateTimeHolder holder = mapSingleColumn(db, "zoned_at", Types.TIMESTAMP_WITH_TIMEZONE,
 				"TIMESTAMP WITH TIME ZONE", rawValue, ZonedDateTimeHolder.class).orElseThrow();
-		Assertions.assertEquals(expected, holder.getZonedAt(), "Expected bean ZonedDateTime property mapping to preserve the instant in DB zone");
+		Assertions.assertEquals(expected, holder.getZonedAt(), "Expected bean ZonedDateTime property mapping to preserve sub-millisecond precision in DB zone");
 	}
 
 	@Test
@@ -1048,11 +1050,10 @@ public class DatabaseTests {
 		DataSource dsNY = createInMemoryDataSource("ts_literal_ny");
 		ZoneId ny = ZoneId.of("America/New_York");
 		Database dbNY = Database.withDataSource(dsNY).timeZone(ny).build();
-		Instant expectedNY = ldt.atZone(ny).toInstant().truncatedTo(ChronoUnit.MILLIS);
+		Instant expectedNY = ldt.atZone(ny).toInstant();
 		Instant gotNY = dbNY.query("SELECT TIMESTAMP '2020-01-02 03:04:05.123' FROM (VALUES (0)) AS t(x)")
 				.fetchObject(Instant.class)
-				.orElseThrow()
-				.truncatedTo(ChronoUnit.MILLIS);
+				.orElseThrow();
 		Assertions.assertEquals(expectedNY, gotNY, "NY literal TIMESTAMP→Instant mismatch");
 
 		// But LocalDateTime should be the literal value regardless of zone
@@ -1065,11 +1066,10 @@ public class DatabaseTests {
 		DataSource dsUTC = createInMemoryDataSource("ts_literal_utc");
 		ZoneId utc = ZoneId.of("UTC");
 		Database dbUTC = Database.withDataSource(dsUTC).timeZone(utc).build();
-		Instant expectedUTC = ldt.atZone(utc).toInstant().truncatedTo(ChronoUnit.MILLIS);
+		Instant expectedUTC = ldt.atZone(utc).toInstant();
 		Instant gotUTC = dbUTC.query("SELECT TIMESTAMP '2020-01-02 03:04:05.123' FROM (VALUES (0)) AS t(x)")
 				.fetchObject(Instant.class)
-				.orElseThrow()
-				.truncatedTo(ChronoUnit.MILLIS);
+				.orElseThrow();
 
 		Assertions.assertEquals(expectedUTC, gotUTC, "UTC literal TIMESTAMP→Instant mismatch");
 		LocalDateTime gotUTCLdt = dbUTC.query("SELECT TIMESTAMP '2020-01-02 03:04:05.123' FROM (VALUES (0)) AS t(x)")
@@ -1089,9 +1089,8 @@ public class DatabaseTests {
 		Instant instFromSqlTs = db.query("SELECT CAST(:ts AS TIMESTAMP) FROM (VALUES (0)) AS t(x)")
 				.bind("ts", ts)
 				.fetchObject(Instant.class)
-				.orElseThrow()
-				.truncatedTo(ChronoUnit.MILLIS);
-		Assertions.assertEquals(ts.toInstant().truncatedTo(ChronoUnit.MILLIS), instFromSqlTs, "java.sql.Timestamp→Instant mismatch");
+				.orElseThrow();
+		Assertions.assertEquals(ts.toInstant(), instFromSqlTs, "java.sql.Timestamp→Instant mismatch");
 
 		// java.sql.Date
 		java.sql.Date sqlDate = java.sql.Date.valueOf("2020-01-02");

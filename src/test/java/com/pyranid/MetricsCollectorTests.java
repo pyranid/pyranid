@@ -37,6 +37,7 @@ import java.sql.Statement;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Logger;
@@ -202,6 +203,49 @@ public class MetricsCollectorTests {
 		Assertions.assertEquals(0L, snapshot.streamsClosedNormally());
 		Assertions.assertEquals(0L, snapshot.streamsEarlyClosed());
 		Assertions.assertEquals(1L, snapshot.statementsFailed());
+	}
+
+	@Test
+	public void mapperFailureStreamOutcomeIsRecordedAsIterationFailure() {
+		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
+		AtomicReference<StatementLog<?>> logRef = new AtomicReference<>();
+		RuntimeException mapperFailure = new RuntimeException("mapper failure");
+		ResultSetMapper throwingMapper = new ResultSetMapper() {
+			@NonNull
+			@Override
+			public <T> Optional<T> map(@NonNull StatementContext<T> statementContext,
+																 @NonNull ResultSet resultSet,
+																 @NonNull Class<T> resultSetRowType,
+																 @NonNull InstanceProvider instanceProvider) {
+				throw mapperFailure;
+			}
+		};
+		Database database = Database.withDataSource(createInMemoryDataSource("metrics_mapper_iteration_failure"))
+				.metricsCollector(metricsCollector)
+				.statementLogger(logRef::set)
+				.resultSetMapper(throwingMapper)
+				.build();
+
+		database.query("CREATE TABLE t (id INT)").execute();
+		database.query("INSERT INTO t VALUES (1)").execute();
+		metricsCollector.reset();
+		logRef.set(null);
+
+		RuntimeException thrown = Assertions.assertThrows(RuntimeException.class, () -> database.query("SELECT id FROM t")
+				.fetchStream(Integer.class, stream -> stream.collect(Collectors.toList())));
+
+		Assertions.assertSame(mapperFailure, thrown);
+		MetricsCollector.Snapshot snapshot = snapshot(metricsCollector);
+		Assertions.assertEquals(1L, snapshot.streamsOpened());
+		Assertions.assertEquals(1L, snapshot.streamsIterationFailed());
+		Assertions.assertEquals(0L, snapshot.streamsCallbackFailed());
+		Assertions.assertEquals(0L, snapshot.streamsClosedNormally());
+		Assertions.assertEquals(0L, snapshot.streamsEarlyClosed());
+		Assertions.assertEquals(1L, snapshot.statementsFailed());
+
+		StatementLog<?> statementLog = logRef.get();
+		Assertions.assertNotNull(statementLog, "Expected statement logger to receive the failed stream statement");
+		Assertions.assertSame(mapperFailure, statementLog.getException().orElse(null));
 	}
 
 	@Test

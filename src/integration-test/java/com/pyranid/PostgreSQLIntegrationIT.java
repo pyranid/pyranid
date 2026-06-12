@@ -36,7 +36,6 @@ import java.sql.SQLFeatureNotSupportedException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
-import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -159,10 +158,10 @@ public class PostgreSQLIntegrationIT {
 		Database db = Database.withDataSource(dataSource())
 				.timeZone(ZoneId.of("UTC"))
 				.build();
-		Instant instant = Instant.parse("2020-01-02T03:04:05.123Z");
-		OffsetDateTime offsetDateTime = OffsetDateTime.parse("2020-01-02T05:04:05.123+02:00");
-		Instant expectedInstant = instant.truncatedTo(ChronoUnit.MILLIS);
-		Instant expectedOffsetInstant = offsetDateTime.toInstant().truncatedTo(ChronoUnit.MILLIS);
+		Instant instant = Instant.parse("2020-01-02T03:04:05.123456Z");
+		OffsetDateTime offsetDateTime = OffsetDateTime.parse("2020-01-02T05:04:05.123456+02:00");
+		Instant expectedInstant = instant;
+		Instant expectedOffsetInstant = offsetDateTime.toInstant();
 
 		db.query("""
 				CREATE TABLE IF NOT EXISTS pyranid_temporal_test (
@@ -199,8 +198,7 @@ public class PostgreSQLIntegrationIT {
 		Assertions.assertEquals(expectedOffsetInstant, db.query("SELECT offset_tstz FROM pyranid_temporal_test")
 				.fetchObject(OffsetDateTime.class)
 				.orElseThrow()
-				.toInstant()
-				.truncatedTo(ChronoUnit.MILLIS));
+				.toInstant());
 	}
 
 	@Test
