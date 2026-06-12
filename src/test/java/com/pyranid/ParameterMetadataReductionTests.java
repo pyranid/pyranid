@@ -93,6 +93,25 @@ public class ParameterMetadataReductionTests {
 				"Null binds should still inspect parameter metadata when available");
 	}
 
+	@Test
+	public void testParameterMetaDataIsFetchedAtMostOncePerStatementExecution() {
+		AtomicInteger parameterMetaDataAccessCount = new AtomicInteger();
+		Database db = Database.withDataSource(new ParameterMetadataCountingDataSource(
+				createInMemoryDataSource("parameter_metadata_once_per_execution"), parameterMetaDataAccessCount)).build();
+
+		db.query("CREATE TABLE t (id INT, created_at TIMESTAMP, updated_at TIMESTAMP)").execute();
+		parameterMetaDataAccessCount.set(0);
+
+		db.query("INSERT INTO t(id, created_at, updated_at) VALUES (:id, :createdAt, :updatedAt)")
+				.bind("id", null)
+				.bind("createdAt", Instant.parse("2020-01-02T03:04:05Z"))
+				.bind("updatedAt", Instant.parse("2020-01-02T03:04:06Z"))
+				.execute();
+
+		Assertions.assertEquals(1, parameterMetaDataAccessCount.get(),
+				"Pyranid should reuse one ParameterMetaData instance across all built-in binding paths for an execution");
+	}
+
 	@NonNull
 	private static DataSource createInMemoryDataSource(@NonNull String databaseName) {
 		requireNonNull(databaseName);

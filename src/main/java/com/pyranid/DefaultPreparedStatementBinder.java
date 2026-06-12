@@ -101,10 +101,19 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 																@NonNull PreparedStatement preparedStatement,
 																@NonNull Integer parameterIndex,
 																@NonNull Object parameter) throws SQLException {
+		bindParameter(statementContext, preparedStatement, parameterIndex, parameter, new ParameterSqlTypeResolver(preparedStatement));
+	}
+
+	<T> void bindParameter(@NonNull StatementContext<T> statementContext,
+												 @NonNull PreparedStatement preparedStatement,
+												 @NonNull Integer parameterIndex,
+												 @NonNull Object parameter,
+												 @NonNull ParameterSqlTypeResolver parameterSqlTypeResolver) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(preparedStatement);
 		requireNonNull(parameterIndex);
 		requireNonNull(parameter);
+		requireNonNull(parameterSqlTypeResolver);
 
 		TargetType explicitTargetType = (parameter instanceof TypedParameter typedParameter)
 				? TargetType.of(typedParameter.getExplicitType())
@@ -115,7 +124,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		Object unwrappedParameter = unwrapOptionalValue(rawParameter);
 
 		if (unwrappedParameter == null) {
-			Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
+			Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(parameterSqlTypeResolver, parameterIndex);
 			Integer sqlType = sqlTypeOptional.map(ParameterSqlType::getSqlType).orElse(null);
 			if (sqlType == null || sqlType == Types.NULL) {
 				sqlType = explicitTargetType == null
@@ -145,7 +154,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 		// Try custom binders first (if they exist) on the unwrapped value
 		if (!getCustomParameterBinders().isEmpty() && !customBindersFor(explicitTargetType).isEmpty()) {
-			Integer sqlType = determineParameterSqlType(preparedStatement, parameterIndex)
+			Integer sqlType = determineParameterSqlType(parameterSqlTypeResolver, parameterIndex)
 					.map(ParameterSqlType::getSqlType)
 					.orElse(Types.OTHER);
 
@@ -186,7 +195,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		if (normalizedParameter instanceof OffsetDateTime offsetDateTime) {
-			Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
+			Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(parameterSqlTypeResolver, parameterIndex);
 			ParameterSqlType sqlType = sqlTypeOptional.orElse(ParameterSqlType.UNKNOWN);
 
 			if (sqlType.isTimestampWithoutTimeZone() || shouldBindAsTimestampWithoutTimeZone(statementContext, sqlTypeOptional)) {
@@ -213,7 +222,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		if (normalizedParameter instanceof Instant instant) {
-			Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
+			Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(parameterSqlTypeResolver, parameterIndex);
 			ParameterSqlType sqlType = sqlTypeOptional.orElse(ParameterSqlType.UNKNOWN);
 
 			if (sqlType.isTimestampWithoutTimeZone() || shouldBindAsTimestampWithoutTimeZone(statementContext, sqlTypeOptional)) {
@@ -244,7 +253,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			Object[] elements = sqlArrayParameter.getElements().orElse(null);
 
 			if (elements == null) {
-				Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
+				Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(parameterSqlTypeResolver, parameterIndex);
 				setNullWithFallback(preparedStatement, parameterIndex, Types.ARRAY, sqlArrayParameter.getBaseTypeName(),
 						sqlTypeOptional.map(ParameterSqlType::getSqlType).orElse(null));
 			} else {
@@ -274,7 +283,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			double[] elements = vectorParameter.getElements().orElse(null);
 
 			if (elements == null) {
-				Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
+				Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(parameterSqlTypeResolver, parameterIndex);
 				setNullWithFallback(preparedStatement, parameterIndex, Types.OTHER, "vector",
 						sqlTypeOptional.map(ParameterSqlType::getSqlType).orElse(null));
 			} else {
@@ -291,7 +300,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			String json = jsonParameter.getJson().orElse(null);
 
 			if (json == null) {
-				Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
+				Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(parameterSqlTypeResolver, parameterIndex);
 
 				if (statementContext.getDatabaseType() == DatabaseType.POSTGRESQL) {
 					String typeName = jsonParameter.getBindingPreference() == BindingPreference.TEXT ? "json" : "jsonb";
@@ -414,27 +423,70 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 																																 @NonNull Integer parameterIndex) throws SQLException {
 		requireNonNull(preparedStatement);
 		requireNonNull(parameterIndex);
+		return determineParameterSqlType(new ParameterSqlTypeResolver(preparedStatement), parameterIndex);
+	}
 
-		try {
-			ParameterMetaData parameterMetaData = preparedStatement.getParameterMetaData();
+	@NonNull
+	protected Optional<ParameterSqlType> determineParameterSqlType(@NonNull ParameterSqlTypeResolver parameterSqlTypeResolver,
+																																 @NonNull Integer parameterIndex) throws SQLException {
+		requireNonNull(parameterSqlTypeResolver);
+		requireNonNull(parameterIndex);
+		return parameterSqlTypeResolver.determineParameterSqlType(parameterIndex);
+	}
+
+	static final class ParameterSqlTypeResolver {
+		@NonNull
+		private final PreparedStatement preparedStatement;
+		private boolean initialized;
+		@Nullable
+		private ParameterMetaData parameterMetaData;
+
+		ParameterSqlTypeResolver(@NonNull PreparedStatement preparedStatement) {
+			this.preparedStatement = requireNonNull(preparedStatement);
+		}
+
+		@NonNull
+		Optional<ParameterSqlType> determineParameterSqlType(@NonNull Integer parameterIndex) throws SQLException {
+			requireNonNull(parameterIndex);
+
+			ParameterMetaData parameterMetaData = parameterMetaData();
 
 			if (parameterMetaData == null)
 				return Optional.empty();
 
-			Integer sqlType = parameterMetaData.getParameterType(parameterIndex);
-			String typeName = null;
-
 			try {
-				typeName = parameterMetaData.getParameterTypeName(parameterIndex);
-			} catch (SQLFeatureNotSupportedException | AbstractMethodError ignored) {
-			} catch (SQLException ignored) {
+				Integer sqlType = parameterMetaData.getParameterType(parameterIndex);
+				String typeName = null;
+
+				try {
+					typeName = parameterMetaData.getParameterTypeName(parameterIndex);
+				} catch (SQLFeatureNotSupportedException | AbstractMethodError ignored) {
+				} catch (SQLException ignored) {
+				}
+
+				return Optional.of(new ParameterSqlType(sqlType, typeName));
+			} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
+				return Optional.empty();
+			} catch (SQLException e) {
+				return Optional.empty();
+			}
+		}
+
+		@Nullable
+		private ParameterMetaData parameterMetaData() throws SQLException {
+			if (!this.initialized) {
+				this.initialized = true;
+
+				try {
+					this.parameterMetaData = this.preparedStatement.getParameterMetaData();
+				} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
+					this.parameterMetaData = null;
+				} catch (SQLException e) {
+					this.parameterMetaData = null;
+				}
 			}
 
-			return Optional.of(new ParameterSqlType(sqlType, typeName));
-		} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
-			return Optional.empty();
-		} catch (SQLException e) {
-			return Optional.empty();
+			return this.parameterMetaData;
 		}
 	}
 
@@ -453,7 +505,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		@NonNull
-		private Integer getSqlType() {
+		Integer getSqlType() {
 			return this.sqlType;
 		}
 

@@ -24,7 +24,6 @@ import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
-import java.sql.ParameterMetaData;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -2295,22 +2294,32 @@ public final class Database {
 		requireNonNull(parameters);
 
 		try {
+			DefaultPreparedStatementBinder.ParameterSqlTypeResolver parameterSqlTypeResolver =
+					new DefaultPreparedStatementBinder.ParameterSqlTypeResolver(preparedStatement);
+			PreparedStatementBinder preparedStatementBinder = getPreparedStatementBinder();
+
 			for (int i = 0; i < parameters.size(); ++i) {
 				Object parameter = parameters.get(i);
+				Integer parameterIndex = i + 1;
 
 				if (parameter != null) {
-					getPreparedStatementBinder().bindParameter(statementContext, preparedStatement, i + 1, parameter);
+					if (preparedStatementBinder instanceof DefaultPreparedStatementBinder defaultPreparedStatementBinder) {
+						defaultPreparedStatementBinder.bindParameter(statementContext, preparedStatement, parameterIndex, parameter,
+								parameterSqlTypeResolver);
+					} else {
+						preparedStatementBinder.bindParameter(statementContext, preparedStatement, parameterIndex, parameter);
+					}
 				} else {
+					Integer sqlType = parameterSqlTypeResolver.determineParameterSqlType(parameterIndex)
+							.map(DefaultPreparedStatementBinder.ParameterSqlType::getSqlType)
+							.orElse(Types.NULL);
 					try {
-						ParameterMetaData parameterMetaData = preparedStatement.getParameterMetaData();
-
-						if (parameterMetaData != null) {
-							preparedStatement.setNull(i + 1, parameterMetaData.getParameterType(i + 1));
-						} else {
-							preparedStatement.setNull(i + 1, Types.NULL);
-						}
+						preparedStatement.setNull(parameterIndex, sqlType);
 					} catch (SQLException | AbstractMethodError e) {
-						preparedStatement.setNull(i + 1, Types.NULL);
+						if (sqlType == Types.NULL)
+							throw e;
+
+						preparedStatement.setNull(parameterIndex, Types.NULL);
 					}
 				}
 			}
