@@ -27,6 +27,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -64,6 +65,38 @@ public class DatabaseTypeDetectionTests {
 				.build();
 
 		Assertions.assertEquals(DatabaseType.POSTGRESQL, db.getDatabaseType());
+	}
+
+	@Test
+	public void testStatementContextDiagnosticsDoNotForceDatabaseTypeDetection() {
+		DataSource dataSource = new ThrowingDataSource();
+		Database db = Database.withDataSource(dataSource).build();
+		Statement statement = Statement.of("diagnostic", "SELECT :value");
+		StatementContext<Integer> statementContext = StatementContext.<Integer>with(statement, db)
+				.parameters("secret")
+				.resultSetRowType(Integer.class)
+				.build();
+		StatementContext<Integer> sameStatementContext = StatementContext.<Integer>with(statement, db)
+				.parameters("secret")
+				.resultSetRowType(Integer.class)
+				.build();
+		StatementLog<?> statementLog = StatementLog.withStatementContext(statementContext)
+				.executionDuration(Duration.ofNanos(1))
+				.build();
+
+		Assertions.assertDoesNotThrow(() -> {
+			statementContext.hashCode();
+			statementContext.equals(sameStatementContext);
+			statementContext.toString();
+			statementLog.hashCode();
+			statementLog.equals(StatementLog.withStatementContext(sameStatementContext)
+					.executionDuration(Duration.ofNanos(1))
+					.build());
+			statementLog.toString();
+		});
+		Assertions.assertTrue(statementContext.toString().contains("databaseType=GENERIC"),
+				"Cold database type diagnostics should use the non-I/O GENERIC sentinel");
+		Assertions.assertThrows(DatabaseException.class, statementContext::getDatabaseType);
 	}
 
 	@Test
