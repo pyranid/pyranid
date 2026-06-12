@@ -142,6 +142,23 @@ public class TransactionLifecycleTests {
 	}
 
 	@Test
+	public void testTransactionOwnerThreadUsesThreadIdentity() throws Exception {
+		DataSource dataSource = createInMemoryDataSource("transaction_owner_thread_identity");
+		Database db = Database.withDataSource(dataSource).build();
+		Transaction transaction = new Transaction(dataSource, TransactionIsolation.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
+		AtomicBoolean participantOwned = new AtomicBoolean(true);
+
+		Assertions.assertTrue(transaction.isOwnedByCurrentThread(), "Creating thread should own the transaction");
+
+		Thread participant = new Thread(() -> participantOwned.set(transaction.isOwnedByCurrentThread()));
+		participant.start();
+		participant.join(1_000L);
+
+		Assertions.assertFalse(participant.isAlive(), "Expected participant thread to finish");
+		Assertions.assertFalse(participantOwned.get(), "Different thread object must not be treated as transaction owner");
+	}
+
+	@Test
 	public void testNestedTransactionsRemainIndependent() {
 		Database db = Database.withDataSource(createInMemoryDataSource("nested_transactions_independent")).build();
 

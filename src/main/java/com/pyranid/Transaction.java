@@ -21,6 +21,7 @@ import org.jspecify.annotations.Nullable;
 
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
+import java.lang.ref.WeakReference;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
@@ -74,7 +75,7 @@ public final class Transaction {
 	@NonNull
 	private final Logger logger;
 	@NonNull
-	private final Long ownerThreadId;
+	private final WeakReference<Thread> ownerThreadReference;
 
 	@NonNull
 	private final AtomicBoolean rollbackOnly;
@@ -114,7 +115,7 @@ public final class Transaction {
 		this.postTransactionOperations = new CopyOnWriteArrayList();
 		this.connectionLock = new ReentrantLock();
 		this.logger = Logger.getLogger(Transaction.class.getName());
-		this.ownerThreadId = Thread.currentThread().getId();
+		this.ownerThreadReference = new WeakReference<>(Thread.currentThread());
 	}
 
 	@Override
@@ -335,7 +336,7 @@ public final class Transaction {
 
 	@NonNull
 	Boolean isOwnedByCurrentThread() {
-		return Thread.currentThread().getId() == this.ownerThreadId;
+		return this.ownerThreadReference.get() == Thread.currentThread();
 	}
 
 	@NonNull
