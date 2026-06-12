@@ -697,6 +697,7 @@ car = database.query("SELECT some_id AS car_id, some_color AS color FROM car LIM
 * [`LocalDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/LocalDateTime.html) for `TIMESTAMP`
 * [`OffsetTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/OffsetTime.html) for `TIME WITH TIMEZONE`
 * [`OffsetDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/OffsetDateTime.html) for `TIMESTAMP WITH TIMEZONE`
+* [`ZonedDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/ZonedDateTime.html) for `TIMESTAMP` and `TIMESTAMP WITH TIMEZONE`
 * [`java.sql.Timestamp`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Timestamp.html)
 * [`java.sql.Date`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Date.html)
 * [`ZoneId`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/ZoneId.html)
@@ -704,7 +705,9 @@ car = database.query("SELECT some_id AS car_id, some_color AS color FROM car LIM
 * [`Locale`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Locale.html) (IETF BCP 47 "language tag" format)
 * [`Currency`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Currency.html)
 
-Temporal result-set mapping preserves the fractional-second precision returned by your JDBC driver; Pyranid does not round or truncate `Instant`, `OffsetDateTime`, or `ZonedDateTime` values to milliseconds. The maximum precision is still determined by the database column and driver (for example, PostgreSQL timestamps are stored at microsecond precision).
+Temporal result-set mapping uses JDBC `ResultSetMetaData` for the returned column. Zone-less `TIMESTAMP` values are wall-clock values; when mapping them to `Instant`, `OffsetDateTime`, `ZonedDateTime`, or `Date`, Pyranid interprets that wall clock in `Database.Builder::timeZone(...)`. Mapping a zone-less `TIMESTAMP` to `LocalDateTime` keeps the wall clock unchanged. `TIMESTAMP WITH TIME ZONE` values already identify an instant; mapping to `Instant` preserves that instant, and mapping to `ZonedDateTime` represents it in the configured `timeZone(...)`.
+
+Pyranid preserves the fractional-second precision returned by your JDBC driver; it does not round or truncate `Instant`, `OffsetDateTime`, or `ZonedDateTime` values to milliseconds. The maximum precision is still determined by the database column and driver (for example, PostgreSQL timestamps are stored at microsecond precision).
 
 ### Custom Mapping
 
@@ -910,6 +913,7 @@ Notes:
 * [`LocalDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/LocalDateTime.html)
 * [`OffsetTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/OffsetTime.html)
 * [`OffsetDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/OffsetDateTime.html)
+* [`ZonedDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/ZonedDateTime.html)
 * [`java.sql.Timestamp`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Timestamp.html)
 * [`java.sql.Date`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Date.html)
 * [`java.sql.Time`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Time.html)
@@ -918,7 +922,9 @@ Notes:
 * [`Locale`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Locale.html) (IETF BCP 47 "language tag" format)
 * [`Currency`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Currency.html)
 
-Temporal binding uses JDBC parameter metadata when available to distinguish `TIMESTAMP` from `TIMESTAMP WITH TIME ZONE` targets. If metadata is unavailable or non-identifying, `Instant` and `OffsetDateTime` default to timestamp-with-time-zone binding. For drivers or proxies that cannot provide identifying parameter metadata when your target columns are zone-less `TIMESTAMP` values, configure `ambiguousTimestampBindingStrategy(TIMESTAMP_WITHOUT_TIME_ZONE)`; Pyranid will convert those parameters through `Database.Builder::timeZone(...)` and bind them as `TIMESTAMP`.
+Temporal binding uses JDBC `ParameterMetaData` when available to distinguish `TIMESTAMP` from `TIMESTAMP WITH TIME ZONE` targets. For known zone-less `TIMESTAMP` targets, Pyranid converts `Instant` and `OffsetDateTime` parameters through `Database.Builder::timeZone(...)` and binds the resulting local timestamp. For known `TIMESTAMP WITH TIME ZONE` targets, Pyranid binds them as time-zone-aware timestamps. `ZonedDateTime` parameters are normalized to `OffsetDateTime` first and follow the same rules.
+
+If parameter metadata is unavailable or non-identifying, `Instant` and `OffsetDateTime` default to `TIMESTAMP_WITH_TIME_ZONE`. For drivers or proxies that cannot provide identifying parameter metadata when your target columns are zone-less `TIMESTAMP` values, configure `ambiguousTimestampBindingStrategy(TIMESTAMP_WITHOUT_TIME_ZONE)`.
 
 ### Special Parameters
 
