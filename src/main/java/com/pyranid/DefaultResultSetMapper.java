@@ -21,15 +21,12 @@ import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
 import javax.annotation.concurrent.ThreadSafe;
-import java.beans.BeanInfo;
-import java.beans.IntrospectionException;
-import java.beans.Introspector;
-import java.beans.PropertyDescriptor;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
@@ -139,11 +136,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				}
 			};
 	@NonNull
-	private final ClassValue<PropertyDescriptor[]> propertyDescriptorsCache =
+	private final ClassValue<WritableProperty[]> writablePropertiesCache =
 			new ClassValue<>() {
 				@Override
-				protected PropertyDescriptor[] computeValue(Class<?> type) {
-					return computePropertyDescriptors(type);
+				protected WritableProperty[] computeValue(Class<?> type) {
+					return computeWritableProperties(type);
 				}
 			};
 	@NonNull
@@ -377,19 +374,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		Map<String, TargetType> types = new HashMap<>();
 
 		// JavaBean setters (preserve generics like List<UUID>)
-		try {
-			BeanInfo beanInfo = Introspector.getBeanInfo(resultClass);
-			for (PropertyDescriptor propertyDescriptor : beanInfo.getPropertyDescriptors()) {
-				Method writeMethod = propertyDescriptor.getWriteMethod();
-
-				if (writeMethod == null)
-					continue;
-
-				Type genericParameterType = writeMethod.getGenericParameterTypes()[0];
-				types.put(propertyDescriptor.getName(), TargetType.of(genericParameterType));
-			}
-		} catch (IntrospectionException e) {
-			throw new RuntimeException(format("Unable to introspect properties for %s", resultClass.getName()), e);
+		for (WritableProperty writableProperty : determineWritableProperties(resultClass)) {
+			Type genericParameterType = writableProperty.getWriteMethod().getGenericParameterTypes()[0];
+			types.put(writableProperty.getName(), TargetType.of(genericParameterType));
 		}
 
 		// Java records (preserve generics)
@@ -401,23 +388,102 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@NonNull
-	protected PropertyDescriptor[] determinePropertyDescriptors(@NonNull Class<?> resultClass) {
+	protected WritableProperty[] determineWritableProperties(@NonNull Class<?> resultClass) {
 		requireNonNull(resultClass);
 
-		return this.propertyDescriptorsCache.get(resultClass);
+		return this.writablePropertiesCache.get(resultClass);
 	}
 
 	@NonNull
-	private PropertyDescriptor[] computePropertyDescriptors(@NonNull Class<?> resultClass) {
+	private WritableProperty[] computeWritableProperties(@NonNull Class<?> resultClass) {
 		requireNonNull(resultClass);
 
-		try {
-			BeanInfo beanInfo = Introspector.getBeanInfo(resultClass);
-			PropertyDescriptor[] descriptors = beanInfo.getPropertyDescriptors();
-			return descriptors == null ? new PropertyDescriptor[0] : descriptors;
-		} catch (IntrospectionException e) {
-			throw new RuntimeException(format("Unable to introspect properties for %s", resultClass.getName()), e);
+		List<WritableProperty> discoveredProperties = new ArrayList<>();
+
+		for (Method method : resultClass.getMethods()) {
+			String propertyName = propertyNameForSetter(method).orElse(null);
+
+			if (propertyName != null)
+				discoveredProperties.add(new WritableProperty(propertyName, method));
 		}
+
+		discoveredProperties.sort((left, right) -> {
+			int propertyNameComparison = left.getName().compareTo(right.getName());
+			if (propertyNameComparison != 0)
+				return propertyNameComparison;
+
+			int declaringClassComparison = Integer.compare(
+					declaringClassDistance(resultClass, left.getWriteMethod().getDeclaringClass()),
+					declaringClassDistance(resultClass, right.getWriteMethod().getDeclaringClass()));
+			if (declaringClassComparison != 0)
+				return declaringClassComparison;
+
+			return methodSignature(left.getWriteMethod()).compareTo(methodSignature(right.getWriteMethod()));
+		});
+
+		Map<String, WritableProperty> propertiesByName = new HashMap<>();
+		for (WritableProperty discoveredProperty : discoveredProperties)
+			propertiesByName.putIfAbsent(discoveredProperty.getName(), discoveredProperty);
+
+		List<WritableProperty> writableProperties = new ArrayList<>(propertiesByName.values());
+		writableProperties.sort((left, right) -> left.getName().compareTo(right.getName()));
+
+		return writableProperties.toArray(WritableProperty[]::new);
+	}
+
+	@NonNull
+	private Optional<String> propertyNameForSetter(@NonNull Method method) {
+		requireNonNull(method);
+
+		if (method.isBridge() || method.isSynthetic())
+			return Optional.empty();
+		if (Modifier.isStatic(method.getModifiers()))
+			return Optional.empty();
+		if (!method.getName().startsWith("set") || method.getName().length() <= 3)
+			return Optional.empty();
+		if (method.getParameterCount() != 1)
+			return Optional.empty();
+		if (method.getReturnType() != Void.TYPE)
+			return Optional.empty();
+
+		return Optional.of(decapitalizeJavaBeansPropertyName(method.getName().substring(3)));
+	}
+
+	@NonNull
+	private String decapitalizeJavaBeansPropertyName(@NonNull String propertyName) {
+		requireNonNull(propertyName);
+
+		if (propertyName.length() > 1 && Character.isUpperCase(propertyName.charAt(0)) && Character.isUpperCase(propertyName.charAt(1)))
+			return propertyName;
+
+		char[] chars = propertyName.toCharArray();
+		chars[0] = Character.toLowerCase(chars[0]);
+		return new String(chars);
+	}
+
+	private int declaringClassDistance(@NonNull Class<?> resultClass,
+																		 @NonNull Class<?> declaringClass) {
+		requireNonNull(resultClass);
+		requireNonNull(declaringClass);
+
+		int distance = 0;
+		for (Class<?> current = resultClass; current != null; current = current.getSuperclass()) {
+			if (current == declaringClass)
+				return distance;
+
+			++distance;
+		}
+
+		return Integer.MAX_VALUE;
+	}
+
+	@NonNull
+	private String methodSignature(@NonNull Method method) {
+		requireNonNull(method);
+
+		return format("%s(%s)", method.getName(), asList(method.getParameterTypes()).stream()
+				.map(Class::getName)
+				.collect(joining(",")));
 	}
 
 	@NonNull
@@ -441,11 +507,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		Map<String, Set<String>> columnLabelAliasesByPropertyName = determineColumnLabelAliasesByPropertyName(resultClass);
 		Map<String, Set<String>> normalizedLabelsByPropertyName = new HashMap<>();
 
-		for (PropertyDescriptor propertyDescriptor : determinePropertyDescriptors(resultClass)) {
-			if (propertyDescriptor.getWriteMethod() == null)
-				continue;
-
-			String propertyName = propertyDescriptor.getName();
+		for (WritableProperty writableProperty : determineWritableProperties(resultClass)) {
+			String propertyName = writableProperty.getName();
 			Set<String> baseNames = columnLabelAliasesByPropertyName.get(propertyName);
 			if (baseNames == null || baseNames.isEmpty())
 				baseNames = Set.of(propertyName);
@@ -1110,7 +1173,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		Class<T> resultSetRowType = statementContext.getResultSetRowType().get();
 
 		T object = instanceProvider.provide(statementContext, resultSetRowType);
-		PropertyDescriptor[] propertyDescriptors = determinePropertyDescriptors(resultSetRowType);
+		WritableProperty[] writableProperties = determineWritableProperties(resultSetRowType);
 		ColumnLabelMaps columnLabelMaps = extractColumnLabelsToValues(statementContext, resultSet, resultSetMetaData);
 		Map<String, Object> columnLabelsToValues = columnLabelMaps.getValuesByLabel();
 		Map<String, Integer> columnLabelsToIndexes = columnLabelMaps.getIndexesByLabel();
@@ -1119,20 +1182,19 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		// Compute once per class (generic-aware)
 		Map<String, TargetType> propertyTargetTypes = determinePropertyTargetTypes(resultSetRowType);
 
-		for (PropertyDescriptor propertyDescriptor : propertyDescriptors) {
-			Method writeMethod = propertyDescriptor.getWriteMethod();
-			if (writeMethod == null) continue;
+		for (WritableProperty writableProperty : writableProperties) {
+			Method writeMethod = writableProperty.getWriteMethod();
 
 			Parameter parameter = writeMethod.getParameters()[0];
 			Class<?> writeMethodParameterType = writeMethod.getParameterTypes()[0];
 
 			// Pull in property names, taking into account any aliases defined by @DatabaseColumn
-			Set<String> propertyNames = normalizedColumnLabelsByPropertyName.get(propertyDescriptor.getName());
+			Set<String> propertyNames = normalizedColumnLabelsByPropertyName.get(writableProperty.getName());
 			if (propertyNames == null || propertyNames.isEmpty())
-				propertyNames = databaseColumnNamesForPropertyName(propertyDescriptor.getName());
+				propertyNames = databaseColumnNamesForPropertyName(writableProperty.getName());
 
 			// Precise TargetType for this property (generic-aware)
-			TargetType targetType = propertyTargetTypes.get(propertyDescriptor.getName());
+			TargetType targetType = propertyTargetTypes.get(writableProperty.getName());
 			if (targetType == null) targetType = TargetType.of(parameter.getParameterizedType());
 
 			List<String> orderedPropertyNames = new ArrayList<>(propertyNames.size());
@@ -1160,7 +1222,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				// It's considered programmer error to have a NULL value in the ResultSet and map it to a primitive (which does not support null)
 				if (value == null && writeMethodParameterType.isPrimitive())
 					throw new DatabaseException(format("Column '%s' is NULL but bean property '%s' of %s is primitive (%s). Use a non-primitive type or COALESCE/CAST in SQL.",
-							propertyName, propertyDescriptor.getName(), resultSetRowType.getSimpleName(), writeMethodParameterType.getSimpleName()));
+							propertyName, writableProperty.getName(), resultSetRowType.getSimpleName(), writeMethodParameterType.getSimpleName()));
 
 				Class<?> checkedType = boxedClass(writeMethodParameterType);
 
@@ -1170,7 +1232,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 							format(
 									"Property '%s' of %s has a write method of type %s, but the ResultSet type %s does not match. "
 											+ "Consider providing a %s to %s to detect instances of %s and convert them to %s",
-									propertyDescriptor.getName(), resultSetRowType, writeMethodParameterType, resultSetTypeDescription,
+									writableProperty.getName(), resultSetRowType, writeMethodParameterType, resultSetTypeDescription,
 									CustomColumnMapper.class.getSimpleName(), DefaultResultSetMapper.class.getSimpleName(), resultSetTypeDescription, writeMethodParameterType));
 				}
 
@@ -1812,6 +1874,30 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		return this.normalizationLocale;
 	}
 
+	@ThreadSafe
+	protected static final class WritableProperty {
+		@NonNull
+		private final String name;
+		@NonNull
+		private final Method writeMethod;
+
+		private WritableProperty(@NonNull String name,
+														 @NonNull Method writeMethod) {
+			this.name = requireNonNull(name);
+			this.writeMethod = requireNonNull(writeMethod);
+		}
+
+		@NonNull
+		protected String getName() {
+			return this.name;
+		}
+
+		@NonNull
+		protected Method getWriteMethod() {
+			return this.writeMethod;
+		}
+	}
+
 	/**
 	 * The result of attempting to map a {@link ResultSet} to a "standard" type like primitive or {@link UUID}.
 	 *
@@ -2277,11 +2363,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		// bean: property -> setter handle
 		final Map<String, MethodHandle> setterByProp = new HashMap<>();
 		if (!isRecord) {
-			BeanInfo beanInfo = Introspector.getBeanInfo(resultClass);
-			for (PropertyDescriptor pd : beanInfo.getPropertyDescriptors()) {
-				Method w = pd.getWriteMethod();
-				if (w != null) setterByProp.put(pd.getName(), lookup.unreflect(w));
-			}
+			for (WritableProperty writableProperty : determineWritableProperties(resultClass))
+				setterByProp.put(writableProperty.getName(), lookup.unreflect(writableProperty.getWriteMethod()));
 		}
 
 		// Union of all writable property names

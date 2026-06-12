@@ -235,6 +235,18 @@ public class DatabaseTests {
 		}
 	}
 
+	public static class AcronymPropertyHolder {
+		private String URL;
+
+		public String getURL() {
+			return this.URL;
+		}
+
+		public void setURL(String URL) {
+			this.URL = URL;
+		}
+	}
+
 	private static final class TestError extends Error {
 		private TestError(String message) {
 			super(message);
@@ -274,6 +286,21 @@ public class DatabaseTests {
 				.orElseThrow(() -> new AssertionError("Expected a result"));
 
 		Assertions.assertEquals("Employee One", employee.getDisplayName(), "Didn't detect DB column name override on superclass field");
+	}
+
+	@Test
+	public void testAcronymJavaBeanPropertyNames() {
+		for (Boolean planCachingEnabled : List.of(false, true)) {
+			Database database = Database.withDataSource(createInMemoryDataSource(format("testAcronymJavaBeanPropertyNames%s", planCachingEnabled)))
+					.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(planCachingEnabled).build())
+					.build();
+
+			AcronymPropertyHolder holder = database.query("SELECT 'https://example.test' AS URL FROM (VALUES (0)) AS t(x)")
+					.fetchObject(AcronymPropertyHolder.class)
+					.orElseThrow();
+
+			Assertions.assertEquals("https://example.test", holder.getURL());
+		}
 	}
 
 	@Test
