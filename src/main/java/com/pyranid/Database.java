@@ -98,6 +98,8 @@ public final class Database {
 	@NonNull
 	private final ZoneId timeZone;
 	@NonNull
+	private final AmbiguousTimestampBindingStrategy ambiguousTimestampBindingStrategy;
+	@NonNull
 	private final InstanceProvider instanceProvider;
 	@NonNull
 	private final PreparedStatementBinder preparedStatementBinder;
@@ -126,6 +128,9 @@ public final class Database {
 		this.databaseType = new AtomicReference<>(builder.databaseType);
 		this.databaseTypeDetectionConnectionHolder = new ThreadLocal<>();
 		this.timeZone = builder.timeZone == null ? ZoneId.systemDefault() : builder.timeZone;
+		this.ambiguousTimestampBindingStrategy = builder.ambiguousTimestampBindingStrategy == null
+				? AmbiguousTimestampBindingStrategy.TIMESTAMP_WITH_TIME_ZONE
+				: builder.ambiguousTimestampBindingStrategy;
 		this.instanceProvider = builder.instanceProvider == null ? new InstanceProvider() {} : builder.instanceProvider;
 		this.preparedStatementBinder = builder.preparedStatementBinder == null ? PreparedStatementBinder.withDefaultConfiguration() : builder.preparedStatementBinder;
 		this.resultSetMapper = builder.resultSetMapper == null ? ResultSetMapper.withDefaultConfiguration() : builder.resultSetMapper;
@@ -2421,6 +2426,18 @@ public final class Database {
 	}
 
 	/**
+	 * How should Pyranid bind {@link java.time.Instant} and {@link java.time.OffsetDateTime} parameters when JDBC
+	 * parameter metadata cannot identify whether the target is {@code TIMESTAMP} or {@code TIMESTAMP WITH TIME ZONE}?
+	 *
+	 * @return behavior to use when timestamp target metadata is unavailable or non-identifying
+	 * @since 4.2.0
+	 */
+	@NonNull
+	public AmbiguousTimestampBindingStrategy getAmbiguousTimestampBindingStrategy() {
+		return this.ambiguousTimestampBindingStrategy;
+	}
+
+	/**
 	 * Useful for single-shot "utility" calls that operate outside of normal query operations, e.g. pulling DB metadata.
 	 * <p>
 	 * Example: {@link #readDatabaseMetaData(DatabaseMetaDataReader)}.
@@ -3197,6 +3214,8 @@ public final class Database {
 		@Nullable
 		private ZoneId timeZone;
 		@Nullable
+		private AmbiguousTimestampBindingStrategy ambiguousTimestampBindingStrategy;
+		@Nullable
 		private InstanceProvider instanceProvider;
 		@Nullable
 		private PreparedStatementBinder preparedStatementBinder;
@@ -3232,9 +3251,45 @@ public final class Database {
 			return this;
 		}
 
+		/**
+		 * Configures the database time zone Pyranid should use when converting zone-less temporal values.
+		 * <p>
+		 * This value is used when mapping {@code TIMESTAMP} values to instant-based Java types, and when binding
+		 * {@link java.time.Instant} or {@link java.time.OffsetDateTime} parameters to known {@code TIMESTAMP}
+		 * targets. It also applies to ambiguous timestamp bindings if
+		 * {@link #ambiguousTimestampBindingStrategy(AmbiguousTimestampBindingStrategy)} is configured with
+		 * {@link AmbiguousTimestampBindingStrategy#TIMESTAMP_WITHOUT_TIME_ZONE}.
+		 * <p>
+		 * If {@code null}, Pyranid uses {@link ZoneId#systemDefault()}.
+		 *
+		 * @param timeZone database time zone to use, or {@code null} for the JVM default zone
+		 * @return this {@code Builder}, for chaining
+		 * @since 3.0.0
+		 */
 		@NonNull
 		public Builder timeZone(@Nullable ZoneId timeZone) {
 			this.timeZone = timeZone;
+			return this;
+		}
+
+		/**
+		 * Configures how Pyranid binds {@link java.time.Instant} and {@link java.time.OffsetDateTime} parameters
+		 * when JDBC parameter metadata cannot identify whether the target is {@code TIMESTAMP} or
+		 * {@code TIMESTAMP WITH TIME ZONE}.
+		 * <p>
+		 * The default, {@link AmbiguousTimestampBindingStrategy#TIMESTAMP_WITH_TIME_ZONE}, is appropriate for
+		 * timestamp-with-time-zone targets. Use
+		 * {@link AmbiguousTimestampBindingStrategy#TIMESTAMP_WITHOUT_TIME_ZONE} for drivers or proxies that
+		 * cannot provide identifying parameter metadata when your target columns are zone-less {@code TIMESTAMP}
+		 * values that should be interpreted in {@link #timeZone(ZoneId)}.
+		 *
+		 * @param ambiguousTimestampBindingStrategy strategy to use, or {@code null} for the default
+		 * @return this {@code Builder}, for chaining
+		 * @since 4.2.0
+		 */
+		@NonNull
+		public Builder ambiguousTimestampBindingStrategy(@Nullable AmbiguousTimestampBindingStrategy ambiguousTimestampBindingStrategy) {
+			this.ambiguousTimestampBindingStrategy = ambiguousTimestampBindingStrategy;
 			return this;
 		}
 

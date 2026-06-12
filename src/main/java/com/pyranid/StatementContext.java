@@ -55,6 +55,8 @@ public final class StatementContext<T> {
 	@NonNull
 	private final ZoneId timeZone;
 	@NonNull
+	private final AmbiguousTimestampBindingStrategy ambiguousTimestampBindingStrategy;
+	@NonNull
 	private final Queue<@NonNull AutoCloseable> cleanupOperations;
 
 	protected StatementContext(@NonNull Builder builder) {
@@ -67,12 +69,13 @@ public final class StatementContext<T> {
 		this.resultSetRowType = builder.resultSetRowType;
 		this.databaseTypeSupplier = builder.databaseTypeSupplier;
 		this.timeZone = builder.timeZone;
+		this.ambiguousTimestampBindingStrategy = builder.ambiguousTimestampBindingStrategy;
 		this.cleanupOperations = new ConcurrentLinkedQueue<>();
 	}
 
 	@Override
 	public int hashCode() {
-		return Objects.hash(getStatement(), getParameters(), getResultSetRowType(), getDatabaseType(), getTimeZone());
+		return Objects.hash(getStatement(), getParameters(), getResultSetRowType(), getDatabaseType(), getTimeZone(), getAmbiguousTimestampBindingStrategy());
 	}
 
 	@Override
@@ -89,7 +92,8 @@ public final class StatementContext<T> {
 				&& Objects.equals(statementContext.getParameters(), getParameters())
 				&& Objects.equals(statementContext.getResultSetRowType(), getResultSetRowType())
 				&& Objects.equals(statementContext.getDatabaseType(), getDatabaseType())
-				&& Objects.equals(statementContext.getTimeZone(), getTimeZone());
+				&& Objects.equals(statementContext.getTimeZone(), getTimeZone())
+				&& Objects.equals(statementContext.getAmbiguousTimestampBindingStrategy(), getAmbiguousTimestampBindingStrategy());
 	}
 
 	@Override
@@ -108,6 +112,7 @@ public final class StatementContext<T> {
 
 		components.add(format("databaseType=%s", getDatabaseType().name()));
 		components.add(format("timeZone=%s", getTimeZone().getId()));
+		components.add(format("ambiguousTimestampBindingStrategy=%s", getAmbiguousTimestampBindingStrategy().name()));
 
 		return format("%s{%s}", getClass().getSimpleName(), components.stream().collect(Collectors.joining(", ")));
 	}
@@ -135,6 +140,18 @@ public final class StatementContext<T> {
 	@NonNull
 	public ZoneId getTimeZone() {
 		return this.timeZone;
+	}
+
+	/**
+	 * How should Pyranid bind {@link java.time.Instant} and {@link java.time.OffsetDateTime} parameters when JDBC
+	 * parameter metadata cannot identify whether the target is {@code TIMESTAMP} or {@code TIMESTAMP WITH TIME ZONE}?
+	 *
+	 * @return behavior to use when timestamp target metadata is unavailable or non-identifying
+	 * @since 4.2.0
+	 */
+	@NonNull
+	public AmbiguousTimestampBindingStrategy getAmbiguousTimestampBindingStrategy() {
+		return this.ambiguousTimestampBindingStrategy;
 	}
 
 	void addCleanupOperation(@NonNull AutoCloseable cleanupOperation) {
@@ -172,6 +189,8 @@ public final class StatementContext<T> {
 		private final Supplier<@NonNull DatabaseType> databaseTypeSupplier;
 		@NonNull
 		private final ZoneId timeZone;
+		@NonNull
+		private final AmbiguousTimestampBindingStrategy ambiguousTimestampBindingStrategy;
 		@Nullable
 		private List<@Nullable Object> parameters;
 		@Nullable
@@ -185,6 +204,7 @@ public final class StatementContext<T> {
 			this.statement = statement;
 			this.databaseTypeSupplier = database::getDatabaseType;
 			this.timeZone = database.getTimeZone();
+			this.ambiguousTimestampBindingStrategy = database.getAmbiguousTimestampBindingStrategy();
 		}
 
 		@NonNull

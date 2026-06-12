@@ -183,6 +183,7 @@ ZoneId timeZone = ZoneId.of("UTC");
 
 Database customDatabase = Database.withDataSource(dataSource)
   .timeZone(timeZone)
+  .ambiguousTimestampBindingStrategy(TIMESTAMP_WITH_TIME_ZONE)
   .instanceProvider(instanceProvider)
   .resultSetMapper(resultSetMapper)
   .preparedStatementBinder(preparedStatementBinder)
@@ -917,6 +918,8 @@ Notes:
 * [`Locale`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Locale.html) (IETF BCP 47 "language tag" format)
 * [`Currency`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Currency.html)
 
+Temporal binding uses JDBC parameter metadata when available to distinguish `TIMESTAMP` from `TIMESTAMP WITH TIME ZONE` targets. If metadata is unavailable or non-identifying, `Instant` and `OffsetDateTime` default to timestamp-with-time-zone binding. For drivers or proxies that cannot provide identifying parameter metadata when your target columns are zone-less `TIMESTAMP` values, configure `ambiguousTimestampBindingStrategy(TIMESTAMP_WITHOUT_TIME_ZONE)`; Pyranid will convert those parameters through `Database.Builder::timeZone(...)` and bind them as `TIMESTAMP`.
+
 ### Special Parameters
 
 Special support is provided for IN-list, JSON/JSONB, vector, and SQL ARRAY parameters.
@@ -1390,6 +1393,8 @@ Artifact signing and Maven Central publishing are isolated in the `release` prof
 Pyranid is a zero-runtime-dependency library, but applications still need to provide the JDBC driver for their database. PostgreSQL-specific helpers such as JSONB, `text[]`, and pgvector parameters require pgjdbc on the application classpath; pgvector also requires the database extension to be installed.
 
 [`Database.build()`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#build()) does not validate connectivity or inspect JDBC metadata. If you do not configure [`Database.Builder::databaseType(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#databaseType(com.pyranid.DatabaseType)), Pyranid detects the database type lazily when code first requests database-type-sensitive behavior. Calling [`Database::getDatabaseType()`](https://javadoc.pyranid.com/com/pyranid/Database.html#getDatabaseType()) outside an active query may acquire a fresh connection; configure `databaseType(...)` explicitly when using small pools, database proxies, or startup paths that must avoid surprise connection checkouts.
+
+`Database.Builder::timeZone(...)` controls how zone-less `TIMESTAMP` values are interpreted when mapping to instant-based Java types. It also controls binding if `ambiguousTimestampBindingStrategy(TIMESTAMP_WITHOUT_TIME_ZONE)` is enabled for drivers that cannot report identifying timestamp parameter metadata.
 
 A [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) instance has one effective [`DatabaseType`](https://javadoc.pyranid.com/com/pyranid/DatabaseType.html). If one application talks to multiple database products, create one `Database` per product and configure each explicitly.
 

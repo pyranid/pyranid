@@ -186,9 +186,10 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		if (normalizedParameter instanceof OffsetDateTime offsetDateTime) {
-			ParameterSqlType sqlType = determineParameterSqlType(preparedStatement, parameterIndex).orElse(ParameterSqlType.UNKNOWN);
+			Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
+			ParameterSqlType sqlType = sqlTypeOptional.orElse(ParameterSqlType.UNKNOWN);
 
-			if (sqlType.isTimestampWithoutTimeZone()) {
+			if (sqlType.isTimestampWithoutTimeZone() || shouldBindAsTimestampWithoutTimeZone(statementContext, sqlTypeOptional)) {
 				// Coerce to DB zone and drop the offset.
 				LocalDateTime localDateTime = offsetDateTime.atZoneSameInstant(statementContext.getTimeZone()).toLocalDateTime();
 				if (!trySetObject(preparedStatement, parameterIndex, localDateTime, Types.TIMESTAMP))
@@ -204,17 +205,18 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 				return;
 			}
 
-			// Unknown target: prefer preserving the offset/instant.
-			if (!trySetObject(preparedStatement, parameterIndex, offsetDateTime))
+			// Ambiguous target: default to TIMESTAMP WITH TIME ZONE.
+			if (!trySetObject(preparedStatement, parameterIndex, offsetDateTime, Types.TIMESTAMP_WITH_TIMEZONE))
 				preparedStatement.setTimestamp(parameterIndex, java.sql.Timestamp.from(offsetDateTime.toInstant()));
 
 			return;
 		}
 
 		if (normalizedParameter instanceof Instant instant) {
-			ParameterSqlType sqlType = determineParameterSqlType(preparedStatement, parameterIndex).orElse(ParameterSqlType.UNKNOWN);
+			Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(preparedStatement, parameterIndex);
+			ParameterSqlType sqlType = sqlTypeOptional.orElse(ParameterSqlType.UNKNOWN);
 
-			if (sqlType.isTimestampWithoutTimeZone()) {
+			if (sqlType.isTimestampWithoutTimeZone() || shouldBindAsTimestampWithoutTimeZone(statementContext, sqlTypeOptional)) {
 				LocalDateTime localDateTime = LocalDateTime.ofInstant(instant, statementContext.getTimeZone());
 
 				if (!trySetObject(preparedStatement, parameterIndex, localDateTime, Types.TIMESTAMP))
@@ -223,7 +225,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 				return;
 			}
 
-			// Default (and for TIMESTAMP WITH TIME ZONE): keep the instant.
+			// Ambiguous target: default to TIMESTAMP WITH TIME ZONE.
 			if (!trySetObject(preparedStatement, parameterIndex, OffsetDateTime.ofInstant(instant, ZoneOffset.UTC), Types.TIMESTAMP_WITH_TIMEZONE))
 				preparedStatement.setTimestamp(parameterIndex, java.sql.Timestamp.from(instant));
 
@@ -317,6 +319,14 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 		// Everything else
 		preparedStatement.setObject(parameterIndex, normalizedParameter);
+	}
+
+	private boolean shouldBindAsTimestampWithoutTimeZone(@NonNull StatementContext<?> statementContext,
+																											 @NonNull Optional<ParameterSqlType> sqlTypeOptional) {
+		requireNonNull(statementContext);
+		requireNonNull(sqlTypeOptional);
+		return statementContext.getAmbiguousTimestampBindingStrategy() == AmbiguousTimestampBindingStrategy.TIMESTAMP_WITHOUT_TIME_ZONE
+				&& (sqlTypeOptional.isEmpty() || sqlTypeOptional.get().isUnknown());
 	}
 
 	@NonNull
@@ -460,10 +470,22 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			return normalizedTypeName.contains("WITH TIME ZONE") || normalizedTypeName.contains("TIMESTAMPTZ");
 		}
 
-		private boolean isTimestampWithoutTimeZone() {
-			return getSqlType() == Types.TIMESTAMP && !isTimestampWithTimeZone();
+			private boolean isTimestampWithoutTimeZone() {
+				if (getSqlType() == Types.TIMESTAMP && !isTimestampWithTimeZone())
+					return true;
+
+				String typeName = this.typeName;
+
+				if (typeName == null)
+					return false;
+
+				return typeName.toUpperCase(Locale.ROOT).contains("TIMESTAMP") && !isTimestampWithTimeZone();
+			}
+
+			private boolean isUnknown() {
+				return getSqlType() == Types.OTHER && this.typeName == null;
+			}
 		}
-	}
 
 	private static void setNullWithFallback(@NonNull PreparedStatement preparedStatement,
 																					@NonNull Integer parameterIndex,
