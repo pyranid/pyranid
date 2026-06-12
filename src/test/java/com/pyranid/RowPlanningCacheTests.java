@@ -24,6 +24,10 @@ import org.junit.jupiter.api.Test;
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Proxy;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.Types;
 import java.time.OffsetTime;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -64,6 +68,68 @@ public class RowPlanningCacheTests {
 		return dataSource;
 	}
 
+	@NonNull
+	private ResultSet resultSetWithFreshMetaData(@NonNull AtomicInteger columnLabelCalls) {
+		requireNonNull(columnLabelCalls);
+
+		return (ResultSet) Proxy.newProxyInstance(ResultSet.class.getClassLoader(), new Class<?>[]{ResultSet.class},
+				(proxy, method, args) -> {
+					return switch (method.getName()) {
+						case "getMetaData" -> freshResultSetMetaData(columnLabelCalls);
+						case "getObject" -> 1;
+						case "wasNull" -> false;
+						case "toString" -> "ResultSet<fresh-metadata>";
+						default -> defaultValue(method.getReturnType());
+					};
+				});
+	}
+
+	@NonNull
+	private ResultSetMetaData freshResultSetMetaData(@NonNull AtomicInteger columnLabelCalls) {
+		requireNonNull(columnLabelCalls);
+
+		return (ResultSetMetaData) Proxy.newProxyInstance(ResultSetMetaData.class.getClassLoader(),
+				new Class<?>[]{ResultSetMetaData.class},
+				(proxy, method, args) -> {
+					return switch (method.getName()) {
+						case "getColumnCount" -> 1;
+						case "getColumnLabel" -> {
+							columnLabelCalls.incrementAndGet();
+							yield "id";
+						}
+						case "getColumnName" -> "id";
+						case "getColumnType" -> Types.INTEGER;
+						case "getColumnTypeName" -> "INTEGER";
+						case "toString" -> "ResultSetMetaData<fresh>";
+						default -> defaultValue(method.getReturnType());
+					};
+				});
+	}
+
+	private Object defaultValue(@NonNull Class<?> returnType) {
+		requireNonNull(returnType);
+
+		if (!returnType.isPrimitive())
+			return null;
+		if (returnType == boolean.class)
+			return false;
+		if (returnType == byte.class)
+			return (byte) 0;
+		if (returnType == short.class)
+			return (short) 0;
+		if (returnType == int.class)
+			return 0;
+		if (returnType == long.class)
+			return 0L;
+		if (returnType == float.class)
+			return 0.0f;
+		if (returnType == double.class)
+			return 0.0d;
+		if (returnType == char.class)
+			return '\0';
+		return null;
+	}
+
 	// ---------- Beans / Records used in tests ----------
 
 	public static class BeanWithPrimitive {
@@ -80,6 +146,14 @@ public class RowPlanningCacheTests {
 		public String getName() {return name;}
 
 		public void setName(String name) {this.name = name;}
+	}
+
+	public static class SignatureMemoRow {
+		private Integer id;
+
+		public Integer getId() {return id;}
+
+		public void setId(Integer id) {this.id = id;}
 	}
 
 	public static record RecWithPrimitive(int n) {}
@@ -231,6 +305,30 @@ public class RowPlanningCacheTests {
 		// Planned path should still route record construction through the InstanceProvider:
 		Assertions.assertEquals(1, provideRecordCalls.get(),
 				"InstanceProvider.provideRecord(...) should be invoked exactly once in the planned path");
+	}
+
+	@Test
+	public void testSchemaSignatureIsMemoizedPerResultSet_Planned() throws Exception {
+		DefaultResultSetMapper mapper = (DefaultResultSetMapper) ResultSetMapper.withPlanCachingEnabled(true).build();
+		Database db = Database.withDataSource(createInMemoryDataSource("schema_signature_memo"))
+				.databaseType(DatabaseType.GENERIC)
+				.build();
+		StatementContext<SignatureMemoRow> statementContext = StatementContext.<SignatureMemoRow>with(
+						Statement.of("schema-signature-memo", "SELECT id FROM t"), db)
+				.resultSetRowType(SignatureMemoRow.class)
+				.build();
+		AtomicInteger columnLabelCalls = new AtomicInteger();
+		ResultSet resultSet = resultSetWithFreshMetaData(columnLabelCalls);
+		InstanceProvider instanceProvider = new InstanceProvider() {};
+
+		for (int i = 0; i < 3; i++) {
+			SignatureMemoRow row = mapper.map(statementContext, resultSet, SignatureMemoRow.class, instanceProvider)
+					.orElseThrow();
+			Assertions.assertEquals(1, row.getId());
+		}
+
+		Assertions.assertEquals(2, columnLabelCalls.get(),
+				"Schema-signature and row-plan metadata should be read once per ResultSet, even if getMetaData() returns fresh objects");
 	}
 
 	// ---------- 3) Character standard type formatting bug ----------

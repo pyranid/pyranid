@@ -182,6 +182,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			};
 	@NonNull
 	private final Map<ResultSetMetaData, String> schemaSignatureByResultSetMetaData;
+	@NonNull
+	private final ThreadLocal<SchemaSignatureMemo> schemaSignatureMemo;
 
 	static {
 		WRAPPER_CLASSES_BY_PRIMITIVE_CLASS = Map.of(
@@ -494,6 +496,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		this.preferredColumnMapperCacheCapacity = builder.preferredColumnMapperCacheCapacity;
 		this.planCacheCapacity = builder.planCacheCapacity;
 		this.schemaSignatureByResultSetMetaData = Collections.synchronizedMap(new WeakHashMap<>());
+		this.schemaSignatureMemo = new ThreadLocal<>();
 	}
 
 	@NonNull
@@ -573,7 +576,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			if (standardTypeResult.isStandardType()) return standardTypeResult.getValue();
 
 			// Otherwise, use a per-schema row plan
-			String schemaSignature = schemaSignatureFor(statementContext, resultSetMetaData);
+			String schemaSignature = schemaSignatureFor(statementContext, resultSet, resultSetMetaData);
 			RowPlan<T> plan = buildPlan(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData, schemaSignature);
 			final boolean hasFanOut = plan.hasFanOut;
 			// Per-row raw cache: 1-based, size = columnCount + 1 (only when we have fan-out)
@@ -695,6 +698,24 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 	@NonNull
 	protected String schemaSignatureFor(@NonNull StatementContext<?> statementContext,
+																			@NonNull ResultSet resultSet,
+																			@NonNull ResultSetMetaData resultSetMetaData) throws SQLException {
+		requireNonNull(statementContext);
+		requireNonNull(resultSet);
+		requireNonNull(resultSetMetaData);
+
+		SchemaSignatureMemo memo = getSchemaSignatureMemo().get();
+
+		if (memo != null && memo.matches(resultSet))
+			return memo.getSchemaSignature();
+
+		String schemaSignature = schemaSignatureFor(statementContext, resultSetMetaData);
+		getSchemaSignatureMemo().set(new SchemaSignatureMemo(resultSet, schemaSignature));
+		return schemaSignature;
+	}
+
+	@NonNull
+	protected String schemaSignatureFor(@NonNull StatementContext<?> statementContext,
 																			@NonNull ResultSetMetaData resultSetMetaData) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(resultSetMetaData);
@@ -732,6 +753,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		return sig.toString();
+	}
+
+	@NonNull
+	private ThreadLocal<SchemaSignatureMemo> getSchemaSignatureMemo() {
+		return this.schemaSignatureMemo;
 	}
 
 	@SuppressWarnings("unchecked")
@@ -2188,6 +2214,29 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 	}
 
+	protected static final class SchemaSignatureMemo {
+		@NonNull
+		private final WeakReference<ResultSet> resultSetReference;
+		@NonNull
+		private final String schemaSignature;
+
+		SchemaSignatureMemo(@NonNull ResultSet resultSet,
+												@NonNull String schemaSignature) {
+			this.resultSetReference = new WeakReference<>(requireNonNull(resultSet));
+			this.schemaSignature = requireNonNull(schemaSignature);
+		}
+
+		boolean matches(@NonNull ResultSet resultSet) {
+			requireNonNull(resultSet);
+			return this.resultSetReference.get() == resultSet;
+		}
+
+		@NonNull
+		String getSchemaSignature() {
+			return this.schemaSignature;
+		}
+	}
+
 	@SuppressWarnings({"unchecked", "rawtypes"})
 	@NonNull
 	protected <T> RowPlan<T> buildPlan(@NonNull StatementContext<T> ctx,
@@ -2203,11 +2252,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(resultSetMetaData);
 		requireNonNull(schemaSignature);
 
-		int cols = resultSetMetaData.getColumnCount();
-
 		Map<String, RowPlan<?>> planCache = getRowPlanningCacheForResultClass(resultClass);
 		RowPlan<?> cached = planCache.get(schemaSignature);
 		if (cached != null) return (RowPlan<T>) cached;
+
+		int cols = resultSetMetaData.getColumnCount();
 
 		// Precompute property metadata for this class
 		Map<String, TargetType> propertyTargetTypes = determinePropertyTargetTypes(resultClass);
