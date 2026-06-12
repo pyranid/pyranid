@@ -40,6 +40,9 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.logging.Handler;
+import java.util.logging.Level;
+import java.util.logging.LogRecord;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
@@ -358,17 +361,40 @@ public class MetricsCollectorTests {
 
 	@Test
 	public void collectorFailuresDoNotAffectQueriesTransactionsOrStreams() {
-		Database database = Database.withDataSource(createInMemoryDataSource("metrics_failure_containment"))
-				.metricsCollector(throwingMetricsCollector())
-				.build();
+		Logger logger = Logger.getLogger(MetricsCollectorDispatcher.class.getName());
+		RecordingLogHandler logHandler = new RecordingLogHandler();
+		Level previousLevel = logger.getLevel();
+		boolean previousUseParentHandlers = logger.getUseParentHandlers();
 
-		Assertions.assertDoesNotThrow(() -> {
-			database.query("CREATE TABLE t (id INT)").execute();
-			database.transaction(() -> database.query("INSERT INTO t VALUES (1)").execute());
-			List<Integer> rows = database.query("SELECT id FROM t")
-					.fetchStream(Integer.class, stream -> stream.collect(Collectors.toList()));
-			Assertions.assertEquals(List.of(1), rows);
-		});
+		logger.setUseParentHandlers(false);
+		logger.setLevel(Level.FINE);
+		logHandler.setLevel(Level.FINE);
+		logger.addHandler(logHandler);
+
+		try {
+			Database database = Database.withDataSource(createInMemoryDataSource("metrics_failure_containment"))
+					.metricsCollector(throwingMetricsCollector())
+					.build();
+
+			Assertions.assertDoesNotThrow(() -> {
+				database.query("CREATE TABLE t (id INT)").execute();
+				database.transaction(() -> database.query("INSERT INTO t VALUES (1)").execute());
+				List<Integer> rows = database.query("SELECT id FROM t")
+						.fetchStream(Integer.class, stream -> stream.collect(Collectors.toList()));
+				Assertions.assertEquals(List.of(1), rows);
+			});
+
+			Assertions.assertTrue(logHandler.records().stream().anyMatch(record ->
+							Level.FINE.equals(record.getLevel())
+									&& "Metrics collector failure ignored".equals(record.getMessage())
+									&& record.getThrown() instanceof AssertionError
+									&& record.getThrown().getMessage().startsWith("metrics failure: ")),
+					"Expected ignored metrics collector failures to be logged at FINE");
+		} finally {
+			logger.removeHandler(logHandler);
+			logger.setLevel(previousLevel);
+			logger.setUseParentHandlers(previousUseParentHandlers);
+		}
 	}
 
 	@Test
@@ -683,6 +709,35 @@ public class MetricsCollectorTests {
 		Object invoke(@NonNull ResultSet delegate,
 									@NonNull Method method,
 									Object[] args) throws Throwable;
+	}
+
+	private static final class RecordingLogHandler extends Handler {
+		@NonNull
+		private final List<LogRecord> records;
+
+		private RecordingLogHandler() {
+			this.records = new ArrayList<>();
+		}
+
+		@Override
+		public void publish(@NonNull LogRecord record) {
+			this.records.add(record);
+		}
+
+		@Override
+		public void flush() {
+			// No buffered state.
+		}
+
+		@Override
+		public void close() {
+			// No resources to release.
+		}
+
+		@NonNull
+		private List<LogRecord> records() {
+			return this.records;
+		}
 	}
 
 	private static final class WrappingDataSource implements DataSource {

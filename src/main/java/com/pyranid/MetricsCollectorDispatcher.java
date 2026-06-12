@@ -21,12 +21,16 @@ import org.jspecify.annotations.Nullable;
 
 import javax.annotation.concurrent.ThreadSafe;
 import java.time.Duration;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+import static java.util.Objects.requireNonNull;
 
 /**
  * Package-local dispatcher that applies the metrics disabled fast path and failure-containment contract.
  * <p>
- * Every dispatch method checks whether metrics are enabled before doing work and silently drops collector failures so
- * observability cannot affect JDBC behavior.
+ * Every dispatch method checks whether metrics are enabled before doing work and contains collector failures so
+ * observability cannot affect JDBC behavior. Collector failures are logged at {@link Level#FINE}.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 4.2.0
@@ -35,10 +39,13 @@ import java.time.Duration;
 final class MetricsCollectorDispatcher {
 	@NonNull
 	private final MetricsCollector metricsCollector;
+	@NonNull
+	private final Logger logger;
 	private final boolean enabled;
 
 	MetricsCollectorDispatcher(@Nullable MetricsCollector metricsCollector) {
 		this.metricsCollector = metricsCollector == null ? MetricsCollector.disabledInstance() : metricsCollector;
+		this.logger = Logger.getLogger(MetricsCollectorDispatcher.class.getName());
 		this.enabled = !(this.metricsCollector instanceof DisabledMetricsCollector);
 	}
 
@@ -427,7 +434,8 @@ final class MetricsCollectorDispatcher {
 		}
 	}
 
-	private void ignoreMetricsFailure(@NonNull Throwable ignored) {
-		// Metrics collection is observational and must not affect database behavior.
+	private void ignoreMetricsFailure(@NonNull Throwable throwable) {
+		requireNonNull(throwable);
+		this.logger.log(Level.FINE, "Metrics collector failure ignored", throwable);
 	}
 }
