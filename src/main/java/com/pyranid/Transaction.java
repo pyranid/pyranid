@@ -279,6 +279,10 @@ public final class Transaction {
 	 * or
 	 * {@link TransactionResult#IN_DOUBT} if the commit call failed and Pyranid cannot prove whether the database
 	 * committed or rolled back.
+	 * <p>
+	 * If the operation throws, Pyranid wraps the thrown value in a {@link PostTransactionOperationException}. If the
+	 * transaction already has a primary failure, the wrapper is suppressed onto that primary failure; otherwise,
+	 * {@link Database#transaction(TransactionalOperation)} throws the wrapper directly.
 	 *
 	 * @param postTransactionOperation the post-transaction operation to add
 	 */

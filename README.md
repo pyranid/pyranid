@@ -608,6 +608,8 @@ Post-transaction callbacks receive a [`TransactionResult`](https://javadoc.pyran
 * [`ROLLED_BACK`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#ROLLED_BACK) if the transaction completed on the rollback path before commit was attempted
 * [`IN_DOUBT`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#IN_DOUBT) if Pyranid attempted commit but the commit call failed, so the final database outcome is unknown
 
+Post-transaction callbacks are fail-fast. If a callback throws, Pyranid wraps the failure in a [`PostTransactionOperationException`](https://javadoc.pyranid.com/com/pyranid/PostTransactionOperationException.html). When there is no primary transaction failure, `transaction()` throws this exception directly. When the transaction operation or commit already failed, Pyranid suppresses it onto the primary exception. Check [`getTransactionResult()`](https://javadoc.pyranid.com/com/pyranid/PostTransactionOperationException.html#getTransactionResult()) to distinguish a successful commit followed by callback failure from a failed or in-doubt transaction.
+
 ## ResultSet Mapping
 
 The out-of-the-box [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) implementation supports user-defined types that follow the JavaBean getter/setter conventions, primitives, and some additional common JDK types.

@@ -78,9 +78,52 @@ public class ExceptionSuppressionTests {
 		});
 
 		Assertions.assertSame(boom, ex, "Expected original exception to be thrown");
-		Assertions.assertTrue(
-				Arrays.stream(ex.getSuppressed()).anyMatch(suppressed -> "post".equals(suppressed.getMessage())),
-				"Expected post-transaction failure to be suppressed");
+		PostTransactionOperationException suppressed = suppressedPostTransactionOperationException(ex);
+		Assertions.assertEquals(TransactionResult.ROLLED_BACK, suppressed.getTransactionResult());
+		Assertions.assertSame(postFailure, suppressed.getCause());
+	}
+
+	@Test
+	public void testPostTransactionOperationExceptionThrownWhenOperationSucceeds() {
+		Database db = Database.withDataSource(createInMemoryDataSource("txn_post_failure_after_commit")).build();
+		RuntimeException postFailure = new RuntimeException("post");
+
+		db.query("CREATE TABLE t (id INT)").execute();
+
+		PostTransactionOperationException ex = Assertions.assertThrows(PostTransactionOperationException.class, () ->
+				db.transaction(() -> {
+					db.currentTransaction().orElseThrow()
+							.addPostTransactionOperation(result -> {
+								throw postFailure;
+							});
+					db.query("INSERT INTO t VALUES (1)").execute();
+				}));
+
+		Assertions.assertEquals(TransactionResult.COMMITTED, ex.getTransactionResult());
+		Assertions.assertSame(postFailure, ex.getCause());
+		Assertions.assertEquals(1L, db.query("SELECT COUNT(*) FROM t").fetchObject(Long.class).orElseThrow());
+	}
+
+	@Test
+	public void testPostTransactionOperationExceptionSuppressedWhenCommitIsInDoubt() {
+		Database db = Database.withDataSource(createCommitFailingDataSource("txn_post_failure_after_commit_failure")).build();
+		RuntimeException postFailure = new RuntimeException("post");
+
+		db.query("CREATE TABLE t (id INT)").execute();
+
+		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
+				db.transaction(() -> {
+					db.currentTransaction().orElseThrow()
+							.addPostTransactionOperation(result -> {
+								throw postFailure;
+							});
+					db.query("INSERT INTO t VALUES (1)").execute();
+				}));
+
+		Assertions.assertTrue(ex.getMessage().contains("Unable to commit transaction"));
+		PostTransactionOperationException suppressed = suppressedPostTransactionOperationException(ex);
+		Assertions.assertEquals(TransactionResult.IN_DOUBT, suppressed.getTransactionResult());
+		Assertions.assertSame(postFailure, suppressed.getCause());
 	}
 
 	@Test
@@ -221,11 +264,22 @@ public class ExceptionSuppressionTests {
 		requireNonNull(throwable);
 
 		Assertions.assertTrue(
-				Arrays.stream(throwable.getSuppressed()).anyMatch(suppressed ->
-						"Unable to roll back transaction".equals(suppressed.getMessage())
-								&& suppressed.getCause() != null
-								&& "rollback failed".equals(suppressed.getCause().getMessage())),
+					Arrays.stream(throwable.getSuppressed()).anyMatch(suppressed ->
+							"Unable to roll back transaction".equals(suppressed.getMessage())
+									&& suppressed.getCause() != null
+									&& "rollback failed".equals(suppressed.getCause().getMessage())),
 				"Expected suppressed rollback failure");
+	}
+
+	@NonNull
+	private PostTransactionOperationException suppressedPostTransactionOperationException(@NonNull Throwable throwable) {
+		requireNonNull(throwable);
+
+		return Arrays.stream(throwable.getSuppressed())
+				.filter(PostTransactionOperationException.class::isInstance)
+				.map(PostTransactionOperationException.class::cast)
+				.findFirst()
+				.orElseThrow(() -> new AssertionError("Expected suppressed post-transaction operation failure"));
 	}
 
 	@NonNull
@@ -242,20 +296,32 @@ public class ExceptionSuppressionTests {
 
 	@NonNull
 	private DataSource createRollbackFailingDataSource(@NonNull String databaseName) {
+		return createConnectionWrappingDataSource(databaseName, this::connectionThatThrowsOnRollback);
+	}
+
+	@NonNull
+	private DataSource createCommitFailingDataSource(@NonNull String databaseName) {
+		return createConnectionWrappingDataSource(databaseName, this::connectionThatThrowsOnCommit);
+	}
+
+	@NonNull
+	private DataSource createConnectionWrappingDataSource(@NonNull String databaseName,
+																											 @NonNull ConnectionWrapper connectionWrapper) {
 		requireNonNull(databaseName);
+		requireNonNull(connectionWrapper);
 
 		DataSource delegate = createInMemoryDataSource(databaseName);
 
 		return new DataSource() {
 			@Override
 			public Connection getConnection() throws SQLException {
-				return connectionThatThrowsOnRollback(delegate.getConnection());
+				return connectionWrapper.wrap(delegate.getConnection());
 			}
 
 			@Override
 			public Connection getConnection(String username,
 																			String password) throws SQLException {
-				return connectionThatThrowsOnRollback(delegate.getConnection(username, password));
+				return connectionWrapper.wrap(delegate.getConnection(username, password));
 			}
 
 			@Override
@@ -293,6 +359,12 @@ public class ExceptionSuppressionTests {
 				return delegate.isWrapperFor(iface);
 			}
 		};
+	}
+
+	@FunctionalInterface
+	private interface ConnectionWrapper {
+		@NonNull
+		Connection wrap(@NonNull Connection connection) throws SQLException;
 	}
 
 	private static final class QueryThrowingDataSource implements DataSource {
@@ -381,6 +453,23 @@ public class ExceptionSuppressionTests {
 				(proxy, method, args) -> {
 					if ("rollback".equals(method.getName()) && method.getParameterCount() == 0)
 						throw new SQLException("rollback failed");
+
+					try {
+						return method.invoke(connection, args);
+					} catch (InvocationTargetException e) {
+						throw e.getCause();
+					}
+				});
+	}
+
+	@NonNull
+	private Connection connectionThatThrowsOnCommit(@NonNull Connection connection) {
+		requireNonNull(connection);
+
+		return (Connection) Proxy.newProxyInstance(Connection.class.getClassLoader(), new Class<?>[]{Connection.class},
+				(proxy, method, args) -> {
+					if ("commit".equals(method.getName()) && method.getParameterCount() == 0)
+						throw new SQLException("commit failed");
 
 					try {
 						return method.invoke(connection, args);

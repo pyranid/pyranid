@@ -399,10 +399,13 @@ public final class Database {
 						postTransactionOperation.accept(transactionResult);
 					} catch (Throwable cleanupException) {
 						postTransactionThrowable = cleanupException;
+						PostTransactionOperationException postTransactionOperationException =
+								new PostTransactionOperationException(transactionResult, cleanupException);
+
 						if (cleanupFailure == null)
-							cleanupFailure = cleanupException;
+							cleanupFailure = postTransactionOperationException;
 						else
-							cleanupFailure.addSuppressed(cleanupException);
+							cleanupFailure.addSuppressed(postTransactionOperationException);
 					} finally {
 						getMetricsCollectorDispatcher().didRunPostTransactionOperation(transaction, transactionResult, transaction.getDatabaseType(),
 								Duration.ofNanos(nanoTime() - postTransactionStartTime), postTransactionThrowable);
