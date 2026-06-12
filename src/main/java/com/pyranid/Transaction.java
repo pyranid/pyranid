@@ -273,6 +273,12 @@ public final class Transaction {
 
 	/**
 	 * Adds an operation to the list of operations to be executed when the transaction completes.
+	 * <p>
+	 * The supplied operation receives {@link TransactionResult#COMMITTED} if commit completed successfully,
+	 * {@link TransactionResult#ROLLED_BACK} if the transaction completed on the rollback path before commit was attempted,
+	 * or
+	 * {@link TransactionResult#IN_DOUBT} if the commit call failed and Pyranid cannot prove whether the database
+	 * committed or rolled back.
 	 *
 	 * @param postTransactionOperation the post-transaction operation to add
 	 */

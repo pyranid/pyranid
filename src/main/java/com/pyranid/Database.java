@@ -294,6 +294,7 @@ public final class Database {
 		Transaction transaction = new Transaction(dataSource, transactionIsolation, getMetricsCollectorDispatcher(), peekDatabaseType());
 		TRANSACTION_STACK_HOLDER.get().push(transaction);
 		boolean committed = false;
+		boolean commitFailed = false;
 		boolean rollbackFailed = false;
 		boolean rollbackAttempted = false;
 		Throwable thrown = null;
@@ -314,7 +315,12 @@ public final class Database {
 					rollbackAttempted = true;
 					transaction.rollback();
 				} else {
-					transaction.commit();
+					try {
+						transaction.commit();
+					} catch (RuntimeException | Error e) {
+						commitFailed = true;
+						throw e;
+					}
 					committed = true;
 				}
 
@@ -388,7 +394,7 @@ public final class Database {
 				for (Consumer<TransactionResult> postTransactionOperation : transaction.getPostTransactionOperations()) {
 					long postTransactionStartTime = nanoTime();
 					Throwable postTransactionThrowable = null;
-					TransactionResult transactionResult = committed ? TransactionResult.COMMITTED : TransactionResult.ROLLED_BACK;
+					TransactionResult transactionResult = transactionResult(committed, commitFailed);
 					try {
 						postTransactionOperation.accept(transactionResult);
 					} catch (Throwable cleanupException) {
@@ -406,7 +412,7 @@ public final class Database {
 
 			Throwable exitThrown = thrown == null ? cleanupFailure : thrown;
 			getMetricsCollectorDispatcher().didExitTransactionClosure(transaction,
-					transactionClosureOutcome(committed, hadPhysicalTransaction, rollbackFailed),
+					transactionClosureOutcome(committed, commitFailed, hadPhysicalTransaction, rollbackFailed),
 					transaction.getDatabaseType(), Duration.ofNanos(nanoTime() - transactionStartTime), exitThrown);
 
 			if (cleanupFailure != null) {
@@ -554,10 +560,24 @@ public final class Database {
 				statement.getId(), boundedSql(statement.getSql()), statementContext.getParameters().size());
 	}
 
+	@NonNull
+	private static TransactionResult transactionResult(@NonNull Boolean committed,
+																										 @NonNull Boolean commitFailed) {
+		requireNonNull(committed);
+		requireNonNull(commitFailed);
+
+		if (committed)
+			return TransactionResult.COMMITTED;
+
+		return commitFailed ? TransactionResult.IN_DOUBT : TransactionResult.ROLLED_BACK;
+	}
+
 	private static MetricsCollector.TransactionClosureOutcome transactionClosureOutcome(@NonNull Boolean committed,
+																																										 @NonNull Boolean commitFailed,
 																																										 @NonNull Boolean hadPhysicalTransaction,
 																																										 @NonNull Boolean rollbackFailed) {
 		requireNonNull(committed);
+		requireNonNull(commitFailed);
 		requireNonNull(hadPhysicalTransaction);
 		requireNonNull(rollbackFailed);
 
@@ -566,6 +586,9 @@ public final class Database {
 
 		if (committed)
 			return MetricsCollector.TransactionClosureOutcome.COMMITTED;
+
+		if (commitFailed)
+			return MetricsCollector.TransactionClosureOutcome.FAILED;
 
 		return rollbackFailed
 				? MetricsCollector.TransactionClosureOutcome.FAILED

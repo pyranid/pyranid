@@ -544,7 +544,7 @@ database.transaction(TransactionIsolation.SERIALIZABLE, () -> {
 
 ### Post-Transaction Operations
 
-It is useful to be able to schedule code to run after a transaction has been fully committed or rolled back.  Often, transaction management happens at a higher layer of code than business logic (e.g. a transaction-per-web-request pattern), so it is helpful to have a mechanism to "warp" local logic out to the higher layer.
+It is useful to be able to schedule code to run after a transaction has completed.  Often, transaction management happens at a higher layer of code than business logic (e.g. a transaction-per-web-request pattern), so it is helpful to have a mechanism to "warp" local logic out to the higher layer.
 
 Without this, you might run into subtle bugs like
 
@@ -570,6 +570,10 @@ class EmployeeService {
       } else if(transactionResult == TransactionResult.ROLLED_BACK) {
         // Rolled back? We can clean up
         payrollSystem.cancelLengthyWarmupProcess();	
+      } else if(transactionResult == TransactionResult.IN_DOUBT) {
+        // Commit was attempted but the final database outcome is unknown.
+        // Avoid commit-only side effects and reconcile separately.
+        payrollSystem.queueReconciliation();
       }
     });
   }
@@ -597,6 +601,12 @@ class DatabaseTransactionFilter implements Filter {
   // Rest of implementation elided
 }
 ```
+
+Post-transaction callbacks receive a [`TransactionResult`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html) value:
+
+* [`COMMITTED`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#COMMITTED) if commit completed successfully
+* [`ROLLED_BACK`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#ROLLED_BACK) if the transaction completed on the rollback path before commit was attempted
+* [`IN_DOUBT`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#IN_DOUBT) if Pyranid attempted commit but the commit call failed, so the final database outcome is unknown
 
 ## ResultSet Mapping
 

@@ -17,18 +17,28 @@
 package com.pyranid;
 
 /**
- * Indicates whether a transaction was committed or rolled back.
+ * Indicates the transaction result reported to post-transaction operations.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 2.0.0
  */
 public enum TransactionResult {
 	/**
-	 * The transaction was successfully committed.
+	 * Commit completed successfully.
 	 */
 	COMMITTED,
 	/**
-	 * The transaction was rolled back.
+	 * Pyranid did not attempt to commit the transaction.
+	 * <p>
+	 * This is the result for transactions that leave the closure through the rollback path before commit.
 	 */
-	ROLLED_BACK
+	ROLLED_BACK,
+	/**
+	 * Pyranid attempted to commit the transaction, but the commit call failed, so the final database outcome is unknown.
+	 * <p>
+	 * For example, the database may have committed successfully but the client may not have received the acknowledgement.
+	 *
+	 * @since 4.2.0
+	 */
+	IN_DOUBT
 }
