@@ -2951,6 +2951,7 @@ public final class Database {
 				close();
 				throw wrapped;
 			} catch (Error e) {
+				this.exception = databaseExceptionWithStatementContext(this.statementContext, e);
 				this.thrown = e;
 				this.openFailed = true;
 				this.database.getMetricsCollectorDispatcher().didFailToOpenStream(this.statementContext,
@@ -3011,6 +3012,7 @@ public final class Database {
 					close();
 					throw e;
 				} catch (Error e) {
+					this.exception = databaseExceptionWithStatementContext(this.statementContext, e);
 					this.thrown = e;
 					this.iterationThrowable = e;
 					close();
@@ -3069,6 +3071,8 @@ public final class Database {
 				close();
 				throw e;
 			} catch (Error e) {
+				this.exception = databaseExceptionWithStatementContext(this.statementContext,
+						format("Unable to map JDBC %s row to %s", ResultSet.class.getSimpleName(), this.statementContext.getResultSetRowType().get()), e);
 				this.thrown = e;
 				this.iterationThrowable = e;
 				close();

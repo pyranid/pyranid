@@ -249,6 +249,114 @@ public class MetricsCollectorTests {
 	}
 
 	@Test
+	public void customColumnMapperFailureStreamOutcomeIsRecordedAsIterationFailure() {
+		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
+		AtomicReference<StatementLog<?>> logRef = new AtomicReference<>();
+		RuntimeException mapperFailure = new RuntimeException("custom column mapper failure");
+		CustomColumnMapper throwingMapper = new CustomColumnMapper() {
+			@NonNull
+			@Override
+			public Boolean appliesTo(@NonNull TargetType targetType) {
+				return targetType.matchesClass(Integer.class);
+			}
+
+			@NonNull
+			@Override
+			public MappingResult map(@NonNull StatementContext<?> statementContext,
+															 @NonNull ResultSet resultSet,
+															 @NonNull Object resultSetValue,
+															 @NonNull TargetType targetType,
+															 @NonNull Integer columnIndex,
+															 @Nullable String columnLabel,
+															 @NonNull InstanceProvider instanceProvider) {
+				throw mapperFailure;
+			}
+		};
+		Database database = Database.withDataSource(createInMemoryDataSource("metrics_custom_mapper_iteration_failure"))
+				.metricsCollector(metricsCollector)
+				.statementLogger(logRef::set)
+				.resultSetMapper(ResultSetMapper.withCustomColumnMappers(List.of(throwingMapper)).build())
+				.build();
+
+		database.query("CREATE TABLE t (id INT)").execute();
+		database.query("INSERT INTO t VALUES (1)").execute();
+		metricsCollector.reset();
+		logRef.set(null);
+
+		DatabaseException thrown = Assertions.assertThrows(DatabaseException.class, () -> database.query("SELECT id FROM t")
+				.fetchStream(Integer.class, stream -> stream.collect(Collectors.toList())));
+
+		Assertions.assertSame(mapperFailure, thrown.getCause());
+		MetricsCollector.Snapshot snapshot = snapshot(metricsCollector);
+		Assertions.assertEquals(1L, snapshot.streamsOpened());
+		Assertions.assertEquals(1L, snapshot.streamsIterationFailed());
+		Assertions.assertEquals(0L, snapshot.streamsCallbackFailed());
+		Assertions.assertEquals(0L, snapshot.streamsClosedNormally());
+		Assertions.assertEquals(0L, snapshot.streamsEarlyClosed());
+		Assertions.assertEquals(1L, snapshot.statementsFailed());
+
+		StatementLog<?> statementLog = logRef.get();
+		Assertions.assertNotNull(statementLog, "Expected statement logger to receive the failed stream statement");
+		Assertions.assertSame(thrown, statementLog.getException().orElse(null));
+	}
+
+	@Test
+	public void customColumnMapperErrorStreamStatementLogIncludesDiagnosticException() {
+		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
+		AtomicReference<StatementLog<?>> logRef = new AtomicReference<>();
+		Error mapperFailure = new Error("custom column mapper error");
+		CustomColumnMapper throwingMapper = new CustomColumnMapper() {
+			@NonNull
+			@Override
+			public Boolean appliesTo(@NonNull TargetType targetType) {
+				return targetType.matchesClass(Integer.class);
+			}
+
+			@NonNull
+			@Override
+			public MappingResult map(@NonNull StatementContext<?> statementContext,
+															 @NonNull ResultSet resultSet,
+															 @NonNull Object resultSetValue,
+															 @NonNull TargetType targetType,
+															 @NonNull Integer columnIndex,
+															 @Nullable String columnLabel,
+															 @NonNull InstanceProvider instanceProvider) {
+				throw mapperFailure;
+			}
+		};
+		Database database = Database.withDataSource(createInMemoryDataSource("metrics_custom_mapper_error_iteration_failure"))
+				.metricsCollector(metricsCollector)
+				.statementLogger(logRef::set)
+				.resultSetMapper(ResultSetMapper.withCustomColumnMappers(List.of(throwingMapper))
+						.planCachingEnabled(false)
+						.build())
+				.build();
+
+		database.query("CREATE TABLE t (id INT)").execute();
+		database.query("INSERT INTO t VALUES (1)").execute();
+		metricsCollector.reset();
+		logRef.set(null);
+
+		Error thrown = Assertions.assertThrows(Error.class, () -> database.query("SELECT id FROM t")
+				.fetchStream(Integer.class, stream -> stream.collect(Collectors.toList())));
+
+		Assertions.assertSame(mapperFailure, thrown);
+		MetricsCollector.Snapshot snapshot = snapshot(metricsCollector);
+		Assertions.assertEquals(1L, snapshot.streamsOpened());
+		Assertions.assertEquals(1L, snapshot.streamsIterationFailed());
+		Assertions.assertEquals(0L, snapshot.streamsCallbackFailed());
+		Assertions.assertEquals(0L, snapshot.streamsClosedNormally());
+		Assertions.assertEquals(0L, snapshot.streamsEarlyClosed());
+		Assertions.assertEquals(1L, snapshot.statementsFailed());
+
+		StatementLog<?> statementLog = logRef.get();
+		Assertions.assertNotNull(statementLog, "Expected statement logger to receive the failed stream statement");
+		Exception loggedException = statementLog.getException().orElse(null);
+		Assertions.assertNotNull(loggedException, "Expected statement log to carry a diagnostic exception for mapper Errors");
+		Assertions.assertSame(mapperFailure, loggedException.getCause());
+	}
+
+	@Test
 	public void collectorFailuresDoNotAffectQueriesTransactionsOrStreams() {
 		Database database = Database.withDataSource(createInMemoryDataSource("metrics_failure_containment"))
 				.metricsCollector(throwingMetricsCollector())
