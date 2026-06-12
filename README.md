@@ -729,6 +729,8 @@ Fine-grained control of mapping is supported by registering [`CustomColumnMapper
 
 When multiple custom column mappers apply, Pyranid tries them in the order supplied. Returning `MappingResult.fallback()` lets the next applicable mapper run; if none handles the value, normal mapping continues.
 
+When mapping JavaBeans or records, custom column mappers run against matched properties or components. Row-type custom mapping is for single-column results that represent the target value itself.
+
 ```java
 // Your application-specific type
 class MySpecialType {

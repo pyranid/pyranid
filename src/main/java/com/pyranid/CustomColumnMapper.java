@@ -26,6 +26,9 @@ import java.util.Optional;
 
 /**
  * Enables per-column {@link ResultSet} mapping customization via {@link ResultSetMapper}.
+ * <p>
+ * When mapping JavaBean or {@link Record} rows, custom column mappers are applied to matched properties
+ * or components. Row-type custom mapping is intended for single-column results that represent the target value itself.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 3.0.0

@@ -75,6 +75,7 @@ import static java.util.Objects.requireNonNull;
 @ThreadSafe
 public class DatabaseTests {
 	public record EmployeeRecord(@DatabaseColumn("name") String displayName, String emailAddress, Locale locale) {}
+	public record LocaleRecord(Locale locale) {}
 
 	public static class EmployeeClass {
 		private @DatabaseColumn("name") String displayName;
@@ -1259,6 +1260,125 @@ public class DatabaseTests {
 
 		Assertions.assertEquals(3, firstCalls.get(), "First mapper should keep priority after falling back");
 		Assertions.assertEquals(1, secondCalls.get(), "Second mapper should only run when earlier mappers fall back");
+	}
+
+	@Test
+	public void testBroadCustomColumnMapperDoesNotChangeBeanOrRecordNullSemantics() {
+		for (Boolean planCachingEnabled : List.of(false, true)) {
+			AtomicInteger mapCalls = new AtomicInteger(0);
+
+			CustomColumnMapper broadFallback = new CustomColumnMapper() {
+				@NonNull
+				@Override
+				public Boolean appliesTo(@NonNull TargetType targetType) {
+					return true;
+				}
+
+				@NonNull
+				@Override
+				public MappingResult map(@NonNull StatementContext<?> statementContext,
+																 @NonNull ResultSet resultSet,
+																 @NonNull Object resultSetValue,
+																 @NonNull TargetType targetType,
+																 @NonNull Integer columnIndex,
+																 @Nullable String columnLabel,
+																 @NonNull InstanceProvider instanceProvider) {
+					mapCalls.incrementAndGet();
+					return MappingResult.fallback();
+				}
+			};
+
+			Database db = Database.withDataSource(createInMemoryDataSource("cm_broad_null_" + planCachingEnabled))
+					.resultSetMapper(ResultSetMapper.withCustomColumnMappers(List.of(broadFallback))
+							.planCachingEnabled(planCachingEnabled)
+							.build())
+					.build();
+
+			createTestSchema(db);
+					db.query("INSERT INTO employee VALUES (1, 'A', 'a@x.com', NULL)").execute();
+
+			LocaleHolder beanSingleColumn = db.query("SELECT locale FROM employee WHERE employee_id=1")
+					.fetchObject(LocaleHolder.class)
+					.orElseThrow();
+			Assertions.assertNull(beanSingleColumn.getLocale(), "Bean row mapping should preserve a claimed NULL property");
+
+			LocaleHolder beanMultiColumn = db.query("SELECT locale, name FROM employee WHERE employee_id=1")
+					.fetchObject(LocaleHolder.class)
+					.orElseThrow();
+			Assertions.assertNull(beanMultiColumn.getLocale(), "Bean row mapping should not throw when a broad mapper applies");
+
+			LocaleRecord recordSingleColumn = db.query("SELECT locale FROM employee WHERE employee_id=1")
+					.fetchObject(LocaleRecord.class)
+					.orElseThrow();
+			Assertions.assertNull(recordSingleColumn.locale(), "Record row mapping should preserve a claimed NULL component");
+
+			LocaleRecord recordMultiColumn = db.query("SELECT locale, name FROM employee WHERE employee_id=1")
+					.fetchObject(LocaleRecord.class)
+					.orElseThrow();
+			Assertions.assertNull(recordMultiColumn.locale(), "Record row mapping should not throw when a broad mapper applies");
+
+			Assertions.assertEquals(0, mapCalls.get(), "Row-level custom mapper should not intercept claimed NULL row columns");
+		}
+	}
+
+	@Test
+	public void testBroadCustomColumnMapperDoesNotInterceptClaimedMultiColumnRows() {
+		for (Boolean planCachingEnabled : List.of(false, true)) {
+			AtomicInteger mapCalls = new AtomicInteger(0);
+
+			CustomColumnMapper broadRowMapper = new CustomColumnMapper() {
+				@NonNull
+				@Override
+				public Boolean appliesTo(@NonNull TargetType targetType) {
+					return true;
+				}
+
+				@NonNull
+				@Override
+				public MappingResult map(@NonNull StatementContext<?> statementContext,
+																 @NonNull ResultSet resultSet,
+																 @NonNull Object resultSetValue,
+																 @NonNull TargetType targetType,
+																 @NonNull Integer columnIndex,
+																 @Nullable String columnLabel,
+																 @NonNull InstanceProvider instanceProvider) {
+					if (targetType.matchesClass(LocaleHolder.class)) {
+						mapCalls.incrementAndGet();
+						LocaleHolder holder = new LocaleHolder();
+						holder.setLocale(Locale.CANADA);
+						return MappingResult.of(holder);
+					}
+
+					if (targetType.matchesClass(LocaleRecord.class)) {
+						mapCalls.incrementAndGet();
+						return MappingResult.of(new LocaleRecord(Locale.CANADA));
+					}
+
+					return MappingResult.fallback();
+				}
+			};
+
+			Database db = Database.withDataSource(createInMemoryDataSource("cm_broad_multi_" + planCachingEnabled))
+					.resultSetMapper(ResultSetMapper.withCustomColumnMappers(List.of(broadRowMapper))
+							.planCachingEnabled(planCachingEnabled)
+							.build())
+					.build();
+
+			createTestSchema(db);
+					db.query("INSERT INTO employee VALUES (1, 'A', 'a@x.com', 'en-US')").execute();
+
+			LocaleHolder bean = db.query("SELECT name, locale FROM employee WHERE employee_id=1")
+					.fetchObject(LocaleHolder.class)
+					.orElseThrow();
+			Assertions.assertEquals(Locale.US, bean.getLocale(), "Bean row mapping should use the claimed locale column");
+
+			LocaleRecord record = db.query("SELECT name, locale FROM employee WHERE employee_id=1")
+					.fetchObject(LocaleRecord.class)
+					.orElseThrow();
+			Assertions.assertEquals(Locale.US, record.locale(), "Record row mapping should use the claimed locale column");
+
+			Assertions.assertEquals(0, mapCalls.get(), "Row-level custom mapper should not intercept claimed multi-column rows");
+		}
 	}
 
 	@Test

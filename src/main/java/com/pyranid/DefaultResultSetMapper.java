@@ -852,13 +852,23 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		List<CustomColumnMapper> mappers = customColumnMappersFor(targetType);
 
 		if (!mappers.isEmpty()) {
+			int columnCount = resultSetMetaData.getColumnCount();
+			Boolean rowColumnsClaimed = null;
+
+			if (columnCount != 1) {
+				rowColumnsClaimed = resultSetHasMappedRowColumns(resultClass, resultSetMetaData);
+				if (rowColumnsClaimed)
+					return new StandardTypeResult<>(null, false);
+			}
+
 			Object resultSetValue = extractColumnValue(resultSetMetaData, statementContext, resultSet, 1).orElse(null);
 
-			// If single-column AND value is NULL AND target has applicable custom mappers,
-			// treat this as a "standard" mapping that yields null => Optional.empty()
-			int columnCount = resultSetMetaData.getColumnCount();
-
 			if (resultSetValue == null) {
+				if (rowColumnsClaimed == null)
+					rowColumnsClaimed = resultSetHasMappedRowColumns(resultClass, resultSetMetaData);
+				if (rowColumnsClaimed)
+					return new StandardTypeResult<>(null, false);
+
 				if (columnCount != 1) {
 					List<String> labels = new ArrayList<>(columnCount);
 					for (int i = 1; i <= columnCount; ++i)
@@ -1025,6 +1035,38 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		return new StandardTypeResult(value, standardType);
+	}
+
+	private boolean resultSetHasMappedRowColumns(@NonNull Class<?> resultClass,
+																							 @NonNull ResultSetMetaData resultSetMetaData) throws SQLException {
+		requireNonNull(resultClass);
+		requireNonNull(resultSetMetaData);
+
+		if (resultClass.isRecord())
+			return resultSetHasMappedRowColumns(determineColumnLabelsByRecordComponentName(resultClass), resultSetMetaData);
+
+		return resultSetHasMappedRowColumns(determineNormalizedColumnLabelsByPropertyName(resultClass), resultSetMetaData);
+	}
+
+	private boolean resultSetHasMappedRowColumns(@NonNull Map<@NonNull String, @NonNull Set<@NonNull String>> labelsByPropertyName,
+																							 @NonNull ResultSetMetaData resultSetMetaData) throws SQLException {
+		requireNonNull(labelsByPropertyName);
+		requireNonNull(resultSetMetaData);
+
+		if (labelsByPropertyName.isEmpty())
+			return false;
+
+		int columnCount = resultSetMetaData.getColumnCount();
+
+		for (int i = 1; i <= columnCount; ++i) {
+			String label = normalizeColumnLabel(resultSetMetaData.getColumnLabel(i));
+
+			for (Set<String> propertyLabels : labelsByPropertyName.values())
+				if (propertyLabels.contains(label))
+					return true;
+		}
+
+		return false;
 	}
 
 	/**
