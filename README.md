@@ -100,7 +100,8 @@ InstanceProvider instanceProvider = new InstanceProvider() {
 // Supports JavaBeans, records, and standard JDK types out-of-the-box.
 // Plan caching (on by default) trades memory for faster mapping of wide ResultSets.
 // Normalization locale should match the language of your database tables/column names.
-// CustomColumnMappers supply "surgical" overrides to handle custom types
+// CustomColumnMappers supply "surgical" overrides to handle custom types.
+// If multiple mappers apply, Pyranid tries them in list order.
 ResultSetMapper resultSetMapper = ResultSetMapper.withPlanCachingEnabled(false)
   .normalizationLocale(Locale.forLanguageTag("pt-BR"))
   .customColumnMappers(List.of(new CustomColumnMapper() {
@@ -128,8 +129,8 @@ ResultSetMapper resultSetMapper = ResultSetMapper.withPlanCachingEnabled(false)
       String moneyAsString = resultSetValue.toString();
       Money money = Money.parse(moneyAsString);
 
-      // Or return MappingResult.fallback() to indicate "I don't want to do custom mapping"
-      // and Pyranid will fall back to the registered ResultSetMapper's mapping behavior
+      // Or return MappingResult.fallback() to let the next applicable custom mapper run.
+      // If none handles the value, Pyranid continues with normal mapping behavior.
       return MappingResult.of(money);
     }
   }))
@@ -137,6 +138,7 @@ ResultSetMapper resultSetMapper = ResultSetMapper.withPlanCachingEnabled(false)
 
 // Binds parameters to a SQL PreparedStatement.
 // CustomParameterBinders supply "surgical" overrides to handle custom types.
+// If multiple binders apply, Pyranid tries them in list order.
 // Here, we transform Money instances into a DB-friendly string representation 
 PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCustomParameterBinders(List.of(
   new CustomParameterBinder() {
@@ -162,8 +164,8 @@ PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCu
       // Bind to the PreparedStatement
       preparedStatement.setString(parameterIndex, moneyAsString);
 
-      // Or return BindingResult.fallback() to indicate "I don't want to do custom binding"
-      // and Pyranid will fall back to the registered PreparedStatementBinder's binding behavior
+      // Or return BindingResult.fallback() to let the next applicable custom binder run.
+      // If none handles the value, Pyranid's normal binding rules apply.
       return BindingResult.handled();
     }
   }  
@@ -725,6 +727,8 @@ Pyranid preserves the fractional-second precision returned by your JDBC driver; 
 
 Fine-grained control of mapping is supported by registering [`CustomColumnMapper`](https://javadoc.pyranid.com/com/pyranid/CustomColumnMapper.html) instances.  For example, you might want to "inflate" a `JSONB` column into a Java type:
 
+When multiple custom column mappers apply, Pyranid tries them in the order supplied. Returning `MappingResult.fallback()` lets the next applicable mapper run; if none handles the value, normal mapping continues.
+
 ```java
 // Your application-specific type
 class MySpecialType {
@@ -760,8 +764,8 @@ ResultSetMapper resultSetMapper = ResultSetMapper.withCustomColumnMappers(List.o
     String json = resultSetValue.toString();
     MySpecialType mySpecialType = GSON.fromJson(json, MySpecialType.class);
 
-    // Or return MappingResult.fallback() to indicate "I don't want to do custom mapping"
-    // and Pyranid will fall back to the registered ResultSetMapper's mapping behavior
+    // Or return MappingResult.fallback() to let the next applicable custom mapper run.
+    // If none handles the value, Pyranid continues with normal mapping behavior.
     return MappingResult.of(mySpecialType);
   }
 }))
@@ -1062,6 +1066,8 @@ You may register instances of [`CustomParameterBinder`](https://javadoc.pyranid.
 
 This allows you to use your objects as-is with Pyranid instead of sprinkling "convert this object to database format" code throughout your system.
 
+When multiple custom parameter binders apply, Pyranid tries them in the order supplied. Returning `BindingResult.fallback()` lets the next applicable binder run; if none handles the value, Pyranid's normal binding rules apply.
+
 #### Arbitrary Types
 
 Let's define a simple type.
@@ -1111,8 +1117,8 @@ PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCu
       // Bind to the PreparedStatement as a value like "#6a5acd"
       preparedStatement.setString(parameterIndex, hexColor.toHexString());
 
-      // Or return BindingResult.fallback() to indicate "I don't want to do custom binding"
-      // and Pyranid will fall back to the registered PreparedStatementBinder's binding behavior
+      // Or return BindingResult.fallback() to let the next applicable custom binder run.
+      // If none handles the value, Pyranid's normal binding rules apply.
       return BindingResult.handled();
     }
   }  

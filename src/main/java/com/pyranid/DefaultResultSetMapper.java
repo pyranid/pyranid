@@ -324,35 +324,18 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		PreferredColumnMapperKey preferredKey = preferredColumnMapperKeyFor(targetType);
 		Map<PreferredColumnMapperKey, CustomColumnMapper> preferredByTargetType =
 				preferredKey == null ? null : getPreferredColumnMapperCacheForSourceClass(sourceClass);
-		CustomColumnMapper preferred = preferredByTargetType == null ? null : preferredByTargetType.get(preferredKey);
 
-		// 1) Try the preferred mapper first, if any
-		if (preferred != null) {
-			CustomColumnMapper.MappingResult mappingResult =
-					preferred.map(statementContext, resultSet, resultSetValue, targetType, columnIndex, columnLabel, instanceProvider);
-
-			if (mappingApplied(mappingResult))
-				// Keep the preference (it applied); return its (possibly null) value
-				return CustomMappingOutcome.applied(mappedValue(mappingResult).orElse(null));
-			// If it didn’t apply this time, fall through to try others; retain hint for future rows.
-		}
-
-		// 2) Try the remaining applicable mappers
 		for (CustomColumnMapper mapper : mappers) {
-			if (mapper == preferred) continue;
-
 			CustomColumnMapper.MappingResult mappingResult =
 					mapper.map(statementContext, resultSet, resultSetValue, targetType, columnIndex, columnLabel, instanceProvider);
 
 			if (mappingApplied(mappingResult)) {
-				// Learn the winner for (sourceClass, targetType) even if it produced null
 				if (preferredByTargetType != null && preferredKey != null)
 					preferredByTargetType.put(preferredKey, mapper);
 				return CustomMappingOutcome.applied(mappedValue(mappingResult).orElse(null));
 			}
 		}
 
-		// 3) No custom mapper applied
 		return CustomMappingOutcome.notApplied();
 	}
 

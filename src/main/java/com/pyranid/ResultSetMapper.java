@@ -246,6 +246,8 @@ public interface ResultSetMapper {
 		/**
 		 * Specifies the maximum number of cached preferred custom column mappers per source class.
 		 * <p>
+		 * This cache does not change the priority order in which custom column mappers are tried.
+		 * <p>
 		 * Use {@code 0} for an unbounded cache.
 		 *
 		 * @param preferredColumnMapperCacheCapacity maximum number of cached preferred custom column mappers per source class,

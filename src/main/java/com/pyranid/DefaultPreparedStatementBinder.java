@@ -614,27 +614,13 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		Class<?> valueClass = parameter.getClass();
 		boolean cachePreferredBinder = shouldCachePreferredBinder(valueClass, targetType);
 		InboundKey key = cachePreferredBinder ? new InboundKey(sqlType, targetType.getRawClass()) : null;
-		CustomParameterBinder cached = cachePreferredBinder
-				? getPreferredBinderCacheForValueClass(valueClass).get(key)
-				: null;
 
-		// Fast path: try cached binder first
-		if (cached != null) {
-			BindingResult bindingResult = requireNonNull(cached.bind(statementContext, preparedStatement, parameterIndex, parameter));
-
-			if (bindingResult instanceof BindingResult.Handled)
-				return true;
-
-			// If it no longer applies, fall through to the rest (keep the hint; may win next time)
-		}
-
-		// Slow path: scan applicable binders
 		for (CustomParameterBinder customParameterBinder : candidates) {
 			BindingResult bindingResult = requireNonNull(customParameterBinder.bind(statementContext, preparedStatement, parameterIndex, parameter));
 
 			if (bindingResult instanceof BindingResult.Handled) {
 				if (cachePreferredBinder)
-					getPreferredBinderCacheForValueClass(valueClass).put(key, customParameterBinder);
+					getPreferredBinderCacheForValueClass(valueClass).put(requireNonNull(key), customParameterBinder);
 				return true;
 			}
 		}

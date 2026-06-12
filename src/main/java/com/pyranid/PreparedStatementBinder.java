@@ -84,11 +84,11 @@ public interface PreparedStatementBinder {
 	}
 
 	/**
-	 * Acquires a concrete implementation of this interface, specifying "surgical" per-type custom parameter binders.
+	 * Acquires a concrete implementation of this interface, specifying "surgical" per-type custom parameter binders to apply in priority order.
 	 * <p>
 	 * The returned instance is thread-safe.
 	 *
-	 * @param customParameterBinders the "surgical" per-type custom parameter binders
+	 * @param customParameterBinders the "surgical" per-type custom parameter binders to apply in priority order
 	 * @return a concrete implementation of this interface
 	 */
 	@NonNull
