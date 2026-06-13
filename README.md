@@ -1070,6 +1070,8 @@ This allows you to use your objects as-is with Pyranid instead of sprinkling "co
 
 When multiple custom parameter binders apply, Pyranid tries them in the order supplied. Returning `BindingResult.fallback()` lets the next applicable binder run; if none handles the value, Pyranid's normal binding rules apply.
 
+Because a binder can be asked speculatively before falling back, only mutate the `PreparedStatement` or other externally-visible state after you have decided to handle the value.
+
 #### Arbitrary Types
 
 Let's define a simple type.

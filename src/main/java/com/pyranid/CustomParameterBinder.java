@@ -33,6 +33,10 @@ public interface CustomParameterBinder {
 	 * Performs custom binding of a {@link PreparedStatement} value given a {@code value} and its {@code index} when {@link #appliesTo(TargetType)} is {@code true}.
 	 * <p>
 	 * This function is only invoked when {@code parameter} is non-null.
+	 * <p>
+	 * Pyranid may invoke this method speculatively before falling back to another custom binder or to default
+	 * {@link PreparedStatementBinder} behavior. Implementations that return {@link BindingResult#fallback()} should avoid
+	 * mutating the {@code preparedStatement} or other externally-visible state before deciding to handle the value.
 	 *
 	 * @param statementContext  current SQL context
 	 * @param preparedStatement the prepared statement to bind to

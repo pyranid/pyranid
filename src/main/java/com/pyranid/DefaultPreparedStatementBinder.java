@@ -61,8 +61,6 @@ import static java.util.Objects.requireNonNull;
  */
 @ThreadSafe
 class DefaultPreparedStatementBinder implements PreparedStatementBinder {
-	private static final int DEFAULT_PREFERRED_BINDER_CACHE_CAPACITY = 256;
-
 	@NonNull
 	private final List<CustomParameterBinder> customParameterBinders;
 
@@ -75,17 +73,6 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 					return computeCustomBindersFor(TargetType.of(type));
 				}
 			};
-
-	// Cache: which binder last won for a given value class?
-	@NonNull
-	private final ClassValue<Map<InboundKey, CustomParameterBinder>> preferredBinderByValueClass =
-			new ClassValue<>() {
-				@Override
-				protected Map<InboundKey, CustomParameterBinder> computeValue(Class<?> type) {
-					return new ConcurrentLruMap<>(DEFAULT_PREFERRED_BINDER_CACHE_CAPACITY);
-				}
-			};
-
 
 	DefaultPreparedStatementBinder() {
 		this(List.of());
@@ -154,11 +141,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 		// Try custom binders first (if they exist) on the unwrapped value
 		if (!getCustomParameterBinders().isEmpty() && !customBindersFor(explicitTargetType).isEmpty()) {
-			Integer sqlType = determineParameterSqlType(parameterSqlTypeResolver, parameterIndex)
-					.map(ParameterSqlType::getSqlType)
-					.orElse(Types.OTHER);
-
-			if (tryCustomBinders(statementContext, preparedStatement, parameterIndex, unwrappedParameter, sqlType, explicitTargetType))
+			if (tryCustomBinders(statementContext, preparedStatement, parameterIndex, unwrappedParameter, explicitTargetType))
 				return;
 		}
 
@@ -596,13 +579,11 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 																				 @NonNull PreparedStatement preparedStatement,
 																				 @NonNull Integer parameterIndex,
 																				 @NonNull Object parameter, /* must be the UNWRAPPED value */
-																				 @NonNull Integer sqlType,
 																				 @NonNull TargetType targetType /* explicit target (from TypedParameter if present) */) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(preparedStatement);
 		requireNonNull(parameterIndex);
 		requireNonNull(parameter);
-		requireNonNull(sqlType);
 		requireNonNull(targetType);
 
 		// use the provided target instead of TargetType.of(parameter.getClass())
@@ -611,18 +592,11 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		if (candidates.isEmpty())
 			return false;
 
-		Class<?> valueClass = parameter.getClass();
-		boolean cachePreferredBinder = shouldCachePreferredBinder(valueClass, targetType);
-		InboundKey key = cachePreferredBinder ? new InboundKey(sqlType, targetType.getRawClass()) : null;
-
 		for (CustomParameterBinder customParameterBinder : candidates) {
 			BindingResult bindingResult = requireNonNull(customParameterBinder.bind(statementContext, preparedStatement, parameterIndex, parameter));
 
-			if (bindingResult instanceof BindingResult.Handled) {
-				if (cachePreferredBinder)
-					getPreferredBinderCacheForValueClass(valueClass).put(requireNonNull(key), customParameterBinder);
+			if (bindingResult instanceof BindingResult.Handled)
 				return true;
-			}
 		}
 
 		return false;
@@ -685,66 +659,6 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		return getCustomParameterBinders().stream()
 				.filter(b -> b.appliesTo(targetType))
 				.toList();
-	}
-
-	private static boolean isSystemClass(@NonNull Class<?> rawClass) {
-		requireNonNull(rawClass);
-		ClassLoader loader = rawClass.getClassLoader();
-		return loader == null || loader == ClassLoader.getPlatformClassLoader();
-	}
-
-	private static boolean shouldCachePreferredBinder(@NonNull Class<?> valueClass,
-																									 @NonNull TargetType targetType) {
-		requireNonNull(valueClass);
-		requireNonNull(targetType);
-
-		if (!targetType.getTypeArguments().isEmpty())
-			return false;
-
-		Class<?> targetClass = targetType.getRawClass();
-		if (!isSystemClass(valueClass))
-			return true;
-
-		return isSystemClass(targetClass);
-	}
-
-	@NonNull
-	protected Map<@NonNull InboundKey, @NonNull CustomParameterBinder> getPreferredBinderCacheForValueClass(@NonNull Class<?> valueClass) {
-		requireNonNull(valueClass);
-		return this.preferredBinderByValueClass.get(valueClass);
-	}
-
-	@ThreadSafe
-	protected static final class InboundKey {
-		@NonNull
-		private final Integer sqlType;
-		@NonNull
-		private final Class<?> targetClass;
-
-		InboundKey(@NonNull Integer sqlType,
-							 @NonNull Class<?> targetClass) {
-			requireNonNull(sqlType);
-			requireNonNull(targetClass);
-
-			this.sqlType = sqlType;
-			this.targetClass = targetClass;
-		}
-
-		@Override
-		public boolean equals(Object o) {
-			if (this == o) return true;
-			if (o == null || getClass() != o.getClass()) return false;
-			InboundKey that = (InboundKey) o;
-			return (sqlType == null ? that.sqlType == null : sqlType.equals(that.sqlType)) &&
-					targetClass.equals(that.targetClass);
-		}
-
-		@Override
-		public int hashCode() {
-			int result = sqlType == null ? 0 : sqlType.hashCode();
-			result = 31 * result + targetClass.hashCode();
-			return result;
-		}
 	}
 
 	@NonNull
