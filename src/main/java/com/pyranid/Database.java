@@ -85,7 +85,7 @@ public final class Database {
 	private static final Pattern DIAGNOSTIC_WHITESPACE_PATTERN = Pattern.compile("\\s+");
 
 	static {
-		TRANSACTION_STACK_HOLDER = ThreadLocal.withInitial(() -> new ArrayDeque<>());
+		TRANSACTION_STACK_HOLDER = new ThreadLocal<>();
 	}
 
 	@NonNull
@@ -167,8 +167,8 @@ public final class Database {
 	 */
 	@NonNull
 	public Optional<Transaction> currentTransaction() {
-		Deque<Transaction> transactionStack = TRANSACTION_STACK_HOLDER.get();
-		Transaction transaction = transactionStack.isEmpty() ? null : transactionStack.peek();
+		@Nullable Deque<Transaction> transactionStack = TRANSACTION_STACK_HOLDER.get();
+		Transaction transaction = transactionStack == null || transactionStack.isEmpty() ? null : transactionStack.peek();
 
 		if (transaction == null || !isTransactionOwnedByThisDatabase(transaction))
 			return Optional.empty();
@@ -178,8 +178,8 @@ public final class Database {
 
 	@NonNull
 	private Optional<Transaction> currentTransactionForDatabaseOperation() {
-		Deque<Transaction> transactionStack = TRANSACTION_STACK_HOLDER.get();
-		Transaction transaction = transactionStack.isEmpty() ? null : transactionStack.peek();
+		@Nullable Deque<Transaction> transactionStack = TRANSACTION_STACK_HOLDER.get();
+		Transaction transaction = transactionStack == null || transactionStack.isEmpty() ? null : transactionStack.peek();
 
 		if (transaction == null)
 			return Optional.empty();
@@ -188,6 +188,18 @@ public final class Database {
 			throw wrongDatabaseTransactionException(transaction);
 
 		return Optional.of(transaction);
+	}
+
+	@NonNull
+	private Deque<Transaction> transactionStackForPush() {
+		Deque<Transaction> transactionStack = TRANSACTION_STACK_HOLDER.get();
+
+		if (transactionStack == null) {
+			transactionStack = new ArrayDeque<>();
+			TRANSACTION_STACK_HOLDER.set(transactionStack);
+		}
+
+		return transactionStack;
 	}
 
 	private boolean isTransactionOwnedByThisDatabase(@NonNull Transaction transaction) {
@@ -292,7 +304,8 @@ public final class Database {
 		requireNonNull(transactionalOperation);
 
 		Transaction transaction = new Transaction(dataSource, transactionIsolation, getMetricsCollectorDispatcher(), peekDatabaseType());
-		TRANSACTION_STACK_HOLDER.get().push(transaction);
+		Deque<Transaction> transactionStack = transactionStackForPush();
+		transactionStack.push(transaction);
 		boolean committed = false;
 		boolean commitFailed = false;
 		boolean rollbackFailed = false;
@@ -365,8 +378,6 @@ public final class Database {
 			restoreInterruptIfNeeded(t);
 			throw wrapped;
 		} finally {
-			Deque<Transaction> transactionStack = TRANSACTION_STACK_HOLDER.get();
-
 			transactionStack.pop();
 
 			// Ensure txn stack is fully cleaned up
@@ -695,7 +706,7 @@ public final class Database {
 		if (transaction.isCompleted())
 			throw new IllegalStateException(format("Transaction %s has already completed and cannot participate", transaction.id()));
 
-		Deque<Transaction> transactionStack = TRANSACTION_STACK_HOLDER.get();
+		Deque<Transaction> transactionStack = transactionStackForPush();
 		transactionStack.push(transaction);
 
 		try {

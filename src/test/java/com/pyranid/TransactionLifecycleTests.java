@@ -24,6 +24,7 @@ import org.junit.jupiter.api.Test;
 
 import javax.sql.DataSource;
 import java.io.PrintWriter;
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.sql.Connection;
@@ -44,6 +45,26 @@ import static java.util.Objects.requireNonNull;
  * @since 4.1.0
  */
 public class TransactionLifecycleTests {
+	@Test
+	public void testNonTransactionalOperationsDoNotCreateTransactionStack() throws Exception {
+		Database db = Database.withDataSource(createInMemoryDataSource("transaction_threadlocal_absent")).build();
+		ThreadLocal<?> transactionStackHolder = transactionStackHolder();
+
+		transactionStackHolder.remove();
+
+		try {
+			Assertions.assertTrue(db.currentTransaction().isEmpty());
+			Assertions.assertNull(transactionStackHolder.get(), "currentTransaction() must not install an empty transaction stack");
+
+			Integer value = db.query("SELECT 1 FROM (VALUES (0)) AS t(x)").fetchObject(Integer.class).orElseThrow();
+
+			Assertions.assertEquals(1, value);
+			Assertions.assertNull(transactionStackHolder.get(), "Non-transactional statements must not install an empty transaction stack");
+		} finally {
+			transactionStackHolder.remove();
+		}
+	}
+
 	@Test
 	public void testCompletedTransactionRejectsMutatingAndJdbcTouchingOperations() {
 		Database db = Database.withDataSource(createInMemoryDataSource("transaction_terminal_state")).build();
@@ -409,6 +430,14 @@ public class TransactionLifecycleTests {
 			Thread.sleep(10L);
 
 		Assertions.assertTrue(transaction.getConnectionLock().hasQueuedThreads(), "Expected participant thread to be waiting on transaction lock");
+	}
+
+	@NonNull
+	private static ThreadLocal<?> transactionStackHolder() throws NoSuchFieldException, IllegalAccessException {
+		Field transactionStackHolderField = Database.class.getDeclaredField("TRANSACTION_STACK_HOLDER");
+		transactionStackHolderField.setAccessible(true);
+
+		return (ThreadLocal<?>) transactionStackHolderField.get(null);
 	}
 
 	@NonNull
