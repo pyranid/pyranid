@@ -506,6 +506,44 @@ public class MetricsCollectorTests {
 	}
 
 	@Test
+	public void runtimeConnectionAcquisitionFailuresAreCounted() {
+		MetricsCollector statementMetricsCollector = MetricsCollector.inMemoryInstance();
+		Database statementDatabase = Database.withDataSource(new RuntimeConnectionFailingDataSource())
+				.metricsCollector(statementMetricsCollector)
+				.build();
+
+		Assertions.assertThrows(DatabaseException.class, () -> statementDatabase.query("SELECT 1").execute());
+		MetricsCollector.Snapshot statementSnapshot = snapshot(statementMetricsCollector);
+		Assertions.assertEquals(1L, statementSnapshot.connectionsFailedStatementScope());
+		Assertions.assertEquals(1L, statementSnapshot.statementsFailed());
+
+		MetricsCollector streamMetricsCollector = MetricsCollector.inMemoryInstance();
+		Database streamDatabase = Database.withDataSource(new RuntimeConnectionFailingDataSource())
+				.metricsCollector(streamMetricsCollector)
+				.build();
+
+		Assertions.assertThrows(DatabaseException.class, () -> streamDatabase.query("SELECT 1")
+				.fetchStream(Integer.class, stream -> stream.collect(Collectors.toList())));
+		MetricsCollector.Snapshot streamSnapshot = snapshot(streamMetricsCollector);
+		Assertions.assertEquals(1L, streamSnapshot.connectionsFailedStatementScope());
+		Assertions.assertEquals(1L, streamSnapshot.streamsOpenFailures());
+		Assertions.assertEquals(1L, streamSnapshot.statementsFailed());
+
+		MetricsCollector transactionMetricsCollector = MetricsCollector.inMemoryInstance();
+		Database transactionDatabase = Database.withDataSource(new RuntimeConnectionFailingDataSource())
+				.metricsCollector(transactionMetricsCollector)
+				.build();
+
+		Assertions.assertThrows(DatabaseException.class, () -> transactionDatabase.transaction(() ->
+				transactionDatabase.query("SELECT 1").execute()));
+		MetricsCollector.Snapshot transactionSnapshot = snapshot(transactionMetricsCollector);
+		Assertions.assertEquals(1L, transactionSnapshot.connectionsFailedTransactionScope());
+		Assertions.assertEquals(1L, transactionSnapshot.physicalTransactionsBeginFailed());
+		Assertions.assertEquals(1L, transactionSnapshot.transactionClosuresNoPhysical());
+		Assertions.assertEquals(1L, transactionSnapshot.statementsFailed());
+	}
+
+	@Test
 	public void savepointEventsAreCounted() {
 		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
 		Database database = Database.withDataSource(createInMemoryDataSource("metrics_savepoints"))
@@ -859,6 +897,54 @@ public class MetricsCollectorTests {
 		@Override
 		public Logger getParentLogger() {
 			return Logger.getLogger(ConnectionFailingDataSource.class.getName());
+		}
+
+		@Override
+		public <T> T unwrap(Class<T> iface) throws SQLException {
+			throw new SQLException("No wrapper for " + iface);
+		}
+
+		@Override
+		public boolean isWrapperFor(Class<?> iface) {
+			return false;
+		}
+	}
+
+	private static final class RuntimeConnectionFailingDataSource implements DataSource {
+		@Override
+		public Connection getConnection() {
+			throw new IllegalStateException("connection unavailable");
+		}
+
+		@Override
+		public Connection getConnection(String username,
+																		String password) {
+			return getConnection();
+		}
+
+		@Override
+		public PrintWriter getLogWriter() {
+			return null;
+		}
+
+		@Override
+		public void setLogWriter(PrintWriter out) {
+			// No-op for the synthetic failing data source.
+		}
+
+		@Override
+		public void setLoginTimeout(int seconds) {
+			// No-op for the synthetic failing data source.
+		}
+
+		@Override
+		public int getLoginTimeout() {
+			return 0;
+		}
+
+		@Override
+		public Logger getParentLogger() {
+			return Logger.getLogger(RuntimeConnectionFailingDataSource.class.getName());
 		}
 
 		@Override

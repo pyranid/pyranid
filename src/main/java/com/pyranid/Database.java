@@ -2615,6 +2615,11 @@ public final class Database {
 					getMetricsCollectorDispatcher().didFailToAcquireStatementConnection(statementContext, peekDatabaseType(),
 							connectionAcquisitionDuration, wrapped);
 					throw wrapped;
+				} catch (RuntimeException e) {
+					connectionAcquisitionDuration = Duration.ofNanos(nanoTime() - startTime);
+					getMetricsCollectorDispatcher().didFailToAcquireStatementConnection(statementContext, peekDatabaseType(),
+							connectionAcquisitionDuration, e);
+					throw e;
 				}
 			}
 
@@ -2898,6 +2903,11 @@ public final class Database {
 						this.database.getMetricsCollectorDispatcher().didFailToAcquireStatementConnection(this.statementContext,
 								this.database.peekDatabaseType(), this.connectionAcquisitionDuration, wrapped);
 						throw wrapped;
+					} catch (RuntimeException e) {
+						this.connectionAcquisitionDuration = Duration.ofNanos(nanoTime() - startTime);
+						this.database.getMetricsCollectorDispatcher().didFailToAcquireStatementConnection(this.statementContext,
+								this.database.peekDatabaseType(), this.connectionAcquisitionDuration, e);
+						throw e;
 					}
 				}
 				this.connectionAcquisitionDuration = alreadyHasConnection ? null : Duration.ofNanos(nanoTime() - startTime);

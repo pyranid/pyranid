@@ -439,6 +439,12 @@ public final class Transaction {
 				getMetricsCollectorDispatcher().didFailToBeginPhysicalTransaction(this, getTransactionIsolation(),
 						MetricsCollector.PhysicalTransactionBeginFailurePhase.ACQUIRE_CONNECTION, getDatabaseType(), wrapped);
 				throw wrapped;
+			} catch (RuntimeException e) {
+				Duration acquisitionDuration = Duration.ofNanos(nanoTime() - startTime);
+				getMetricsCollectorDispatcher().didFailToAcquireTransactionConnection(this, getDatabaseType(), acquisitionDuration, e);
+				getMetricsCollectorDispatcher().didFailToBeginPhysicalTransaction(this, getTransactionIsolation(),
+						MetricsCollector.PhysicalTransactionBeginFailurePhase.ACQUIRE_CONNECTION, getDatabaseType(), e);
+				throw e;
 			}
 
 			this.connectionAcquiredAtNanos = nanoTime();
