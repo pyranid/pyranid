@@ -1301,7 +1301,7 @@ database.transaction(() -> {
       .execute();
   } catch(DatabaseException e) {
     // Detect a unique constraint violation and gracefully continue on.
-    if("account_award_unique_idx".equals(e.getConstraint().orElse(null)) {
+    if("account_award_unique_idx".equals(e.getConstraint().orElse(null))) {
       out.printf("The %s award was already given to account ID %s\n", AwardType.BIG, accountId); 
       // Puts transaction back in good state (prior to constraint violation)
       transaction.rollback(savepoint);
