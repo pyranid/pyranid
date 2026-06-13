@@ -47,6 +47,7 @@ public interface MetricsCollector {
 	}
 
 	default void didFailToAcquireStatementConnection(@NonNull StatementContext<?> ctx,
+																									 @NonNull DatabaseType databaseType,
 																									 @NonNull Duration acquisitionDuration,
 																									 @NonNull Throwable throwable) {
 		// No-op by default
@@ -183,6 +184,7 @@ public interface MetricsCollector {
 
 	default void didFailToExecuteStatement(@NonNull StatementContext<?> ctx,
 																				 @NonNull StatementLog<?> statementLog,
+																				 @NonNull DatabaseType databaseType,
 																				 @NonNull Throwable throwable) {
 		// No-op by default
 	}
@@ -197,6 +199,7 @@ public interface MetricsCollector {
 	}
 
 	default void didFailToOpenStream(@NonNull StatementContext<?> ctx,
+																	 @NonNull DatabaseType databaseType,
 																	 @NonNull Duration openDuration,
 																	 @NonNull Throwable throwable) {
 		// No-op by default

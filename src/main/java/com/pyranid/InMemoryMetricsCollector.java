@@ -114,6 +114,7 @@ final class InMemoryMetricsCollector implements MetricsCollector {
 
 	@Override
 	public void didFailToAcquireStatementConnection(@NonNull StatementContext<?> ctx,
+																									@NonNull DatabaseType databaseType,
 																									@NonNull Duration acquisitionDuration,
 																									@NonNull Throwable throwable) {
 		this.connectionsFailedStatementScope.increment();
@@ -246,6 +247,7 @@ final class InMemoryMetricsCollector implements MetricsCollector {
 	@Override
 	public void didFailToExecuteStatement(@NonNull StatementContext<?> ctx,
 																				@NonNull StatementLog<?> statementLog,
+																				@NonNull DatabaseType databaseType,
 																				@NonNull Throwable throwable) {
 		this.statementsFailed.increment();
 	}
@@ -258,6 +260,7 @@ final class InMemoryMetricsCollector implements MetricsCollector {
 
 	@Override
 	public void didFailToOpenStream(@NonNull StatementContext<?> ctx,
+																	@NonNull DatabaseType databaseType,
 																	@NonNull Duration openDuration,
 																	@NonNull Throwable throwable) {
 		this.streamsOpenFailures.increment();

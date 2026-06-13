@@ -2612,7 +2612,8 @@ public final class Database {
 				} catch (SQLException e) {
 					DatabaseException wrapped = new DatabaseException("Unable to acquire database connection", e);
 					connectionAcquisitionDuration = Duration.ofNanos(nanoTime() - startTime);
-					getMetricsCollectorDispatcher().didFailToAcquireStatementConnection(statementContext, connectionAcquisitionDuration, wrapped);
+					getMetricsCollectorDispatcher().didFailToAcquireStatementConnection(statementContext, peekDatabaseType(),
+							connectionAcquisitionDuration, wrapped);
 					throw wrapped;
 				}
 			}
@@ -2700,7 +2701,8 @@ public final class Database {
 					getMetricsCollectorDispatcher().didExecuteStatement(statementContext, statementLog, statementResult);
 				} else {
 					Throwable statementThrowable = thrown == null ? exception : thrown;
-					getMetricsCollectorDispatcher().didFailToExecuteStatement(statementContext, statementLog, requireNonNull(statementThrowable));
+					getMetricsCollectorDispatcher().didFailToExecuteStatement(statementContext, statementLog, peekDatabaseType(),
+							requireNonNull(statementThrowable));
 				}
 
 				try {
@@ -2893,7 +2895,8 @@ public final class Database {
 					} catch (SQLException e) {
 						DatabaseException wrapped = new DatabaseException("Unable to acquire database connection", e);
 						this.connectionAcquisitionDuration = Duration.ofNanos(nanoTime() - startTime);
-						this.database.getMetricsCollectorDispatcher().didFailToAcquireStatementConnection(this.statementContext, this.connectionAcquisitionDuration, wrapped);
+						this.database.getMetricsCollectorDispatcher().didFailToAcquireStatementConnection(this.statementContext,
+								this.database.peekDatabaseType(), this.connectionAcquisitionDuration, wrapped);
 						throw wrapped;
 					}
 				}
@@ -2937,7 +2940,7 @@ public final class Database {
 				this.exception = e;
 				this.thrown = e;
 				this.openFailed = true;
-				this.database.getMetricsCollectorDispatcher().didFailToOpenStream(this.statementContext,
+				this.database.getMetricsCollectorDispatcher().didFailToOpenStream(this.statementContext, this.database.peekDatabaseType(),
 						Duration.ofNanos(nanoTime() - this.openStartTime), e);
 				close();
 				throw e;
@@ -2946,7 +2949,7 @@ public final class Database {
 				this.exception = e;
 				this.thrown = wrapped;
 				this.openFailed = true;
-				this.database.getMetricsCollectorDispatcher().didFailToOpenStream(this.statementContext,
+				this.database.getMetricsCollectorDispatcher().didFailToOpenStream(this.statementContext, this.database.peekDatabaseType(),
 						Duration.ofNanos(nanoTime() - this.openStartTime), wrapped);
 				close();
 				throw wrapped;
@@ -2954,7 +2957,7 @@ public final class Database {
 				this.exception = databaseExceptionWithStatementContext(this.statementContext, e);
 				this.thrown = e;
 				this.openFailed = true;
-				this.database.getMetricsCollectorDispatcher().didFailToOpenStream(this.statementContext,
+				this.database.getMetricsCollectorDispatcher().didFailToOpenStream(this.statementContext, this.database.peekDatabaseType(),
 						Duration.ofNanos(nanoTime() - this.openStartTime), e);
 				close();
 				throw e;
@@ -3145,7 +3148,8 @@ public final class Database {
 					this.database.getMetricsCollectorDispatcher().didExecuteStatement(this.statementContext, statementLog, StatementResult.empty());
 				} else {
 					Throwable statementThrowable = this.thrown == null ? this.exception : this.thrown;
-					this.database.getMetricsCollectorDispatcher().didFailToExecuteStatement(this.statementContext, statementLog, requireNonNull(statementThrowable));
+					this.database.getMetricsCollectorDispatcher().didFailToExecuteStatement(this.statementContext, statementLog,
+							this.database.peekDatabaseType(), requireNonNull(statementThrowable));
 				}
 
 				try {

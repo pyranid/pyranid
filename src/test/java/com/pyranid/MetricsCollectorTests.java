@@ -177,7 +177,7 @@ public class MetricsCollectorTests {
 		Database database = Database.withDataSource(createInMemoryDataSource("metrics_open_failure_counter")).build();
 		StatementContext<?> statementContext = StatementContext.with(com.pyranid.Statement.of("test", "SELECT 1"), database).build();
 
-		metricsCollector.didFailToOpenStream(statementContext, Duration.ZERO, new RuntimeException("open"));
+		metricsCollector.didFailToOpenStream(statementContext, DatabaseType.GENERIC, Duration.ZERO, new RuntimeException("open"));
 		metricsCollector.didCloseStream(statementContext, MetricsCollector.StreamTerminalOutcome.OPEN_FAILURE, 0L, Duration.ZERO, null);
 
 		Assertions.assertEquals(1L, snapshot(metricsCollector).streamsOpenFailures());
@@ -478,6 +478,31 @@ public class MetricsCollectorTests {
 		Assertions.assertThrows(DatabaseException.class, () -> transactionDatabase.transaction(() ->
 				transactionDatabase.query("CREATE TABLE t (id INT)").execute()));
 		Assertions.assertEquals(1L, snapshot(transactionMetricsCollector).connectionReleaseFailuresTransactionScope());
+	}
+
+	@Test
+	public void statementFailureMetricsReceiveConfiguredDatabaseTypeSnapshot() {
+		RecordingMetricsCollector statementMetricsCollector = new RecordingMetricsCollector();
+		Database statementDatabase = Database.withDataSource(new ConnectionFailingDataSource())
+				.databaseType(DatabaseType.POSTGRESQL)
+				.metricsCollector(statementMetricsCollector)
+				.build();
+
+		Assertions.assertThrows(DatabaseException.class, () -> statementDatabase.query("SELECT 1").execute());
+		Assertions.assertEquals(DatabaseType.POSTGRESQL, statementMetricsCollector.statementConnectionFailureDatabaseType.get());
+		Assertions.assertEquals(DatabaseType.POSTGRESQL, statementMetricsCollector.statementFailureDatabaseType.get());
+
+		RecordingMetricsCollector streamMetricsCollector = new RecordingMetricsCollector();
+		Database streamDatabase = Database.withDataSource(new ConnectionFailingDataSource())
+				.databaseType(DatabaseType.POSTGRESQL)
+				.metricsCollector(streamMetricsCollector)
+				.build();
+
+		Assertions.assertThrows(DatabaseException.class, () -> streamDatabase.query("SELECT 1")
+				.fetchStream(Integer.class, stream -> stream.collect(Collectors.toList())));
+		Assertions.assertEquals(DatabaseType.POSTGRESQL, streamMetricsCollector.statementConnectionFailureDatabaseType.get());
+		Assertions.assertEquals(DatabaseType.POSTGRESQL, streamMetricsCollector.statementFailureDatabaseType.get());
+		Assertions.assertEquals(DatabaseType.POSTGRESQL, streamMetricsCollector.streamOpenFailureDatabaseType.get());
 	}
 
 	@Test
@@ -799,14 +824,68 @@ public class MetricsCollectorTests {
 		}
 	}
 
+	private static final class ConnectionFailingDataSource implements DataSource {
+		@Override
+		public Connection getConnection() throws SQLException {
+			throw new SQLException("connection unavailable");
+		}
+
+		@Override
+		public Connection getConnection(String username,
+																		String password) throws SQLException {
+			return getConnection();
+		}
+
+		@Override
+		public PrintWriter getLogWriter() {
+			return null;
+		}
+
+		@Override
+		public void setLogWriter(PrintWriter out) {
+			// No-op for the synthetic failing data source.
+		}
+
+		@Override
+		public void setLoginTimeout(int seconds) {
+			// No-op for the synthetic failing data source.
+		}
+
+		@Override
+		public int getLoginTimeout() {
+			return 0;
+		}
+
+		@Override
+		public Logger getParentLogger() {
+			return Logger.getLogger(ConnectionFailingDataSource.class.getName());
+		}
+
+		@Override
+		public <T> T unwrap(Class<T> iface) throws SQLException {
+			throw new SQLException("No wrapper for " + iface);
+		}
+
+		@Override
+		public boolean isWrapperFor(Class<?> iface) {
+			return false;
+		}
+	}
+
 	@ThreadSafe
 	private static final class RecordingMetricsCollector implements MetricsCollector {
 		private final List<StatementResult> results;
 		private final AtomicReference<DatabaseType> transactionDatabaseType;
+		private final AtomicReference<DatabaseType> statementConnectionFailureDatabaseType;
+		private final AtomicReference<DatabaseType> statementFailureDatabaseType;
+		private final AtomicReference<DatabaseType> streamOpenFailureDatabaseType;
 
 		private RecordingMetricsCollector() {
 			this.results = new ArrayList<>();
 			this.transactionDatabaseType = new AtomicReference<>();
+			this.statementConnectionFailureDatabaseType = new AtomicReference<>();
+			this.statementFailureDatabaseType = new AtomicReference<>();
+			this.streamOpenFailureDatabaseType = new AtomicReference<>();
 		}
 
 		@Override
@@ -814,6 +893,30 @@ public class MetricsCollectorTests {
 																								 @NonNull StatementLog<?> statementLog,
 																								 @NonNull StatementResult result) {
 			this.results.add(result);
+		}
+
+		@Override
+		public void didFailToAcquireStatementConnection(@NonNull StatementContext<?> ctx,
+																										@NonNull DatabaseType databaseType,
+																										@NonNull Duration acquisitionDuration,
+																										@NonNull Throwable throwable) {
+			this.statementConnectionFailureDatabaseType.set(databaseType);
+		}
+
+		@Override
+		public void didFailToExecuteStatement(@NonNull StatementContext<?> ctx,
+																					@NonNull StatementLog<?> statementLog,
+																					@NonNull DatabaseType databaseType,
+																					@NonNull Throwable throwable) {
+			this.statementFailureDatabaseType.set(databaseType);
+		}
+
+		@Override
+		public void didFailToOpenStream(@NonNull StatementContext<?> ctx,
+																		@NonNull DatabaseType databaseType,
+																		@NonNull Duration openDuration,
+																		@NonNull Throwable throwable) {
+			this.streamOpenFailureDatabaseType.set(databaseType);
 		}
 
 		@Override

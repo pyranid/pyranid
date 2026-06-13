@@ -82,13 +82,14 @@ final class MetricsCollectorDispatcher {
 	}
 
 	void didFailToAcquireStatementConnection(@NonNull StatementContext<?> ctx,
+																					 @NonNull DatabaseType databaseType,
 																					 @NonNull Duration acquisitionDuration,
 																					 @NonNull Throwable throwable) {
 		if (!isEnabled())
 			return;
 
 		try {
-			this.metricsCollector.didFailToAcquireStatementConnection(ctx, acquisitionDuration, throwable);
+			this.metricsCollector.didFailToAcquireStatementConnection(ctx, databaseType, acquisitionDuration, throwable);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
 		}
@@ -372,12 +373,13 @@ final class MetricsCollectorDispatcher {
 
 	void didFailToExecuteStatement(@NonNull StatementContext<?> ctx,
 																 @NonNull StatementLog<?> statementLog,
+																 @NonNull DatabaseType databaseType,
 																 @NonNull Throwable throwable) {
 		if (!isEnabled())
 			return;
 
 		try {
-			this.metricsCollector.didFailToExecuteStatement(ctx, statementLog, throwable);
+			this.metricsCollector.didFailToExecuteStatement(ctx, statementLog, databaseType, throwable);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
 		}
@@ -407,13 +409,14 @@ final class MetricsCollectorDispatcher {
 	}
 
 	void didFailToOpenStream(@NonNull StatementContext<?> ctx,
+													 @NonNull DatabaseType databaseType,
 													 @NonNull Duration openDuration,
 													 @NonNull Throwable throwable) {
 		if (!isEnabled())
 			return;
 
 		try {
-			this.metricsCollector.didFailToOpenStream(ctx, openDuration, throwable);
+			this.metricsCollector.didFailToOpenStream(ctx, databaseType, openDuration, throwable);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
 		}
