@@ -20,6 +20,7 @@ import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
 import javax.annotation.concurrent.NotThreadSafe;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -104,9 +105,58 @@ public interface Query {
 	Query id(@Nullable Object id);
 
 	/**
+	 * Configures the JDBC query timeout for this query.
+	 * <p>
+	 * This maps to {@link java.sql.Statement#setQueryTimeout(int)}. {@code null} leaves the timeout unset so any
+	 * {@link Database.Builder#queryTimeout(Duration)} default applies. {@link Duration#ZERO} disables the JDBC timeout.
+	 * Positive sub-second durations are rounded up to one second because JDBC accepts whole seconds.
+	 *
+	 * @param queryTimeout timeout to apply, or {@code null} to inherit the database default
+	 * @return this builder, for chaining
+	 * @since 4.2.0
+	 */
+	@NonNull
+	default Query queryTimeout(@Nullable Duration queryTimeout) {
+		throw new UnsupportedOperationException("queryTimeout is not supported by this Query implementation");
+	}
+
+	/**
+	 * Configures the JDBC fetch size for this query.
+	 * <p>
+	 * This maps to {@link java.sql.Statement#setFetchSize(int)}. {@code null} leaves the fetch size unset so any
+	 * {@link Database.Builder#fetchSize(Integer)} default applies. A value of {@code 0} uses the driver's default
+	 * fetch-size behavior.
+	 *
+	 * @param fetchSize fetch size to apply, or {@code null} to inherit the database default
+	 * @return this builder, for chaining
+	 * @since 4.2.0
+	 */
+	@NonNull
+	default Query fetchSize(@Nullable Integer fetchSize) {
+		throw new UnsupportedOperationException("fetchSize is not supported by this Query implementation");
+	}
+
+	/**
+	 * Configures the JDBC maximum row count for this query.
+	 * <p>
+	 * This maps to {@link java.sql.Statement#setMaxRows(int)}. {@code null} leaves the maximum row count unset so any
+	 * {@link Database.Builder#maxRows(Integer)} default applies. A value of {@code 0} disables the JDBC row limit.
+	 *
+	 * @param maxRows maximum rows to apply, or {@code null} to inherit the database default
+	 * @return this builder, for chaining
+	 * @since 4.2.0
+	 */
+	@NonNull
+	default Query maxRows(@Nullable Integer maxRows) {
+		throw new UnsupportedOperationException("maxRows is not supported by this Query implementation");
+	}
+
+	/**
 	 * Customizes the {@link java.sql.PreparedStatement} before execution.
 	 * <p>
-	 * If called multiple times, the most recent customizer wins.
+	 * If called multiple times, the most recent customizer wins. The customizer runs after database-wide statement
+	 * settings and this query's {@link #queryTimeout(Duration)}, {@link #fetchSize(Integer)}, and
+	 * {@link #maxRows(Integer)} settings, so it can override them when needed.
 	 *
 	 * @param preparedStatementCustomizer customization callback
 	 * @return this builder, for chaining
@@ -146,7 +196,7 @@ public interface Query {
 	 * The stream must be consumed within the scope of the transaction or connection that created it.
 	 * <p>
 	 * PostgreSQL streams are configured automatically with a positive JDBC fetch size and an autocommit-disabled
-	 * connection when no Pyranid transaction is active. Use {@link #customize(PreparedStatementCustomizer)} to override
+	 * connection when no Pyranid transaction is active. Use {@link #fetchSize(Integer)} to override
 	 * the fetch size when needed. Other cursor-based drivers may require driver-specific transaction or fetch-size setup.
 	 *
 	 * @param resultType     the type to marshal each row to

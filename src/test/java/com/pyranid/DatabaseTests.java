@@ -40,6 +40,7 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.sql.Types;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -1510,6 +1511,72 @@ public class DatabaseTests {
 		Assertions.assertEquals(2, rows.size(), "Last customizer should win and limit max rows");
 		Assertions.assertEquals(0, firstCalls.get(), "Previous customizer should be overwritten");
 		Assertions.assertEquals(1, secondCalls.get(), "Last customizer should run");
+	}
+
+	@Test
+	public void testPreparedStatementSettingsApplyDefaultsAndPerQueryOverridesBeforeCustomizer() {
+		Database db = Database.withDataSource(createInMemoryDataSource("query_statement_settings"))
+				.queryTimeout(Duration.ofMillis(1_500))
+				.fetchSize(100)
+				.maxRows(1)
+				.build();
+		createTestSchema(db);
+
+		db.query("INSERT INTO employee VALUES (1, 'A', 'a@x.com', 'en-US')").execute();
+		db.query("INSERT INTO employee VALUES (2, 'B', 'b@x.com', 'en-US')").execute();
+		db.query("INSERT INTO employee VALUES (3, 'C', 'c@x.com', 'en-US')").execute();
+
+		AtomicInteger defaultCustomizerCalls = new AtomicInteger(0);
+		List<EmployeeClass> defaultRows = db.query("SELECT * FROM employee ORDER BY employee_id")
+				.customize((statementContext, preparedStatement) -> {
+					defaultCustomizerCalls.incrementAndGet();
+					Assertions.assertEquals(2, preparedStatement.getQueryTimeout());
+					Assertions.assertEquals(100, preparedStatement.getFetchSize());
+					Assertions.assertEquals(1, preparedStatement.getMaxRows());
+					preparedStatement.setMaxRows(2);
+				})
+				.fetchList(EmployeeClass.class);
+
+		Assertions.assertEquals(1, defaultCustomizerCalls.get());
+		Assertions.assertEquals(2, defaultRows.size(), "Query.customize(...) should run last and override maxRows");
+
+		AtomicInteger overrideCustomizerCalls = new AtomicInteger(0);
+		List<EmployeeClass> overrideRows = db.query("SELECT * FROM employee ORDER BY employee_id")
+				.queryTimeout(Duration.ofSeconds(5))
+				.fetchSize(200)
+				.maxRows(3)
+				.customize((statementContext, preparedStatement) -> {
+					overrideCustomizerCalls.incrementAndGet();
+					Assertions.assertEquals(5, preparedStatement.getQueryTimeout());
+					Assertions.assertEquals(200, preparedStatement.getFetchSize());
+					Assertions.assertEquals(3, preparedStatement.getMaxRows());
+					preparedStatement.setMaxRows(2);
+				})
+				.fetchList(EmployeeClass.class);
+
+		Assertions.assertEquals(1, overrideCustomizerCalls.get());
+		Assertions.assertEquals(2, overrideRows.size(), "Per-query settings should override database defaults before customizer runs");
+	}
+
+	@Test
+	public void testPreparedStatementSettingsRejectInvalidValues() {
+		DataSource dataSource = createInMemoryDataSource("query_statement_settings_invalid");
+		Database db = Database.withDataSource(dataSource).build();
+
+		Assertions.assertThrows(IllegalArgumentException.class, () ->
+				Database.withDataSource(dataSource).queryTimeout(Duration.ofNanos(-1)));
+		Assertions.assertThrows(IllegalArgumentException.class, () ->
+				Database.withDataSource(dataSource).queryTimeout(Duration.ofSeconds((long) Integer.MAX_VALUE + 1L)));
+		Assertions.assertThrows(IllegalArgumentException.class, () ->
+				Database.withDataSource(dataSource).fetchSize(-1));
+		Assertions.assertThrows(IllegalArgumentException.class, () ->
+				Database.withDataSource(dataSource).maxRows(-1));
+		Assertions.assertThrows(IllegalArgumentException.class, () ->
+				db.query("SELECT 1 FROM (VALUES (0)) AS t(x)").queryTimeout(Duration.ofNanos(-1)));
+		Assertions.assertThrows(IllegalArgumentException.class, () ->
+				db.query("SELECT 1 FROM (VALUES (0)) AS t(x)").fetchSize(-1));
+		Assertions.assertThrows(IllegalArgumentException.class, () ->
+				db.query("SELECT 1 FROM (VALUES (0)) AS t(x)").maxRows(-1));
 	}
 
 	public record GroupRow(String groupName, List<UUID> ids) {}

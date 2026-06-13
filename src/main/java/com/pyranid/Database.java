@@ -109,6 +109,12 @@ public final class Database {
 	@NonNull
 	private final MetricsCollectorDispatcher metricsCollectorDispatcher;
 	@Nullable
+	private final Duration queryTimeout;
+	@Nullable
+	private final Integer fetchSize;
+	@Nullable
+	private final Integer maxRows;
+	@Nullable
 	private final Map<String, ParsedSql> parsedSqlCache;
 	@NonNull
 	private final AtomicLong defaultIdGenerator;
@@ -135,6 +141,9 @@ public final class Database {
 		this.resultSetMapper = builder.resultSetMapper == null ? ResultSetMapper.withDefaultConfiguration() : builder.resultSetMapper;
 		this.statementLogger = builder.statementLogger == null ? (statementLog) -> {} : builder.statementLogger;
 		this.metricsCollectorDispatcher = new MetricsCollectorDispatcher(builder.metricsCollector);
+		this.queryTimeout = validateQueryTimeout(builder.queryTimeout);
+		this.fetchSize = validateNonNegativeStatementSetting("fetchSize", builder.fetchSize);
+		this.maxRows = validateNonNegativeStatementSetting("maxRows", builder.maxRows);
 		if (builder.parsedSqlCacheCapacity != null && builder.parsedSqlCacheCapacity < 0)
 			throw new IllegalArgumentException("parsedSqlCacheCapacity must be >= 0");
 
@@ -854,6 +863,47 @@ public final class Database {
 				|| lower.contains("feature not supported");
 	}
 
+	@Nullable
+	private static Duration validateQueryTimeout(@Nullable Duration queryTimeout) {
+		if (queryTimeout != null) {
+			if (queryTimeout.isNegative())
+				throw new IllegalArgumentException("queryTimeout must be >= 0");
+
+			queryTimeoutSeconds(queryTimeout);
+		}
+
+		return queryTimeout;
+	}
+
+	@Nullable
+	private static Integer validateNonNegativeStatementSetting(@NonNull String name,
+																														 @Nullable Integer value) {
+		requireNonNull(name);
+
+		if (value != null && value < 0)
+			throw new IllegalArgumentException(format("%s must be >= 0", name));
+
+		return value;
+	}
+
+	private static int queryTimeoutSeconds(@NonNull Duration queryTimeout) {
+		requireNonNull(queryTimeout);
+
+		long seconds = queryTimeout.getSeconds();
+
+		if (queryTimeout.getNano() > 0) {
+			if (seconds == Long.MAX_VALUE)
+				throw new IllegalArgumentException(format("queryTimeout must be <= %s seconds", Integer.MAX_VALUE));
+
+			++seconds;
+		}
+
+		if (seconds > Integer.MAX_VALUE)
+			throw new IllegalArgumentException(format("queryTimeout must be <= %s seconds", Integer.MAX_VALUE));
+
+		return (int) seconds;
+	}
+
 	@NonNull
 	private ParsedSql getParsedSql(@NonNull String sql) {
 		requireNonNull(sql);
@@ -888,6 +938,12 @@ public final class Database {
 		@Nullable
 		private PreparedStatementCustomizer preparedStatementCustomizer;
 		@Nullable
+		private Duration queryTimeout;
+		@Nullable
+		private Integer fetchSize;
+		@Nullable
+		private Integer maxRows;
+		@Nullable
 		private Object id;
 
 		private DefaultQuery(@NonNull Database database,
@@ -906,6 +962,9 @@ public final class Database {
 
 			this.bindings = new LinkedHashMap<>(Math.max(8, this.distinctParameterNames.size()));
 			this.preparedStatementCustomizer = null;
+			this.queryTimeout = null;
+			this.fetchSize = null;
+			this.maxRows = null;
 		}
 
 		@NonNull
@@ -941,6 +1000,27 @@ public final class Database {
 
 		@NonNull
 		@Override
+		public Query queryTimeout(@Nullable Duration queryTimeout) {
+			this.queryTimeout = validateQueryTimeout(queryTimeout);
+			return this;
+		}
+
+		@NonNull
+		@Override
+		public Query fetchSize(@Nullable Integer fetchSize) {
+			this.fetchSize = validateNonNegativeStatementSetting("fetchSize", fetchSize);
+			return this;
+		}
+
+		@NonNull
+		@Override
+		public Query maxRows(@Nullable Integer maxRows) {
+			this.maxRows = validateNonNegativeStatementSetting("maxRows", maxRows);
+			return this;
+		}
+
+		@NonNull
+		@Override
 		public Query customize(@NonNull PreparedStatementCustomizer preparedStatementCustomizer) {
 			requireNonNull(preparedStatementCustomizer);
 			this.preparedStatementCustomizer = preparedStatementCustomizer;
@@ -953,7 +1033,7 @@ public final class Database {
 		public <T> Optional<T> fetchObject(@NonNull Class<T> resultType) {
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
-			return this.database.queryForObject(preparedQuery.statement, resultType, this.preparedStatementCustomizer, preparedQuery.parameters);
+			return this.database.queryForObject(preparedQuery.statement, resultType, effectivePreparedStatementCustomizer(), preparedQuery.parameters);
 		}
 
 		@NonNull
@@ -961,7 +1041,7 @@ public final class Database {
 		public <T> List<@Nullable T> fetchList(@NonNull Class<T> resultType) {
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
-			return this.database.queryForList(preparedQuery.statement, resultType, this.preparedStatementCustomizer, preparedQuery.parameters);
+			return this.database.queryForList(preparedQuery.statement, resultType, effectivePreparedStatementCustomizer(), preparedQuery.parameters);
 		}
 
 		@Nullable
@@ -971,7 +1051,7 @@ public final class Database {
 			requireNonNull(resultType);
 			requireNonNull(streamFunction);
 			PreparedQuery preparedQuery = prepare(this.bindings);
-			return this.database.queryForStream(preparedQuery.statement, resultType, this.preparedStatementCustomizer, streamFunction, preparedQuery.parameters);
+			return this.database.queryForStream(preparedQuery.statement, resultType, effectivePreparedStatementCustomizer(), streamFunction, preparedQuery.parameters);
 		}
 
 
@@ -979,7 +1059,7 @@ public final class Database {
 		@Override
 		public Long execute() {
 			PreparedQuery preparedQuery = prepare(this.bindings);
-			return this.database.execute(preparedQuery.statement, this.preparedStatementCustomizer, preparedQuery.parameters);
+			return this.database.execute(preparedQuery.statement, effectivePreparedStatementCustomizer(), preparedQuery.parameters);
 		}
 
 		@NonNull
@@ -1029,7 +1109,7 @@ public final class Database {
 			if (statement == null)
 				statement = Statement.of(statementId, buildPlaceholderSql());
 
-			return this.database.executeBatch(statement, parametersAsList, this.preparedStatementCustomizer);
+			return this.database.executeBatch(statement, parametersAsList, effectivePreparedStatementCustomizer());
 		}
 
 		@NonNull
@@ -1037,7 +1117,7 @@ public final class Database {
 		public <T> Optional<T> executeForObject(@NonNull Class<T> resultType) {
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
-			return this.database.executeForObject(preparedQuery.statement, resultType, this.preparedStatementCustomizer, preparedQuery.parameters);
+			return this.database.executeForObject(preparedQuery.statement, resultType, effectivePreparedStatementCustomizer(), preparedQuery.parameters);
 		}
 
 		@NonNull
@@ -1045,7 +1125,27 @@ public final class Database {
 		public <T> List<@Nullable T> executeForList(@NonNull Class<T> resultType) {
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
-			return this.database.executeForList(preparedQuery.statement, resultType, this.preparedStatementCustomizer, preparedQuery.parameters);
+			return this.database.executeForList(preparedQuery.statement, resultType, effectivePreparedStatementCustomizer(), preparedQuery.parameters);
+		}
+
+		@Nullable
+		private PreparedStatementCustomizer effectivePreparedStatementCustomizer() {
+			if (!this.database.hasDefaultPreparedStatementSettings()
+					&& !hasQueryPreparedStatementSettings()
+					&& this.preparedStatementCustomizer == null)
+				return null;
+
+			return (statementContext, preparedStatement) -> {
+				this.database.applyDefaultPreparedStatementSettings(preparedStatement);
+				applyPreparedStatementSettings(preparedStatement, this.queryTimeout, this.fetchSize, this.maxRows);
+
+				if (this.preparedStatementCustomizer != null)
+					this.preparedStatementCustomizer.customize(statementContext, preparedStatement);
+			};
+		}
+
+		private boolean hasQueryPreparedStatementSettings() {
+			return this.queryTimeout != null || this.fetchSize != null || this.maxRows != null;
 		}
 
 		@NonNull
@@ -2377,6 +2477,31 @@ public final class Database {
 		preparedStatementCustomizer.customize(statementContext, preparedStatement);
 	}
 
+	private boolean hasDefaultPreparedStatementSettings() {
+		return this.queryTimeout != null || this.fetchSize != null || this.maxRows != null;
+	}
+
+	private void applyDefaultPreparedStatementSettings(@NonNull PreparedStatement preparedStatement) throws SQLException {
+		requireNonNull(preparedStatement);
+		applyPreparedStatementSettings(preparedStatement, this.queryTimeout, this.fetchSize, this.maxRows);
+	}
+
+	private static void applyPreparedStatementSettings(@NonNull PreparedStatement preparedStatement,
+																										 @Nullable Duration queryTimeout,
+																										 @Nullable Integer fetchSize,
+																										 @Nullable Integer maxRows) throws SQLException {
+		requireNonNull(preparedStatement);
+
+		if (queryTimeout != null)
+			preparedStatement.setQueryTimeout(queryTimeoutSeconds(queryTimeout));
+
+		if (fetchSize != null)
+			preparedStatement.setFetchSize(fetchSize);
+
+		if (maxRows != null)
+			preparedStatement.setMaxRows(maxRows);
+	}
+
 	@FunctionalInterface
 	protected interface RawConnectionOperation<R> {
 		@NonNull
@@ -3290,12 +3415,21 @@ public final class Database {
 		@Nullable
 		private MetricsCollector metricsCollector;
 		@Nullable
+		private Duration queryTimeout;
+		@Nullable
+		private Integer fetchSize;
+		@Nullable
+		private Integer maxRows;
+		@Nullable
 		private Integer parsedSqlCacheCapacity;
 
 		private Builder(@NonNull DataSource dataSource) {
 			this.dataSource = requireNonNull(dataSource);
 			this.databaseType = null;
 			this.metricsCollector = null;
+			this.queryTimeout = null;
+			this.fetchSize = null;
+			this.maxRows = null;
 			this.parsedSqlCacheCapacity = null;
 		}
 
@@ -3404,6 +3538,58 @@ public final class Database {
 		@NonNull
 		public Builder metricsCollector(@Nullable MetricsCollector metricsCollector) {
 			this.metricsCollector = metricsCollector;
+			return this;
+		}
+
+		/**
+		 * Configures a database-wide JDBC query timeout default.
+		 * <p>
+		 * This maps to {@link java.sql.Statement#setQueryTimeout(int)}. {@code null} leaves the timeout unset.
+		 * {@link Duration#ZERO} disables the JDBC timeout. Positive sub-second durations are rounded up to one second
+		 * because JDBC accepts whole seconds. Per-query {@link Query#queryTimeout(Duration)} settings override this value,
+		 * and {@link Query#customize(PreparedStatementCustomizer)} runs last.
+		 *
+		 * @param queryTimeout timeout to apply by default, or {@code null} to leave unset
+		 * @return this {@code Builder}, for chaining
+		 * @since 4.2.0
+		 */
+		@NonNull
+		public Builder queryTimeout(@Nullable Duration queryTimeout) {
+			this.queryTimeout = validateQueryTimeout(queryTimeout);
+			return this;
+		}
+
+		/**
+		 * Configures a database-wide JDBC fetch size default.
+		 * <p>
+		 * This maps to {@link java.sql.Statement#setFetchSize(int)}. {@code null} leaves the fetch size unset. A value
+		 * of {@code 0} uses the driver's default fetch-size behavior. Per-query {@link Query#fetchSize(Integer)}
+		 * settings override this value, and {@link Query#customize(PreparedStatementCustomizer)} runs last.
+		 *
+		 * @param fetchSize fetch size to apply by default, or {@code null} to leave unset
+		 * @return this {@code Builder}, for chaining
+		 * @since 4.2.0
+		 */
+		@NonNull
+		public Builder fetchSize(@Nullable Integer fetchSize) {
+			this.fetchSize = validateNonNegativeStatementSetting("fetchSize", fetchSize);
+			return this;
+		}
+
+		/**
+		 * Configures a database-wide JDBC maximum row count default.
+		 * <p>
+		 * This maps to {@link java.sql.Statement#setMaxRows(int)}. {@code null} leaves the maximum row count unset. A
+		 * value of {@code 0} disables the JDBC row limit. Per-query {@link Query#maxRows(Integer)} settings override
+		 * this value, and {@link Query#customize(PreparedStatementCustomizer)} runs last.
+		 *
+		 * @param maxRows maximum rows to apply by default, or {@code null} to leave unset
+		 * @return this {@code Builder}, for chaining
+		 * @since 4.2.0
+		 */
+		@NonNull
+		public Builder maxRows(@Nullable Integer maxRows) {
+			this.maxRows = validateNonNegativeStatementSetting("maxRows", maxRows);
 			return this;
 		}
 

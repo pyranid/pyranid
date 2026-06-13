@@ -190,6 +190,8 @@ Database customDatabase = Database.withDataSource(dataSource)
   .resultSetMapper(resultSetMapper)
   .preparedStatementBinder(preparedStatementBinder)
   .statementLogger(statementLogger)
+  .queryTimeout(Duration.ofSeconds(30))
+  .fetchSize(500)
   // Cache parsed SQL strings (0 disables caching).
   .parsedSqlCacheCapacity(1024)
   .build();
@@ -304,7 +306,7 @@ List<Employee> employees = database.query("""
 
 The stream must be consumed within the scope of the transaction or connection that created it. Do not let the stream escape from the callback.
 
-For PostgreSQL, Pyranid automatically configures streaming reads with an autocommit-disabled connection and a positive JDBC fetch size when no Pyranid transaction is active. Use [`Query::customize(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#customize(com.pyranid.PreparedStatementCustomizer)) to override the fetch size when needed. Other cursor-based drivers may require driver-specific transaction or fetch-size setup.
+For PostgreSQL, Pyranid automatically configures streaming reads with an autocommit-disabled connection and a positive JDBC fetch size when no Pyranid transaction is active. Use [`Query::fetchSize(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchSize(java.lang.Integer)) to override the fetch size when needed. Other cursor-based drivers may require driver-specific transaction or fetch-size setup.
 
 ```java
 List<Employee> employees = database.query("""
@@ -312,8 +314,7 @@ List<Employee> employees = database.query("""
   FROM employee
   ORDER BY employee_id
   """)
-  .customize((statementContext, preparedStatement) ->
-    preparedStatement.setFetchSize(1_000))
+  .fetchSize(1_000)
   .fetchStream(Employee.class, stream ->
     stream.limit(10_000).toList());
 ```
@@ -861,9 +862,28 @@ database.query("""
   .execute();
 ```
 
+### Statement settings
+
+Common JDBC statement settings are available directly on [`Query`](https://javadoc.pyranid.com/com/pyranid/Query.html):
+
+```java
+List<Employee> employees = database.query("""
+  SELECT *
+  FROM employee
+  WHERE department_id=:departmentId
+  """)
+  .bind("departmentId", departmentId)
+  .queryTimeout(Duration.ofSeconds(10))
+  .fetchSize(500)
+  .maxRows(1_000)
+  .fetchList(Employee.class);
+```
+
+Use [`Database.Builder::queryTimeout(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#queryTimeout(java.time.Duration)), [`fetchSize(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#fetchSize(java.lang.Integer)), and [`maxRows(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#maxRows(java.lang.Integer)) to configure database-wide defaults. Per-query settings override database defaults, and `Query::customize(...)` runs last.
+
 ### PreparedStatementCustomizer
 
-If you need to tweak the JDBC `PreparedStatement` before execution (for example, to set query hints), use `Query::customize(...)`.
+If you need to tweak the JDBC `PreparedStatement` before execution beyond built-in statement settings, use `Query::customize(...)`.
 
 ```java
 List<Employee> employees = database.query("""
@@ -873,7 +893,7 @@ List<Employee> employees = database.query("""
   """)
   .bind("departmentId", departmentId)
   .customize((statementContext, preparedStatement) -> {
-    preparedStatement.setFetchSize(500);
+    preparedStatement.setPoolable(false);
   })
   .fetchList(Employee.class);
 ```
@@ -1428,7 +1448,7 @@ A [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) instance h
 
 Each call to [`transaction(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transaction(com.pyranid.TransactionalOperation)) opens an independent transaction with its own physical connection. Nested `transaction(...)` calls do not auto-join an outer transaction and can pressure small pools. Use [`participate(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#participate(com.pyranid.Transaction,com.pyranid.TransactionalOperation)) to run work on an existing transaction from another thread, and make sure participating workers complete before the owning transaction closure returns; coordinate with application primitives such as [`CompletableFuture::join`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/CompletableFuture.html#join()), [`ExecutorService::awaitTermination`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/ExecutorService.html#awaitTermination(long,java.util.concurrent.TimeUnit)), or [`CountDownLatch`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/CountDownLatch.html).
 
-[`fetchStream(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchStream(java.lang.Class,java.util.function.Function)) streams rows only for as long as the callback is executing. Do not return the stream or consume it asynchronously after the callback returns. PostgreSQL streams automatically use an autocommit-disabled connection and a positive fetch size outside explicit Pyranid transactions; [`Query::customize(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#customize(com.pyranid.PreparedStatementCustomizer)) can override that fetch size. For other cursor-based drivers, follow the driver's transaction and fetch-size requirements.
+[`fetchStream(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchStream(java.lang.Class,java.util.function.Function)) streams rows only for as long as the callback is executing. Do not return the stream or consume it asynchronously after the callback returns. PostgreSQL streams automatically use an autocommit-disabled connection and a positive fetch size outside explicit Pyranid transactions; [`Query::fetchSize(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchSize(java.lang.Integer)) can override that fetch size. For other cursor-based drivers, follow the driver's transaction and fetch-size requirements.
 
 Savepoints are stack-like on most drivers. Prefer [`Transaction::withSavepoint(...)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#withSavepoint(com.pyranid.TransactionalOperation)) for nested savepoint workflows, and avoid manual out-of-order [`rollback(Savepoint)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#rollback(java.sql.Savepoint)) / [`releaseSavepoint(Savepoint)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#releaseSavepoint(java.sql.Savepoint)) calls unless your driver documents the behavior you need.
 
