@@ -290,7 +290,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 																												@NonNull TargetType targetType,
 																												@NonNull Integer columnIndex,
 																												@Nullable String columnLabel,
-																												@NonNull InstanceProvider instanceProvider) throws SQLException {
+																												@NonNull InstanceProvider instanceProvider) {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(resultSetValue);
@@ -309,7 +309,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 																												@NonNull List<CustomColumnMapper> mappers,
 																												@NonNull Integer columnIndex,
 																												@Nullable String columnLabel,
-																												@NonNull InstanceProvider instanceProvider) throws SQLException {
+																												@NonNull InstanceProvider instanceProvider) {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(resultSetValue);
@@ -326,8 +326,13 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				preferredKey == null ? null : getPreferredColumnMapperCacheForSourceClass(sourceClass);
 
 		for (CustomColumnMapper mapper : mappers) {
-			CustomColumnMapper.MappingResult mappingResult =
-					mapper.map(statementContext, resultSet, resultSetValue, targetType, columnIndex, columnLabel, instanceProvider);
+			CustomColumnMapper.MappingResult mappingResult;
+
+			try {
+				mappingResult = mapper.map(statementContext, resultSet, resultSetValue, targetType, columnIndex, columnLabel, instanceProvider);
+			} catch (SQLException e) {
+				throw new DatabaseException(e);
+			}
 
 			if (mappingApplied(mappingResult)) {
 				if (preferredByTargetType != null && preferredKey != null)
@@ -2502,21 +2507,18 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				List<CustomColumnMapper> customMappers = customColumnMappersFor(targetTypeFinal);
 				Converter converter = (raw, rrs, cctx, ip) -> {
 					if (raw == null) return null;
-					try {
-						if (!customMappers.isEmpty()) {
-							CustomMappingOutcome outcome = tryCustomColumnMappers(cctx, rrs, raw, targetTypeFinal, customMappers, colIndexFinal, labelFinal, ip);
-							if (outcome.isApplied())
-								return outcome.getValue();
-						}
 
-						if (rawTargetClassBoxed.isInstance(raw))
-							return raw;
-
-						return convertResultSetValueToPropertyType(cctx, raw, rawTargetClassBoxed)
-								.orElse(raw);
-					} catch (SQLException e) {
-						throw new DatabaseException(e);
+					if (!customMappers.isEmpty()) {
+						CustomMappingOutcome outcome = tryCustomColumnMappers(cctx, rrs, raw, targetTypeFinal, customMappers, colIndexFinal, labelFinal, ip);
+						if (outcome.isApplied())
+							return outcome.getValue();
 					}
+
+					if (rawTargetClassBoxed.isInstance(raw))
+						return raw;
+
+					return convertResultSetValueToPropertyType(cctx, raw, rawTargetClassBoxed)
+							.orElse(raw);
 				};
 
 				bindings.add(new ColumnBinding(i, recordArgIndex, setterMH, reader, converter,

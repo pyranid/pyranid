@@ -38,6 +38,9 @@ public interface CustomColumnMapper {
 	 * Perform custom mapping of a {@link ResultSet} column: given a {@code resultSetValue}, optionally return an instance of {@code targetType} instead.
 	 * <p>
 	 * This method is only invoked when {@code resultSetValue} is non-null.
+	 * <p>
+	 * If this method throws {@link SQLException}, the default {@link ResultSetMapper} wraps it in {@link DatabaseException}
+	 * so row-plan caching settings do not affect the exception type observed by callers.
 	 *
 	 * @param statementContext current SQL context
 	 * @param resultSet        the {@link ResultSet} from which data was read

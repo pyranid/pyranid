@@ -1365,7 +1365,7 @@ public class DatabaseTests {
 					.build();
 
 			createTestSchema(db);
-					db.query("INSERT INTO employee VALUES (1, 'A', 'a@x.com', 'en-US')").execute();
+			db.query("INSERT INTO employee VALUES (1, 'A', 'a@x.com', 'en-US')").execute();
 
 			LocaleHolder bean = db.query("SELECT name, locale FROM employee WHERE employee_id=1")
 					.fetchObject(LocaleHolder.class)
@@ -1642,6 +1642,49 @@ public class DatabaseTests {
 						db.query("SELECT locale, email FROM employee WHERE employee_id=1")
 								.fetchObject(Locale.class),
 				"Mapping a standard type from multiple columns should throw");
+	}
+
+	@Test
+	public void testCustomColumnMapperSqlExceptionWrappingDoesNotDependOnPlanCaching() {
+		for (Boolean planCachingEnabled : List.of(false, true)) {
+			CustomColumnMapper throwingMapper = new CustomColumnMapper() {
+				@NonNull
+				@Override
+				public Boolean appliesTo(@NonNull TargetType targetType) {
+					return targetType.matchesClass(Locale.class);
+				}
+
+				@NonNull
+				@Override
+				public MappingResult map(@NonNull StatementContext<?> statementContext,
+																 @NonNull ResultSet resultSet,
+																 @NonNull Object resultSetValue,
+																 @NonNull TargetType targetType,
+																 @NonNull Integer columnIndex,
+																 @Nullable String columnLabel,
+																 @NonNull InstanceProvider instanceProvider) throws SQLException {
+					throw new SQLException("custom mapper failure");
+				}
+			};
+
+			Database db = Database.withDataSource(createInMemoryDataSource("cm_sql_exception_" + planCachingEnabled))
+					.resultSetMapper(ResultSetMapper.withCustomColumnMappers(List.of(throwingMapper))
+							.planCachingEnabled(planCachingEnabled)
+							.build())
+					.build();
+
+			createTestSchema(db);
+					db.query("INSERT INTO employee VALUES (1, 'A', 'a@x.com', 'en-US')").execute();
+
+			DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
+					db.query("SELECT locale FROM employee WHERE employee_id=1")
+							.fetchObject(LocaleHolder.class)
+							.orElseThrow());
+
+			Assertions.assertEquals("custom mapper failure", exception.getMessage());
+			Assertions.assertInstanceOf(SQLException.class, exception.getCause());
+			Assertions.assertEquals("custom mapper failure", exception.getCause().getMessage());
+		}
 	}
 
 	@Test
