@@ -55,6 +55,8 @@
 		<maven.failsafe.plugin.version>3.5.4</maven.failsafe.plugin.version>
 		<maven.jar.plugin.version>3.4.2</maven.jar.plugin.version>
 		<build.helper.maven.plugin.version>3.6.1</build.helper.maven.plugin.version>
+		<japicmp.maven.plugin.version>0.26.1</japicmp.maven.plugin.version>
+		<japicmp.baseline.version>4.1.0</japicmp.baseline.version>
 		<testcontainers.version>1.21.4</testcontainers.version>
 		<slf4j.version>1.7.36</slf4j.version>
 		<postgres.integration.image>postgres:17-alpine</postgres.integration.image>
@@ -167,6 +169,41 @@
 						<id>attach-javadocs</id>
 						<goals>
 							<goal>jar</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<groupId>com.github.siom79.japicmp</groupId>
+				<artifactId>japicmp-maven-plugin</artifactId>
+				<version>${japicmp.maven.plugin.version}</version>
+				<configuration>
+					<oldVersion>
+						<dependency>
+							<groupId>${project.groupId}</groupId>
+							<artifactId>${project.artifactId}</artifactId>
+							<version>${japicmp.baseline.version}</version>
+							<type>jar</type>
+						</dependency>
+					</oldVersion>
+					<newVersion>
+						<file>
+							<path>${project.build.directory}/${project.artifactId}-${project.version}.${project.packaging}</path>
+						</file>
+					</newVersion>
+					<parameter>
+						<accessModifier>public</accessModifier>
+						<onlyModified>true</onlyModified>
+					</parameter>
+					<breakBuildOnBinaryIncompatibleModifications>true</breakBuildOnBinaryIncompatibleModifications>
+					<breakBuildOnSourceIncompatibleModifications>true</breakBuildOnSourceIncompatibleModifications>
+				</configuration>
+				<executions>
+					<execution>
+						<id>check-api-compatibility</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>cmp</goal>
 						</goals>
 					</execution>
 				</executions>
