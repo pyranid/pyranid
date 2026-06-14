@@ -1472,17 +1472,53 @@ Artifact signing and Maven Central publishing are isolated in the `release` prof
 
 Pyranid is a zero-runtime-dependency library, but applications still need to provide the JDBC driver for their database. PostgreSQL-specific helpers such as JSONB, `text[]`, and pgvector parameters require pgjdbc on the application classpath; pgvector also requires the database extension to be installed.
 
+### SQL Injection and Dynamic SQL
+
+Pyranid named parameters bind SQL values through JDBC `PreparedStatement` placeholders. Use them for values such as IDs, names, timestamps, limits, and status codes.
+
+Named parameters do not bind SQL structure. Table names, column names, sort directions, operators, and other SQL syntax must not be built from untrusted input. If SQL structure needs to vary, map application-level choices to hardcoded SQL fragments with an allowlist.
+
+```java
+String orderBy = switch (sort) {
+  case NAME -> "name";
+  case CREATED_AT -> "created_at";
+};
+
+String direction = descending ? "DESC" : "ASC";
+
+List<Employee> employees = database.query("""
+  SELECT *
+  FROM employee
+  ORDER BY %s %s
+  """.formatted(orderBy, direction))
+  .fetchList(Employee.class);
+```
+
+Pyranid exception messages include bounded SQL and parameter counts, not raw parameter values. Custom `StatementLogger` implementations receive the full `StatementLog`, including its `StatementContext`, so application logging code is responsible for redacting secrets before writing logs.
+
+### Startup and Database Type Detection
+
 [`Database.build()`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#build()) does not validate connectivity or inspect JDBC metadata. If you do not configure [`Database.Builder::databaseType(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#databaseType(com.pyranid.DatabaseType)), Pyranid detects the database type lazily when code first requests database-type-sensitive behavior. Calling [`Database::getDatabaseType()`](https://javadoc.pyranid.com/com/pyranid/Database.html#getDatabaseType()) outside an active query may acquire a fresh connection; configure `databaseType(...)` explicitly when using small pools, database proxies, or startup paths that must avoid surprise connection checkouts.
+
+### Timestamp Time Zone Handling
 
 `Database.Builder::timeZone(...)` controls how zone-less `TIMESTAMP` values are interpreted when mapping to instant-based Java types. It also controls binding if `ambiguousTimestampBindingStrategy(TIMESTAMP_WITHOUT_TIME_ZONE)` is enabled for drivers that cannot report identifying timestamp parameter metadata.
 
 A [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) instance has one effective [`DatabaseType`](https://javadoc.pyranid.com/com/pyranid/DatabaseType.html). If one application talks to multiple database products, create one `Database` per product and configure each explicitly.
 
+### Transaction Boundaries
+
 Each call to [`transaction(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transaction(com.pyranid.TransactionalOperation)) opens an independent transaction with its own physical connection. Nested `transaction(...)` calls do not auto-join an outer transaction and can pressure small pools. Use [`participate(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#participate(com.pyranid.Transaction,com.pyranid.TransactionalOperation)) to run work on an existing transaction from another thread, and make sure participating workers complete before the owning transaction closure returns; coordinate with application primitives such as [`CompletableFuture::join`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/CompletableFuture.html#join()), [`ExecutorService::awaitTermination`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/ExecutorService.html#awaitTermination(long,java.util.concurrent.TimeUnit)), or [`CountDownLatch`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/CountDownLatch.html).
+
+### Streaming Results
 
 [`fetchStream(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchStream(java.lang.Class,java.util.function.Function)) streams rows only for as long as the callback is executing. Do not return the stream or consume it asynchronously after the callback returns. PostgreSQL streams automatically use an autocommit-disabled connection and a positive fetch size outside explicit Pyranid transactions; [`Query::fetchSize(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchSize(java.lang.Integer)) can override that fetch size. For other cursor-based drivers, follow the driver's transaction and fetch-size requirements.
 
+### Savepoints
+
 Savepoints are stack-like on most drivers. Prefer [`Transaction::withSavepoint(...)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#withSavepoint(com.pyranid.TransactionalOperation)) for nested savepoint workflows, and avoid manual out-of-order [`rollback(Savepoint)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#rollback(java.sql.Savepoint)) / [`releaseSavepoint(Savepoint)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#releaseSavepoint(java.sql.Savepoint)) calls unless your driver documents the behavior you need.
+
+### Large Update Counts
 
 Pyranid uses JDBC `executeLargeUpdate(...)` / `executeLargeBatch(...)` when supported and falls back to standard update APIs when the driver reports lack of support. That support decision is cached per `Database` instance.
 
