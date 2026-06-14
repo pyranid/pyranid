@@ -477,6 +477,8 @@ Internally, Database manages a threadlocal stack of [`Transaction`](https://java
 
 Transactions are scoped to the `DataSource` instance that created them. A second `Database` built with the same `DataSource` instance can participate in the transaction; a `Database` built with a different `DataSource` fails fast instead of silently joining the wrong connection.
 
+Transaction context follows the current Java thread. Async frameworks that suspend work and resume it on another thread do not automatically carry the transaction context with them; this includes Kotlin coroutines when a suspension point resumes on a different dispatcher thread. Keep transactional database access on the transaction thread, or capture the current `Transaction` and call `Database::participate(...)` on the thread that performs the database work. All participating work must complete before the owning transaction closure returns.
+
 On Java 21+, a clean way to do this is with a virtual-thread executor:
 
 ```java
@@ -1509,6 +1511,8 @@ A [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) instance h
 ### Transaction Boundaries
 
 Each call to [`transaction(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transaction(com.pyranid.TransactionalOperation)) opens an independent transaction with its own physical connection. Nested `transaction(...)` calls do not auto-join an outer transaction and can pressure small pools. Use [`participate(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#participate(com.pyranid.Transaction,com.pyranid.TransactionalOperation)) to run work on an existing transaction from another thread, and make sure participating workers complete before the owning transaction closure returns; coordinate with application primitives such as [`CompletableFuture::join`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/CompletableFuture.html#join()), [`ExecutorService::awaitTermination`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/ExecutorService.html#awaitTermination(long,java.util.concurrent.TimeUnit)), or [`CountDownLatch`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/CountDownLatch.html).
+
+Because transaction context is thread-local, async frameworks that resume work on a different thread do not automatically carry a Pyranid transaction with them. Pin transactional database work to the transaction thread, or explicitly rejoin with `participate(...)` on the thread that performs the database work.
 
 ### Streaming Results
 
