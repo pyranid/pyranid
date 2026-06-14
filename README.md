@@ -379,6 +379,23 @@ List<Car> repaintedCars = database.query("""
   .bind("oldColor", Color.BLUE)
   .executeForList(Car.class);
 
+// For identity/auto-increment columns, use JDBC-generated keys.
+// This is useful for databases that do not support RETURNING for inserts.
+Optional<BigInteger> generatedCarId = database.query("""
+  INSERT INTO car (color)
+  VALUES (:color)
+  """)
+  .bind("color", Color.GREEN)
+  .executeReturningGeneratedKey(BigInteger.class);
+
+// Some drivers require the generated-key column names to be specified.
+Optional<BigInteger> generatedCarIdByColumn = database.query("""
+  INSERT INTO car (color)
+  VALUES (:color)
+  """)
+  .bind("color", Color.BLUE)
+  .executeReturningGeneratedKey(BigInteger.class, "id");
+
 // Batch operations can be more efficient than execution of discrete statements.
 // Useful for inserting a lot of data at once
 List<Map<String, Object>> parameterGroups = List.of(

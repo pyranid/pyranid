@@ -1064,6 +1064,44 @@ public final class Database {
 
 		@NonNull
 		@Override
+		public <T> Optional<T> executeReturningGeneratedKey(@NonNull Class<T> resultType) {
+			requireNonNull(resultType);
+			PreparedQuery preparedQuery = prepare(this.bindings);
+			return this.database.executeReturningGeneratedKey(preparedQuery.statement, resultType,
+					effectivePreparedStatementCustomizer(), new String[0], preparedQuery.parameters);
+		}
+
+		@NonNull
+		@Override
+		public <T> Optional<T> executeReturningGeneratedKey(@NonNull Class<T> resultType,
+																												@NonNull String @NonNull ... keyColumnNames) {
+			requireNonNull(resultType);
+			PreparedQuery preparedQuery = prepare(this.bindings);
+			return this.database.executeReturningGeneratedKey(preparedQuery.statement, resultType,
+					effectivePreparedStatementCustomizer(), keyColumnNames, preparedQuery.parameters);
+		}
+
+		@NonNull
+		@Override
+		public <T> List<@Nullable T> executeReturningGeneratedKeys(@NonNull Class<T> resultType) {
+			requireNonNull(resultType);
+			PreparedQuery preparedQuery = prepare(this.bindings);
+			return this.database.executeReturningGeneratedKeys(preparedQuery.statement, resultType,
+					effectivePreparedStatementCustomizer(), new String[0], preparedQuery.parameters);
+		}
+
+		@NonNull
+		@Override
+		public <T> List<@Nullable T> executeReturningGeneratedKeys(@NonNull Class<T> resultType,
+																													 @NonNull String @NonNull ... keyColumnNames) {
+			requireNonNull(resultType);
+			PreparedQuery preparedQuery = prepare(this.bindings);
+			return this.database.executeReturningGeneratedKeys(preparedQuery.statement, resultType,
+					effectivePreparedStatementCustomizer(), keyColumnNames, preparedQuery.parameters);
+		}
+
+		@NonNull
+		@Override
 		public List<Long> executeBatch(@NonNull List<@NonNull Map<@NonNull String, @Nullable Object>> parameterGroups) {
 			requireNonNull(parameterGroups);
 			if (parameterGroups.isEmpty())
@@ -2105,32 +2143,7 @@ public final class Database {
 
 		performDatabaseOperation(statementContext, parametersAsList, preparedStatementCustomizer, (PreparedStatement preparedStatement) -> {
 			long startTime = nanoTime();
-
-			DatabaseOperationSupportStatus executeLargeUpdateSupported = getExecuteLargeUpdateSupported();
-
-			// Use the appropriate "large" value if we know it.
-			// If we don't know it, detect it and store it.
-			if (executeLargeUpdateSupported == DatabaseOperationSupportStatus.YES) {
-				resultHolder.value = preparedStatement.executeLargeUpdate();
-			} else if (executeLargeUpdateSupported == DatabaseOperationSupportStatus.NO) {
-				resultHolder.value = (long) preparedStatement.executeUpdate();
-			} else {
-				// If the driver doesn't support executeLargeUpdate, then UnsupportedOperationException is thrown.
-				try {
-					resultHolder.value = preparedStatement.executeLargeUpdate();
-					setExecuteLargeUpdateSupported(DatabaseOperationSupportStatus.YES);
-				} catch (SQLFeatureNotSupportedException | UnsupportedOperationException | AbstractMethodError e) {
-					setExecuteLargeUpdateSupported(DatabaseOperationSupportStatus.NO);
-					resultHolder.value = (long) preparedStatement.executeUpdate();
-				} catch (SQLException e) {
-					if (isUnsupportedSqlFeature(e)) {
-						setExecuteLargeUpdateSupported(DatabaseOperationSupportStatus.NO);
-						resultHolder.value = (long) preparedStatement.executeUpdate();
-					} else {
-						throw e;
-					}
-				}
-			}
+			resultHolder.value = executeUpdate(preparedStatement);
 
 			Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);
 			StatementResult statementResult = getMetricsCollectorDispatcher().isEnabled()
@@ -2140,6 +2153,162 @@ public final class Database {
 		});
 
 		return resultHolder.value;
+	}
+
+	@NonNull
+	private Long executeUpdate(@NonNull PreparedStatement preparedStatement) throws SQLException {
+		requireNonNull(preparedStatement);
+
+		DatabaseOperationSupportStatus executeLargeUpdateSupported = getExecuteLargeUpdateSupported();
+
+		// Use the appropriate "large" value if we know it.
+		// If we don't know it, detect it and store it.
+		if (executeLargeUpdateSupported == DatabaseOperationSupportStatus.YES)
+			return preparedStatement.executeLargeUpdate();
+
+		if (executeLargeUpdateSupported == DatabaseOperationSupportStatus.NO)
+			return (long) preparedStatement.executeUpdate();
+
+		// If the driver doesn't support executeLargeUpdate, then UnsupportedOperationException is thrown.
+		try {
+			Long result = preparedStatement.executeLargeUpdate();
+			setExecuteLargeUpdateSupported(DatabaseOperationSupportStatus.YES);
+			return result;
+		} catch (SQLFeatureNotSupportedException | UnsupportedOperationException | AbstractMethodError e) {
+			setExecuteLargeUpdateSupported(DatabaseOperationSupportStatus.NO);
+			return (long) preparedStatement.executeUpdate();
+		} catch (SQLException e) {
+			if (isUnsupportedSqlFeature(e)) {
+				setExecuteLargeUpdateSupported(DatabaseOperationSupportStatus.NO);
+				return (long) preparedStatement.executeUpdate();
+			}
+
+			throw e;
+		}
+	}
+
+	@NonNull
+	private <T> Optional<T> executeReturningGeneratedKey(@NonNull Statement statement,
+																											 @NonNull Class<T> resultSetRowType,
+																											 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
+																											 @Nullable String @Nullable [] keyColumnNames,
+																											 Object @Nullable ... parameters) {
+		requireNonNull(statement);
+		requireNonNull(resultSetRowType);
+
+		ResultHolder<Optional<T>> resultHolder = new ResultHolder<>();
+		StatementContext<T> statementContext = StatementContext.<T>with(statement, this)
+				.resultSetRowType(resultSetRowType)
+				.parameters(parameters)
+				.build();
+
+		List<Object> parametersAsList = parameters == null ? List.of() : Arrays.asList(parameters);
+		String[] requestedKeyColumnNames = copyGeneratedKeyColumnNames(keyColumnNames);
+
+		performDatabaseOperation(statementContext, parametersAsList, preparedStatementCustomizer, (PreparedStatement preparedStatement) -> {
+			long startTime = nanoTime();
+			Long rowsAffected = executeUpdate(preparedStatement);
+
+			try (ResultSet resultSet = preparedStatement.getGeneratedKeys()) {
+				Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);
+				startTime = nanoTime();
+
+				Optional<T> result = Optional.empty();
+				long rowsReturned = 0L;
+
+				if (resultSet.next()) {
+					rowsReturned = 1L;
+					try {
+						T value = getResultSetMapper().map(statementContext, resultSet, statementContext.getResultSetRowType().get(), getInstanceProvider()).orElse(null);
+						result = Optional.ofNullable(value);
+					} catch (SQLException e) {
+						throw databaseExceptionWithStatementContext(statementContext,
+								format("Unable to map JDBC generated-key row to %s", statementContext.getResultSetRowType().get()), e);
+					}
+
+					if (resultSet.next())
+						throw new DatabaseException("Expected 1 generated-key row but got more than 1 instead");
+				}
+
+				resultHolder.value = result;
+				Duration resultSetMappingDuration = Duration.ofNanos(nanoTime() - startTime);
+				StatementResult statementResult = getMetricsCollectorDispatcher().isEnabled()
+						? new StatementResult(rowsReturned, rowsAffected)
+						: StatementResult.empty();
+				return new DatabaseOperationResult(executionDuration, resultSetMappingDuration, statementResult);
+			}
+		}, generatedKeysPreparedStatementFactory(requestedKeyColumnNames));
+
+		return resultHolder.value;
+	}
+
+	@NonNull
+	private <T> List<@Nullable T> executeReturningGeneratedKeys(@NonNull Statement statement,
+																														 @NonNull Class<T> resultSetRowType,
+																														 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
+																														 @Nullable String @Nullable [] keyColumnNames,
+																														 Object @Nullable ... parameters) {
+		requireNonNull(statement);
+		requireNonNull(resultSetRowType);
+
+		List<T> list = new ArrayList<>();
+		StatementContext<T> statementContext = StatementContext.<T>with(statement, this)
+				.resultSetRowType(resultSetRowType)
+				.parameters(parameters)
+				.build();
+
+		List<Object> parametersAsList = parameters == null ? List.of() : Arrays.asList(parameters);
+		String[] requestedKeyColumnNames = copyGeneratedKeyColumnNames(keyColumnNames);
+
+		performDatabaseOperation(statementContext, parametersAsList, preparedStatementCustomizer, (PreparedStatement preparedStatement) -> {
+			long startTime = nanoTime();
+			Long rowsAffected = executeUpdate(preparedStatement);
+
+			try (ResultSet resultSet = preparedStatement.getGeneratedKeys()) {
+				Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);
+				startTime = nanoTime();
+
+				while (resultSet.next()) {
+					try {
+						T listElement = getResultSetMapper().map(statementContext, resultSet, statementContext.getResultSetRowType().get(), getInstanceProvider()).orElse(null);
+						list.add(listElement);
+					} catch (SQLException e) {
+						throw databaseExceptionWithStatementContext(statementContext,
+								format("Unable to map JDBC generated-key row to %s", statementContext.getResultSetRowType().get()), e);
+					}
+				}
+
+				Duration resultSetMappingDuration = Duration.ofNanos(nanoTime() - startTime);
+				StatementResult statementResult = getMetricsCollectorDispatcher().isEnabled()
+						? new StatementResult((long) list.size(), rowsAffected)
+						: StatementResult.empty();
+				return new DatabaseOperationResult(executionDuration, resultSetMappingDuration, statementResult);
+			}
+		}, generatedKeysPreparedStatementFactory(requestedKeyColumnNames));
+
+		return list;
+	}
+
+	@NonNull
+	private String[] copyGeneratedKeyColumnNames(@Nullable String @Nullable [] keyColumnNames) {
+		if (keyColumnNames == null || keyColumnNames.length == 0)
+			return new String[0];
+
+		String[] copy = Arrays.copyOf(keyColumnNames, keyColumnNames.length);
+
+		for (String keyColumnName : copy)
+			requireNonNull(keyColumnName);
+
+		return copy;
+	}
+
+	@NonNull
+	private PreparedStatementFactory generatedKeysPreparedStatementFactory(@NonNull String @NonNull [] keyColumnNames) {
+		requireNonNull(keyColumnNames);
+
+		return (connection, statementContext) -> keyColumnNames.length == 0
+				? connection.prepareStatement(statementContext.getStatement().getSql(), java.sql.Statement.RETURN_GENERATED_KEYS)
+				: connection.prepareStatement(statementContext.getStatement().getSql(), keyColumnNames);
 	}
 
 	/**
@@ -2448,15 +2617,25 @@ public final class Database {
 																							@NonNull List<Object> parameters,
 																							@Nullable PreparedStatementCustomizer preparedStatementCustomizer,
 																							@NonNull DatabaseOperation databaseOperation) {
+		performDatabaseOperation(statementContext, parameters, preparedStatementCustomizer, databaseOperation,
+				(connection, context) -> connection.prepareStatement(context.getStatement().getSql()));
+	}
+
+	protected <T> void performDatabaseOperation(@NonNull StatementContext<T> statementContext,
+																							@NonNull List<Object> parameters,
+																							@Nullable PreparedStatementCustomizer preparedStatementCustomizer,
+																							@NonNull DatabaseOperation databaseOperation,
+																							@NonNull PreparedStatementFactory preparedStatementFactory) {
 		requireNonNull(statementContext);
 		requireNonNull(parameters);
 		requireNonNull(databaseOperation);
+		requireNonNull(preparedStatementFactory);
 
 		performDatabaseOperation(statementContext, (preparedStatement) -> {
 			applyPreparedStatementCustomizer(statementContext, preparedStatement, preparedStatementCustomizer);
 			if (parameters.size() > 0)
 				performPreparedStatementBinding(statementContext, preparedStatement, parameters);
-		}, databaseOperation);
+		}, databaseOperation, null, preparedStatementFactory);
 	}
 
 	protected <T> void performPreparedStatementBinding(@NonNull StatementContext<T> statementContext,
@@ -2753,9 +2932,19 @@ public final class Database {
 																							@NonNull PreparedStatementBindingOperation preparedStatementBindingOperation,
 																							@NonNull DatabaseOperation databaseOperation,
 																							@Nullable Integer batchSize) {
+		performDatabaseOperation(statementContext, preparedStatementBindingOperation, databaseOperation, batchSize,
+				(connection, context) -> connection.prepareStatement(context.getStatement().getSql()));
+	}
+
+	protected <T> void performDatabaseOperation(@NonNull StatementContext<T> statementContext,
+																							@NonNull PreparedStatementBindingOperation preparedStatementBindingOperation,
+																							@NonNull DatabaseOperation databaseOperation,
+																							@Nullable Integer batchSize,
+																							@NonNull PreparedStatementFactory preparedStatementFactory) {
 		requireNonNull(statementContext);
 		requireNonNull(preparedStatementBindingOperation);
 		requireNonNull(databaseOperation);
+		requireNonNull(preparedStatementFactory);
 
 		long startTime = nanoTime();
 		Duration connectionAcquisitionDuration = null;
@@ -2806,7 +2995,7 @@ public final class Database {
 			}
 			startTime = nanoTime();
 
-			try (PreparedStatement preparedStatement = connection.prepareStatement(statementContext.getStatement().getSql())) {
+			try (PreparedStatement preparedStatement = preparedStatementFactory.prepare(connection, statementContext)) {
 				Connection previousDatabaseTypeDetectionConnection = this.databaseTypeDetectionConnectionHolder.get();
 				this.databaseTypeDetectionConnectionHolder.set(connection);
 
@@ -2985,6 +3174,13 @@ public final class Database {
 	protected interface DatabaseOperation {
 		@NonNull
 		DatabaseOperationResult perform(@NonNull PreparedStatement preparedStatement) throws Exception;
+	}
+
+	@FunctionalInterface
+	protected interface PreparedStatementFactory {
+		@NonNull
+		PreparedStatement prepare(@NonNull Connection connection,
+															@NonNull StatementContext<?> statementContext) throws SQLException;
 	}
 
 	@FunctionalInterface

@@ -219,6 +219,82 @@ public interface Query {
 	Long execute();
 
 	/**
+	 * Executes a DML statement and maps a single JDBC-generated key row.
+	 * <p>
+	 * This uses JDBC {@link java.sql.Statement#RETURN_GENERATED_KEYS}. It is intended for database-generated values such
+	 * as identity/auto-increment primary keys. If your SQL returns rows directly via database syntax such as PostgreSQL
+	 * {@code RETURNING} or SQL Server {@code OUTPUT}, use {@link #executeForObject(Class)} instead.
+	 *
+	 * @param resultType the type to marshal the generated-key row to
+	 * @param <T>        the result type
+	 * @return the single generated key row, or empty if the driver returns no generated keys
+	 * @throws DatabaseException if more than one generated-key row is returned
+	 * @since 4.2.0
+	 */
+	@NonNull
+	default <T> Optional<T> executeReturningGeneratedKey(@NonNull Class<T> resultType) {
+		throw new UnsupportedOperationException("executeReturningGeneratedKey is not supported by this Query implementation");
+	}
+
+	/**
+	 * Executes a DML statement and maps a single JDBC-generated key row.
+	 * <p>
+	 * This uses JDBC {@link java.sql.Connection#prepareStatement(String, String[])} with the supplied key column names.
+	 * Some drivers require column names to return generated keys for specific columns, especially when more than one
+	 * generated value is available. If {@code keyColumnNames} is empty, this behaves like
+	 * {@link #executeReturningGeneratedKey(Class)}.
+	 *
+	 * @param resultType      the type to marshal the generated-key row to
+	 * @param keyColumnNames generated-key column names requested from the driver
+	 * @param <T>             the result type
+	 * @return the single generated key row, or empty if the driver returns no generated keys
+	 * @throws DatabaseException if more than one generated-key row is returned
+	 * @since 4.2.0
+	 */
+	@NonNull
+	default <T> Optional<T> executeReturningGeneratedKey(@NonNull Class<T> resultType,
+																											 @NonNull String @NonNull ... keyColumnNames) {
+		throw new UnsupportedOperationException("executeReturningGeneratedKey is not supported by this Query implementation");
+	}
+
+	/**
+	 * Executes a DML statement and maps all JDBC-generated key rows.
+	 * <p>
+	 * This uses JDBC {@link java.sql.Statement#RETURN_GENERATED_KEYS}. It is intended for database-generated values such
+	 * as identity/auto-increment primary keys. If your SQL returns rows directly via database syntax such as PostgreSQL
+	 * {@code RETURNING} or SQL Server {@code OUTPUT}, use {@link #executeForList(Class)} instead.
+	 *
+	 * @param resultType the type to marshal each generated-key row to
+	 * @param <T>        the result type
+	 * @return list of generated key rows
+	 * @since 4.2.0
+	 */
+	@NonNull
+	default <T> List<@Nullable T> executeReturningGeneratedKeys(@NonNull Class<T> resultType) {
+		throw new UnsupportedOperationException("executeReturningGeneratedKeys is not supported by this Query implementation");
+	}
+
+	/**
+	 * Executes a DML statement and maps all JDBC-generated key rows.
+	 * <p>
+	 * This uses JDBC {@link java.sql.Connection#prepareStatement(String, String[])} with the supplied key column names.
+	 * Some drivers require column names to return generated keys for specific columns, especially when more than one
+	 * generated value is available. If {@code keyColumnNames} is empty, this behaves like
+	 * {@link #executeReturningGeneratedKeys(Class)}.
+	 *
+	 * @param resultType      the type to marshal each generated-key row to
+	 * @param keyColumnNames generated-key column names requested from the driver
+	 * @param <T>             the result type
+	 * @return list of generated key rows
+	 * @since 4.2.0
+	 */
+	@NonNull
+	default <T> List<@Nullable T> executeReturningGeneratedKeys(@NonNull Class<T> resultType,
+																														 @NonNull String @NonNull ... keyColumnNames) {
+		throw new UnsupportedOperationException("executeReturningGeneratedKeys is not supported by this Query implementation");
+	}
+
+	/**
 	 * Executes a DML statement in batch over groups of named parameters.
 	 * <p>
 	 * Any parameters already bound on this {@code Query} apply to all groups; group values override them.
