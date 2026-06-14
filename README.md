@@ -319,6 +319,38 @@ List<Employee> employees = database.query("""
     stream.limit(10_000).toList());
 ```
 
+### Raw JDBC Connection Access
+
+If you need a JDBC escape hatch for driver-specific features, stored procedures, `CallableStatement`, or other operations that do not fit Pyranid's query API, use [`Database::useRawConnection(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#useRawConnection(com.pyranid.RawConnectionOperation)).
+
+```java
+Optional<Integer> result = database.useRawConnection(connection -> {
+  try (CallableStatement statement = connection.prepareCall("{ ? = call calculate_bonus(?) }")) {
+    statement.registerOutParameter(1, Types.INTEGER);
+    statement.setLong(2, employeeId);
+    statement.execute();
+    return Optional.of(statement.getInt(1));
+  }
+});
+```
+
+`useRawConnection(...)` automatically participates in an active Pyranid transaction. Outside a transaction, Pyranid borrows a connection for the raw connection callback and closes it when the callback returns.
+
+```java
+database.transaction(() -> {
+  database.useRawConnection(connection -> {
+    try (PreparedStatement statement = connection.prepareStatement("INSERT INTO audit_log VALUES (?)")) {
+      statement.setString(1, "bonus calculated");
+      statement.executeUpdate();
+    }
+
+    return Optional.empty();
+  });
+});
+```
+
+The `Connection` passed to your callback is a Pyranid-managed guarded handle. Do not close it, retain it, or perform transaction lifecycle operations on it. Methods such as `close()`, `commit()`, `rollback()`, `setAutoCommit(...)`, `setTransactionIsolation(...)`, and JDBC savepoint controls throw immediately. Use `Database::transaction(...)`, `Database::participate(...)`, and `Transaction` savepoint APIs for transaction management. Close any `Statement` or `ResultSet` instances you create inside the callback.
+
 ## Statements
 
 ```java

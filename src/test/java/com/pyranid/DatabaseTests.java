@@ -78,6 +78,8 @@ public class DatabaseTests {
 	public record EmployeeRecord(@DatabaseColumn("name") String displayName, String emailAddress, Locale locale) {}
 	public record LocaleRecord(Locale locale) {}
 
+	private interface ConnectionSubtype extends Connection {}
+
 	public static class EmployeeClass {
 		private @DatabaseColumn("name") String displayName;
 		private String emailAddress;
@@ -2143,6 +2145,107 @@ public class DatabaseTests {
 			seen.incrementAndGet();
 		});
 		Assertions.assertEquals(1, seen.get());
+	}
+
+	@Test
+	public void testUseRawConnectionClosesConnectionOutsideTransaction() {
+		TrackingDataSource dataSource = new TrackingDataSource(createInMemoryDataSource("useRawConnectionClose"));
+		Database db = Database.withDataSource(dataSource).build();
+
+		dataSource.resetCloseCount();
+
+		Optional<String> databaseProductName = db.useRawConnection(connection -> {
+			Assertions.assertNotNull(connection.getMetaData().getDatabaseProductName());
+			return Optional.of(connection.getMetaData().getDatabaseProductName());
+		});
+
+		Assertions.assertTrue(databaseProductName.isPresent());
+		Assertions.assertEquals(1, dataSource.getCloseCount(), "Raw connection callback should close its borrowed connection");
+	}
+
+	@Test
+	public void testUseRawConnectionParticipatesInTransaction() {
+		TrackingDataSource dataSource = new TrackingDataSource(createInMemoryDataSource("useRawConnectionTransaction"));
+		Database db = Database.withDataSource(dataSource).build();
+
+		db.query("CREATE TABLE t_raw_connection (id INT)").execute();
+		dataSource.resetCloseCount();
+
+		Assertions.assertThrows(IllegalStateException.class, () ->
+				db.transaction(() -> {
+					db.useRawConnection(connection -> {
+						try (PreparedStatement preparedStatement = connection.prepareStatement("INSERT INTO t_raw_connection VALUES (?)")) {
+							preparedStatement.setInt(1, 1);
+							preparedStatement.executeUpdate();
+						}
+
+						Assertions.assertEquals(0, dataSource.getCloseCount(),
+								"Raw connection callback should not close the transaction connection");
+						return Optional.empty();
+					});
+
+					throw new IllegalStateException("roll back");
+				}));
+
+		Assertions.assertEquals(1, dataSource.getCloseCount(), "Transaction completion should close its connection");
+		Assertions.assertEquals(Long.valueOf(0), db.query("SELECT COUNT(*) FROM t_raw_connection")
+				.fetchObject(Long.class)
+				.orElseThrow());
+	}
+
+	@Test
+	public void testUseRawConnectionGuardsLifecycleAndTransactionMethods() {
+		Database db = Database.withDataSource(createInMemoryDataSource("useRawConnectionGuard")).build();
+
+		db.useRawConnection(connection -> {
+			Assertions.assertThrows(IllegalStateException.class, connection::close);
+			Assertions.assertThrows(IllegalStateException.class, connection::commit);
+			Assertions.assertThrows(IllegalStateException.class, connection::rollback);
+			Assertions.assertThrows(IllegalStateException.class, () -> connection.setAutoCommit(false));
+			Assertions.assertThrows(IllegalStateException.class, () -> connection.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE));
+			Assertions.assertThrows(IllegalStateException.class, connection::setSavepoint);
+			Assertions.assertThrows(IllegalStateException.class, () -> connection.releaseSavepoint(null));
+			return Optional.empty();
+		});
+	}
+
+	@Test
+	public void testUseRawConnectionWrapsCheckedException() {
+		Database db = Database.withDataSource(createInMemoryDataSource("useRawConnectionException")).build();
+		Exception cause = new Exception("boom");
+
+		DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
+				db.useRawConnection(connection -> {
+					throw cause;
+				}));
+
+		Assertions.assertSame(cause, exception.getCause());
+	}
+
+	@Test
+	public void testUseRawConnectionRetainedHandleFailsAfterCallback() {
+		Database db = Database.withDataSource(createInMemoryDataSource("useRawConnectionRetained")).build();
+		AtomicReference<Connection> connectionReference = new AtomicReference<>();
+
+		db.useRawConnection(connection -> {
+			connectionReference.set(connection);
+			return Optional.empty();
+		});
+
+		Assertions.assertThrows(IllegalStateException.class, () -> connectionReference.get().isClosed());
+	}
+
+	@Test
+	public void testUseRawConnectionWrapperBehavior() {
+		Database db = Database.withDataSource(createInMemoryDataSource("useRawConnectionWrapper")).build();
+
+		db.useRawConnection(connection -> {
+			Assertions.assertTrue(connection.isWrapperFor(Connection.class));
+			Assertions.assertSame(connection, connection.unwrap(Connection.class));
+			Assertions.assertFalse(connection.isWrapperFor(ConnectionSubtype.class));
+			Assertions.assertThrows(SQLException.class, () -> connection.unwrap(ConnectionSubtype.class));
+			return Optional.empty();
+		});
 	}
 
 	@Test
