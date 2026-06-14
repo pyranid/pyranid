@@ -22,10 +22,6 @@ import org.jspecify.annotations.Nullable;
 import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
-import java.lang.reflect.InvocationHandler;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.lang.reflect.Proxy;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
@@ -87,17 +83,6 @@ public final class Database {
 	private static final String TRUNCATED_SUFFIX = "... (truncated)";
 	@NonNull
 	private static final Pattern DIAGNOSTIC_WHITESPACE_PATTERN = Pattern.compile("\\s+");
-	@NonNull
-	private static final Set<String> GUARDED_CONNECTION_METHOD_NAMES = Set.of(
-			"abort",
-			"close",
-			"commit",
-			"releaseSavepoint",
-			"rollback",
-			"setAutoCommit",
-			"setReadOnly",
-			"setSavepoint",
-			"setTransactionIsolation");
 
 	static {
 		TRANSACTION_STACK_HOLDER = new ThreadLocal<>();
@@ -2438,17 +2423,13 @@ public final class Database {
 		requireNonNull(rawConnectionOperation);
 
 		return performRawConnectionOperation(connection -> {
-			GuardedConnectionInvocationHandler invocationHandler = new GuardedConnectionInvocationHandler(connection);
-			Connection guardedConnection = (Connection) Proxy.newProxyInstance(
-					Connection.class.getClassLoader(),
-					new Class<?>[]{Connection.class},
-					invocationHandler);
+			PyranidRawConnection rawConnection = new PyranidRawConnection(connection);
 
 			try {
-				Optional<T> result = rawConnectionOperation.perform(guardedConnection);
+				Optional<T> result = rawConnectionOperation.perform(rawConnection);
 				return result == null ? Optional.empty() : result;
 			} finally {
-				invocationHandler.release();
+				rawConnection.release();
 			}
 		}, true);
 	}
@@ -2561,115 +2542,6 @@ public final class Database {
 	protected interface InternalRawConnectionOperation<R> {
 		@NonNull
 		Optional<R> perform(@NonNull Connection connection) throws Exception;
-	}
-
-	private static final class GuardedConnectionInvocationHandler implements InvocationHandler {
-		@NonNull
-		private final Connection connection;
-		private volatile boolean released;
-
-		private GuardedConnectionInvocationHandler(@NonNull Connection connection) {
-			this.connection = requireNonNull(connection);
-		}
-
-		@Override
-		public Object invoke(@NonNull Object proxy,
-												 @NonNull Method method,
-												 @Nullable Object[] args) throws Throwable {
-			requireNonNull(proxy);
-			requireNonNull(method);
-
-			if (method.getDeclaringClass() == Object.class)
-				return invokeObjectMethod(proxy, method, args);
-
-			if (this.released)
-				throw new IllegalStateException("Pyranid-managed Connection handle is no longer valid outside Database.useRawConnection(...) callback");
-
-			if (isUnwrapMethod(method))
-				return unwrap(proxy, args);
-
-			if (isWrapperForMethod(method))
-				return isWrapperFor(proxy, args);
-
-			if (GUARDED_CONNECTION_METHOD_NAMES.contains(method.getName()))
-				throw new IllegalStateException(format(
-						"Cannot call Connection.%s(...) on a Pyranid-managed Connection; use Pyranid transaction APIs instead",
-						method.getName()));
-
-			try {
-				return method.invoke(this.connection, args);
-			} catch (InvocationTargetException e) {
-				throw e.getTargetException();
-			}
-		}
-
-		private void release() {
-			this.released = true;
-		}
-
-		@Nullable
-		private Object invokeObjectMethod(@NonNull Object proxy,
-																			@NonNull Method method,
-																			@Nullable Object[] args) {
-			return switch (method.getName()) {
-				case "equals" -> proxy == (args == null ? null : args[0]);
-				case "hashCode" -> System.identityHashCode(proxy);
-				case "toString" -> "Pyranid-managed Connection";
-				default -> throw new IllegalStateException(format("Unsupported Object method %s", method.getName()));
-			};
-		}
-
-		private boolean isUnwrapMethod(@NonNull Method method) {
-			requireNonNull(method);
-			return "unwrap".equals(method.getName()) && method.getParameterCount() == 1 && method.getParameterTypes()[0] == Class.class;
-		}
-
-		private boolean isWrapperForMethod(@NonNull Method method) {
-			requireNonNull(method);
-			return "isWrapperFor".equals(method.getName()) && method.getParameterCount() == 1 && method.getParameterTypes()[0] == Class.class;
-		}
-
-		@NonNull
-		private Object unwrap(@NonNull Object proxy,
-													@Nullable Object[] args) throws SQLException {
-			requireNonNull(proxy);
-			Class<?> iface = connectionInterfaceArgument(args);
-
-			if (iface.isInstance(proxy))
-				return iface.cast(proxy);
-
-			if (Connection.class.isAssignableFrom(iface))
-				throw new SQLException(format(
-						"Cannot unwrap Pyranid-managed Connection to %s because that would bypass Pyranid connection lifecycle management",
-						iface.getName()));
-
-			if (iface.isInstance(this.connection))
-				return iface.cast(this.connection);
-
-			return this.connection.unwrap(iface);
-		}
-
-		private boolean isWrapperFor(@NonNull Object proxy,
-																 @Nullable Object[] args) throws SQLException {
-			requireNonNull(proxy);
-			Class<?> iface = connectionInterfaceArgument(args);
-
-			if (iface.isInstance(proxy))
-				return true;
-
-			if (Connection.class.isAssignableFrom(iface))
-				return false;
-
-			return iface.isInstance(this.connection) || this.connection.isWrapperFor(iface);
-		}
-
-		@NonNull
-		private Class<?> connectionInterfaceArgument(@Nullable Object[] args) throws SQLException {
-			if (args == null || args.length != 1 || !(args[0] instanceof Class<?> iface))
-				throw new SQLException("Expected a JDBC wrapper interface");
-
-			return iface;
-		}
 	}
 
 	/**

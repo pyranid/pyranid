@@ -2202,9 +2202,12 @@ public class DatabaseTests {
 			Assertions.assertThrows(IllegalStateException.class, connection::commit);
 			Assertions.assertThrows(IllegalStateException.class, connection::rollback);
 			Assertions.assertThrows(IllegalStateException.class, () -> connection.setAutoCommit(false));
+			Assertions.assertThrows(IllegalStateException.class, () -> connection.setReadOnly(true));
 			Assertions.assertThrows(IllegalStateException.class, () -> connection.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE));
 			Assertions.assertThrows(IllegalStateException.class, connection::setSavepoint);
+			Assertions.assertThrows(IllegalStateException.class, () -> connection.rollback((java.sql.Savepoint) null));
 			Assertions.assertThrows(IllegalStateException.class, () -> connection.releaseSavepoint(null));
+			Assertions.assertThrows(IllegalStateException.class, () -> connection.abort(Runnable::run));
 			return Optional.empty();
 		});
 	}
@@ -2240,6 +2243,8 @@ public class DatabaseTests {
 		Database db = Database.withDataSource(createInMemoryDataSource("useRawConnectionWrapper")).build();
 
 		db.useRawConnection(connection -> {
+			Assertions.assertInstanceOf(PyranidRawConnection.class, connection);
+			Assertions.assertFalse(Proxy.isProxyClass(connection.getClass()));
 			Assertions.assertTrue(connection.isWrapperFor(Connection.class));
 			Assertions.assertSame(connection, connection.unwrap(Connection.class));
 			Assertions.assertFalse(connection.isWrapperFor(ConnectionSubtype.class));
