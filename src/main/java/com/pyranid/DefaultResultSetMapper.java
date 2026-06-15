@@ -67,6 +67,7 @@ import java.util.TimeZone;
 import java.util.UUID;
 import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 
 import static java.lang.String.format;
@@ -179,6 +180,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			};
 	@NonNull
 	private final Map<ResultSetMetaData, String> schemaSignatureByResultSetMetaData;
+	@NonNull
+	private final ReentrantLock schemaSignatureByResultSetMetaDataLock;
 	@NonNull
 	private final ThreadLocal<SchemaSignatureMemo> schemaSignatureMemo;
 
@@ -546,7 +549,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		this.preferredColumnMapperCacheCapacity = builder.preferredColumnMapperCacheCapacity;
 		this.planCacheCapacity = builder.planCacheCapacity;
-		this.schemaSignatureByResultSetMetaData = Collections.synchronizedMap(new WeakHashMap<>());
+		this.schemaSignatureByResultSetMetaData = new WeakHashMap<>();
+		this.schemaSignatureByResultSetMetaDataLock = new ReentrantLock();
 		this.schemaSignatureMemo = new ThreadLocal<>();
 	}
 
@@ -771,12 +775,31 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(statementContext);
 		requireNonNull(resultSetMetaData);
 
-		String signature = getSchemaSignatureByResultSetMetaData().get(resultSetMetaData);
-		if (signature != null)
-			return signature;
+		ReentrantLock lock = getSchemaSignatureByResultSetMetaDataLock();
+		lock.lock();
 
-		signature = buildSchemaSignature(statementContext, resultSetMetaData);
-		getSchemaSignatureByResultSetMetaData().put(resultSetMetaData, signature);
+		try {
+			String signature = getSchemaSignatureByResultSetMetaData().get(resultSetMetaData);
+			if (signature != null)
+				return signature;
+		} finally {
+			lock.unlock();
+		}
+
+		String signature = buildSchemaSignature(statementContext, resultSetMetaData);
+
+		lock.lock();
+
+		try {
+			String existingSignature = getSchemaSignatureByResultSetMetaData().get(resultSetMetaData);
+			if (existingSignature != null)
+				return existingSignature;
+
+			getSchemaSignatureByResultSetMetaData().put(resultSetMetaData, signature);
+		} finally {
+			lock.unlock();
+		}
+
 		return signature;
 	}
 
@@ -2600,5 +2623,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	@NonNull
 	protected Map<@NonNull ResultSetMetaData, @NonNull String> getSchemaSignatureByResultSetMetaData() {
 		return this.schemaSignatureByResultSetMetaData;
+	}
+
+	@NonNull
+	protected ReentrantLock getSchemaSignatureByResultSetMetaDataLock() {
+		return this.schemaSignatureByResultSetMetaDataLock;
 	}
 }

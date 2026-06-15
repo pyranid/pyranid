@@ -30,6 +30,7 @@ import java.sql.ResultSetMetaData;
 import java.sql.Types;
 import java.time.OffsetTime;
 import java.util.Locale;
+import java.util.WeakHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static java.lang.String.format;
@@ -305,6 +306,14 @@ public class RowPlanningCacheTests {
 		// Planned path should still route record construction through the InstanceProvider:
 		Assertions.assertEquals(1, provideRecordCalls.get(),
 				"InstanceProvider.provideRecord(...) should be invoked exactly once in the planned path");
+	}
+
+	@Test
+	public void testSchemaSignatureCacheUsesPlainWeakHashMap() {
+		DefaultResultSetMapper mapper = (DefaultResultSetMapper) ResultSetMapper.withPlanCachingEnabled(true).build();
+
+		Assertions.assertInstanceOf(WeakHashMap.class, mapper.getSchemaSignatureByResultSetMetaData(),
+				"Schema-signature metadata cache should retain weak-key behavior without using a synchronized wrapper");
 	}
 
 	@Test
