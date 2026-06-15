@@ -639,6 +639,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			final boolean[] rawLoaded = hasFanOut ? new boolean[plan.columnCount + 1] : null;
 
 			if (plan.isRecord) {
+				if (plan.mappedColumnCount == 0)
+					throw noRecordColumnMappingsException(resultSetRowType, resultSetMetaData);
+
 				RecordComponent[] rc = determineRecordComponents(resultSetRowType);
 				Object[] args = new Object[rc.length];
 
@@ -1132,6 +1135,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		Map<String, TargetType> propertyTargetTypes = determinePropertyTargetTypes(resultSetRowType);
 
 		Object[] args = new Object[recordComponents.length];
+		int mappedColumnCount = 0;
+		List<RecordComponent> missingPrimitiveRecordComponents = new ArrayList<>();
 
 		for (int i = 0; i < recordComponents.length; ++i) {
 			RecordComponent recordComponent = recordComponents[i];
@@ -1156,16 +1161,17 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				if (columnLabelsToValues.containsKey(potentialPropertyName))
 					orderedPropertyNames.add(potentialPropertyName);
 
-			if (orderedPropertyNames.isEmpty() && recordComponentType.isPrimitive())
-				throw new DatabaseException(format(
-						"No column matches record component '%s' of %s, but the component is primitive (%s). "
-								+ "Ensure the column is selected/aliased or use a non-primitive type.",
-						recordComponent.getName(), resultSetRowType.getSimpleName(), recordComponentType.getSimpleName()));
+			if (orderedPropertyNames.isEmpty()) {
+				if (recordComponentType.isPrimitive())
+					missingPrimitiveRecordComponents.add(recordComponent);
+				continue;
+			}
 
 			orderedPropertyNames.sort((left, right) ->
 					Integer.compare(columnLabelsToIndexes.get(left), columnLabelsToIndexes.get(right)));
 
 			for (String potentialPropertyName : orderedPropertyNames) {
+				++mappedColumnCount;
 				Object rawValue = columnLabelsToValues.get(potentialPropertyName);
 
 				Integer columnIndex = requireNonNull(columnLabelsToIndexes.get(potentialPropertyName));
@@ -1199,6 +1205,17 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 				args[i] = value;
 			}
+		}
+
+		if (mappedColumnCount == 0)
+			throw noRecordColumnMappingsException(resultSetRowType, resultSetMetaData);
+
+		if (!missingPrimitiveRecordComponents.isEmpty()) {
+			RecordComponent missingPrimitiveRecordComponent = missingPrimitiveRecordComponents.get(0);
+			throw new DatabaseException(format(
+					"No column matches record component '%s' of %s, but the component is primitive (%s). "
+							+ "Ensure the column is selected/aliased or use a non-primitive type.",
+					missingPrimitiveRecordComponent.getName(), resultSetRowType.getSimpleName(), missingPrimitiveRecordComponent.getType().getSimpleName()));
 		}
 
 		return instanceProvider.provideRecord(statementContext, resultSetRowType, args);
@@ -1317,6 +1334,19 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		return new DatabaseException(format(
 				"No result columns map to writable bean properties of %s. Selected columns: %s. "
 						+ "Ensure the SQL selects/aliases columns that match bean setters, use a record target, or provide a custom ResultSetMapper.",
+				resultSetRowType.getName(), columnLabels));
+	}
+
+	@NonNull
+	private DatabaseException noRecordColumnMappingsException(@NonNull Class<?> resultSetRowType,
+																													 @NonNull ResultSetMetaData resultSetMetaData) throws SQLException {
+		requireNonNull(resultSetRowType);
+		requireNonNull(resultSetMetaData);
+
+		String columnLabels = selectedColumnLabels(resultSetMetaData).stream().collect(joining(", "));
+		return new DatabaseException(format(
+				"No result columns map to record components of %s. Selected columns: %s. "
+						+ "Ensure the SQL selects/aliases columns that match record components or provide a custom ResultSetMapper.",
 				resultSetRowType.getName(), columnLabels));
 	}
 

@@ -84,6 +84,7 @@ import static java.util.Objects.requireNonNull;
 public class DatabaseTests {
 	public record EmployeeRecord(@DatabaseColumn("name") String displayName, String emailAddress, Locale locale) {}
 	public record LocaleRecord(Locale locale) {}
+	public record UnmatchedRecord(String name, String emailAddress) {}
 
 	private interface ConnectionSubtype extends Connection {}
 
@@ -1778,6 +1779,39 @@ public class DatabaseTests {
 			Assertions.assertTrue(exception.getMessage().contains("No result columns map to writable bean properties"));
 			Assertions.assertTrue(exception.getMessage().contains(SetterlessResult.class.getName()));
 			Assertions.assertTrue(exception.getMessage().toLowerCase(Locale.ROOT).contains("name"));
+		}
+	}
+
+	@Test
+	public void testRecordMappingRejectsResultSetsWithNoComponentMatches() {
+		for (Boolean planCachingEnabled : List.of(false, true)) {
+			Database db = Database.withDataSource(createInMemoryDataSource("record_no_component_matches_" + planCachingEnabled))
+					.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(planCachingEnabled).build())
+					.build();
+
+			DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
+					db.query("SELECT 'A' AS unrelated FROM (VALUES (0)) AS t(x)")
+							.fetchObject(UnmatchedRecord.class));
+
+			Assertions.assertTrue(exception.getMessage().contains("No result columns map to record components"));
+			Assertions.assertTrue(exception.getMessage().contains(UnmatchedRecord.class.getName()));
+			Assertions.assertTrue(exception.getMessage().toLowerCase(Locale.ROOT).contains("unrelated"));
+		}
+	}
+
+	@Test
+	public void testRecordMappingAllowsPartialNullableComponentMatches() {
+		for (Boolean planCachingEnabled : List.of(false, true)) {
+			Database db = Database.withDataSource(createInMemoryDataSource("record_partial_component_matches_" + planCachingEnabled))
+					.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(planCachingEnabled).build())
+					.build();
+
+			UnmatchedRecord record = db.query("SELECT 'A' AS name, 'B' AS unrelated FROM (VALUES (0)) AS t(x)")
+					.fetchObject(UnmatchedRecord.class)
+					.orElseThrow();
+
+			Assertions.assertEquals("A", record.name());
+			Assertions.assertNull(record.emailAddress());
 		}
 	}
 
