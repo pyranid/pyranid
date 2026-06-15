@@ -28,6 +28,7 @@ import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
 
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 @BenchmarkMode(Mode.AverageTime)
@@ -52,6 +53,8 @@ public class ParsedSqlCacheBenchmark {
 	public static class DatabaseState {
 		Database cachedDatabase;
 		Database uncachedDatabase;
+		Database churnDatabase;
+		String[] churnSql;
 
 		@Setup(Level.Trial)
 		public void setup() {
@@ -63,8 +66,25 @@ public class ParsedSqlCacheBenchmark {
 					.databaseType(DatabaseType.POSTGRESQL)
 					.parsedSqlCacheCapacity(0)
 					.build();
+			churnDatabase = Database.withDataSource(BenchmarkSupport.throwingDataSource())
+					.databaseType(DatabaseType.POSTGRESQL)
+					.parsedSqlCacheCapacity(64)
+					.build();
+			churnSql = new String[512];
 
 			cachedDatabase.query(SQL);
+
+			for (int i = 0; i < churnSql.length; ++i)
+				churnSql[i] = SQL + "\n-- variant " + i;
+		}
+	}
+
+	@State(Scope.Thread)
+	public static class Cursor {
+		private int value = ThreadLocalRandom.current().nextInt();
+
+		int next(int count) {
+			return ++value & (count - 1);
 		}
 	}
 
@@ -74,7 +94,18 @@ public class ParsedSqlCacheBenchmark {
 	}
 
 	@Benchmark
+	public Database.ParsedSql parseOnly() {
+		return Database.parseNamedParameterSql(SQL);
+	}
+
+	@Benchmark
 	public Query noCache(DatabaseState databaseState) {
 		return databaseState.uncachedDatabase.query(SQL);
+	}
+
+	@Benchmark
+	public Query cacheChurn(DatabaseState databaseState,
+													Cursor cursor) {
+		return databaseState.churnDatabase.query(databaseState.churnSql[cursor.next(databaseState.churnSql.length)]);
 	}
 }

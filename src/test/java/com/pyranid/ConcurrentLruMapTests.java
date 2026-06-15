@@ -50,6 +50,27 @@ public class ConcurrentLruMapTests {
 	}
 
 	@Test
+	public void testSingleThreadReadBurstRetainsOriginalReadBufferDepth() {
+		ConcurrentLruMap<Integer, Integer> map = new ConcurrentLruMap<>(64);
+		List<Integer> expectedKeys = new ArrayList<>();
+
+		for (int i = 0; i < 64; ++i)
+			map.put(i, i);
+
+		map.drain();
+
+		for (int i = 0; i < 56; ++i)
+			map.get(i);
+
+		for (int i = 55; i >= 0; --i)
+			expectedKeys.add(i);
+		for (int i = 63; i >= 56; --i)
+			expectedKeys.add(i);
+
+		Assertions.assertEquals(expectedKeys, map.keysInAccessOrder());
+	}
+
+	@Test
 	public void testBurstyUniqueWritesRemainBoundedAndConverge() throws Exception {
 		int capacity = 1_024;
 		int threadCount = 8;

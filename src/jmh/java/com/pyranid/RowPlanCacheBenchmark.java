@@ -32,6 +32,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Types;
 import java.util.Optional;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 @BenchmarkMode(Mode.AverageTime)
@@ -75,9 +76,12 @@ public class RowPlanCacheBenchmark {
 				17
 		};
 
-		ResultSetMapper mapper;
+		ResultSetMapper cachedMapper;
+		ResultSetMapper uncachedMapper;
+		ResultSetMapper churnMapper;
 		StatementContext<RowProjection> statementContext;
 		ResultSet resultSet;
+		ResultSet[] churnResultSets;
 		InstanceProvider instanceProvider;
 
 		@Setup(Level.Trial)
@@ -86,8 +90,13 @@ public class RowPlanCacheBenchmark {
 					.databaseType(DatabaseType.GENERIC)
 					.build();
 
-			mapper = ResultSetMapper.withPlanCachingEnabled(true)
+			cachedMapper = ResultSetMapper.withPlanCachingEnabled(true)
 					.planCacheCapacity(256)
+					.build();
+			uncachedMapper = ResultSetMapper.withPlanCachingEnabled(false)
+					.build();
+			churnMapper = ResultSetMapper.withPlanCachingEnabled(true)
+					.planCacheCapacity(64)
 					.build();
 			statementContext = StatementContext.<RowProjection>with(
 							Statement.of("row-plan-cache-benchmark", "SELECT id, account_id, email, display_name, active, login_count"),
@@ -95,17 +104,52 @@ public class RowPlanCacheBenchmark {
 					.resultSetRowType(RowProjection.class)
 					.build();
 			resultSet = BenchmarkSupport.resultSet(COLUMN_LABELS, COLUMN_TYPES, COLUMN_TYPE_NAMES, VALUES);
+			churnResultSets = new ResultSet[512];
 			instanceProvider = new InstanceProvider() {};
 
-			mapper.map(statementContext, resultSet, RowProjection.class, instanceProvider);
+			for (int i = 0; i < churnResultSets.length; ++i) {
+				String[] columnTypeNames = COLUMN_TYPE_NAMES.clone();
+				columnTypeNames[columnTypeNames.length - 1] = "INTEGER_" + i;
+				churnResultSets[i] = BenchmarkSupport.resultSet(COLUMN_LABELS, COLUMN_TYPES, columnTypeNames, VALUES);
+			}
+
+			cachedMapper.map(statementContext, resultSet, RowProjection.class, instanceProvider);
+		}
+	}
+
+	@State(Scope.Thread)
+	public static class Cursor {
+		private int value = ThreadLocalRandom.current().nextInt();
+
+		int next(int count) {
+			return ++value & (count - 1);
 		}
 	}
 
 	@Benchmark
 	public Optional<RowProjection> cacheHit(RowPlanState rowPlanState) throws SQLException {
-		return rowPlanState.mapper.map(
+		return rowPlanState.cachedMapper.map(
 				rowPlanState.statementContext,
 				rowPlanState.resultSet,
+				RowProjection.class,
+				rowPlanState.instanceProvider);
+	}
+
+	@Benchmark
+	public Optional<RowProjection> noPlanCache(RowPlanState rowPlanState) throws SQLException {
+		return rowPlanState.uncachedMapper.map(
+				rowPlanState.statementContext,
+				rowPlanState.resultSet,
+				RowProjection.class,
+				rowPlanState.instanceProvider);
+	}
+
+	@Benchmark
+	public Optional<RowProjection> planCacheChurn(RowPlanState rowPlanState,
+																							 Cursor cursor) throws SQLException {
+		return rowPlanState.churnMapper.map(
+				rowPlanState.statementContext,
+				rowPlanState.churnResultSets[cursor.next(rowPlanState.churnResultSets.length)],
 				RowProjection.class,
 				rowPlanState.instanceProvider);
 	}

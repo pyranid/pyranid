@@ -29,6 +29,7 @@ import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
 
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 @BenchmarkMode(Mode.Throughput)
@@ -43,13 +44,17 @@ public class ConcurrentLruMapBenchmark {
 		public int capacity;
 
 		ConcurrentLruMap<Integer, Integer> map;
+		ConcurrentHashMap<Integer, Integer> concurrentHashMap;
 
 		@Setup(Level.Trial)
 		public void setup() {
 			map = new ConcurrentLruMap<>(capacity);
+			concurrentHashMap = new ConcurrentHashMap<>(capacity);
 
-			for (int i = 0; i < capacity; ++i)
+			for (int i = 0; i < capacity; ++i) {
 				map.put(i, i);
+				concurrentHashMap.put(i, i);
+			}
 		}
 	}
 
@@ -63,14 +68,40 @@ public class ConcurrentLruMapBenchmark {
 	}
 
 	@Benchmark
+	public Integer concurrentHashMapGetHit(MapState mapState,
+																				 Cursor cursor) {
+		return mapState.concurrentHashMap.get(cursor.next(mapState.capacity));
+	}
+
+	@Benchmark
 	public Integer getHit(MapState mapState,
 												Cursor cursor) {
 		return mapState.map.get(cursor.next(mapState.capacity));
 	}
 
 	@Benchmark
+	public Integer getMixedHitMiss(MapState mapState,
+																 Cursor cursor) {
+		return mapState.map.get(cursor.next(mapState.capacity * 2));
+	}
+
+	@Benchmark
 	public Integer computeIfAbsentHit(MapState mapState,
 																		Cursor cursor) {
 		return mapState.map.computeIfAbsent(cursor.next(mapState.capacity), Integer::valueOf);
+	}
+
+	@Benchmark
+	public Integer computeIfAbsentMixedHitMiss(MapState mapState,
+																						 Cursor cursor) {
+		return mapState.map.computeIfAbsent(cursor.next(mapState.capacity * 2), Integer::valueOf);
+	}
+
+	@Benchmark
+	public Integer putEvicting(MapState mapState,
+														 Cursor cursor) {
+		Integer key = mapState.capacity + cursor.next(mapState.capacity * 4);
+		mapState.map.put(key, key);
+		return key;
 	}
 }
