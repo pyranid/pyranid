@@ -809,6 +809,12 @@ Temporal result-set mapping uses JDBC `ResultSetMetaData` for the returned colum
 
 Pyranid preserves the fractional-second precision returned by your JDBC driver; it does not round or truncate `Instant`, `OffsetDateTime`, or `ZonedDateTime` values to milliseconds. The maximum precision is still determined by the database column and driver (for example, PostgreSQL timestamps are stored at microsecond precision).
 
+### SQL ARRAY and JSON Results
+
+SQL ARRAY columns can be mapped to Java array targets such as `String[]` or `UUID[]`. They can also be mapped to `List<T>` or `Set<T>` when Pyranid can see the generic element type from a Record component or JavaBean setter, for example `record Row(List<String> tags, Set<String> labels) {}` or `void setTags(Set<String> tags)`. Raw scalar `List.class` and `Set.class` targets are supported too, but the element type is whatever the JDBC driver returns because Java's `Class<List>` and `Class<Set>` tokens carry no generic type argument. Set targets use insertion order from the SQL ARRAY and apply normal Set semantics, so duplicates collapse and multiple SQL `NULL` elements become one `null`.
+
+PostgreSQL `JSON`/`JSONB` values returned by pgjdbc as `PGobject` map to `String` by default. Pyranid does not parse JSON into application objects; register a [`CustomColumnMapper`](https://javadoc.pyranid.com/com/pyranid/CustomColumnMapper.html) when you want to inflate JSON into your own type.
+
 ### Custom Mapping
 
 Fine-grained control of mapping is supported by registering [`CustomColumnMapper`](https://javadoc.pyranid.com/com/pyranid/CustomColumnMapper.html) instances.  For example, you might want to "inflate" a `JSONB` column into a Java type:

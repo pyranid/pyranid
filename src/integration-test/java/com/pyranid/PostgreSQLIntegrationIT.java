@@ -36,7 +36,9 @@ import java.sql.SQLFeatureNotSupportedException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
@@ -49,6 +51,8 @@ import static java.util.Objects.requireNonNull;
  */
 @Testcontainers
 public class PostgreSQLIntegrationIT {
+	public record JsonbAndArrayRow(String payload, String[] tagsArray, List<String> tagsList, Set<String> tagsSet) {}
+
 	private static final String POSTGRES_IMAGE_NAME =
 			System.getProperty("postgres.integration.image", "postgres:17-alpine");
 	private static final DockerImageName POSTGRES_IMAGE = DockerImageName.parse(POSTGRES_IMAGE_NAME)
@@ -151,6 +155,47 @@ public class PostgreSQLIntegrationIT {
 				.orElseThrow();
 
 		Assertions.assertEquals("beta", secondTag);
+	}
+
+	@Test
+	public void testJsonbAndTextArrayResultMapping() {
+		for (Boolean planCachingEnabled : List.of(false, true)) {
+			Database db = Database.withDataSource(dataSource())
+					.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(planCachingEnabled).build())
+					.build();
+
+			db.query("""
+					CREATE TABLE IF NOT EXISTS pyranid_jsonb_array_result_test (
+						id BIGSERIAL PRIMARY KEY,
+						payload JSONB NOT NULL,
+						tags TEXT[] NOT NULL
+					)
+					""").execute();
+			db.query("TRUNCATE TABLE pyranid_jsonb_array_result_test").execute();
+			db.query("INSERT INTO pyranid_jsonb_array_result_test(payload, tags) VALUES (:payload, :tags)")
+					.bind("payload", Parameters.json("{\"kind\":\"integration\",\"count\":3}"))
+					.bind("tags", Parameters.sqlArrayOf("text", List.of("alpha", "beta", "alpha", "gamma")))
+					.execute();
+
+			JsonbAndArrayRow row = db.query("""
+					SELECT payload, tags AS tags_array, tags AS tags_list, tags AS tags_set
+					FROM pyranid_jsonb_array_result_test
+					FETCH FIRST ROW ONLY
+					""")
+					.fetchObject(JsonbAndArrayRow.class)
+					.orElseThrow();
+
+			Assertions.assertTrue(row.payload().contains("\"kind\""));
+			Assertions.assertTrue(row.payload().contains("\"integration\""));
+			Assertions.assertArrayEquals(new String[]{"alpha", "beta", "alpha", "gamma"}, row.tagsArray());
+			Assertions.assertEquals(List.of("alpha", "beta", "alpha", "gamma"), row.tagsList());
+			Assertions.assertEquals(new LinkedHashSet<>(List.of("alpha", "beta", "gamma")), row.tagsSet());
+
+			String[] scalarTags = db.query("SELECT tags FROM pyranid_jsonb_array_result_test FETCH FIRST ROW ONLY")
+					.fetchObject(String[].class)
+					.orElseThrow();
+			Assertions.assertArrayEquals(new String[]{"alpha", "beta", "alpha", "gamma"}, scalarTags);
+		}
 	}
 
 	@Test

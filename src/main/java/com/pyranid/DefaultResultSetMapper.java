@@ -33,6 +33,7 @@ import java.lang.reflect.Type;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
+import java.sql.Array;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
@@ -57,6 +58,7 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IllformedLocaleException;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -975,6 +977,15 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			value = resultSet.getString(1);
 		} else if (resultClass == byte[].class) {
 			value = resultSet.getBytes(1);
+		} else if (resultClass.isArray() || resultClass == List.class || resultClass == Set.class) {
+			Object raw = resultSet.getObject(1);
+			value = raw == null ? null : convertResultSetValueToTargetType(statementContext, raw, TargetType.of(resultClass))
+					.orElse(null);
+
+			if (value != null && !resultClass.isInstance(value)) {
+				throw new DatabaseException(format("Cannot map value '%s' (%s) to %s",
+						raw, raw.getClass().getName(), resultClass.getSimpleName()));
+			}
 		} else if (resultClass.isEnum()) {
 			Object raw = resultSet.getObject(1);
 			if (raw == null)
@@ -1182,7 +1193,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					CustomMappingOutcome outcome = tryCustomColumnMappers(statementContext, resultSet, rawValue, targetType, columnIndex, potentialPropertyName, instanceProvider);
 					value = outcome.isApplied()
 							? outcome.getValue()
-							: convertResultSetValueToPropertyType(statementContext, rawValue, recordComponentType).orElse(null);
+							: convertResultSetValueToTargetType(statementContext, rawValue, targetType).orElse(null);
 				}
 
 				// It's considered programmer error to have a NULL value in the ResultSet and map it to a primitive (which does not support null)
@@ -1291,7 +1302,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					CustomMappingOutcome outcome = tryCustomColumnMappers(statementContext, resultSet, rawValue, targetType, columnIndex, propertyName, instanceProvider);
 					value = outcome.isApplied()
 							? outcome.getValue()
-							: convertResultSetValueToPropertyType(statementContext, rawValue, writeMethodParameterType).orElse(null);
+							: convertResultSetValueToTargetType(statementContext, rawValue, targetType).orElse(null);
 				}
 
 				// It's considered programmer error to have a NULL value in the ResultSet and map it to a primitive (which does not support null)
@@ -1493,47 +1504,64 @@ class DefaultResultSetMapper implements ResultSetMapper {
 																																		 @NonNull Class<?> propertyType) {
 		requireNonNull(statementContext);
 		requireNonNull(propertyType);
+		return convertResultSetValueToTargetType(statementContext, resultSetValue, TargetType.of(propertyType));
+	}
+
+	@NonNull
+	protected <T> Optional<Object> convertResultSetValueToTargetType(@NonNull StatementContext<T> statementContext,
+																																 @Nullable Object resultSetValue,
+																																 @NonNull TargetType targetType) {
+		requireNonNull(statementContext);
+		requireNonNull(targetType);
 
 		if (resultSetValue == null)
 			return Optional.empty();
 
+		Class<?> propertyType = targetType.getRawClass();
+
+		if (resultSetValue instanceof Array sqlArray && (targetType.isArray() || targetType.isList() || targetType.isSet()))
+			return Optional.of(convertSqlArrayResultSetValue(statementContext, sqlArray, targetType));
+
+		if (resultSetValue.getClass().isArray() && (targetType.isArray() || targetType.isList() || targetType.isSet()))
+			return Optional.of(convertArrayResultSetValue(statementContext, resultSetValue, targetType));
+
 		// Normalize primitives to wrappers
-		Class<?> targetType = boxedClass(propertyType);
+		Class<?> targetClass = boxedClass(propertyType);
 
 		// Numbers
 		if (resultSetValue instanceof BigDecimal bigDecimal) {
-			if (BigDecimal.class.isAssignableFrom(targetType))
+			if (BigDecimal.class.isAssignableFrom(targetClass))
 				return Optional.of(bigDecimal);
-			if (BigInteger.class.isAssignableFrom(targetType))
+			if (BigInteger.class.isAssignableFrom(targetClass))
 				return Optional.of(exactBigInteger(bigDecimal));
 		}
 
 		if (resultSetValue instanceof BigInteger bigInteger) {
-			if (BigDecimal.class.isAssignableFrom(targetType))
+			if (BigDecimal.class.isAssignableFrom(targetClass))
 				return Optional.of(new BigDecimal(bigInteger));
-			if (BigInteger.class.isAssignableFrom(targetType))
+			if (BigInteger.class.isAssignableFrom(targetClass))
 				return Optional.of(bigInteger);
 		}
 
 		if (resultSetValue instanceof Number number) {
-			if (Byte.class.isAssignableFrom(targetType))
+			if (Byte.class.isAssignableFrom(targetClass))
 				return Optional.of(exactByte(number));
-			if (Short.class.isAssignableFrom(targetType))
+			if (Short.class.isAssignableFrom(targetClass))
 				return Optional.of(exactShort(number));
-			if (Integer.class.isAssignableFrom(targetType))
+			if (Integer.class.isAssignableFrom(targetClass))
 				return Optional.of(exactInt(number));
-			if (Long.class.isAssignableFrom(targetType))
+			if (Long.class.isAssignableFrom(targetClass))
 				return Optional.of(exactLong(number));
-			if (Float.class.isAssignableFrom(targetType))
+			if (Float.class.isAssignableFrom(targetClass))
 				return Optional.of(finiteFloat(number));
-			if (Double.class.isAssignableFrom(targetType))
+			if (Double.class.isAssignableFrom(targetClass))
 				return Optional.of(finiteDouble(number));
-			if (BigDecimal.class.isAssignableFrom(targetType)) {
+			if (BigDecimal.class.isAssignableFrom(targetClass)) {
 				if (number instanceof Byte || number instanceof Short || number instanceof Integer || number instanceof Long)
 					return Optional.of(BigDecimal.valueOf(number.longValue()));
 				return Optional.of(new BigDecimal(number.toString()));
 			}
-			if (BigInteger.class.isAssignableFrom(targetType)) {
+			if (BigInteger.class.isAssignableFrom(targetClass)) {
 				if (number instanceof Byte || number instanceof Short || number instanceof Integer || number instanceof Long)
 					return Optional.of(BigInteger.valueOf(number.longValue()));
 				return Optional.of(exactBigInteger(decimalForNumericConversion(number)));
@@ -1542,153 +1570,153 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		// Legacy java.sql.* coming from drivers
 		if (resultSetValue instanceof java.sql.Timestamp timestamp) {
-			if (Date.class.isAssignableFrom(targetType))
+			if (Date.class.isAssignableFrom(targetClass))
 				return Optional.of(timestamp);
-			if (Instant.class.isAssignableFrom(targetType))
+			if (Instant.class.isAssignableFrom(targetClass))
 				return Optional.of(timestamp.toInstant());
-			if (LocalDate.class.isAssignableFrom(targetType))
+			if (LocalDate.class.isAssignableFrom(targetClass))
 				return Optional.of(timestamp.toLocalDateTime().toLocalDate());
-			if (LocalDateTime.class.isAssignableFrom(targetType))
+			if (LocalDateTime.class.isAssignableFrom(targetClass))
 				return Optional.of(timestamp.toLocalDateTime());
-			if (OffsetDateTime.class.isAssignableFrom(targetType))
+			if (OffsetDateTime.class.isAssignableFrom(targetClass))
 				return Optional.of(timestamp.toInstant().atZone(statementContext.getTimeZone()).toOffsetDateTime());
-			if (ZonedDateTime.class.isAssignableFrom(targetType))
+			if (ZonedDateTime.class.isAssignableFrom(targetClass))
 				return Optional.of(timestamp.toInstant().atZone(statementContext.getTimeZone()));
 		}
 
 		if (resultSetValue instanceof java.sql.Date date) {
-			if (Date.class.isAssignableFrom(targetType))
+			if (Date.class.isAssignableFrom(targetClass))
 				return Optional.of(date);
-			if (Instant.class.isAssignableFrom(targetType))
+			if (Instant.class.isAssignableFrom(targetClass))
 				return Optional.of(date.toInstant());
-			if (LocalDate.class.isAssignableFrom(targetType))
+			if (LocalDate.class.isAssignableFrom(targetClass))
 				return Optional.of(date.toLocalDate());
-			if (LocalDateTime.class.isAssignableFrom(targetType))
+			if (LocalDateTime.class.isAssignableFrom(targetClass))
 				return Optional.of(LocalDateTime.ofInstant(date.toInstant(), statementContext.getTimeZone()));
 		}
 
 		if (resultSetValue instanceof java.sql.Time time) {
-			if (LocalTime.class.isAssignableFrom(targetType))
+			if (LocalTime.class.isAssignableFrom(targetClass))
 				return Optional.of(time.toLocalTime());
 		}
 
 		// New java.time values (preferred)
 		if (resultSetValue instanceof Instant instant) {
-			if (Instant.class.isAssignableFrom(targetType))
+			if (Instant.class.isAssignableFrom(targetClass))
 				return Optional.of(instant);
-			if (Date.class.isAssignableFrom(targetType))
+			if (Date.class.isAssignableFrom(targetClass))
 				return Optional.of(Date.from(instant));
-			if (LocalDateTime.class.isAssignableFrom(targetType))
+			if (LocalDateTime.class.isAssignableFrom(targetClass))
 				return Optional.of(instant.atZone(statementContext.getTimeZone()).toLocalDateTime());
-			if (LocalDate.class.isAssignableFrom(targetType))
+			if (LocalDate.class.isAssignableFrom(targetClass))
 				return Optional.of(instant.atZone(statementContext.getTimeZone()).toLocalDate());
-			if (OffsetDateTime.class.isAssignableFrom(targetType))
+			if (OffsetDateTime.class.isAssignableFrom(targetClass))
 				return Optional.of(instant.atZone(statementContext.getTimeZone()).toOffsetDateTime());
-			if (ZonedDateTime.class.isAssignableFrom(targetType))
+			if (ZonedDateTime.class.isAssignableFrom(targetClass))
 				return Optional.of(instant.atZone(statementContext.getTimeZone()));
-			if (java.sql.Timestamp.class.isAssignableFrom(targetType))
+			if (java.sql.Timestamp.class.isAssignableFrom(targetClass))
 				return Optional.of(Timestamp.from(instant));
-			if (java.sql.Date.class.isAssignableFrom(targetType))
+			if (java.sql.Date.class.isAssignableFrom(targetClass))
 				return Optional.of(java.sql.Date.valueOf(instant.atZone(statementContext.getTimeZone()).toLocalDate()));
 		}
 
 		if (resultSetValue instanceof LocalDateTime localDateTime) {
-			if (LocalDateTime.class.isAssignableFrom(targetType))
+			if (LocalDateTime.class.isAssignableFrom(targetClass))
 				return Optional.of(localDateTime);
-			if (Instant.class.isAssignableFrom(targetType))
+			if (Instant.class.isAssignableFrom(targetClass))
 				return Optional.of(localDateTime.atZone(statementContext.getTimeZone()).toInstant());
-			if (Date.class.isAssignableFrom(targetType))
+			if (Date.class.isAssignableFrom(targetClass))
 				return Optional.of(Date.from(localDateTime.atZone(statementContext.getTimeZone()).toInstant()));
-			if (LocalDate.class.isAssignableFrom(targetType))
+			if (LocalDate.class.isAssignableFrom(targetClass))
 				return Optional.of(localDateTime.toLocalDate());
-			if (OffsetDateTime.class.isAssignableFrom(targetType))
+			if (OffsetDateTime.class.isAssignableFrom(targetClass))
 				return Optional.of(localDateTime.atZone(statementContext.getTimeZone()).toOffsetDateTime());
-			if (ZonedDateTime.class.isAssignableFrom(targetType))
+			if (ZonedDateTime.class.isAssignableFrom(targetClass))
 				return Optional.of(localDateTime.atZone(statementContext.getTimeZone()));
-			if (java.sql.Timestamp.class.isAssignableFrom(targetType))
+			if (java.sql.Timestamp.class.isAssignableFrom(targetClass))
 				return Optional.of(Timestamp.valueOf(localDateTime));
-			if (java.sql.Date.class.isAssignableFrom(targetType))
+			if (java.sql.Date.class.isAssignableFrom(targetClass))
 				return Optional.of(java.sql.Date.valueOf(localDateTime.toLocalDate()));
 		}
 
 		if (resultSetValue instanceof OffsetDateTime offsetDateTime) {
-			if (OffsetDateTime.class.isAssignableFrom(targetType))
+			if (OffsetDateTime.class.isAssignableFrom(targetClass))
 				return Optional.of(offsetDateTime);
-			if (Instant.class.isAssignableFrom(targetType))
+			if (Instant.class.isAssignableFrom(targetClass))
 				return Optional.of(offsetDateTime.toInstant());
-			if (LocalDateTime.class.isAssignableFrom(targetType))
+			if (LocalDateTime.class.isAssignableFrom(targetClass))
 				return Optional.of(offsetDateTime.atZoneSameInstant(statementContext.getTimeZone()).toLocalDateTime());
-			if (Date.class.isAssignableFrom(targetType))
+			if (Date.class.isAssignableFrom(targetClass))
 				return Optional.of(Date.from(offsetDateTime.toInstant()));
-			if (ZonedDateTime.class.isAssignableFrom(targetType))
+			if (ZonedDateTime.class.isAssignableFrom(targetClass))
 				return Optional.of(offsetDateTime.atZoneSameInstant(statementContext.getTimeZone()));
-			if (java.sql.Timestamp.class.isAssignableFrom(targetType))
+			if (java.sql.Timestamp.class.isAssignableFrom(targetClass))
 				return Optional.of(Timestamp.from(offsetDateTime.toInstant()));
 		}
 
 		if (resultSetValue instanceof LocalDate localDate) {
-			if (LocalDate.class.isAssignableFrom(targetType))
+			if (LocalDate.class.isAssignableFrom(targetClass))
 				return Optional.of(localDate);
-			if (LocalDateTime.class.isAssignableFrom(targetType))
+			if (LocalDateTime.class.isAssignableFrom(targetClass))
 				return Optional.of(localDate.atStartOfDay());
-			if (ZonedDateTime.class.isAssignableFrom(targetType))
+			if (ZonedDateTime.class.isAssignableFrom(targetClass))
 				return Optional.of(localDate.atStartOfDay(statementContext.getTimeZone()));
-			if (Instant.class.isAssignableFrom(targetType))
+			if (Instant.class.isAssignableFrom(targetClass))
 				return Optional.of(localDate.atStartOfDay(statementContext.getTimeZone()).toInstant());
-			if (java.sql.Date.class.isAssignableFrom(targetType))
+			if (java.sql.Date.class.isAssignableFrom(targetClass))
 				return Optional.of(java.sql.Date.valueOf(localDate));
-			if (Date.class.isAssignableFrom(targetType))
+			if (Date.class.isAssignableFrom(targetClass))
 				return Optional.of(Date.from(localDate.atStartOfDay(statementContext.getTimeZone()).toInstant()));
 		}
 
 		if (resultSetValue instanceof LocalTime localTime) {
-			if (LocalTime.class.isAssignableFrom(targetType))
+			if (LocalTime.class.isAssignableFrom(targetClass))
 				return Optional.of(localTime);
 
-			if (OffsetTime.class.isAssignableFrom(targetType)) {
+			if (OffsetTime.class.isAssignableFrom(targetClass)) {
 				ZoneOffset off = statementContext.getTimeZone().getRules().getOffset(Instant.EPOCH);
 				return Optional.of(localTime.atOffset(off));
 			}
 
-			if (java.sql.Time.class.isAssignableFrom(targetType))
+			if (java.sql.Time.class.isAssignableFrom(targetClass))
 				return Optional.of(java.sql.Time.valueOf(localTime));
 		}
 
 		if (resultSetValue instanceof OffsetTime offsetTime) {
-			if (OffsetTime.class.isAssignableFrom(targetType))
+			if (OffsetTime.class.isAssignableFrom(targetClass))
 				return Optional.of(offsetTime);
-			if (LocalTime.class.isAssignableFrom(targetType))
+			if (LocalTime.class.isAssignableFrom(targetClass))
 				return Optional.of(offsetTime.toLocalTime());
-			if (java.sql.Time.class.isAssignableFrom(targetType))
+			if (java.sql.Time.class.isAssignableFrom(targetClass))
 				return Optional.of(java.sql.Time.valueOf(offsetTime.toLocalTime()));
 		}
 
-		if (UUID.class.isAssignableFrom(targetType)) {
+		if (UUID.class.isAssignableFrom(targetClass)) {
 			return Optional.ofNullable(uuidFromValue(resultSetValue));
-		} else if (ZoneId.class.isAssignableFrom(targetType)) {
+		} else if (ZoneId.class.isAssignableFrom(targetClass)) {
 			try {
 				return Optional.ofNullable(ZoneId.of(resultSetValue.toString()));
 			} catch (DateTimeException e) {
 				throw new DatabaseException(format("Unable to convert value '%s' to ZoneId", resultSetValue), e);
 			}
-		} else if (TimeZone.class.isAssignableFrom(targetType)) {
+		} else if (TimeZone.class.isAssignableFrom(targetClass)) {
 			return Optional.of(timeZoneFromId(resultSetValue.toString()));
-		} else if (Locale.class.isAssignableFrom(targetType)) {
+		} else if (Locale.class.isAssignableFrom(targetClass)) {
 			return Optional.of(localeFromLanguageTag(resultSetValue.toString()));
-		} else if (Currency.class.isAssignableFrom(targetType)) {
+		} else if (Currency.class.isAssignableFrom(targetClass)) {
 			try {
 				return Optional.ofNullable(Currency.getInstance(resultSetValue.toString()));
 			} catch (IllegalArgumentException e) {
 				throw new DatabaseException(format("Unable to convert value '%s' to Currency", resultSetValue), e);
 			}
-		} else if (targetType.isEnum()) {
-			return Optional.ofNullable(extractEnumValue(targetType, resultSetValue));
+		} else if (targetClass.isEnum()) {
+			return Optional.ofNullable(extractEnumValue(targetClass, resultSetValue));
 		} else if ("org.postgresql.util.PGobject".equals(resultSetValue.getClass().getName())) {
 			org.postgresql.util.PGobject pgObject = (org.postgresql.util.PGobject) resultSetValue;
 			return Optional.ofNullable(pgObject.getValue());
 		}
 
-		if (Boolean.class.isAssignableFrom(targetType)) {
+		if (Boolean.class.isAssignableFrom(targetClass)) {
 			// Native boolean
 			if (resultSetValue instanceof Boolean b)
 				return Optional.of(b);
@@ -1700,7 +1728,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			throw new DatabaseException(format("Cannot map value '%s' (%s) to boolean", resultSetValue, resultSetValue.getClass().getName()));
 		}
 
-		if (Character.class.isAssignableFrom(targetType)) {
+		if (Character.class.isAssignableFrom(targetClass)) {
 			// Native char
 			if (resultSetValue instanceof Character c) return Optional.of(c);
 
@@ -1726,6 +1754,115 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		return Optional.ofNullable(resultSetValue);
+	}
+
+	@NonNull
+	private <T> Object convertSqlArrayResultSetValue(@NonNull StatementContext<T> statementContext,
+																									 @NonNull Array sqlArray,
+																									 @NonNull TargetType targetType) {
+		requireNonNull(statementContext);
+		requireNonNull(sqlArray);
+		requireNonNull(targetType);
+
+		Throwable thrown = null;
+		try {
+			return convertArrayResultSetValue(statementContext, sqlArray.getArray(), targetType);
+		} catch (SQLException e) {
+			DatabaseException wrapped = new DatabaseException("Unable to extract JDBC Array value", e);
+			thrown = wrapped;
+			throw wrapped;
+		} catch (RuntimeException | Error e) {
+			thrown = e;
+			throw e;
+		} finally {
+			try {
+				sqlArray.free();
+			} catch (SQLException e) {
+				DatabaseException wrapped = new DatabaseException("Unable to free JDBC Array value", e);
+				if (thrown != null)
+					thrown.addSuppressed(wrapped);
+				else
+					throw wrapped;
+			}
+		}
+	}
+
+	@NonNull
+	private <T> Object convertArrayResultSetValue(@NonNull StatementContext<T> statementContext,
+																								@NonNull Object arrayValue,
+																								@NonNull TargetType targetType) {
+		requireNonNull(statementContext);
+		requireNonNull(arrayValue);
+		requireNonNull(targetType);
+
+		Class<?> arrayClass = arrayValue.getClass();
+		if (!arrayClass.isArray())
+			throw new DatabaseException(format("Expected JDBC Array value to expose a Java array but encountered %s",
+					arrayClass.getName()));
+
+		int length = java.lang.reflect.Array.getLength(arrayValue);
+
+		if (targetType.isList()) {
+			TargetType elementType = targetType.getListElementType().orElse(TargetType.of(Object.class));
+			List<Object> values = new ArrayList<>(length);
+
+			for (int i = 0; i < length; ++i)
+				values.add(convertResultSetArrayElement(statementContext, java.lang.reflect.Array.get(arrayValue, i), elementType, i));
+
+			return values;
+		}
+
+		if (targetType.isSet()) {
+			TargetType elementType = targetType.getSetElementType().orElse(TargetType.of(Object.class));
+			Set<Object> values = new LinkedHashSet<>(length);
+
+			for (int i = 0; i < length; ++i)
+				values.add(convertResultSetArrayElement(statementContext, java.lang.reflect.Array.get(arrayValue, i), elementType, i));
+
+			return values;
+		}
+
+		TargetType componentType = targetType.getArrayComponentType().orElse(TargetType.of(Object.class));
+		Class<?> componentClass = componentType.getRawClass();
+		Object convertedArray = java.lang.reflect.Array.newInstance(componentClass, length);
+
+		for (int i = 0; i < length; ++i) {
+			Object convertedElement = convertResultSetArrayElement(statementContext, java.lang.reflect.Array.get(arrayValue, i), componentType, i);
+
+			if (convertedElement == null && componentClass.isPrimitive())
+				throw new DatabaseException(format("SQL ARRAY element %s is NULL but target array component type is primitive (%s)",
+						i, componentClass.getSimpleName()));
+
+			java.lang.reflect.Array.set(convertedArray, i, convertedElement);
+		}
+
+		return convertedArray;
+	}
+
+	@Nullable
+	private <T> Object convertResultSetArrayElement(@NonNull StatementContext<T> statementContext,
+																									@Nullable Object value,
+																									@NonNull TargetType targetType,
+																									int elementIndex) {
+		requireNonNull(statementContext);
+		requireNonNull(targetType);
+
+		if (value == null)
+			return null;
+
+		Class<?> targetClass = boxedClass(targetType.getRawClass());
+
+		if (targetClass == Object.class || targetClass.isInstance(value))
+			return value;
+
+		Object converted = convertResultSetValueToTargetType(statementContext, value, targetType).orElse(null);
+
+		if (converted != null && !targetClass.isInstance(converted)) {
+			throw new DatabaseException(format("SQL ARRAY element %s of type %s cannot be mapped to %s",
+					elementIndex, value.getClass().getName(), targetClass.getName()));
+		}
+
+		return converted;
 	}
 
 	private static byte exactByte(@NonNull Number number) {
@@ -2613,7 +2750,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					if (rawTargetClassBoxed.isInstance(raw))
 						return raw;
 
-					return convertResultSetValueToPropertyType(cctx, raw, rawTargetClassBoxed)
+					return convertResultSetValueToTargetType(cctx, raw, targetTypeFinal)
 							.orElse(raw);
 				};
 
