@@ -1561,6 +1561,14 @@ Pyranid exception messages include bounded SQL and parameter counts, not raw par
 
 [`Database.build()`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#build()) does not validate connectivity or inspect JDBC metadata. If you do not configure [`Database.Builder::databaseType(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#databaseType(com.pyranid.DatabaseType)), Pyranid detects the database type lazily when code first requests database-type-sensitive behavior. Calling [`Database::getDatabaseType()`](https://javadoc.pyranid.com/com/pyranid/Database.html#getDatabaseType()) outside an active query may acquire a fresh connection; configure `databaseType(...)` explicitly when using small pools, database proxies, or startup paths that must avoid surprise connection checkouts.
 
+Use [`Database::performHealthCheck(Duration)`](https://javadoc.pyranid.com/com/pyranid/Database.html#performHealthCheck(java.time.Duration)) when you want an explicit startup or readiness validation step:
+
+```java
+database.performHealthCheck(Duration.ofSeconds(2));
+```
+
+This borrows a fresh connection, calls JDBC [`Connection::isValid(int)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html#isValid(int)), closes the connection, and throws `DatabaseException` if acquisition or validation fails. It does not execute SQL, so it is portable across JDBC drivers that implement the standard validation API. It does not participate in an active Pyranid transaction.
+
 ### Timestamp Time Zone Handling
 
 `Database.Builder::timeZone(...)` controls how zone-less `TIMESTAMP` values are interpreted when mapping to instant-based Java types. It also controls binding if `ambiguousTimestampBindingStrategy(TIMESTAMP_WITHOUT_TIME_ZONE)` is enabled for drivers that cannot report identifying timestamp parameter metadata.

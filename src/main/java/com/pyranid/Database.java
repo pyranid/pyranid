@@ -797,6 +797,42 @@ public final class Database {
 		return new DefaultQuery(this, sql);
 	}
 
+	/**
+	 * Performs a portable connectivity check using JDBC {@link Connection#isValid(int)}.
+	 * <p>
+	 * This method borrows a fresh connection from this database's {@link DataSource}, calls
+	 * {@link Connection#isValid(int)}, and closes the connection before returning. It does <strong>not</strong>
+	 * participate in an active Pyranid transaction, if one exists.
+	 * <p>
+	 * JDBC accepts timeout values in whole seconds. Positive sub-second durations are rounded up to one second;
+	 * {@link Duration#ZERO} passes a timeout of {@code 0} to the driver.
+	 *
+	 * @param timeout maximum time to wait for driver validation
+	 * @throws IllegalArgumentException if {@code timeout} is negative or too large for JDBC's integer-second timeout
+	 * @throws DatabaseException if connection acquisition fails, validation throws, or the driver reports the
+	 *                           connection is not valid
+	 * @since 4.2.0
+	 */
+	public void performHealthCheck(@NonNull Duration timeout) {
+		requireNonNull(timeout);
+		int timeoutSeconds = healthCheckTimeoutSeconds(timeout);
+
+		performRawConnectionOperation(connection -> {
+			boolean valid;
+
+			try {
+				valid = connection.isValid(timeoutSeconds);
+			} catch (SQLException e) {
+				throw new DatabaseException("Unable to perform database health check", e);
+			}
+
+			if (!valid)
+				throw new DatabaseException("Database health check failed: connection is not valid");
+
+			return Optional.empty();
+		}, false);
+	}
+
 	private static void restoreInterruptIfNeeded(@NonNull Throwable throwable) {
 		requireNonNull(throwable);
 
@@ -938,6 +974,27 @@ public final class Database {
 
 		if (seconds > Integer.MAX_VALUE)
 			throw new IllegalArgumentException(format("queryTimeout must be <= %s seconds", Integer.MAX_VALUE));
+
+		return (int) seconds;
+	}
+
+	private static int healthCheckTimeoutSeconds(@NonNull Duration timeout) {
+		requireNonNull(timeout);
+
+		if (timeout.isNegative())
+			throw new IllegalArgumentException("timeout must be >= 0");
+
+		long seconds = timeout.getSeconds();
+
+		if (timeout.getNano() > 0) {
+			if (seconds == Long.MAX_VALUE)
+				throw new IllegalArgumentException(format("timeout must be <= %s seconds", Integer.MAX_VALUE));
+
+			++seconds;
+		}
+
+		if (seconds > Integer.MAX_VALUE)
+			throw new IllegalArgumentException(format("timeout must be <= %s seconds", Integer.MAX_VALUE));
 
 		return (int) seconds;
 	}

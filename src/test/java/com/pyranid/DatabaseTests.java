@@ -2570,6 +2570,119 @@ public class DatabaseTests {
 	}
 
 	@Test
+	public void testPerformHealthCheckUsesIsValidAndClosesConnection() {
+		AtomicInteger isValidTimeout = new AtomicInteger(-1);
+		AtomicInteger closeCount = new AtomicInteger(0);
+		Connection connection = healthCheckConnection(isValidTimeout, closeCount, true, null);
+		Database db = Database.withDataSource(dataSourceForConnection(connection)).build();
+
+		db.performHealthCheck(Duration.ofMillis(1_500));
+
+		Assertions.assertEquals(2, isValidTimeout.get());
+		Assertions.assertEquals(1, closeCount.get());
+	}
+
+	@Test
+	public void testPerformHealthCheckRejectsInvalidTimeouts() {
+		DataSource dataSource = new DataSource() {
+			@Override
+			public Connection getConnection() throws SQLException {
+				throw new SQLException("unexpected connection usage");
+			}
+
+			@Override
+			public Connection getConnection(String username, String password) throws SQLException {
+				throw new SQLException("unexpected connection usage");
+			}
+
+			@Override
+			public java.io.PrintWriter getLogWriter() throws SQLException {
+				return null;
+			}
+
+			@Override
+			public void setLogWriter(java.io.PrintWriter out) throws SQLException {
+			}
+
+			@Override
+			public void setLoginTimeout(int seconds) throws SQLException {
+			}
+
+			@Override
+			public int getLoginTimeout() throws SQLException {
+				return 0;
+			}
+
+			@Override
+			public java.util.logging.Logger getParentLogger() throws java.sql.SQLFeatureNotSupportedException {
+				throw new java.sql.SQLFeatureNotSupportedException();
+			}
+
+			@Override
+			public <T> T unwrap(Class<T> iface) throws SQLException {
+				throw new SQLException("unwrap");
+			}
+
+			@Override
+			public boolean isWrapperFor(Class<?> iface) {
+				return false;
+			}
+		};
+		Database db = Database.withDataSource(dataSource).build();
+
+		Assertions.assertThrows(IllegalArgumentException.class, () -> db.performHealthCheck(Duration.ofNanos(-1)));
+		Assertions.assertThrows(IllegalArgumentException.class, () ->
+				db.performHealthCheck(Duration.ofSeconds((long) Integer.MAX_VALUE + 1L)));
+	}
+
+	@Test
+	public void testPerformHealthCheckThrowsWhenConnectionIsInvalid() {
+		AtomicInteger closeCount = new AtomicInteger(0);
+		Connection connection = healthCheckConnection(new AtomicInteger(-1), closeCount, false, null);
+		Database db = Database.withDataSource(dataSourceForConnection(connection)).build();
+
+		DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
+				db.performHealthCheck(Duration.ZERO));
+
+		Assertions.assertTrue(exception.getMessage().contains("connection is not valid"));
+		Assertions.assertEquals(1, closeCount.get());
+	}
+
+	@Test
+	public void testPerformHealthCheckWrapsIsValidFailure() {
+		AtomicInteger closeCount = new AtomicInteger(0);
+		SQLException failure = new SQLException("validation failed");
+		Connection connection = healthCheckConnection(new AtomicInteger(-1), closeCount, true, failure);
+		Database db = Database.withDataSource(dataSourceForConnection(connection)).build();
+
+		DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
+				db.performHealthCheck(Duration.ofSeconds(1)));
+
+		Assertions.assertTrue(exception.getMessage().contains("Unable to perform database health check"));
+		Assertions.assertSame(failure, exception.getCause());
+		Assertions.assertEquals(1, closeCount.get());
+	}
+
+	@Test
+	public void testPerformHealthCheckUsesFreshConnectionInsideTransaction() {
+		TrackingDataSource dataSource = new TrackingDataSource(createInMemoryDataSource("healthCheckFreshConnection"));
+		Database db = Database.withDataSource(dataSource).build();
+
+		db.query("CREATE TABLE health_check_txn (id INT)").execute();
+		dataSource.resetCloseCount();
+
+		db.transaction(() -> {
+			db.query("INSERT INTO health_check_txn VALUES (1)").execute();
+			db.performHealthCheck(Duration.ofSeconds(1));
+			Assertions.assertEquals(1, dataSource.getCloseCount(),
+					"Health check should close its own fresh connection inside an active transaction");
+		});
+
+		Assertions.assertEquals(2, dataSource.getCloseCount(),
+				"Transaction completion should close the transaction connection separately");
+	}
+
+	@Test
 	public void testUseRawConnectionClosesConnectionOutsideTransaction() {
 		TrackingDataSource dataSource = new TrackingDataSource(createInMemoryDataSource("useRawConnectionClose"));
 		Database db = Database.withDataSource(dataSource).build();
@@ -4525,15 +4638,22 @@ public class DatabaseTests {
 	private DataSource dataSourceForPreparedStatement(@NonNull PreparedStatement preparedStatement) {
 		requireNonNull(preparedStatement);
 
+		return dataSourceForConnection(connectionForPreparedStatement(preparedStatement));
+	}
+
+	@NonNull
+	private DataSource dataSourceForConnection(@NonNull Connection connection) {
+		requireNonNull(connection);
+
 		return new DataSource() {
 			@Override
 			public Connection getConnection() {
-				return connectionForPreparedStatement(preparedStatement);
+				return connection;
 			}
 
 			@Override
 			public Connection getConnection(String username, String password) {
-				return connectionForPreparedStatement(preparedStatement);
+				return connection;
 			}
 
 			@Override
@@ -4569,6 +4689,39 @@ public class DatabaseTests {
 				return false;
 			}
 		};
+	}
+
+	@NonNull
+	private Connection healthCheckConnection(@NonNull AtomicInteger isValidTimeout,
+																					 @NonNull AtomicInteger closeCount,
+																					 Boolean isValid,
+																					 @Nullable SQLException isValidFailure) {
+		requireNonNull(isValidTimeout);
+		requireNonNull(closeCount);
+
+		return (Connection) Proxy.newProxyInstance(
+				Connection.class.getClassLoader(),
+				new Class<?>[]{Connection.class},
+				(proxy, method, args) -> {
+					String name = method.getName();
+					if ("isValid".equals(name)) {
+						isValidTimeout.set((Integer) args[0]);
+
+						if (isValidFailure != null)
+							throw isValidFailure;
+
+						return isValid;
+					}
+					if ("close".equals(name)) {
+						closeCount.incrementAndGet();
+						return null;
+					}
+					if ("isClosed".equals(name))
+						return false;
+					if ("toString".equals(name))
+						return "Connection<health-check>";
+					return defaultValue(method.getReturnType());
+				});
 	}
 
 	@NonNull
