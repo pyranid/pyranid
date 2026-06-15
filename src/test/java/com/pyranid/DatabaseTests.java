@@ -162,6 +162,26 @@ public class DatabaseTests {
 		}
 	}
 
+	public static class UnmatchedWritableResult {
+		private String name;
+
+		public String getName() {
+			return this.name;
+		}
+
+		public void setName(String name) {
+			this.name = name;
+		}
+	}
+
+	public static class SetterlessResult {
+		private String name;
+
+		public String getName() {
+			return this.name;
+		}
+	}
+
 	public static class CurrencyHolder {
 		private Currency currency;
 
@@ -1724,6 +1744,40 @@ public class DatabaseTests {
 			Assertions.assertEquals(Locale.US, record.locale(), "Record row mapping should use the claimed locale column");
 
 			Assertions.assertEquals(0, mapCalls.get(), "Row-level custom mapper should not intercept claimed multi-column rows");
+		}
+	}
+
+	@Test
+	public void testBeanMappingRejectsResultSetsWithNoWritableColumnMatches() {
+		for (Boolean planCachingEnabled : List.of(false, true)) {
+			Database db = Database.withDataSource(createInMemoryDataSource("bean_no_writable_column_matches_" + planCachingEnabled))
+					.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(planCachingEnabled).build())
+					.build();
+
+			DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
+					db.query("SELECT 'A' AS unrelated FROM (VALUES (0)) AS t(x)")
+							.fetchObject(UnmatchedWritableResult.class));
+
+			Assertions.assertTrue(exception.getMessage().contains("No result columns map to writable bean properties"));
+			Assertions.assertTrue(exception.getMessage().contains(UnmatchedWritableResult.class.getName()));
+			Assertions.assertTrue(exception.getMessage().toLowerCase(Locale.ROOT).contains("unrelated"));
+		}
+	}
+
+	@Test
+	public void testBeanMappingRejectsSetterlessResultType() {
+		for (Boolean planCachingEnabled : List.of(false, true)) {
+			Database db = Database.withDataSource(createInMemoryDataSource("bean_setterless_" + planCachingEnabled))
+					.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(planCachingEnabled).build())
+					.build();
+
+			DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
+					db.query("SELECT 'A' AS name FROM (VALUES (0)) AS t(x)")
+							.fetchObject(SetterlessResult.class));
+
+			Assertions.assertTrue(exception.getMessage().contains("No result columns map to writable bean properties"));
+			Assertions.assertTrue(exception.getMessage().contains(SetterlessResult.class.getName()));
+			Assertions.assertTrue(exception.getMessage().toLowerCase(Locale.ROOT).contains("name"));
 		}
 	}
 

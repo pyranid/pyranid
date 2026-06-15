@@ -726,6 +726,8 @@ List<String> names = database.query("SELECT name FROM employee")
 
 In the case of user-defined types and Records, the standard [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) examines the names of columns in the [`ResultSet`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/ResultSet.html) and matches them to corresponding fields via reflection.  The [`@DatabaseColumn`](https://javadoc.pyranid.com/com/pyranid/DatabaseColumn.html) annotation allows per-field customization of mapping behavior.
 
+JavaBean mapping requires at least one selected column to match a writable property. If no selected columns match bean setters, Pyranid raises a [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) instead of returning an object with all default values. Use column aliases, a [`Record`](https://openjdk.org/jeps/395) target, or a custom [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) when the default property matching is not appropriate.
+
 By default, column names are assumed to be separated by `_` characters and are mapped to their camel-case equivalent.  For example:
 
 ```java

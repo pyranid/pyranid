@@ -697,6 +697,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				return Optional.of(rec);
 			} else {
 				// Bean
+				if (plan.mappedColumnCount == 0)
+					throw noWritableBeanColumnMappingsException(resultSetRowType, resultSetMetaData);
+
 				T object = instanceProvider.provide(statementContext, resultSetRowType);
 
 				for (ColumnBinding b : plan.bindings) {
@@ -1225,7 +1228,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		Class<T> resultSetRowType = statementContext.getResultSetRowType().get();
 
-		T object = instanceProvider.provide(statementContext, resultSetRowType);
+		T object = null;
 		WritableProperty[] writableProperties = determineWritableProperties(resultSetRowType);
 		ColumnLabelMaps columnLabelMaps = extractColumnLabelsToValues(statementContext, resultSet, resultSetMetaData);
 		Map<String, Object> columnLabelsToValues = columnLabelMaps.getValuesByLabel();
@@ -1234,6 +1237,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		// Compute once per class (generic-aware)
 		Map<String, TargetType> propertyTargetTypes = determinePropertyTargetTypes(resultSetRowType);
+		int mappedColumnCount = 0;
 
 		for (WritableProperty writableProperty : writableProperties) {
 			Method writeMethod = writableProperty.getWriteMethod();
@@ -1259,6 +1263,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					Integer.compare(columnLabelsToIndexes.get(left), columnLabelsToIndexes.get(right)));
 
 			for (String propertyName : orderedPropertyNames) {
+				++mappedColumnCount;
 				Object rawValue = columnLabelsToValues.get(propertyName);
 
 				Integer columnIndex = requireNonNull(columnLabelsToIndexes.get(propertyName));
@@ -1289,11 +1294,43 @@ class DefaultResultSetMapper implements ResultSetMapper {
 									CustomColumnMapper.class.getSimpleName(), DefaultResultSetMapper.class.getSimpleName(), resultSetTypeDescription, writeMethodParameterType));
 				}
 
+				if (object == null)
+					object = instanceProvider.provide(statementContext, resultSetRowType);
+
 				writeMethod.invoke(object, value);
 			}
 		}
 
-		return object;
+		if (mappedColumnCount == 0)
+			throw noWritableBeanColumnMappingsException(resultSetRowType, resultSetMetaData);
+
+		return requireNonNull(object);
+	}
+
+	@NonNull
+	private DatabaseException noWritableBeanColumnMappingsException(@NonNull Class<?> resultSetRowType,
+																																 @NonNull ResultSetMetaData resultSetMetaData) throws SQLException {
+		requireNonNull(resultSetRowType);
+		requireNonNull(resultSetMetaData);
+
+		String columnLabels = selectedColumnLabels(resultSetMetaData).stream().collect(joining(", "));
+		return new DatabaseException(format(
+				"No result columns map to writable bean properties of %s. Selected columns: %s. "
+						+ "Ensure the SQL selects/aliases columns that match bean setters, use a record target, or provide a custom ResultSetMapper.",
+				resultSetRowType.getName(), columnLabels));
+	}
+
+	@NonNull
+	private List<String> selectedColumnLabels(@NonNull ResultSetMetaData resultSetMetaData) throws SQLException {
+		requireNonNull(resultSetMetaData);
+
+		int columnCount = resultSetMetaData.getColumnCount();
+		List<String> columnLabels = new ArrayList<>(columnCount);
+
+		for (int i = 1; i <= columnCount; ++i)
+			columnLabels.add(resultSetMetaData.getColumnLabel(i));
+
+		return columnLabels;
 	}
 
 	@NonNull
@@ -2340,15 +2377,18 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		final boolean isRecord;
 		final int columnCount;                   // for per-row raw caching
 		final boolean hasFanOut;                 // any column maps to multiple properties?
+		final int mappedColumnCount;             // selected columns that map to at least one property/component
 		final @NonNull List<ColumnBinding> bindings; // may contain multiple entries per column (fan-out)
 
 		RowPlan(boolean isRecord,
 						int columnCount,
 						boolean hasFanOut,
+						int mappedColumnCount,
 						@NonNull List<ColumnBinding> bindings) {
 			this.isRecord = isRecord;
 			this.columnCount = columnCount;
 			this.hasFanOut = hasFanOut;
+			this.mappedColumnCount = mappedColumnCount;
 			this.bindings = requireNonNull(bindings);
 		}
 	}
@@ -2461,6 +2501,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		// For each column, bind ALL matching properties (fan-out)
 		List<ColumnBinding> bindings = new ArrayList<>();
 		boolean hasFanOut = false;
+		int mappedColumnCount = 0;
 		Map<String, String> normalizedLabelsToRawLabels = new HashMap<>(cols);
 		for (int i = 1; i <= cols; i++) {
 			String rawLabel = resultSetMetaData.getColumnLabel(i);
@@ -2496,6 +2537,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 			if (matchedProps.size() > 1)
 				hasFanOut = true;
+
+			++mappedColumnCount;
 
 			// Create one binding per matched property
 			for (String prop : matchedProps) {
@@ -2549,7 +2592,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			}
 		}
 
-		RowPlan<T> plan = new RowPlan<>(isRecord, cols, hasFanOut, bindings);
+		RowPlan<T> plan = new RowPlan<>(isRecord, cols, hasFanOut, mappedColumnCount, bindings);
 		planCache.putIfAbsent(schemaSignature, plan);
 		return plan;
 	}
