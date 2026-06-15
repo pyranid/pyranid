@@ -55,8 +55,11 @@
 		<maven.failsafe.plugin.version>3.5.4</maven.failsafe.plugin.version>
 		<maven.jar.plugin.version>3.4.2</maven.jar.plugin.version>
 		<build.helper.maven.plugin.version>3.6.1</build.helper.maven.plugin.version>
+		<exec.maven.plugin.version>3.5.0</exec.maven.plugin.version>
 		<japicmp.maven.plugin.version>0.26.1</japicmp.maven.plugin.version>
 		<japicmp.baseline.version>4.1.0</japicmp.baseline.version>
+		<jmh.version>1.37</jmh.version>
+		<jmh.args>com.pyranid.*CacheBenchmark com.pyranid.ConcurrentLruMapBenchmark</jmh.args>
 		<testcontainers.version>1.21.4</testcontainers.version>
 		<slf4j.version>1.7.36</slf4j.version>
 		<postgres.integration.image>postgres:17-alpine</postgres.integration.image>
@@ -317,6 +320,70 @@
 								</goals>
 							</execution>
 						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+		<profile>
+			<id>benchmarks</id>
+			<dependencies>
+				<dependency>
+					<groupId>org.openjdk.jmh</groupId>
+					<artifactId>jmh-core</artifactId>
+					<version>${jmh.version}</version>
+					<scope>test</scope>
+				</dependency>
+				<dependency>
+					<groupId>org.openjdk.jmh</groupId>
+					<artifactId>jmh-generator-annprocess</artifactId>
+					<version>${jmh.version}</version>
+					<scope>test</scope>
+				</dependency>
+			</dependencies>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.codehaus.mojo</groupId>
+						<artifactId>build-helper-maven-plugin</artifactId>
+						<version>${build.helper.maven.plugin.version}</version>
+						<executions>
+							<execution>
+								<id>add-benchmark-source</id>
+								<phase>generate-test-sources</phase>
+								<goals>
+									<goal>add-test-source</goal>
+								</goals>
+								<configuration>
+									<sources>
+										<source>src/jmh/java</source>
+									</sources>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-compiler-plugin</artifactId>
+						<configuration>
+							<proc>full</proc>
+							<annotationProcessorPaths>
+								<path>
+									<groupId>org.openjdk.jmh</groupId>
+									<artifactId>jmh-generator-annprocess</artifactId>
+									<version>${jmh.version}</version>
+								</path>
+							</annotationProcessorPaths>
+						</configuration>
+					</plugin>
+					<plugin>
+						<groupId>org.codehaus.mojo</groupId>
+						<artifactId>exec-maven-plugin</artifactId>
+						<version>${exec.maven.plugin.version}</version>
+						<configuration>
+							<classpathScope>test</classpathScope>
+							<executable>java</executable>
+							<commandlineArgs>-cp %classpath org.openjdk.jmh.Main ${jmh.args}</commandlineArgs>
+						</configuration>
 					</plugin>
 				</plugins>
 			</build>

@@ -1509,6 +1509,14 @@ The `integration` Maven profile runs Docker-backed PostgreSQL integration tests 
 
 The PostgreSQL integration profile currently covers core pgjdbc behavior such as JSONB, SQL arrays, `RETURNING`, temporal binding/mapping, and exception metadata. It does not run pgvector extension tests; verify pgvector manually if your release depends on that feature.
 
+Cache-sensitive changes should also be checked with the JMH benchmark profile:
+
+```bash
+mvn -q -P benchmarks test-compile exec:exec
+```
+
+The `benchmarks` profile adds JMH only to the test classpath and compiles benchmark sources from `src/jmh/java`; it does not add runtime dependencies to the published Pyranid artifact. Override the default JMH arguments with `-Djmh.args="..."`, and add a thread setting such as `-t 8` when you want to stress shared-cache contention.
+
 Artifact signing and Maven Central publishing are isolated in the `release` profile. Use `mvn -P release deploy` only when publishing a release or snapshot; normal local and CI `verify` runs do not require GPG credentials.
 
 ## Production Notes
