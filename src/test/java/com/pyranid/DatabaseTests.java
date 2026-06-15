@@ -52,6 +52,7 @@ import java.time.OffsetTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Currency;
 import java.util.LinkedHashMap;
@@ -811,6 +812,203 @@ public class DatabaseTests {
 		List<Long> result = query.executeBatch(List.of());
 
 		Assertions.assertEquals(List.of(), result);
+	}
+
+	@Test
+	public void testExecuteBatchChunksJdbcBatchesAndFlattensResults() {
+		AtomicInteger addBatchCalls = new AtomicInteger();
+		AtomicInteger clearBatchCalls = new AtomicInteger();
+		AtomicInteger pendingBatchSize = new AtomicInteger();
+		List<Integer> executedChunkSizes = new ArrayList<>();
+		AtomicReference<StatementLog<?>> logRef = new AtomicReference<>();
+
+		PreparedStatement preparedStatement = (PreparedStatement) Proxy.newProxyInstance(
+				PreparedStatement.class.getClassLoader(),
+				new Class<?>[]{PreparedStatement.class},
+				(proxy, method, args) -> {
+					String name = method.getName();
+					if ("addBatch".equals(name)) {
+						addBatchCalls.incrementAndGet();
+						pendingBatchSize.incrementAndGet();
+						return null;
+					}
+					if ("executeLargeBatch".equals(name)) {
+						int chunkSize = pendingBatchSize.get();
+						long[] result = new long[chunkSize];
+						Arrays.fill(result, 1L);
+						executedChunkSizes.add(chunkSize);
+						return result;
+					}
+					if ("clearBatch".equals(name)) {
+						clearBatchCalls.incrementAndGet();
+						pendingBatchSize.set(0);
+						return null;
+					}
+					if ("setObject".equals(name) || "setNull".equals(name) || "close".equals(name))
+						return null;
+					return defaultValue(method.getReturnType());
+				});
+
+		Database db = Database.withDataSource(dataSourceForPreparedStatement(preparedStatement))
+				.databaseType(DatabaseType.GENERIC)
+				.statementLogger(logRef::set)
+				.build();
+
+		Query query = db.query("INSERT INTO t (id) VALUES (:id)")
+				.batchChunkSize(2);
+		List<Long> result = query.executeBatch(List.of(
+				Map.of("id", 1),
+				Map.of("id", 2),
+				Map.of("id", 3),
+				Map.of("id", 4),
+				Map.of("id", 5)
+		));
+
+		Assertions.assertEquals(List.of(1L, 1L, 1L, 1L, 1L), result);
+		Assertions.assertEquals(List.of(2, 2, 1), executedChunkSizes);
+		Assertions.assertEquals(5, addBatchCalls.get());
+		Assertions.assertEquals(3, clearBatchCalls.get());
+		Assertions.assertEquals(Integer.valueOf(5), logRef.get().getBatchSize().orElse(null));
+	}
+
+	@Test
+	public void testExecuteBatchChunkingUsesLargeBatchFallbackOnce() {
+		AtomicInteger largeBatchCalls = new AtomicInteger();
+		AtomicInteger batchCalls = new AtomicInteger();
+		AtomicInteger pendingBatchSize = new AtomicInteger();
+		List<Integer> executedChunkSizes = new ArrayList<>();
+
+		PreparedStatement preparedStatement = (PreparedStatement) Proxy.newProxyInstance(
+				PreparedStatement.class.getClassLoader(),
+				new Class<?>[]{PreparedStatement.class},
+				(proxy, method, args) -> {
+					String name = method.getName();
+					if ("addBatch".equals(name)) {
+						pendingBatchSize.incrementAndGet();
+						return null;
+					}
+					if ("executeLargeBatch".equals(name)) {
+						largeBatchCalls.incrementAndGet();
+						throw new SQLException("feature not supported", "0A000");
+					}
+					if ("executeBatch".equals(name)) {
+						batchCalls.incrementAndGet();
+						int chunkSize = pendingBatchSize.get();
+						int[] result = new int[chunkSize];
+						Arrays.fill(result, 1);
+						executedChunkSizes.add(chunkSize);
+						return result;
+					}
+					if ("clearBatch".equals(name)) {
+						pendingBatchSize.set(0);
+						return null;
+					}
+					if ("setObject".equals(name) || "setNull".equals(name) || "close".equals(name))
+						return null;
+					return defaultValue(method.getReturnType());
+				});
+
+		Database db = Database.withDataSource(dataSourceForPreparedStatement(preparedStatement))
+				.databaseType(DatabaseType.GENERIC)
+				.build();
+
+		Query query = db.query("INSERT INTO t (id) VALUES (:id)")
+				.batchChunkSize(2);
+		List<Long> result = query.executeBatch(List.of(
+				Map.of("id", 1),
+				Map.of("id", 2),
+				Map.of("id", 3),
+				Map.of("id", 4),
+				Map.of("id", 5)
+		));
+
+		Assertions.assertEquals(List.of(1L, 1L, 1L, 1L, 1L), result);
+		Assertions.assertEquals(List.of(2, 2, 1), executedChunkSizes);
+		Assertions.assertEquals(1, largeBatchCalls.get());
+		Assertions.assertEquals(3, batchCalls.get());
+	}
+
+	@Test
+	public void testBatchChunkSizeRejectsNonPositiveValues() {
+		Database db = Database.withDataSource(createInMemoryDataSource("testBatchChunkSizeRejectsNonPositiveValues")).build();
+
+		Assertions.assertThrows(IllegalArgumentException.class, () ->
+				db.query("INSERT INTO t (id) VALUES (:id)").batchChunkSize(0));
+		Assertions.assertThrows(IllegalArgumentException.class, () ->
+				db.query("INSERT INTO t (id) VALUES (:id)").batchChunkSize(-1));
+	}
+
+	@Test
+	public void testBatchChunkSizeFailsForNonBatchOperations() {
+		DataSource dataSource = new DataSource() {
+			@Override
+			public Connection getConnection() throws SQLException {
+				throw new SQLException("unexpected connection usage");
+			}
+
+			@Override
+			public Connection getConnection(String username, String password) throws SQLException {
+				throw new SQLException("unexpected connection usage");
+			}
+
+			@Override
+			public java.io.PrintWriter getLogWriter() throws SQLException {
+				return null;
+			}
+
+			@Override
+			public void setLogWriter(java.io.PrintWriter out) throws SQLException {
+			}
+
+			@Override
+			public void setLoginTimeout(int seconds) throws SQLException {
+			}
+
+			@Override
+			public int getLoginTimeout() throws SQLException {
+				return 0;
+			}
+
+			@Override
+			public java.util.logging.Logger getParentLogger() throws java.sql.SQLFeatureNotSupportedException {
+				throw new java.sql.SQLFeatureNotSupportedException();
+			}
+
+			@Override
+			public <T> T unwrap(Class<T> iface) throws SQLException {
+				throw new SQLException("unwrap");
+			}
+
+			@Override
+			public boolean isWrapperFor(Class<?> iface) {
+				return false;
+			}
+		};
+
+		Database db = Database.withDataSource(dataSource)
+				.databaseType(DatabaseType.GENERIC)
+				.build();
+
+		Assertions.assertThrows(IllegalStateException.class, () ->
+				db.query("SELECT id FROM t").batchChunkSize(2).fetchObject(Integer.class));
+		Assertions.assertThrows(IllegalStateException.class, () ->
+				db.query("SELECT id FROM t").batchChunkSize(2).fetchList(Integer.class));
+		Assertions.assertThrows(IllegalStateException.class, () ->
+				db.query("SELECT id FROM t").batchChunkSize(2).fetchStream(Integer.class, stream -> stream.toList()));
+		Assertions.assertThrows(IllegalStateException.class, () ->
+				db.query("UPDATE t SET id = 1").batchChunkSize(2).execute());
+		Assertions.assertThrows(IllegalStateException.class, () ->
+				db.query("INSERT INTO t DEFAULT VALUES").batchChunkSize(2).executeReturningGeneratedKey(Integer.class));
+		Assertions.assertThrows(IllegalStateException.class, () ->
+				db.query("INSERT INTO t DEFAULT VALUES").batchChunkSize(2).executeReturningGeneratedKey(Integer.class, "id"));
+		Assertions.assertThrows(IllegalStateException.class, () ->
+				db.query("INSERT INTO t DEFAULT VALUES").batchChunkSize(2).executeReturningGeneratedKeys(Integer.class));
+		Assertions.assertThrows(IllegalStateException.class, () ->
+				db.query("INSERT INTO t DEFAULT VALUES").batchChunkSize(2).executeReturningGeneratedKeys(Integer.class, "id"));
+		Assertions.assertThrows(IllegalStateException.class, () ->
+				db.query("UPDATE t SET id = 1 RETURNING id").batchChunkSize(2).executeForObject(Integer.class));
+		Assertions.assertThrows(IllegalStateException.class, () ->
+				db.query("UPDATE t SET id = 1 RETURNING id").batchChunkSize(2).executeForList(Integer.class));
 	}
 
 	@Test

@@ -913,6 +913,17 @@ public final class Database {
 		return value;
 	}
 
+	@Nullable
+	private static Integer validatePositiveQuerySetting(@NonNull String name,
+																										 @Nullable Integer value) {
+		requireNonNull(name);
+
+		if (value != null && value <= 0)
+			throw new IllegalArgumentException(format("%s must be > 0", name));
+
+		return value;
+	}
+
 	private static int queryTimeoutSeconds(@NonNull Duration queryTimeout) {
 		requireNonNull(queryTimeout);
 
@@ -971,6 +982,8 @@ public final class Database {
 		@Nullable
 		private Integer maxRows;
 		@Nullable
+		private Integer batchChunkSize;
+		@Nullable
 		private Object id;
 
 		private DefaultQuery(@NonNull Database database,
@@ -992,6 +1005,7 @@ public final class Database {
 			this.queryTimeout = null;
 			this.fetchSize = null;
 			this.maxRows = null;
+			this.batchChunkSize = null;
 		}
 
 		@NonNull
@@ -1048,6 +1062,13 @@ public final class Database {
 
 		@NonNull
 		@Override
+		public Query batchChunkSize(@Nullable Integer batchChunkSize) {
+			this.batchChunkSize = validatePositiveQuerySetting("batchChunkSize", batchChunkSize);
+			return this;
+		}
+
+		@NonNull
+		@Override
 		public Query customize(@NonNull PreparedStatementCustomizer preparedStatementCustomizer) {
 			requireNonNull(preparedStatementCustomizer);
 			this.preparedStatementCustomizer = preparedStatementCustomizer;
@@ -1058,6 +1079,7 @@ public final class Database {
 		@NonNull
 		@Override
 		public <T> Optional<T> fetchObject(@NonNull Class<T> resultType) {
+			validateBatchChunkSizeNotSet();
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
 			return this.database.queryForObject(preparedQuery.statement, resultType, effectivePreparedStatementCustomizer(), preparedQuery.parameters);
@@ -1066,6 +1088,7 @@ public final class Database {
 		@NonNull
 		@Override
 		public <T> List<@Nullable T> fetchList(@NonNull Class<T> resultType) {
+			validateBatchChunkSizeNotSet();
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
 			return this.database.queryForList(preparedQuery.statement, resultType, effectivePreparedStatementCustomizer(), preparedQuery.parameters);
@@ -1075,6 +1098,7 @@ public final class Database {
 		@Override
 		public <T, R> R fetchStream(@NonNull Class<T> resultType,
 																@NonNull Function<Stream<@Nullable T>, R> streamFunction) {
+			validateBatchChunkSizeNotSet();
 			requireNonNull(resultType);
 			requireNonNull(streamFunction);
 			PreparedQuery preparedQuery = prepare(this.bindings);
@@ -1085,6 +1109,7 @@ public final class Database {
 		@NonNull
 		@Override
 		public Long execute() {
+			validateBatchChunkSizeNotSet();
 			PreparedQuery preparedQuery = prepare(this.bindings);
 			return this.database.execute(preparedQuery.statement, effectivePreparedStatementCustomizer(), preparedQuery.parameters);
 		}
@@ -1092,6 +1117,7 @@ public final class Database {
 		@NonNull
 		@Override
 		public <T> Optional<T> executeReturningGeneratedKey(@NonNull Class<T> resultType) {
+			validateBatchChunkSizeNotSet();
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
 			return this.database.executeReturningGeneratedKey(preparedQuery.statement, resultType,
@@ -1102,6 +1128,7 @@ public final class Database {
 		@Override
 		public <T> Optional<T> executeReturningGeneratedKey(@NonNull Class<T> resultType,
 																												@NonNull String @NonNull ... keyColumnNames) {
+			validateBatchChunkSizeNotSet();
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
 			return this.database.executeReturningGeneratedKey(preparedQuery.statement, resultType,
@@ -1111,6 +1138,7 @@ public final class Database {
 		@NonNull
 		@Override
 		public <T> List<@Nullable T> executeReturningGeneratedKeys(@NonNull Class<T> resultType) {
+			validateBatchChunkSizeNotSet();
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
 			return this.database.executeReturningGeneratedKeys(preparedQuery.statement, resultType,
@@ -1121,6 +1149,7 @@ public final class Database {
 		@Override
 		public <T> List<@Nullable T> executeReturningGeneratedKeys(@NonNull Class<T> resultType,
 																													 @NonNull String @NonNull ... keyColumnNames) {
+			validateBatchChunkSizeNotSet();
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
 			return this.database.executeReturningGeneratedKeys(preparedQuery.statement, resultType,
@@ -1174,12 +1203,13 @@ public final class Database {
 			if (statement == null)
 				statement = Statement.of(statementId, buildPlaceholderSql());
 
-			return this.database.executeBatch(statement, parametersAsList, effectivePreparedStatementCustomizer());
+			return this.database.executeBatch(statement, parametersAsList, effectivePreparedStatementCustomizer(), this.batchChunkSize);
 		}
 
 		@NonNull
 		@Override
 		public <T> Optional<T> executeForObject(@NonNull Class<T> resultType) {
+			validateBatchChunkSizeNotSet();
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
 			return this.database.executeForObject(preparedQuery.statement, resultType, effectivePreparedStatementCustomizer(), preparedQuery.parameters);
@@ -1188,9 +1218,15 @@ public final class Database {
 		@NonNull
 		@Override
 		public <T> List<@Nullable T> executeForList(@NonNull Class<T> resultType) {
+			validateBatchChunkSizeNotSet();
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
 			return this.database.executeForList(preparedQuery.statement, resultType, effectivePreparedStatementCustomizer(), preparedQuery.parameters);
+		}
+
+		private void validateBatchChunkSizeNotSet() {
+			if (this.batchChunkSize != null)
+				throw new IllegalStateException("batchChunkSize applies only to executeBatch(...)");
 		}
 
 		@Nullable
@@ -2482,12 +2518,13 @@ public final class Database {
 		requireNonNull(statement);
 		requireNonNull(parameterGroups);
 
-		return executeBatch(statement, parameterGroups, null);
+		return executeBatch(statement, parameterGroups, null, null);
 	}
 
 	private List<Long> executeBatch(@NonNull Statement statement,
 																	@NonNull List<List<Object>> parameterGroups,
-																	@Nullable PreparedStatementCustomizer preparedStatementCustomizer) {
+																	@Nullable PreparedStatementCustomizer preparedStatementCustomizer,
+																	@Nullable Integer batchChunkSize) {
 		requireNonNull(statement);
 		requireNonNull(parameterGroups);
 		if (parameterGroups.isEmpty())
@@ -2517,61 +2554,109 @@ public final class Database {
 				.resultSetRowType(List.class)
 				.build();
 
-		performDatabaseOperation(statementContext, (preparedStatement) -> {
-			applyPreparedStatementCustomizer(statementContext, preparedStatement, preparedStatementCustomizer);
+		if (batchChunkSize == null || batchChunkSize >= parameterGroups.size()) {
+			performDatabaseOperation(statementContext, (preparedStatement) -> {
+				applyPreparedStatementCustomizer(statementContext, preparedStatement, preparedStatementCustomizer);
 
-			for (List<Object> parameterGroup : parameterGroups) {
-				if (parameterGroup.size() > 0)
-					performPreparedStatementBinding(statementContext, preparedStatement, parameterGroup);
+				for (List<Object> parameterGroup : parameterGroups) {
+					if (parameterGroup.size() > 0)
+						performPreparedStatementBinding(statementContext, preparedStatement, parameterGroup);
 
-				preparedStatement.addBatch();
-			}
-		}, (PreparedStatement preparedStatement) -> {
-			long startTime = nanoTime();
-			List<Long> result;
+					preparedStatement.addBatch();
+				}
+			}, (PreparedStatement preparedStatement) -> {
+				long startTime = nanoTime();
+				List<Long> result = executePreparedStatementBatch(preparedStatement);
 
-			DatabaseOperationSupportStatus executeLargeBatchSupported = getExecuteLargeBatchSupported();
+				resultHolder.value = result;
+				return batchDatabaseOperationResult(startTime, result);
+			}, parameterGroups.size());
+		} else {
+			int effectiveBatchChunkSize = batchChunkSize;
 
-			// Use the appropriate "large" value if we know it.
-			// If we don't know it, detect it and store it.
-			if (executeLargeBatchSupported == DatabaseOperationSupportStatus.YES) {
-				long[] resultArray = preparedStatement.executeLargeBatch();
-				result = Arrays.stream(resultArray).boxed().collect(Collectors.toList());
-			} else if (executeLargeBatchSupported == DatabaseOperationSupportStatus.NO) {
-				int[] resultArray = preparedStatement.executeBatch();
-				result = Arrays.stream(resultArray).asLongStream().boxed().collect(Collectors.toList());
-			} else {
-				// If the driver doesn't support executeLargeBatch, then UnsupportedOperationException is thrown.
-				try {
-					long[] resultArray = preparedStatement.executeLargeBatch();
-					result = Arrays.stream(resultArray).boxed().collect(Collectors.toList());
-					setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.YES);
-				} catch (SQLFeatureNotSupportedException | UnsupportedOperationException | AbstractMethodError e) {
-					setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.NO);
-					int[] resultArray = preparedStatement.executeBatch();
-					result = Arrays.stream(resultArray).asLongStream().boxed().collect(Collectors.toList());
-				} catch (SQLException e) {
-					if (isUnsupportedSqlFeature(e)) {
-						setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.NO);
-						int[] resultArray = preparedStatement.executeBatch();
-						result = Arrays.stream(resultArray).asLongStream().boxed().collect(Collectors.toList());
-					} else {
-						throw e;
+			performDatabaseOperation(statementContext, (preparedStatement) -> {
+				applyPreparedStatementCustomizer(statementContext, preparedStatement, preparedStatementCustomizer);
+			}, (PreparedStatement preparedStatement) -> {
+				long startTime = nanoTime();
+				int currentBatchSize = 0;
+				List<Long> result = new ArrayList<>(parameterGroups.size());
+
+				for (List<Object> parameterGroup : parameterGroups) {
+					if (parameterGroup.size() > 0)
+						performPreparedStatementBinding(statementContext, preparedStatement, parameterGroup);
+
+					preparedStatement.addBatch();
+					++currentBatchSize;
+
+					if (currentBatchSize == effectiveBatchChunkSize) {
+						result.addAll(executePreparedStatementBatch(preparedStatement));
+						preparedStatement.clearBatch();
+						currentBatchSize = 0;
 					}
 				}
-			}
 
-			resultHolder.value = result;
-			Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);
-			StatementResult statementResult = StatementResult.empty();
-			if (getMetricsCollectorDispatcher().isEnabled()) {
-				Long rowsAffected = sumBatchUpdateCounts(result);
-				statementResult = rowsAffected == null ? StatementResult.empty() : StatementResult.ofRowsAffected(rowsAffected);
-			}
-			return new DatabaseOperationResult(executionDuration, null, statementResult);
-		}, parameterGroups.size());
+				if (currentBatchSize > 0) {
+					result.addAll(executePreparedStatementBatch(preparedStatement));
+					preparedStatement.clearBatch();
+				}
+
+				resultHolder.value = result;
+				return batchDatabaseOperationResult(startTime, result);
+			}, parameterGroups.size());
+		}
 
 		return resultHolder.value;
+	}
+
+	@NonNull
+	private DatabaseOperationResult batchDatabaseOperationResult(long startTime,
+																															@NonNull List<Long> result) {
+		requireNonNull(result);
+
+		Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);
+		StatementResult statementResult = StatementResult.empty();
+		if (getMetricsCollectorDispatcher().isEnabled()) {
+			Long rowsAffected = sumBatchUpdateCounts(result);
+			statementResult = rowsAffected == null ? StatementResult.empty() : StatementResult.ofRowsAffected(rowsAffected);
+		}
+
+		return new DatabaseOperationResult(executionDuration, null, statementResult);
+	}
+
+	@NonNull
+	private List<Long> executePreparedStatementBatch(@NonNull PreparedStatement preparedStatement) throws SQLException {
+		requireNonNull(preparedStatement);
+
+		DatabaseOperationSupportStatus executeLargeBatchSupported = getExecuteLargeBatchSupported();
+
+		// Use the appropriate "large" value if we know it.
+		// If we don't know it, detect it and store it.
+		if (executeLargeBatchSupported == DatabaseOperationSupportStatus.YES) {
+			long[] resultArray = preparedStatement.executeLargeBatch();
+			return Arrays.stream(resultArray).boxed().collect(Collectors.toList());
+		}
+		if (executeLargeBatchSupported == DatabaseOperationSupportStatus.NO) {
+			int[] resultArray = preparedStatement.executeBatch();
+			return Arrays.stream(resultArray).asLongStream().boxed().collect(Collectors.toList());
+		}
+
+		// If the driver doesn't support executeLargeBatch, then UnsupportedOperationException is thrown.
+		try {
+			long[] resultArray = preparedStatement.executeLargeBatch();
+			setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.YES);
+			return Arrays.stream(resultArray).boxed().collect(Collectors.toList());
+		} catch (SQLFeatureNotSupportedException | UnsupportedOperationException | AbstractMethodError e) {
+			setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.NO);
+			int[] resultArray = preparedStatement.executeBatch();
+			return Arrays.stream(resultArray).asLongStream().boxed().collect(Collectors.toList());
+		} catch (SQLException e) {
+			if (!isUnsupportedSqlFeature(e))
+				throw e;
+
+			setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.NO);
+			int[] resultArray = preparedStatement.executeBatch();
+			return Arrays.stream(resultArray).asLongStream().boxed().collect(Collectors.toList());
+		}
 	}
 
 	/**

@@ -152,6 +152,29 @@ public interface Query {
 	}
 
 	/**
+	 * Configures the maximum number of parameter groups to send in each JDBC batch execution.
+	 * <p>
+	 * This setting applies only to {@link #executeBatch(List)}. {@code null} leaves batch execution unchunked,
+	 * preserving the default behavior of sending all parameter groups in one JDBC batch. A positive value causes
+	 * Pyranid to execute multiple JDBC batches as needed and flatten the returned update counts in input order. If this
+	 * setting is specified and a non-batch terminal operation is invoked, Pyranid throws {@link IllegalStateException}.
+	 * <p>
+	 * Chunking is performed by Pyranid. JDBC drivers still execute each chunk as a normal JDBC batch.
+	 * If a later chunk fails outside an explicit transaction, earlier chunks may already be committed depending on
+	 * autocommit and driver behavior. Wrap chunked batches in {@link Database#transaction(TransactionalOperation)} when
+	 * all-or-nothing behavior is required.
+	 *
+	 * @param batchChunkSize maximum parameter groups per JDBC batch execution, or {@code null} to execute one batch
+	 * @return this builder, for chaining
+	 * @throws IllegalArgumentException if {@code batchChunkSize} is less than or equal to {@code 0}
+	 * @since 4.2.0
+	 */
+	@NonNull
+	default Query batchChunkSize(@Nullable Integer batchChunkSize) {
+		throw new UnsupportedOperationException("batchChunkSize is not supported by this Query implementation");
+	}
+
+	/**
 	 * Customizes the {@link java.sql.PreparedStatement} before execution.
 	 * <p>
 	 * If called multiple times, the most recent customizer wins. The customizer runs after database-wide statement

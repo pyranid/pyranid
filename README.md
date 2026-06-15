@@ -410,6 +410,16 @@ List<Long> updateCounts = database.query("INSERT INTO car VALUES (:id, :color)")
 
 Each parameter group must provide a complete set of values after merging with any values bound on the query, and all groups must expand to the same number of JDBC parameters (e.g., IN-list sizes must match).
 
+Use [`Query::batchChunkSize(Integer)`](https://javadoc.pyranid.com/com/pyranid/Query.html#batchChunkSize(java.lang.Integer)) to bound how many parameter groups Pyranid sends in each JDBC batch execution:
+
+```java
+List<Long> updateCounts = database.query("INSERT INTO car VALUES (:id, :color)")
+  .batchChunkSize(500)
+  .executeBatch(parameterGroups);
+```
+
+Chunking is performed by Pyranid; each chunk is still executed by the JDBC driver as a normal batch. If unset, Pyranid preserves the default behavior of sending all parameter groups in one JDBC batch. `batchChunkSize(...)` applies only to `executeBatch(...)`; using it with a non-batch terminal operation throws `IllegalStateException`. For all-or-nothing behavior when a later chunk fails, wrap chunked batches in [`Database::transaction(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transaction(com.pyranid.TransactionalOperation)); outside an explicit transaction, earlier chunks may already be committed depending on autocommit and driver behavior.
+
 Pyranid will automatically determine if your JDBC driver supports "large" updates and batch operations
 and uses them if available.
 
