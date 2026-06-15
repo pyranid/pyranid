@@ -2028,7 +2028,9 @@ public final class Database {
 					}
 
 					if (resultSet.next())
-						throw new DatabaseException("Expected 1 row in resultset but got more than 1 instead");
+						throw databaseExceptionWithStatementContext(statementContext,
+								"Expected 1 row in resultset but got more than 1 instead",
+								new IllegalStateException("Expected 1 row in resultset but got more than 1 instead"));
 				}
 
 				resultHolder.value = result;
@@ -2290,7 +2292,9 @@ public final class Database {
 					}
 
 					if (resultSet.next())
-						throw new DatabaseException("Expected 1 generated-key row but got more than 1 instead");
+						throw databaseExceptionWithStatementContext(statementContext,
+								"Expected 1 generated-key row but got more than 1 instead",
+								new IllegalStateException("Expected 1 generated-key row but got more than 1 instead"));
 				}
 
 				resultHolder.value = result;
