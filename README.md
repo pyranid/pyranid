@@ -496,6 +496,8 @@ Transactions are scoped to the `DataSource` instance that created them. A second
 
 Transaction context follows the current Java thread. Async frameworks that suspend work and resume it on another thread do not automatically carry the transaction context with them; this includes Kotlin coroutines when a suspension point resumes on a different dispatcher thread. Keep transactional database access on the transaction thread, or capture the current `Transaction` and call `Database::participate(...)` on the thread that performs the database work. All participating work must complete before the owning transaction closure returns.
 
+If a participating thread is interrupted while waiting for another participant to release the transaction connection, Pyranid restores the interrupt flag and throws `DatabaseException`. This makes blocked participants cancellable; the thread currently executing a JDBC call still relies on driver behavior, `Query::queryTimeout(...)`, or application-managed `Statement.cancel()`.
+
 On Java 21+, a clean way to do this is with a virtual-thread executor:
 
 ```java
@@ -951,6 +953,8 @@ List<Employee> employees = database.query("""
 ```
 
 Use [`Database.Builder::queryTimeout(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#queryTimeout(java.time.Duration)), [`fetchSize(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#fetchSize(java.lang.Integer)), and [`maxRows(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#maxRows(java.lang.Integer)) to configure database-wide defaults. Per-query settings override database defaults, and `Query::customize(...)` runs last.
+
+`queryTimeout(...)` maps to JDBC `Statement::setQueryTimeout(...)`. For driver-specific cancellation beyond timeouts, capture the `PreparedStatement` in `Query::customize(...)` and call `Statement::cancel()` from your application's cancellation path.
 
 ### PreparedStatementCustomizer
 
@@ -1554,6 +1558,8 @@ Because transaction context is thread-local, async frameworks that resume work o
 ### Streaming Results
 
 [`fetchStream(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchStream(java.lang.Class,java.util.function.Function)) streams rows only for as long as the callback is executing. Do not return the stream or consume it asynchronously after the callback returns. PostgreSQL streams automatically use an autocommit-disabled connection and a positive fetch size outside explicit Pyranid transactions; [`Query::fetchSize(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchSize(java.lang.Integer)) can override that fetch size. For other cursor-based drivers, follow the driver's transaction and fetch-size requirements.
+
+Inside a Pyranid transaction, the stream must be closed by the thread that opened it. Do not hand a transactional stream to another thread for closing or asynchronous consumption.
 
 ### Savepoints
 

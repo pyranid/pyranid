@@ -26,9 +26,11 @@ import org.junit.jupiter.api.Test;
 import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -61,11 +63,15 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TimeZone;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
+import static java.lang.System.nanoTime;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
@@ -255,6 +261,67 @@ public class DatabaseTests {
 		private TestError(String message) {
 			super(message);
 		}
+	}
+
+	@FunctionalInterface
+	private interface LockWaitOperation {
+		void perform(@NonNull Database db) throws Exception;
+	}
+
+	private void assertInterruptibleTransactionLockWait(@NonNull String databaseName,
+																										 @NonNull LockWaitOperation lockWaitOperation) throws Exception {
+		requireNonNull(databaseName);
+		requireNonNull(lockWaitOperation);
+
+		DataSource dataSource = createInMemoryDataSource(databaseName);
+		Database db = Database.withDataSource(dataSource).build();
+		Transaction transaction = new Transaction(dataSource, TransactionOptions.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
+		CountDownLatch started = new CountDownLatch(1);
+		AtomicReference<Throwable> thrown = new AtomicReference<>();
+		AtomicBoolean interruptFlagRestored = new AtomicBoolean(false);
+
+		transaction.getConnectionLock().lock();
+
+		try {
+			Thread worker = new Thread(() -> {
+				started.countDown();
+
+				try {
+					db.participate(transaction, () -> lockWaitOperation.perform(db));
+				} catch (Throwable t) {
+					thrown.set(t);
+				} finally {
+					interruptFlagRestored.set(Thread.currentThread().isInterrupted());
+				}
+			}, databaseName + "-worker");
+
+			worker.start();
+			Assertions.assertTrue(started.await(5, TimeUnit.SECONDS), "Expected worker thread to start");
+			waitForQueuedThread(transaction, worker);
+			worker.interrupt();
+			worker.join(5_000L);
+
+			Assertions.assertFalse(worker.isAlive(), "Expected interrupted worker thread to finish");
+			Assertions.assertInstanceOf(DatabaseException.class, thrown.get());
+			Assertions.assertInstanceOf(InterruptedException.class, thrown.get().getCause());
+			Assertions.assertTrue(interruptFlagRestored.get(), "Expected worker interrupt flag to be restored");
+		} finally {
+			transaction.getConnectionLock().unlock();
+		}
+	}
+
+	private void waitForQueuedThread(@NonNull Transaction transaction,
+																	 @NonNull Thread thread) throws InterruptedException {
+		requireNonNull(transaction);
+		requireNonNull(thread);
+
+		long deadline = nanoTime() + TimeUnit.SECONDS.toNanos(5);
+
+		while (thread.isAlive() && !transaction.getConnectionLock().hasQueuedThread(thread) && nanoTime() < deadline)
+			Thread.sleep(10L);
+
+		Assertions.assertTrue(transaction.getConnectionLock().hasQueuedThread(thread),
+				() -> format("Expected %s to wait on transaction connection lock; thrown=%s", thread.getName(), thread.getState()));
 	}
 
 	@Test
@@ -946,6 +1013,63 @@ public class DatabaseTests {
 				}));
 
 		Assertions.assertSame(error, thrown);
+	}
+
+	@Test
+	public void testParticipatingStatementWaitCanBeInterrupted() throws Exception {
+		assertInterruptibleTransactionLockWait("participate_statement_interrupt", (db) ->
+				db.query("SELECT 1 FROM (VALUES (0)) AS t(x)").fetchObject(Integer.class));
+	}
+
+	@Test
+	public void testParticipatingRawConnectionWaitCanBeInterrupted() throws Exception {
+		assertInterruptibleTransactionLockWait("participate_raw_connection_interrupt", (db) ->
+				db.useRawConnection((connection) -> Optional.empty()));
+	}
+
+	@Test
+	public void testParticipatingStreamOpenWaitCanBeInterrupted() throws Exception {
+		assertInterruptibleTransactionLockWait("participate_stream_interrupt", (db) ->
+				db.query("SELECT 1 FROM (VALUES (0)) AS t(x)").fetchStream(Integer.class, Stream::findFirst));
+	}
+
+	@Test
+	public void testTransactionalStreamCloseFromDifferentThreadFailsFast() {
+		Database db = Database.withDataSource(createInMemoryDataSource("stream_close_wrong_thread")).build();
+
+		db.transaction(() -> {
+			StatementContext<Integer> statementContext = StatementContext.<Integer>with(
+							Statement.of(db.generateId(), "SELECT 1 FROM (VALUES (0)) AS t(x)"), db)
+					.resultSetRowType(Integer.class)
+					.build();
+			Class<?> iteratorClass = Class.forName("com.pyranid.Database$StreamingResultSet");
+			Constructor<?> constructor = iteratorClass.getDeclaredConstructor(Database.class, StatementContext.class, List.class,
+					PreparedStatementCustomizer.class);
+			Method close = iteratorClass.getDeclaredMethod("close");
+			constructor.setAccessible(true);
+			close.setAccessible(true);
+			Object iterator = constructor.newInstance(db, statementContext, List.of(), null);
+			AtomicReference<Throwable> closeThrowable = new AtomicReference<>();
+
+			Thread closer = new Thread(() -> {
+				try {
+					close.invoke(iterator);
+				} catch (InvocationTargetException e) {
+					closeThrowable.set(e.getTargetException());
+				} catch (Throwable t) {
+					closeThrowable.set(t);
+				}
+			}, "stream-close-wrong-thread");
+
+			closer.start();
+			closer.join(5_000L);
+			Assertions.assertFalse(closer.isAlive(), "Expected foreign close thread to finish");
+			Assertions.assertInstanceOf(DatabaseException.class, closeThrowable.get());
+			Assertions.assertTrue(closeThrowable.get().getMessage().contains("thread that opened"),
+					"Expected same-thread close guidance in exception message");
+
+			close.invoke(iterator);
+		});
 	}
 
 	@Test

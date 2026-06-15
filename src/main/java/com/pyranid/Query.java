@@ -157,6 +157,10 @@ public interface Query {
 	 * If called multiple times, the most recent customizer wins. The customizer runs after database-wide statement
 	 * settings and this query's {@link #queryTimeout(Duration)}, {@link #fetchSize(Integer)}, and
 	 * {@link #maxRows(Integer)} settings, so it can override them when needed.
+	 * <p>
+	 * For driver-specific cancellation beyond {@link #queryTimeout(Duration)}, application code may capture the
+	 * {@link java.sql.PreparedStatement} here and call {@link java.sql.Statement#cancel()} from its own cancellation path.
+	 * Cancellation behavior is JDBC-driver-specific.
 	 *
 	 * @param preparedStatementCustomizer customization callback
 	 * @return this builder, for chaining
@@ -194,6 +198,7 @@ public interface Query {
 	 * within that callback. Do not escape the stream from the function.
 	 * <p>
 	 * The stream must be consumed within the scope of the transaction or connection that created it.
+	 * If the stream participates in a Pyranid transaction, it must also be closed by the thread that opened it.
 	 * <p>
 	 * PostgreSQL streams are configured automatically with a positive JDBC fetch size and an autocommit-disabled
 	 * connection when no Pyranid transaction is active. Use {@link #fetchSize(Integer)} to override

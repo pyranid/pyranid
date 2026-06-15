@@ -681,6 +681,9 @@ public final class Database {
 	 * <p>
 	 * The transaction must have been created by this {@link Database}, or by another {@link Database} using the same
 	 * {@link DataSource} instance.
+	 * <p>
+	 * If this thread is interrupted while waiting for another participant to release the transaction connection, Pyranid
+	 * restores the interrupt flag and throws {@link DatabaseException}.
 	 *
 	 * @param transaction            the transaction in which to participate
 	 * @param transactionalOperation the operation that should participate in the transaction
@@ -705,6 +708,9 @@ public final class Database {
 	 * <p>
 	 * The transaction must have been created by this {@link Database}, or by another {@link Database} using the same
 	 * {@link DataSource} instance.
+	 * <p>
+	 * If this thread is interrupted while waiting for another participant to release the transaction connection, Pyranid
+	 * restores the interrupt flag and throws {@link DatabaseException}.
 	 *
 	 * @param transaction            the transaction in which to participate
 	 * @param transactionalOperation the operation that should participate in the transaction
@@ -803,6 +809,19 @@ public final class Database {
 			}
 
 			current = current.getCause();
+		}
+	}
+
+	private static void lockInterruptibly(@NonNull ReentrantLock lock,
+																				@NonNull String operation) {
+		requireNonNull(lock);
+		requireNonNull(operation);
+
+		try {
+			lock.lockInterruptibly();
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new DatabaseException(format("Interrupted while waiting to %s", operation), e);
 		}
 	}
 
@@ -2848,11 +2867,14 @@ public final class Database {
 			// Try to participate in txn if it's available
 			Connection connection = null;
 			Throwable thrown = null;
-
-			if (connectionLock != null)
-				connectionLock.lock();
+			boolean connectionLockAcquired = false;
 
 			try {
+				if (connectionLock != null) {
+					lockInterruptibly(connectionLock, "use the transaction connection for a raw connection operation");
+					connectionLockAcquired = true;
+				}
+
 				connection = transaction.isPresent() ? transaction.get().getConnection() : acquireConnection();
 				return rawConnectionOperation.perform(connection);
 			} catch (DatabaseException e) {
@@ -2875,7 +2897,7 @@ public final class Database {
 						}
 					}
 				} finally {
-					if (connectionLock != null)
+					if (connectionLockAcquired)
 						connectionLock.unlock();
 
 					if (cleanupFailure != null) {
@@ -2966,11 +2988,14 @@ public final class Database {
 		long connectionHeldStartTime = 0L;
 		Optional<Transaction> transaction = currentTransactionForDatabaseOperation();
 		ReentrantLock connectionLock = transaction.isPresent() ? transaction.get().getConnectionLock() : null;
-
-		if (connectionLock != null)
-			connectionLock.lock();
+		boolean connectionLockAcquired = false;
 
 		try {
+			if (connectionLock != null) {
+				lockInterruptibly(connectionLock, "execute a statement on the transaction connection");
+				connectionLockAcquired = true;
+			}
+
 			boolean alreadyHasConnection = transaction.isPresent() && transaction.get().hasConnection();
 			if (transaction.isPresent()) {
 				connection = transaction.get().getConnection();
@@ -3058,7 +3083,7 @@ public final class Database {
 					}
 				}
 			} finally {
-				if (connectionLock != null)
+				if (connectionLockAcquired)
 					connectionLock.unlock();
 
 				StatementLog statementLog =
@@ -3242,6 +3267,7 @@ public final class Database {
 		@Nullable
 		private Boolean initialAutoCommit;
 		private boolean postgresqlStreamTransactionStarted;
+		private boolean connectionLockAcquired;
 
 		private StreamingResultSet(@NonNull Database database,
 															 @NonNull StatementContext<T> statementContext,
@@ -3262,10 +3288,12 @@ public final class Database {
 			this.openStartTime = startTime;
 			this.database.getMetricsCollectorDispatcher().willOpenStream(this.statementContext);
 
-			if (this.connectionLock != null)
-				this.connectionLock.lock();
-
 			try {
+				if (this.connectionLock != null) {
+					lockInterruptibly(this.connectionLock, "open a stream on the transaction connection");
+					this.connectionLockAcquired = true;
+				}
+
 				boolean alreadyHasConnection = this.transaction.isPresent() && this.transaction.get().hasConnection();
 				if (this.transaction.isPresent()) {
 					this.connection = this.transaction.get().getConnection();
@@ -3479,6 +3507,9 @@ public final class Database {
 			if (this.closed)
 				return;
 
+			if (this.connectionLockAcquired && this.connectionLock != null && !this.connectionLock.isHeldByCurrentThread())
+				throw new DatabaseException("Transactional streams must be closed by the thread that opened them");
+
 			this.closed = true;
 			Throwable cleanupFailure = null;
 
@@ -3516,8 +3547,10 @@ public final class Database {
 					}
 				}
 			} finally {
-				if (this.connectionLock != null)
+				if (this.connectionLockAcquired) {
 					this.connectionLock.unlock();
+					this.connectionLockAcquired = false;
+				}
 
 				Duration mappingDuration = this.resultSetMappingNanos == 0L ? null : Duration.ofNanos(this.resultSetMappingNanos);
 
