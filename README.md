@@ -1523,9 +1523,9 @@ mvn -q javadoc:javadoc
 mvn -q -P integration verify
 ```
 
-The `integration` Maven profile runs Docker-backed PostgreSQL integration tests with Testcontainers and requires a working local Docker environment. The initial PostgreSQL image is pinned to `postgres:17-alpine`.
+The `integration` Maven profile runs JDBC integration tests against PostgreSQL, MySQL, and SQLite. PostgreSQL and MySQL use Testcontainers and require a working local Docker environment; SQLite uses a temporary local database file. The initial Docker images are pinned to `postgres:17-alpine` and `mysql:8.4`, and can be overridden with `-Dpostgres.integration.image=...` and `-Dmysql.integration.image=...`.
 
-The PostgreSQL integration profile currently covers core pgjdbc behavior such as JSONB, SQL arrays, `RETURNING`, temporal binding/mapping, and exception metadata. It does not run pgvector extension tests; verify pgvector manually if your release depends on that feature.
+The portable integration suites cover named binding, scalar/object/record mapping, JDBC-generated keys, transaction commit/rollback, batch chunking, guarded raw connection access, statement row limits, health checks, and exception wrapping. The PostgreSQL suite also covers core pgjdbc behavior such as JSONB, SQL arrays, `RETURNING`, temporal binding/mapping, and exception metadata. It does not run pgvector extension tests; verify pgvector manually if your release depends on that feature.
 
 Cache-sensitive changes should also be checked with the JMH benchmark profile:
 
