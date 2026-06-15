@@ -98,7 +98,7 @@ public class TransactionLifecycleTests {
 	public void testWaitingParticipantCannotAcquireFreshConnectionAfterTransactionCompletes() throws Exception {
 		DataSource dataSource = createInMemoryDataSource("transaction_waiting_participant_completion");
 		Database db = Database.withDataSource(dataSource).build();
-		Transaction transaction = new Transaction(dataSource, TransactionIsolation.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
+		Transaction transaction = new Transaction(dataSource, TransactionOptions.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
 		AtomicBoolean acquiredConnection = new AtomicBoolean(false);
 		AtomicReference<Throwable> failure = new AtomicReference<>();
 
@@ -133,7 +133,7 @@ public class TransactionLifecycleTests {
 	public void testParticipateRejectsCompletedTransactionBeforeRunningOperation() {
 		DataSource dataSource = createInMemoryDataSource("participate_completed_transaction");
 		Database db = Database.withDataSource(dataSource).build();
-		Transaction transaction = new Transaction(dataSource, TransactionIsolation.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
+		Transaction transaction = new Transaction(dataSource, TransactionOptions.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
 		AtomicBoolean operationRan = new AtomicBoolean(false);
 
 		transaction.markCompleted();
@@ -149,7 +149,7 @@ public class TransactionLifecycleTests {
 	public void testParticipatePreservesOriginalExceptionWhenTransactionCompletesBeforeRollbackOnlyMark() {
 		DataSource dataSource = createInMemoryDataSource("participate_completion_race");
 		Database db = Database.withDataSource(dataSource).build();
-		Transaction transaction = new Transaction(dataSource, TransactionIsolation.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
+		Transaction transaction = new Transaction(dataSource, TransactionOptions.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
 		RuntimeException boom = new RuntimeException("participant boom");
 
 		RuntimeException exception = Assertions.assertThrows(RuntimeException.class, () ->
@@ -166,7 +166,7 @@ public class TransactionLifecycleTests {
 	public void testTransactionOwnerThreadUsesThreadIdentity() throws Exception {
 		DataSource dataSource = createInMemoryDataSource("transaction_owner_thread_identity");
 		Database db = Database.withDataSource(dataSource).build();
-		Transaction transaction = new Transaction(dataSource, TransactionIsolation.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
+		Transaction transaction = new Transaction(dataSource, TransactionOptions.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
 		AtomicBoolean participantOwned = new AtomicBoolean(true);
 
 		Assertions.assertTrue(transaction.isOwnedByCurrentThread(), "Creating thread should own the transaction");

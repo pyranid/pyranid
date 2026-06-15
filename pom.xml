@@ -194,7 +194,12 @@
 					<parameter>
 						<accessModifier>public</accessModifier>
 						<onlyModified>true</onlyModified>
+						<excludes>
+							<exclude>com.pyranid.Database#transaction(com.pyranid.TransactionIsolation, com.pyranid.TransactionalOperation)</exclude>
+							<exclude>com.pyranid.Database#transaction(com.pyranid.TransactionIsolation, com.pyranid.ReturningTransactionalOperation)</exclude>
+						</excludes>
 					</parameter>
+					<breakBuildBasedOnSemanticVersioning>true</breakBuildBasedOnSemanticVersioning>
 					<breakBuildOnBinaryIncompatibleModifications>true</breakBuildOnBinaryIncompatibleModifications>
 					<breakBuildOnSourceIncompatibleModifications>true</breakBuildOnSourceIncompatibleModifications>
 				</configuration>

@@ -63,6 +63,8 @@ public final class Transaction {
 	@NonNull
 	private final DataSource dataSource;
 	@NonNull
+	private final TransactionOptions transactionOptions;
+	@NonNull
 	private final TransactionIsolation transactionIsolation;
 	@NonNull
 	private final MetricsCollectorDispatcher metricsCollectorDispatcher;
@@ -86,32 +88,39 @@ public final class Transaction {
 	@Nullable
 	private volatile Boolean initialAutoCommit;
 	@Nullable
+	private volatile Boolean initialReadOnly;
+	@Nullable
 	private volatile Integer initialTransactionIsolationJdbcLevel;
 	@Nullable
 	private volatile Long connectionAcquiredAtNanos;
 	@NonNull
 	private final AtomicBoolean transactionIsolationWasChanged;
+	@NonNull
+	private final AtomicBoolean readOnlyWasChanged;
 
 	Transaction(@NonNull DataSource dataSource,
-							@NonNull TransactionIsolation transactionIsolation,
+							@NonNull TransactionOptions transactionOptions,
 							@NonNull MetricsCollectorDispatcher metricsCollectorDispatcher,
 							@NonNull DatabaseType databaseType) {
 		requireNonNull(dataSource);
-		requireNonNull(transactionIsolation);
+		requireNonNull(transactionOptions);
 		requireNonNull(metricsCollectorDispatcher);
 		requireNonNull(databaseType);
 
 		this.id = generateId();
 		this.dataSource = dataSource;
-		this.transactionIsolation = transactionIsolation;
+		this.transactionOptions = transactionOptions;
+		this.transactionIsolation = transactionOptions.getIsolation();
 		this.metricsCollectorDispatcher = metricsCollectorDispatcher;
 		this.databaseType = databaseType;
 		this.connection = null;
 		this.rollbackOnly = new AtomicBoolean(false);
 		this.completed = new AtomicBoolean(false);
 		this.initialAutoCommit = null;
+		this.initialReadOnly = null;
 		this.connectionAcquiredAtNanos = null;
 		this.transactionIsolationWasChanged = new AtomicBoolean(false);
+		this.readOnlyWasChanged = new AtomicBoolean(false);
 		this.postTransactionOperations = new CopyOnWriteArrayList();
 		this.connectionLock = new ReentrantLock();
 		this.logger = Logger.getLogger(Transaction.class.getName());
@@ -328,6 +337,17 @@ public final class Transaction {
 		return this.transactionIsolation;
 	}
 
+	/**
+	 * Gets the options used to create this transaction.
+	 *
+	 * @return transaction options
+	 * @since 4.2.0
+	 */
+	@NonNull
+	public TransactionOptions getTransactionOptions() {
+		return this.transactionOptions;
+	}
+
 	@NonNull
 	Long id() {
 		return this.id;
@@ -471,6 +491,29 @@ public final class Transaction {
 				throw wrapped;
 			}
 
+			try {
+				this.initialReadOnly = this.connection.isReadOnly();
+			} catch (SQLException e) {
+				DatabaseException wrapped = new DatabaseException("Unable to determine database connection read-only setting", e);
+				getMetricsCollectorDispatcher().didFailToBeginPhysicalTransaction(this, getTransactionIsolation(),
+						MetricsCollector.PhysicalTransactionBeginFailurePhase.READ_INITIAL_READ_ONLY, getDatabaseType(), wrapped);
+				throw wrapped;
+			}
+
+			Boolean desiredReadOnly = getTransactionOptions().getReadOnly().orElse(null);
+
+			if (desiredReadOnly != null && !desiredReadOnly.equals(this.initialReadOnly)) {
+				try {
+					this.connection.setReadOnly(desiredReadOnly);
+					this.readOnlyWasChanged.set(true);
+				} catch (SQLException e) {
+					DatabaseException wrapped = new DatabaseException(format("Unable to set database connection read-only value to '%s'", desiredReadOnly), e);
+					getMetricsCollectorDispatcher().didFailToBeginPhysicalTransaction(this, getTransactionIsolation(),
+							MetricsCollector.PhysicalTransactionBeginFailurePhase.SET_READ_ONLY, getDatabaseType(), wrapped);
+					throw wrapped;
+				}
+			}
+
 			// Immediately flip autocommit to false if needed...if initially true, it will get set back to true by Database at
 			// the end of the transaction
 			if (this.initialAutoCommit) {
@@ -556,6 +599,29 @@ public final class Transaction {
 		}
 	}
 
+	void restoreReadOnlyIfNeeded() {
+		getConnectionLock().lock();
+
+		try {
+			if (this.connection == null)
+				return;
+
+			Boolean initialReadOnly = getInitialReadOnly().orElse(null);
+
+			if (getReadOnlyWasChanged() && initialReadOnly != null) {
+				try {
+					this.connection.setReadOnly(initialReadOnly);
+				} catch (SQLException e) {
+					throw new DatabaseException("Unable to restore original read-only setting", e);
+				} finally {
+					this.readOnlyWasChanged.set(false);
+				}
+			}
+		} finally {
+			getConnectionLock().unlock();
+		}
+	}
+
 	@NonNull
 	Long generateId() {
 		return ID_GENERATOR.incrementAndGet();
@@ -564,6 +630,11 @@ public final class Transaction {
 	@NonNull
 	Optional<Boolean> getInitialAutoCommit() {
 		return Optional.ofNullable(this.initialAutoCommit);
+	}
+
+	@NonNull
+	Optional<Boolean> getInitialReadOnly() {
+		return Optional.ofNullable(this.initialReadOnly);
 	}
 
 	@NonNull
@@ -579,6 +650,11 @@ public final class Transaction {
 	@NonNull
 	protected Boolean getTransactionIsolationWasChanged() {
 		return this.transactionIsolationWasChanged.get();
+	}
+
+	@NonNull
+	protected Boolean getReadOnlyWasChanged() {
+		return this.readOnlyWasChanged.get();
 	}
 
 	@NonNull

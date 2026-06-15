@@ -916,7 +916,7 @@ public class DatabaseTests {
 	public void testParticipatePreservesInterruptFlag() {
 		DataSource ds = createInMemoryDataSource("participate_interrupt");
 		Database db = Database.withDataSource(ds).build();
-		Transaction transaction = new Transaction(ds, TransactionIsolation.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
+		Transaction transaction = new Transaction(ds, TransactionOptions.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
 
 		Thread.interrupted();
 
@@ -937,7 +937,7 @@ public class DatabaseTests {
 	public void testParticipateRethrowsError() {
 		DataSource ds = createInMemoryDataSource("participate_error");
 		Database db = Database.withDataSource(ds).build();
-		Transaction transaction = new Transaction(ds, TransactionIsolation.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
+		Transaction transaction = new Transaction(ds, TransactionOptions.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
 		TestError error = new TestError("boom");
 
 		TestError thrown = Assertions.assertThrows(TestError.class, () ->
@@ -2653,11 +2653,12 @@ public class DatabaseTests {
 	public void testTransactionIsolation() {
 		Database db = Database.withDataSource(createInMemoryDataSource("txn_isolation")).build();
 
-		db.transaction(TransactionIsolation.SERIALIZABLE, () -> {
+		db.transaction(TransactionOptions.withIsolation(TransactionIsolation.SERIALIZABLE).build(), () -> {
 			db.performRawConnectionOperation(conn -> {
 				int level = conn.getTransactionIsolation();
 				Assertions.assertEquals(Connection.TRANSACTION_SERIALIZABLE, level);
 				Assertions.assertEquals(TransactionIsolation.SERIALIZABLE, db.currentTransaction().get().getTransactionIsolation());
+				Assertions.assertEquals(TransactionIsolation.SERIALIZABLE, db.currentTransaction().get().getTransactionOptions().getIsolation());
 				return Optional.empty();
 			}, true);
 		});
@@ -2673,11 +2674,12 @@ public class DatabaseTests {
 		});
 
 		// Another txn level
-		db.transaction(TransactionIsolation.REPEATABLE_READ, () -> {
+		db.transaction(TransactionOptions.withIsolation(TransactionIsolation.REPEATABLE_READ).build(), () -> {
 			db.performRawConnectionOperation(conn -> {
 				int level = conn.getTransactionIsolation();
 				Assertions.assertEquals(Connection.TRANSACTION_REPEATABLE_READ, level);
 				Assertions.assertEquals(TransactionIsolation.REPEATABLE_READ, db.currentTransaction().get().getTransactionIsolation());
+				Assertions.assertEquals(TransactionIsolation.REPEATABLE_READ, db.currentTransaction().get().getTransactionOptions().getIsolation());
 				return Optional.empty();
 			}, true);
 		});
@@ -2689,6 +2691,55 @@ public class DatabaseTests {
 			Assertions.assertEquals(Connection.TRANSACTION_READ_COMMITTED, level); // example default
 			return Optional.empty();
 		}, false);
+	}
+
+	@Test
+	public void testTransactionReadOnly() {
+		Database db = Database.withDataSource(createInMemoryDataSource("txn_read_only")).build();
+
+		db.transaction(TransactionOptions.withReadOnly(true).build(), () -> {
+			db.performRawConnectionOperation(conn -> {
+				Assertions.assertTrue(conn.isReadOnly(), "Connection should be read-only inside transaction");
+				Assertions.assertEquals(Optional.of(true), db.currentTransaction().get().getTransactionOptions().getReadOnly());
+				return Optional.empty();
+			}, true);
+		});
+
+		db.performRawConnectionOperation(conn -> {
+			Assertions.assertFalse(conn.isReadOnly(), "Read-only flag should be restored after transaction");
+			return Optional.empty();
+		}, false);
+	}
+
+	@Test
+	public void testTransactionReadWriteOptionRestoresReadOnlyConnection() throws Exception {
+		TrackingReadOnlyDataSource dataSource = new TrackingReadOnlyDataSource(createInMemoryDataSource("txn_read_write_restore"), true);
+		Database db = Database.withDataSource(dataSource).build();
+
+		db.transaction(TransactionOptions.withReadOnly(false).build(), () -> {
+			db.performRawConnectionOperation(conn -> {
+				Assertions.assertFalse(conn.isReadOnly(), "Connection should be read-write inside transaction");
+				return Optional.empty();
+			}, true);
+		});
+
+		Assertions.assertTrue(dataSource.lastReadOnly(), "Read-only flag should be restored to the connection's initial value");
+	}
+
+	@Test
+	public void testTransactionReadOnlyNullLeavesConnectionStateUnchanged() throws Exception {
+		TrackingReadOnlyDataSource dataSource = new TrackingReadOnlyDataSource(createInMemoryDataSource("txn_read_only_null"), true);
+		Database db = Database.withDataSource(dataSource).build();
+
+		db.transaction(TransactionOptions.withReadOnly(null).build(), () -> {
+			db.performRawConnectionOperation(conn -> {
+				Assertions.assertTrue(conn.isReadOnly(), "Connection state should remain unchanged");
+				return Optional.empty();
+			}, true);
+		});
+
+		Assertions.assertEquals(0, dataSource.setReadOnlyCalls(), "Pyranid should not touch read-only state when option is null");
+		Assertions.assertTrue(dataSource.lastReadOnly(), "Connection state should remain unchanged after transaction");
 	}
 
 	@Test
@@ -4212,6 +4263,108 @@ public class DatabaseTests {
 		if (returnType == char.class)
 			return '\0';
 		return null;
+	}
+
+	@NotThreadSafe
+	private static final class TrackingReadOnlyDataSource implements DataSource {
+		private final DataSource delegate;
+		private final Boolean initialReadOnly;
+		private final AtomicBoolean lastReadOnly;
+		private final AtomicInteger setReadOnlyCalls;
+
+		private TrackingReadOnlyDataSource(@NonNull DataSource delegate,
+																			 @NonNull Boolean initialReadOnly) {
+			this.delegate = requireNonNull(delegate);
+			this.initialReadOnly = requireNonNull(initialReadOnly);
+			this.lastReadOnly = new AtomicBoolean(initialReadOnly);
+			this.setReadOnlyCalls = new AtomicInteger();
+		}
+
+		@NonNull
+		public Boolean lastReadOnly() {
+			return this.lastReadOnly.get();
+		}
+
+		public int setReadOnlyCalls() {
+			return this.setReadOnlyCalls.get();
+		}
+
+		@Override
+		public Connection getConnection() throws SQLException {
+			return wrap(this.delegate.getConnection());
+		}
+
+		@Override
+		public Connection getConnection(String username,
+																		String password) throws SQLException {
+			return wrap(this.delegate.getConnection(username, password));
+		}
+
+		@Override
+		public java.io.PrintWriter getLogWriter() throws SQLException {
+			return this.delegate.getLogWriter();
+		}
+
+		@Override
+		public void setLogWriter(java.io.PrintWriter out) throws SQLException {
+			this.delegate.setLogWriter(out);
+		}
+
+		@Override
+		public void setLoginTimeout(int seconds) throws SQLException {
+			this.delegate.setLoginTimeout(seconds);
+		}
+
+		@Override
+		public int getLoginTimeout() throws SQLException {
+			return this.delegate.getLoginTimeout();
+		}
+
+		@Override
+		public java.util.logging.Logger getParentLogger() throws java.sql.SQLFeatureNotSupportedException {
+			return this.delegate.getParentLogger();
+		}
+
+		@Override
+		public <T> T unwrap(Class<T> iface) throws SQLException {
+			return this.delegate.unwrap(iface);
+		}
+
+		@Override
+		public boolean isWrapperFor(Class<?> iface) throws SQLException {
+			return this.delegate.isWrapperFor(iface);
+		}
+
+		private Connection wrap(@NonNull Connection connection) {
+			AtomicBoolean readOnly = new AtomicBoolean(this.initialReadOnly);
+			this.lastReadOnly.set(this.initialReadOnly);
+
+			InvocationHandler handler = (proxy, method, args) -> {
+				String methodName = method.getName();
+
+				if ("isReadOnly".equals(methodName))
+					return readOnly.get();
+
+				if ("setReadOnly".equals(methodName)) {
+					Boolean value = (Boolean) args[0];
+					readOnly.set(value);
+					this.lastReadOnly.set(value);
+					this.setReadOnlyCalls.incrementAndGet();
+					return null;
+				}
+
+				try {
+					return method.invoke(connection, args);
+				} catch (InvocationTargetException e) {
+					throw e.getTargetException();
+				}
+			};
+
+			return (Connection) Proxy.newProxyInstance(
+					Connection.class.getClassLoader(),
+					new Class<?>[]{Connection.class},
+					handler);
+		}
 	}
 
 	@NotThreadSafe

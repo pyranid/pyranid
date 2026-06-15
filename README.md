@@ -588,13 +588,33 @@ Nested transactions borrow separate physical connections and can pressure small 
 // You may specify the normal isolation levels per-transaction as needed:
 // READ_COMMITTED, READ_UNCOMMITTED, REPEATABLE_READ, and SERIALIZABLE.
 // If not specified, DEFAULT is assumed (whatever your DBMS prefers)
-database.transaction(TransactionIsolation.SERIALIZABLE, () -> {
+database.transaction(TransactionOptions.withIsolation(TransactionIsolation.SERIALIZABLE).build(), () -> {
   database.query("UPDATE account SET balance=balance - 10 WHERE id=1")
     .execute();
   database.query("UPDATE account SET balance=balance + 10 WHERE id=2")
     .execute();
 });
 ```
+
+### Read-Only Transactions
+
+```java
+database.transaction(TransactionOptions.withReadOnly(true).build(), () -> {
+  List<Account> accounts = database.query("SELECT * FROM account")
+    .fetchList(Account.class);
+});
+
+database.transaction(
+  TransactionOptions.withIsolation(TransactionIsolation.REPEATABLE_READ)
+    .readOnly(true)
+    .build(),
+  () -> {
+    List<Account> accounts = database.query("SELECT * FROM account")
+      .fetchList(Account.class);
+  });
+```
+
+`TransactionOptions::withReadOnly(true)` maps to JDBC `Connection.setReadOnly(true)` for the physical transaction connection. Pyranid restores the connection's original read-only setting before returning it to the pool. Read-only behavior is enforced, optimized, routed, or ignored by the JDBC driver and DBMS; Pyranid does not parse SQL to reject writes itself.
 
 ### Post-Transaction Operations
 

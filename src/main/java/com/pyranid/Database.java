@@ -248,7 +248,7 @@ public final class Database {
 	}
 
 	/**
-	 * Performs an operation transactionally with the given isolation level.
+	 * Performs an operation transactionally with the given options.
 	 * <p>
 	 * The transaction will be automatically rolled back if an exception bubbles out of {@code transactionalOperation}.
 	 * <p>
@@ -257,15 +257,16 @@ public final class Database {
 	 * existing transaction explicitly. A transaction is scoped to the {@link DataSource} instance that created it; a
 	 * {@link Database} using a different {@link DataSource} fails fast instead of joining it.
 	 *
-	 * @param transactionIsolation   the desired database transaction isolation level
+	 * @param transactionOptions     options to apply to the transaction
 	 * @param transactionalOperation the operation to perform transactionally
+	 * @since 4.2.0
 	 */
-	public void transaction(@NonNull TransactionIsolation transactionIsolation,
+	public void transaction(@NonNull TransactionOptions transactionOptions,
 													@NonNull TransactionalOperation transactionalOperation) {
-		requireNonNull(transactionIsolation);
+		requireNonNull(transactionOptions);
 		requireNonNull(transactionalOperation);
 
-		transaction(transactionIsolation, () -> {
+		transaction(transactionOptions, () -> {
 			transactionalOperation.perform();
 			return Optional.empty();
 		});
@@ -288,11 +289,11 @@ public final class Database {
 	@NonNull
 	public <T> Optional<T> transaction(@NonNull ReturningTransactionalOperation<T> transactionalOperation) {
 		requireNonNull(transactionalOperation);
-		return transaction(TransactionIsolation.DEFAULT, transactionalOperation);
+		return transaction(TransactionOptions.DEFAULT, transactionalOperation);
 	}
 
 	/**
-	 * Performs an operation transactionally with the given isolation level, optionally returning a value.
+	 * Performs an operation transactionally with the given options, optionally returning a value.
 	 * <p>
 	 * The transaction will be automatically rolled back if an exception bubbles out of {@code transactionalOperation}.
 	 * <p>
@@ -301,18 +302,19 @@ public final class Database {
 	 * join an existing transaction explicitly. A transaction is scoped to the {@link DataSource} instance that created it; a
 	 * {@link Database} using a different {@link DataSource} fails fast instead of joining it.
 	 *
-	 * @param transactionIsolation   the desired database transaction isolation level
+	 * @param transactionOptions     options to apply to the transaction
 	 * @param transactionalOperation the operation to perform transactionally
 	 * @param <T>                    the type to be returned
 	 * @return the result of the transactional operation
+	 * @since 4.2.0
 	 */
 	@NonNull
-	public <T> Optional<T> transaction(@NonNull TransactionIsolation transactionIsolation,
+	public <T> Optional<T> transaction(@NonNull TransactionOptions transactionOptions,
 																		 @NonNull ReturningTransactionalOperation<T> transactionalOperation) {
-		requireNonNull(transactionIsolation);
+		requireNonNull(transactionOptions);
 		requireNonNull(transactionalOperation);
 
-		Transaction transaction = new Transaction(dataSource, transactionIsolation, getMetricsCollectorDispatcher(), peekDatabaseType());
+		Transaction transaction = new Transaction(dataSource, transactionOptions, getMetricsCollectorDispatcher(), peekDatabaseType());
 		Deque<Transaction> transactionStack = transactionStackForPush();
 		transactionStack.push(transaction);
 		boolean committed = false;
@@ -321,7 +323,7 @@ public final class Database {
 		boolean rollbackAttempted = false;
 		Throwable thrown = null;
 		long transactionStartTime = nanoTime();
-		getMetricsCollectorDispatcher().didEnterTransactionClosure(transaction, transactionIsolation, transaction.getDatabaseType());
+		getMetricsCollectorDispatcher().didEnterTransactionClosure(transaction, transactionOptions.getIsolation(), transaction.getDatabaseType());
 
 		try {
 			Optional<T> returnValue = transactionalOperation.perform();
@@ -494,6 +496,12 @@ public final class Database {
 
 		try {
 			transaction.restoreTransactionIsolationIfNeeded();
+		} catch (Throwable cleanupException) {
+			cleanupFailure = appendSuppressed(cleanupFailure, cleanupException);
+		}
+
+		try {
+			transaction.restoreReadOnlyIfNeeded();
 		} catch (Throwable cleanupException) {
 			cleanupFailure = appendSuppressed(cleanupFailure, cleanupException);
 		}
