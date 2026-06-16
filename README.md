@@ -20,10 +20,14 @@ Full documentation is available at [https://www.pyranid.com](https://www.pyranid
 ### Design Goals
 
 * Small codebase
-* Customizable
-* Threadsafe
-* No dependencies
-* DI-friendly
+* Immutability/thread-safety
+* Zero dependencies
+* [DI-friendly](https://en.wikipedia.org/wiki/Dependency_injection)
+* Contract/interface-driven: bring your own implementations for almost anything
+
+Pyranid is designed to be small and easy to understand - auditable end-to-end by a human or AI agent.
+
+Its [API design](https://javadoc.pyranid.com) aims for a minimal footprint with a high strength-to-weight ratio.
 
 ### License
 
@@ -506,7 +510,7 @@ Transactions are scoped to the `DataSource` instance that created them. A second
 
 Transaction context follows the current Java thread. Async frameworks that suspend work and resume it on another thread do not automatically carry the transaction context with them; this includes Kotlin coroutines when a suspension point resumes on a different dispatcher thread. Keep transactional database access on the transaction thread, or capture the current `Transaction` and call `Database::participate(...)` on the thread that performs the database work. All participating work must complete before the owning transaction closure returns.
 
-If a participating thread is interrupted while waiting for another participant to release the transaction connection, Pyranid restores the interrupt flag and throws `DatabaseException`. This makes blocked participants cancellable; the thread currently executing a JDBC call still relies on driver behavior, `Query::queryTimeout(...)`, or application-managed `Statement.cancel()`.
+If a participating thread is interrupted while waiting for another participant to release the transaction connection, Pyranid restores the interrupt flag and throws `DatabaseException`. This makes blocked participants cancellable; the thread currently executing a JDBC call still relies on driver behavior, `Query::queryTimeout(...)`, or application-managed [`Statement::cancel()`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Statement.html#cancel()).
 
 On Java 21+, a clean way to do this is with a virtual-thread executor:
 
@@ -626,7 +630,7 @@ database.transaction(
   });
 ```
 
-`TransactionOptions::withReadOnly(true)` maps to JDBC `Connection.setReadOnly(true)` for the physical transaction connection. Pyranid restores the connection's original read-only setting before returning it to the pool. Read-only behavior is enforced, optimized, routed, or ignored by the JDBC driver and DBMS; Pyranid does not parse SQL to reject writes itself.
+`TransactionOptions::withReadOnly(true)` maps to JDBC [`Connection::setReadOnly(true)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html#setReadOnly(boolean)) for the physical transaction connection. Pyranid restores the connection's original read-only setting before returning it to the pool. Read-only behavior is enforced, optimized, routed, or ignored by the JDBC driver and DBMS; Pyranid does not parse SQL to reject writes itself.
 
 ### Post-Transaction Operations
 
@@ -694,7 +698,7 @@ Post-transaction callbacks receive a [`TransactionResult`](https://javadoc.pyran
 * [`ROLLED_BACK`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#ROLLED_BACK) if the transaction completed on the rollback path before commit was attempted
 * [`IN_DOUBT`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#IN_DOUBT) if Pyranid attempted commit but the commit call failed, so the final database outcome is unknown
 
-Post-transaction callbacks are fail-fast. If a callback throws, Pyranid wraps the failure in a [`PostTransactionOperationException`](https://javadoc.pyranid.com/com/pyranid/PostTransactionOperationException.html). When there is no other transaction or cleanup failure, `transaction()` throws this exception as the primary failure. When the transaction operation, commit, rollback, or cleanup already failed, Pyranid suppresses it onto the primary exception. Check [`getTransactionResult()`](https://javadoc.pyranid.com/com/pyranid/PostTransactionOperationException.html#getTransactionResult()) to distinguish a successful commit followed by callback failure from a failed or in-doubt transaction.
+Post-transaction callbacks are fail-fast. If a callback throws, Pyranid wraps the failure in a [`PostTransactionOperationException`](https://javadoc.pyranid.com/com/pyranid/PostTransactionOperationException.html). When there is no other transaction or cleanup failure, `transaction()` throws this exception as the primary failure. When the transaction operation, commit, rollback, or cleanup already failed, Pyranid suppresses it onto the primary exception. Check [`PostTransactionOperationException::getTransactionResult()`](https://javadoc.pyranid.com/com/pyranid/PostTransactionOperationException.html#getTransactionResult()) to distinguish a successful commit followed by callback failure from a failed or in-doubt transaction.
 
 ## ResultSet Mapping
 
@@ -821,7 +825,7 @@ PostgreSQL `JSON`/`JSONB` values returned by pgjdbc as `PGobject` map to `String
 
 Fine-grained control of mapping is supported by registering [`CustomColumnMapper`](https://javadoc.pyranid.com/com/pyranid/CustomColumnMapper.html) instances.  For example, you might want to "inflate" a `JSONB` column into a Java type:
 
-When multiple custom column mappers apply, Pyranid tries them in the order supplied. Returning `MappingResult.fallback()` lets the next applicable mapper run; if none handles the value, normal mapping continues.
+When multiple custom column mappers apply, Pyranid tries them in the order supplied. Returning [`MappingResult::fallback()`](https://javadoc.pyranid.com/com/pyranid/CustomColumnMapper.MappingResult.html#fallback()) lets the next applicable mapper run; if none handles the value, normal mapping continues.
 
 When mapping JavaBeans or records, custom column mappers run against matched properties or components. Row-type custom mapping is for single-column results that represent the target value itself.
 
@@ -972,7 +976,7 @@ List<Employee> employees = database.query("""
   .fetchList(Employee.class);
 ```
 
-Use [`Database.Builder::queryTimeout(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#queryTimeout(java.time.Duration)), [`fetchSize(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#fetchSize(java.lang.Integer)), and [`maxRows(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#maxRows(java.lang.Integer)) to configure database-wide defaults. Per-query settings override database defaults, and `Query::customize(...)` runs last.
+Use [`Database.Builder::queryTimeout(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#queryTimeout(java.time.Duration)), [`Database.Builder::fetchSize(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#fetchSize(java.lang.Integer)), and [`Database.Builder::maxRows(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#maxRows(java.lang.Integer)) to configure database-wide defaults. Per-query settings override database defaults, and `Query::customize(...)` runs last.
 
 `queryTimeout(...)` maps to JDBC `Statement::setQueryTimeout(...)`. For driver-specific cancellation beyond timeouts, capture the `PreparedStatement` in `Query::customize(...)` and call `Statement::cancel()` from your application's cancellation path.
 
@@ -995,7 +999,7 @@ List<Employee> employees = database.query("""
 
 ### IN-list parameters
 
-Use `Parameters.inList(...)` to expand values into a SQL `IN (...)` list.
+Use [`Parameters::inList(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#inList(java.util.Collection)) to expand values into a SQL `IN (...)` list.
 This is useful for SQL `IN` lists:
 
 ```java
@@ -1014,11 +1018,11 @@ Notes:
 * Empty collections/arrays throw `IllegalArgumentException`.
 * `null` elements and empty `Optional` elements throw `IllegalArgumentException`. SQL `IN` does not match `NULL`; use an explicit `IS NULL` predicate when null matching is required.
 * Expansion is context-agnostic; using it outside of `IN (...)` is allowed but may produce invalid SQL.
-* Raw `Collection`/array values are rejected; use `Parameters.inList(...)`.
+* Raw `Collection`/array values are rejected; use [`Parameters::inList(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#inList(java.util.Collection)).
 * Primitive arrays are supported via overloads (e.g. `int[]`, `long[]`).
-* If you want SQL ARRAY binding, use `Parameters.sqlArrayOf(...)`.
-* If you want to bind a typed collection via a custom binder, use `Parameters.listOf(...)`/`Parameters.setOf(...)`.
-* If you want to bind a typed array via a custom binder, use `Parameters.arrayOf(Class, ...)`.
+* If you want SQL ARRAY binding, use [`Parameters::sqlArrayOf(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#sqlArrayOf(java.lang.String,java.util.List)).
+* If you want to bind a typed collection via a custom binder, use [`Parameters::listOf(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#listOf(java.lang.Class,java.util.List)) / [`Parameters::setOf(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#setOf(java.lang.Class,java.util.Set)).
+* If you want to bind a typed array via a custom binder, use [`Parameters::arrayOf(Class, ...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#arrayOf(java.lang.Class,java.lang.Object)).
 
 ### Supported Primitives
 
@@ -1183,7 +1187,7 @@ You may register instances of [`CustomParameterBinder`](https://javadoc.pyranid.
 
 This allows you to use your objects as-is with Pyranid instead of sprinkling "convert this object to database format" code throughout your system.
 
-When multiple custom parameter binders apply, Pyranid tries them in the order supplied. Returning `BindingResult.fallback()` lets the next applicable binder run; if none handles the value, Pyranid's normal binding rules apply.
+When multiple custom parameter binders apply, Pyranid tries them in the order supplied. Returning [`BindingResult::fallback()`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.BindingResult.html#fallback()) lets the next applicable binder run; if none handles the value, Pyranid's normal binding rules apply.
 
 Because a binder can be asked speculatively before falling back, only mutate the `PreparedStatement` or other externally-visible state after you have decided to handle the value.
 
@@ -1271,7 +1275,7 @@ database.query("""
 Runtime binding of generic types is made difficult by type erasure.  For convenience, Pyranid offers special parameters that perform type capture for standard [`List<E>`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/List.html), [`Set<E>)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Set.html), and [`Map<K,V>)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Map.html) types:
 
 * [`Parameters::listOf(Class<E>, List<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#listOf(java.lang.Class,java.util.List))
-* [`Parameters::setOf(Class<E>, Set<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#setOf(java.lang.Class,java.util.List))
+* [`Parameters::setOf(Class<E>, Set<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#setOf(java.lang.Class,java.util.Set))
 * [`Parameters::mapOf(Class<K>, Class<V>, Map<K,V>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#mapOf(java.lang.Class,java.lang.Class,java.util.Map))
 
 This makes it easy to create custom binders for common scenarios.
@@ -1327,18 +1331,18 @@ PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCu
 
 ##### Heads Up!
 
-If you use [`Parameters::listOf(Class<E>, List<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#listOf(java.lang.Class,java.util.List)), [`Parameters::setOf(Class<E>, Set<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#setOf(java.lang.Class,java.util.List)), or [`Parameters::mapOf(Class<K>, Class<V>, Map<K,V>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#mapOf(java.lang.Class,java.lang.Class,java.util.Map)), you must define a corresponding [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) to handle them.  These special parameter types do not automatically work out-of-the-box because Pyranid cannot reliably guess how you intend to bind them.
-This applies even when the wrapped value is `null`; implement `CustomParameterBinder#bindNull(...)` if you want typed nulls to bind successfully.
+If you use [`Parameters::listOf(Class<E>, List<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#listOf(java.lang.Class,java.util.List)), [`Parameters::setOf(Class<E>, Set<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#setOf(java.lang.Class,java.util.Set)), or [`Parameters::mapOf(Class<K>, Class<V>, Map<K,V>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#mapOf(java.lang.Class,java.lang.Class,java.util.Map)), you must define a corresponding [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) to handle them.  These special parameter types do not automatically work out-of-the-box because Pyranid cannot reliably guess how you intend to bind them.
+This applies even when the wrapped value is `null`; implement [`CustomParameterBinder::bindNull(...)`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html#bindNull(com.pyranid.StatementContext,java.sql.PreparedStatement,java.lang.Integer,com.pyranid.TargetType,java.lang.Integer)) if you want typed nulls to bind successfully.
 
 Pyranid will detect this missing-binder scenario and throw an exception to indicate programmer error.
 
 #### Typed Arrays
 
-If you need array component types at runtime for a custom binder, use `Parameters.arrayOf(Class, ...)`.
-This captures the array element type (including primitives) so your binder can match via `TargetType.isArray()`/`getArrayComponentType()`.
+If you need array component types at runtime for a custom binder, use [`Parameters::arrayOf(Class, ...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#arrayOf(java.lang.Class,java.lang.Object)).
+This captures the array element type (including primitives) so your binder can match via [`TargetType::isArray()`](https://javadoc.pyranid.com/com/pyranid/TargetType.html#isArray()) / [`TargetType::getArrayComponentType()`](https://javadoc.pyranid.com/com/pyranid/TargetType.html#getArrayComponentType()).
 Typed arrays require a corresponding [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html); otherwise binding fails fast.
-This applies even when the wrapped value is `null`; implement `CustomParameterBinder#bindNull(...)` if you want typed nulls to bind successfully.
-For SQL ARRAY binding, use `Parameters.sqlArrayOf(...)`.
+This applies even when the wrapped value is `null`; implement [`CustomParameterBinder::bindNull(...)`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html#bindNull(com.pyranid.StatementContext,java.sql.PreparedStatement,java.lang.Integer,com.pyranid.TargetType,java.lang.Integer)) if you want typed nulls to bind successfully.
+For SQL ARRAY binding, use [`Parameters::sqlArrayOf(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#sqlArrayOf(java.lang.String,java.util.List)).
 
 ```java
 String[] names = {"alpha", "beta"};
@@ -1569,7 +1573,7 @@ Pyranid exception messages include bounded SQL and parameter counts, not raw par
 
 ### Startup and Database Type Detection
 
-[`Database.build()`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#build()) does not validate connectivity or inspect JDBC metadata. If you do not configure [`Database.Builder::databaseType(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#databaseType(com.pyranid.DatabaseType)), Pyranid detects the database type lazily when code first requests database-type-sensitive behavior. Calling [`Database::getDatabaseType()`](https://javadoc.pyranid.com/com/pyranid/Database.html#getDatabaseType()) outside an active query may acquire a fresh connection; configure `databaseType(...)` explicitly when using small pools, database proxies, or startup paths that must avoid surprise connection checkouts.
+[`Database.Builder::build()`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#build()) does not validate connectivity or inspect JDBC metadata. If you do not configure [`Database.Builder::databaseType(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#databaseType(com.pyranid.DatabaseType)), Pyranid detects the database type lazily when code first requests database-type-sensitive behavior. Calling [`Database::getDatabaseType()`](https://javadoc.pyranid.com/com/pyranid/Database.html#getDatabaseType()) outside an active query may acquire a fresh connection; configure `databaseType(...)` explicitly when using small pools, database proxies, or startup paths that must avoid surprise connection checkouts.
 
 Use [`Database::performHealthCheck(Duration)`](https://javadoc.pyranid.com/com/pyranid/Database.html#performHealthCheck(java.time.Duration)) when you want an explicit startup or readiness validation step:
 
@@ -1587,19 +1591,19 @@ A [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) instance h
 
 ### Transaction Boundaries
 
-Each call to [`transaction(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transaction(com.pyranid.TransactionalOperation)) opens an independent transaction with its own physical connection. Nested `transaction(...)` calls do not auto-join an outer transaction and can pressure small pools. Use [`participate(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#participate(com.pyranid.Transaction,com.pyranid.TransactionalOperation)) to run work on an existing transaction from another thread, and make sure participating workers complete before the owning transaction closure returns; coordinate with application primitives such as [`CompletableFuture::join`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/CompletableFuture.html#join()), [`ExecutorService::awaitTermination`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/ExecutorService.html#awaitTermination(long,java.util.concurrent.TimeUnit)), or [`CountDownLatch`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/CountDownLatch.html).
+Each call to [`Database::transaction(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transaction(com.pyranid.TransactionalOperation)) opens an independent transaction with its own physical connection. Nested `transaction(...)` calls do not auto-join an outer transaction and can pressure small pools. Use [`Database::participate(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#participate(com.pyranid.Transaction,com.pyranid.TransactionalOperation)) to run work on an existing transaction from another thread, and make sure participating workers complete before the owning transaction closure returns; coordinate with application primitives such as [`CompletableFuture::join`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/CompletableFuture.html#join()), [`ExecutorService::awaitTermination`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/ExecutorService.html#awaitTermination(long,java.util.concurrent.TimeUnit)), or [`CountDownLatch`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/CountDownLatch.html).
 
 Because transaction context is thread-local, async frameworks that resume work on a different thread do not automatically carry a Pyranid transaction with them. Pin transactional database work to the transaction thread, or explicitly rejoin with `participate(...)` on the thread that performs the database work.
 
 ### Streaming Results
 
-[`fetchStream(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchStream(java.lang.Class,java.util.function.Function)) streams rows only for as long as the callback is executing. Do not return the stream or consume it asynchronously after the callback returns. PostgreSQL streams automatically use an autocommit-disabled connection and a positive fetch size outside explicit Pyranid transactions; [`Query::fetchSize(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchSize(java.lang.Integer)) can override that fetch size, including `0` when you deliberately want the driver default. For other cursor-based drivers, follow the driver's transaction and fetch-size requirements.
+[`Query::fetchStream(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchStream(java.lang.Class,java.util.function.Function)) streams rows only for as long as the callback is executing. Do not return the stream or consume it asynchronously after the callback returns. PostgreSQL streams automatically use an autocommit-disabled connection and a positive fetch size outside explicit Pyranid transactions; [`Query::fetchSize(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchSize(java.lang.Integer)) can override that fetch size, including `0` when you deliberately want the driver default. For other cursor-based drivers, follow the driver's transaction and fetch-size requirements.
 
 Inside a Pyranid transaction, the stream must be closed by the thread that opened it. Do not hand a transactional stream to another thread for closing or asynchronous consumption.
 
 ### Savepoints
 
-Savepoints are stack-like on most drivers. Prefer [`Transaction::withSavepoint(...)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#withSavepoint(com.pyranid.TransactionalOperation)) for nested savepoint workflows, and avoid manual out-of-order [`rollback(Savepoint)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#rollback(java.sql.Savepoint)) / [`releaseSavepoint(Savepoint)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#releaseSavepoint(java.sql.Savepoint)) calls unless your driver documents the behavior you need.
+Savepoints are stack-like on most drivers. Prefer [`Transaction::withSavepoint(...)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#withSavepoint(com.pyranid.TransactionalOperation)) for nested savepoint workflows, and avoid manual out-of-order [`Transaction::rollback(Savepoint)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#rollback(java.sql.Savepoint)) / [`Transaction::releaseSavepoint(Savepoint)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#releaseSavepoint(java.sql.Savepoint)) calls unless your driver documents the behavior you need.
 
 ### Large Update Counts
 
