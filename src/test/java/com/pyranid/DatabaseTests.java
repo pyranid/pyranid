@@ -50,6 +50,7 @@ import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.OffsetTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -86,6 +87,14 @@ public class DatabaseTests {
 	public record LocaleRecord(Locale locale) {}
 	public record UnmatchedRecord(String name, String emailAddress) {}
 	public record SqlArrayRecord(String[] tagsArray, List<String> tagsList, Set<String> tagsSet) {}
+	public record SqlArrayFanoutRecord(@DatabaseColumn("tags") String[] tagsArray,
+																			@DatabaseColumn("tags") List<String> tagsList) {}
+	public record StringTemporalRecord(LocalDate localDate,
+																		 LocalTime localTime,
+																		 LocalDateTime localDateTime,
+																		 Instant instant,
+																		 OffsetDateTime offsetDateTime,
+																		 ZonedDateTime zonedDateTime) {}
 
 	private interface ConnectionSubtype extends Connection {}
 
@@ -211,6 +220,27 @@ public class DatabaseTests {
 
 		public void setTagsSet(Set<String> tagsSet) {
 			this.tagsSet = tagsSet;
+		}
+	}
+
+	public static class SqlArrayFanoutBean {
+		private @DatabaseColumn("tags") String[] tagsArray;
+		private @DatabaseColumn("tags") List<String> tagsList;
+
+		public String[] getTagsArray() {
+			return this.tagsArray;
+		}
+
+		public void setTagsArray(String[] tagsArray) {
+			this.tagsArray = tagsArray;
+		}
+
+		public List<String> getTagsList() {
+			return this.tagsList;
+		}
+
+		public void setTagsList(List<String> tagsList) {
+			this.tagsList = tagsList;
 		}
 	}
 
@@ -533,6 +563,10 @@ public class DatabaseTests {
 
 		Assertions.assertDoesNotThrow(() ->
 				db.query("SELECT data ? 'a' AND data ?| 'b' AND data ?& 'c' FROM t"));
+		Assertions.assertDoesNotThrow(() ->
+				db.query("SELECT :in ?| ARRAY['a'] FROM t"));
+		Assertions.assertDoesNotThrow(() ->
+				db.query("SELECT :in ?& ARRAY['a'] FROM t"));
 	}
 
 	@Test
@@ -549,6 +583,11 @@ public class DatabaseTests {
 
 		IllegalArgumentException exception = Assertions.assertThrows(IllegalArgumentException.class,
 				() -> db.query("SELECT ?|| 'x'"));
+
+		Assertions.assertTrue(exception.getMessage().contains("Positional"));
+
+		exception = Assertions.assertThrows(IllegalArgumentException.class,
+				() -> db.query("SELECT ?| ARRAY['x']"));
 
 		Assertions.assertTrue(exception.getMessage().contains("Positional"));
 	}
@@ -1315,11 +1354,11 @@ public class DatabaseTests {
 					.build();
 			Class<?> iteratorClass = Class.forName("com.pyranid.Database$StreamingResultSet");
 			Constructor<?> constructor = iteratorClass.getDeclaredConstructor(Database.class, StatementContext.class, List.class,
-					PreparedStatementCustomizer.class);
+					PreparedStatementCustomizer.class, boolean.class);
 			Method close = iteratorClass.getDeclaredMethod("close");
 			constructor.setAccessible(true);
 			close.setAccessible(true);
-			Object iterator = constructor.newInstance(db, statementContext, List.of(), null);
+			Object iterator = constructor.newInstance(db, statementContext, List.of(), null, false);
 			AtomicReference<Throwable> closeThrowable = new AtomicReference<>();
 
 			Thread closer = new Thread(() -> {
@@ -1449,6 +1488,35 @@ public class DatabaseTests {
 		ZonedDateTimeHolder holder = mapSingleColumn(db, "zoned_at", Types.TIMESTAMP_WITH_TIMEZONE,
 				"TIMESTAMP WITH TIME ZONE", rawValue, ZonedDateTimeHolder.class).orElseThrow();
 		Assertions.assertEquals(expected, holder.getZonedAt(), "Expected bean ZonedDateTime property mapping to preserve sub-millisecond precision in DB zone");
+	}
+
+	@Test
+	public void testStringTemporalColumnsMapToRecordTargets() {
+		ZoneId zone = ZoneId.of("UTC");
+		Database db = Database.withDataSource(createInMemoryDataSource("string_temporal_mapping"))
+				.timeZone(zone)
+				.build();
+
+		StringTemporalRecord record = db.query("""
+				SELECT '2020-01-02' AS local_date,
+				       '03:04:05.123456' AS local_time,
+				       '2020-01-02 03:04:05.123456' AS local_date_time,
+				       '2020-01-02 03:04:05.123456' AS instant,
+				       '2020-01-02 03:04:05.123456' AS offset_date_time,
+				       '2020-01-02 03:04:05.123456' AS zoned_date_time
+				FROM (VALUES (0)) AS t(x)
+				""")
+				.fetchObject(StringTemporalRecord.class)
+				.orElseThrow();
+
+		LocalDateTime expectedDateTime = LocalDateTime.of(2020, 1, 2, 3, 4, 5, 123_456_000);
+
+		Assertions.assertEquals(LocalDate.of(2020, 1, 2), record.localDate());
+		Assertions.assertEquals(LocalTime.of(3, 4, 5, 123_456_000), record.localTime());
+		Assertions.assertEquals(expectedDateTime, record.localDateTime());
+		Assertions.assertEquals(expectedDateTime.atZone(zone).toInstant(), record.instant());
+		Assertions.assertEquals(OffsetDateTime.of(expectedDateTime, ZoneOffset.UTC), record.offsetDateTime());
+		Assertions.assertEquals(ZonedDateTime.of(expectedDateTime, zone), record.zonedDateTime());
 	}
 
 	@Test
@@ -2862,6 +2930,50 @@ public class DatabaseTests {
 			Assertions.assertThrows(IllegalStateException.class, () -> connection.rollback((java.sql.Savepoint) null));
 			Assertions.assertThrows(IllegalStateException.class, () -> connection.releaseSavepoint(null));
 			Assertions.assertThrows(IllegalStateException.class, () -> connection.abort(Runnable::run));
+			Assertions.assertThrows(IllegalStateException.class, () -> connection.setCatalog("other"));
+			Assertions.assertThrows(IllegalStateException.class, () -> connection.setTypeMap(new LinkedHashMap<>()));
+			Assertions.assertThrows(IllegalStateException.class, () -> connection.setHoldability(ResultSet.CLOSE_CURSORS_AT_COMMIT));
+			Assertions.assertThrows(IllegalStateException.class, () -> connection.setClientInfo("applicationName", "pyranid"));
+			Assertions.assertThrows(IllegalStateException.class, () -> connection.setClientInfo(new java.util.Properties()));
+			Assertions.assertThrows(IllegalStateException.class, () -> connection.setSchema("other"));
+			Assertions.assertThrows(IllegalStateException.class, () -> connection.setNetworkTimeout(Runnable::run, 1));
+			Assertions.assertThrows(IllegalStateException.class, connection::beginRequest);
+			Assertions.assertThrows(IllegalStateException.class, connection::endRequest);
+			Assertions.assertThrows(IllegalStateException.class, () -> connection.setShardingKeyIfValid(null, 1));
+			Assertions.assertThrows(IllegalStateException.class, () -> connection.setShardingKeyIfValid(null, null, 1));
+			Assertions.assertThrows(IllegalStateException.class, () -> connection.setShardingKey(null));
+			Assertions.assertThrows(IllegalStateException.class, () -> connection.setShardingKey(null, null));
+			return Optional.empty();
+		});
+	}
+
+	@Test
+	public void testUseRawConnectionStatementAndMetadataExposeGuardedConnection() {
+		Database db = Database.withDataSource(createInMemoryDataSource("useRawConnectionJdbcObjectGuard")).build();
+
+		db.useRawConnection(connection -> {
+			try (java.sql.Statement statement = connection.createStatement()) {
+				Connection statementConnection = statement.getConnection();
+
+				Assertions.assertSame(connection, statementConnection);
+				Assertions.assertThrows(IllegalStateException.class, statementConnection::commit);
+				Assertions.assertSame(statement, statement.unwrap(java.sql.Statement.class));
+			}
+
+			try (PreparedStatement preparedStatement = connection.prepareStatement("SELECT 1 FROM (VALUES (0)) AS t(x)")) {
+				Connection statementConnection = preparedStatement.getConnection();
+
+				Assertions.assertSame(connection, statementConnection);
+				Assertions.assertThrows(IllegalStateException.class, statementConnection::rollback);
+				Assertions.assertSame(preparedStatement, preparedStatement.unwrap(PreparedStatement.class));
+			}
+
+			java.sql.DatabaseMetaData databaseMetaData = connection.getMetaData();
+			Connection metadataConnection = databaseMetaData.getConnection();
+
+			Assertions.assertSame(connection, metadataConnection);
+			Assertions.assertThrows(IllegalStateException.class, metadataConnection::close);
+			Assertions.assertSame(databaseMetaData, databaseMetaData.unwrap(java.sql.DatabaseMetaData.class));
 			return Optional.empty();
 		});
 	}
@@ -3235,6 +3347,32 @@ public class DatabaseTests {
 	}
 
 	@Test
+	public void testSqlArrayResultMappingFansOutSingleColumnToMultipleTargets() {
+		for (Boolean planCachingEnabled : List.of(false, true)) {
+			Database db = Database.withDataSource(createInMemoryDataSource("sql_array_fanout_" + planCachingEnabled))
+					.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(planCachingEnabled).build())
+					.build();
+
+			db.query("CREATE TABLE t_array (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, tags VARCHAR(100) ARRAY)").execute();
+			db.query("INSERT INTO t_array(tags) VALUES (:p1)")
+					.bind("p1", Parameters.sqlArrayOf("VARCHAR", Arrays.asList("alpha", null, "alpha", "gamma")))
+					.execute();
+
+			SqlArrayFanoutRecord record = db.query("SELECT tags FROM t_array FETCH FIRST ROW ONLY")
+					.fetchObject(SqlArrayFanoutRecord.class)
+					.orElseThrow();
+			Assertions.assertArrayEquals(new String[]{"alpha", null, "alpha", "gamma"}, record.tagsArray());
+			Assertions.assertEquals(Arrays.asList("alpha", null, "alpha", "gamma"), record.tagsList());
+
+			SqlArrayFanoutBean bean = db.query("SELECT tags FROM t_array FETCH FIRST ROW ONLY")
+					.fetchObject(SqlArrayFanoutBean.class)
+					.orElseThrow();
+			Assertions.assertArrayEquals(new String[]{"alpha", null, "alpha", "gamma"}, bean.getTagsArray());
+			Assertions.assertEquals(Arrays.asList("alpha", null, "alpha", "gamma"), bean.getTagsList());
+		}
+	}
+
+	@Test
 	public void testJsonParameter_roundTrip_textOnHsqldb() {
 		Database db = Database.withDataSource(createInMemoryDataSource("it_json_param")).build();
 				db.query("CREATE TABLE t_json (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, body LONGVARCHAR)").execute();
@@ -3461,6 +3599,43 @@ public class DatabaseTests {
 		Assertions.assertEquals(java.sql.Time.valueOf(input), setTimeValue.get(),
 				"Expected fallback to JDBC TIME binding");
 		Assertions.assertFalse(setStringCalled.get(), "LocalTime fallback should not bind as VARCHAR text");
+	}
+
+	@Test
+	public void testLocalTimeWithFractionalSecondsFallsBackToStringWhenTypedSetObjectUnsupported() throws SQLException {
+		PreparedStatementBinder binder = PreparedStatementBinder.withDefaultConfiguration();
+		StatementContext<?> ctx = statementContextFor(DatabaseType.GENERIC);
+		LocalTime input = LocalTime.of(8, 9, 10, 123_456_789);
+		AtomicReference<String> setStringValue = new AtomicReference<>();
+		AtomicBoolean setTimeCalled = new AtomicBoolean(false);
+
+		PreparedStatement preparedStatement = (PreparedStatement) Proxy.newProxyInstance(
+				PreparedStatement.class.getClassLoader(),
+				new Class<?>[]{PreparedStatement.class},
+				(proxy, method, args) -> {
+					String name = method.getName();
+					if ("setObject".equals(name))
+						throw new java.sql.SQLFeatureNotSupportedException("typed setObject unsupported");
+					if ("setTime".equals(name)) {
+						setTimeCalled.set(true);
+						return null;
+					}
+					if ("setString".equals(name)) {
+						setStringValue.set((String) args[1]);
+						return null;
+					}
+					if ("getParameterMetaData".equals(name))
+						return null;
+					if ("toString".equals(name))
+						return "PreparedStatement<local-time-fractional-fallback>";
+					return defaultValue(method.getReturnType());
+				});
+
+		binder.bindParameter(ctx, preparedStatement, 1, input);
+
+		Assertions.assertEquals(input.toString(), setStringValue.get(),
+				"Expected fractional LocalTime fallback to preserve nanos as text");
+		Assertions.assertFalse(setTimeCalled.get(), "LocalTime fallback should not truncate fractional seconds with setTime");
 	}
 
 	@Test

@@ -1482,6 +1482,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		} else {
 			// Non-temporal or unknown: take the driver’s native object (PGobject, BigDecimal, etc.)
 			resultSetValue = resultSet.getObject(columnIndex);
+
+			if (resultSetValue instanceof Array sqlArray)
+				resultSetValue = extractSqlArrayResultSetValue(sqlArray);
 		}
 
 		return Optional.ofNullable(resultSetValue);
@@ -1694,30 +1697,49 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		if (resultSetValue instanceof String string) {
 			if (LocalDate.class.isAssignableFrom(targetClass)) {
 				try {
-					return Optional.of(LocalDate.parse(string));
-				} catch (DateTimeParseException e) {
+					return Optional.of(localDateFromString(string));
+				} catch (DateTimeException | IllegalArgumentException e) {
 					throw new DatabaseException(format("Unable to convert value '%s' to LocalDate", resultSetValue), e);
 				}
 			}
 
 			if (LocalTime.class.isAssignableFrom(targetClass)) {
 				try {
-					return Optional.of(LocalTime.parse(string));
-				} catch (DateTimeParseException e) {
+					return Optional.of(localTimeFromString(string));
+				} catch (DateTimeException | IllegalArgumentException e) {
 					throw new DatabaseException(format("Unable to convert value '%s' to LocalTime", resultSetValue), e);
 				}
 			}
 
 			if (LocalDateTime.class.isAssignableFrom(targetClass)) {
 				try {
-					return Optional.of(LocalDateTime.parse(string));
-				} catch (DateTimeParseException ignored) {
-				}
-
-				try {
-					return Optional.of(OffsetDateTime.parse(string).atZoneSameInstant(statementContext.getTimeZone()).toLocalDateTime());
-				} catch (DateTimeParseException e) {
+					return Optional.of(localDateTimeFromString(string));
+				} catch (DateTimeException | IllegalArgumentException e) {
 					throw new DatabaseException(format("Unable to convert value '%s' to LocalDateTime", resultSetValue), e);
+				}
+			}
+
+			if (Instant.class.isAssignableFrom(targetClass)) {
+				try {
+					return Optional.of(instantFromString(string, statementContext));
+				} catch (DateTimeException | IllegalArgumentException e) {
+					throw new DatabaseException(format("Unable to convert value '%s' to Instant", resultSetValue), e);
+				}
+			}
+
+			if (OffsetDateTime.class.isAssignableFrom(targetClass)) {
+				try {
+					return Optional.of(offsetDateTimeFromString(string, statementContext));
+				} catch (DateTimeException | IllegalArgumentException e) {
+					throw new DatabaseException(format("Unable to convert value '%s' to OffsetDateTime", resultSetValue), e);
+				}
+			}
+
+			if (ZonedDateTime.class.isAssignableFrom(targetClass)) {
+				try {
+					return Optional.of(zonedDateTimeFromString(string, statementContext));
+				} catch (DateTimeException | IllegalArgumentException e) {
+					throw new DatabaseException(format("Unable to convert value '%s' to ZonedDateTime", resultSetValue), e);
 				}
 			}
 		}
@@ -1795,25 +1817,33 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(sqlArray);
 		requireNonNull(targetType);
 
-		Throwable thrown = null;
 		try {
-			return convertArrayResultSetValue(statementContext, sqlArray.getArray(), targetType);
+			return convertArrayResultSetValue(statementContext, extractSqlArrayResultSetValue(sqlArray), targetType);
 		} catch (SQLException e) {
 			DatabaseException wrapped = new DatabaseException("Unable to extract JDBC Array value", e);
-			thrown = wrapped;
 			throw wrapped;
-		} catch (RuntimeException | Error e) {
+		}
+	}
+
+	@Nullable
+	private static Object extractSqlArrayResultSetValue(@NonNull Array sqlArray) throws SQLException {
+		requireNonNull(sqlArray);
+
+		Throwable thrown = null;
+
+		try {
+			return sqlArray.getArray();
+		} catch (SQLException e) {
 			thrown = e;
 			throw e;
 		} finally {
 			try {
 				sqlArray.free();
 			} catch (SQLException e) {
-				DatabaseException wrapped = new DatabaseException("Unable to free JDBC Array value", e);
 				if (thrown != null)
-					thrown.addSuppressed(wrapped);
+					thrown.addSuppressed(e);
 				else
-					throw wrapped;
+					throw e;
 			}
 		}
 	}
@@ -2005,6 +2035,117 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		} catch (NumberFormatException e) {
 			throw new DatabaseException(format("Unable to interpret numeric value '%s'", number), e);
 		}
+	}
+
+	@NonNull
+	private static LocalDate localDateFromString(@NonNull String value) {
+		requireNonNull(value);
+		String trimmed = value.trim();
+
+		try {
+			return LocalDate.parse(trimmed);
+		} catch (DateTimeParseException ignored) {
+			return java.sql.Date.valueOf(trimmed).toLocalDate();
+		}
+	}
+
+	@NonNull
+	private static LocalTime localTimeFromString(@NonNull String value) {
+		requireNonNull(value);
+		String trimmed = value.trim();
+
+		try {
+			return LocalTime.parse(trimmed);
+		} catch (DateTimeParseException ignored) {
+			return java.sql.Time.valueOf(trimmed).toLocalTime();
+		}
+	}
+
+	@NonNull
+	private static LocalDateTime localDateTimeFromString(@NonNull String value) {
+		requireNonNull(value);
+		String trimmed = value.trim();
+
+		try {
+			return LocalDateTime.parse(trimmed);
+		} catch (DateTimeParseException ignored) {
+		}
+
+		if (trimmed.indexOf(' ') >= 0) {
+			try {
+				return LocalDateTime.parse(trimmed.replace(' ', 'T'));
+			} catch (DateTimeParseException ignored) {
+			}
+		}
+
+		return Timestamp.valueOf(trimmed).toLocalDateTime();
+	}
+
+	@NonNull
+	private static Instant instantFromString(@NonNull String value,
+																					 @NonNull StatementContext<?> statementContext) {
+		requireNonNull(value);
+		requireNonNull(statementContext);
+		String trimmed = value.trim();
+
+		try {
+			return Instant.parse(trimmed);
+		} catch (DateTimeParseException ignored) {
+		}
+
+		try {
+			return OffsetDateTime.parse(trimmed).toInstant();
+		} catch (DateTimeParseException ignored) {
+		}
+
+		return localDateTimeFromString(trimmed).atZone(statementContext.getTimeZone()).toInstant();
+	}
+
+	@NonNull
+	private static OffsetDateTime offsetDateTimeFromString(@NonNull String value,
+																												 @NonNull StatementContext<?> statementContext) {
+		requireNonNull(value);
+		requireNonNull(statementContext);
+		String trimmed = value.trim();
+
+		try {
+			return OffsetDateTime.parse(trimmed);
+		} catch (DateTimeParseException ignored) {
+		}
+
+		try {
+			return Instant.parse(trimmed).atZone(statementContext.getTimeZone()).toOffsetDateTime();
+		} catch (DateTimeParseException ignored) {
+		}
+
+		LocalDateTime localDateTime = localDateTimeFromString(trimmed);
+		ZoneOffset offset = statementContext.getTimeZone().getRules().getOffset(localDateTime.atZone(statementContext.getTimeZone()).toInstant());
+		return localDateTime.atOffset(offset);
+	}
+
+	@NonNull
+	private static ZonedDateTime zonedDateTimeFromString(@NonNull String value,
+																										 @NonNull StatementContext<?> statementContext) {
+		requireNonNull(value);
+		requireNonNull(statementContext);
+		String trimmed = value.trim();
+
+		try {
+			return ZonedDateTime.parse(trimmed);
+		} catch (DateTimeParseException ignored) {
+		}
+
+		try {
+			return OffsetDateTime.parse(trimmed).atZoneSameInstant(statementContext.getTimeZone());
+		} catch (DateTimeParseException ignored) {
+		}
+
+		try {
+			return Instant.parse(trimmed).atZone(statementContext.getTimeZone());
+		} catch (DateTimeParseException ignored) {
+		}
+
+		return localDateTimeFromString(trimmed).atZone(statementContext.getTimeZone());
 	}
 
 	@Nullable
@@ -2692,7 +2833,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			} else if (jdbcType == Types.TIME) {
 				readers[i] = (r, c, col) -> TemporalReaders.asLocalTime(r, col);
 			} else {
-				readers[i] = (r, c, col) -> r.getObject(col);
+				readers[i] = (r, c, col) -> {
+					Object value = r.getObject(col);
+					return value instanceof Array sqlArray ? extractSqlArrayResultSetValue(sqlArray) : value;
+				};
 			}
 		}
 

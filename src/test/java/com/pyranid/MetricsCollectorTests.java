@@ -363,13 +363,16 @@ public class MetricsCollectorTests {
 	public void collectorFailuresDoNotAffectQueriesTransactionsOrStreams() {
 		Logger logger = Logger.getLogger(MetricsCollectorDispatcher.class.getName());
 		RecordingLogHandler logHandler = new RecordingLogHandler();
+		ThrowingLogHandler throwingLogHandler = new ThrowingLogHandler();
 		Level previousLevel = logger.getLevel();
 		boolean previousUseParentHandlers = logger.getUseParentHandlers();
 
 		logger.setUseParentHandlers(false);
 		logger.setLevel(Level.FINE);
 		logHandler.setLevel(Level.FINE);
+		throwingLogHandler.setLevel(Level.FINE);
 		logger.addHandler(logHandler);
+		logger.addHandler(throwingLogHandler);
 
 		try {
 			Database database = Database.withDataSource(createInMemoryDataSource("metrics_failure_containment"))
@@ -391,6 +394,7 @@ public class MetricsCollectorTests {
 									&& record.getThrown().getMessage().startsWith("metrics failure: ")),
 					"Expected ignored metrics collector failures to be logged at FINE");
 		} finally {
+			logger.removeHandler(throwingLogHandler);
 			logger.removeHandler(logHandler);
 			logger.setLevel(previousLevel);
 			logger.setUseParentHandlers(previousUseParentHandlers);
@@ -800,6 +804,23 @@ public class MetricsCollectorTests {
 		@NonNull
 		private List<LogRecord> records() {
 			return this.records;
+		}
+	}
+
+	private static final class ThrowingLogHandler extends Handler {
+		@Override
+		public void publish(LogRecord record) {
+			throw new AssertionError("log handler failure");
+		}
+
+		@Override
+		public void flush() {
+			// No buffered state.
+		}
+
+		@Override
+		public void close() {
+			// No resources to release.
 		}
 	}
 

@@ -31,6 +31,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.time.Instant;
@@ -78,18 +79,52 @@ public class PostgreSQLIntegrationIT extends AbstractPortableJdbcIntegrationTest
 				.databaseType(DatabaseType.POSTGRESQL)
 				.build();
 		AtomicBoolean sawAutoCommitDisabled = new AtomicBoolean(false);
-		AtomicInteger fetchSize = new AtomicInteger(-1);
 
 		List<Integer> values = db.query("SELECT generate_series(1, 3)")
 				.customize((statementContext, preparedStatement) -> {
 					sawAutoCommitDisabled.set(!preparedStatement.getConnection().getAutoCommit());
-					fetchSize.set(preparedStatement.getFetchSize());
 				})
 				.fetchStream(Integer.class, stream -> stream.toList());
 
 		Assertions.assertEquals(List.of(1, 2, 3), values);
 		Assertions.assertTrue(sawAutoCommitDisabled.get());
-		Assertions.assertEquals(256, fetchSize.get());
+		Assertions.assertEquals(256, trackingDataSource.fetchSizeAtExecute.get());
+		Assertions.assertTrue(trackingDataSource.autoCommitDisabled.get());
+		Assertions.assertTrue(trackingDataSource.committed.get());
+		Assertions.assertTrue(trackingDataSource.autoCommitRestored.get());
+	}
+
+	@Test
+	public void testFetchStreamUsesPostgreSqlCursorFetchSizeWhenDatabaseDefaultIsZero() {
+		TrackingPostgreSqlStreamDataSource trackingDataSource = new TrackingPostgreSqlStreamDataSource(dataSource());
+		Database db = Database.withDataSource(trackingDataSource)
+				.databaseType(DatabaseType.POSTGRESQL)
+				.fetchSize(0)
+				.build();
+
+		List<Integer> values = db.query("SELECT generate_series(1, 3)")
+				.fetchStream(Integer.class, stream -> stream.toList());
+
+		Assertions.assertEquals(List.of(1, 2, 3), values);
+		Assertions.assertEquals(256, trackingDataSource.fetchSizeAtExecute.get());
+		Assertions.assertTrue(trackingDataSource.autoCommitDisabled.get());
+		Assertions.assertTrue(trackingDataSource.committed.get());
+		Assertions.assertTrue(trackingDataSource.autoCommitRestored.get());
+	}
+
+	@Test
+	public void testFetchStreamHonorsQueryFetchSizeForPostgreSqlCursorOutsideTransaction() {
+		TrackingPostgreSqlStreamDataSource trackingDataSource = new TrackingPostgreSqlStreamDataSource(dataSource());
+		Database db = Database.withDataSource(trackingDataSource)
+				.databaseType(DatabaseType.POSTGRESQL)
+				.build();
+
+		List<Integer> values = db.query("SELECT generate_series(1, 3)")
+				.fetchSize(12)
+				.fetchStream(Integer.class, stream -> stream.toList());
+
+		Assertions.assertEquals(List.of(1, 2, 3), values);
+		Assertions.assertEquals(12, trackingDataSource.fetchSizeAtExecute.get());
 		Assertions.assertTrue(trackingDataSource.autoCommitDisabled.get());
 		Assertions.assertTrue(trackingDataSource.committed.get());
 		Assertions.assertTrue(trackingDataSource.autoCommitRestored.get());
@@ -298,12 +333,15 @@ public class PostgreSQLIntegrationIT extends AbstractPortableJdbcIntegrationTest
 		private final AtomicBoolean autoCommitRestored;
 		@NonNull
 		private final AtomicBoolean committed;
+		@NonNull
+		private final AtomicInteger fetchSizeAtExecute;
 
 		private TrackingPostgreSqlStreamDataSource(@NonNull DataSource delegate) {
 			this.delegate = requireNonNull(delegate);
 			this.autoCommitDisabled = new AtomicBoolean(false);
 			this.autoCommitRestored = new AtomicBoolean(false);
 			this.committed = new AtomicBoolean(false);
+			this.fetchSizeAtExecute = new AtomicInteger(-1);
 		}
 
 		@Override
@@ -364,7 +402,9 @@ public class PostgreSQLIntegrationIT extends AbstractPortableJdbcIntegrationTest
 						Object result = invoke(method, connection, args);
 						String methodName = method.getName();
 
-						if ("setAutoCommit".equals(methodName) && args != null && args.length == 1) {
+						if ("prepareStatement".equals(methodName) && result instanceof PreparedStatement preparedStatement) {
+							return wrapPreparedStatement(preparedStatement);
+						} else if ("setAutoCommit".equals(methodName) && args != null && args.length == 1) {
 							if (Boolean.FALSE.equals(args[0]))
 								this.autoCommitDisabled.set(true);
 							else if (Boolean.TRUE.equals(args[0]))
@@ -374,6 +414,20 @@ public class PostgreSQLIntegrationIT extends AbstractPortableJdbcIntegrationTest
 						}
 
 						return result;
+					});
+		}
+
+		private PreparedStatement wrapPreparedStatement(@NonNull PreparedStatement preparedStatement) {
+			requireNonNull(preparedStatement);
+
+			return (PreparedStatement) Proxy.newProxyInstance(
+					PreparedStatement.class.getClassLoader(),
+					new Class<?>[]{PreparedStatement.class},
+					(proxy, method, args) -> {
+						if ("executeQuery".equals(method.getName()) && (args == null || args.length == 0))
+							this.fetchSizeAtExecute.set(preparedStatement.getFetchSize());
+
+						return invoke(method, preparedStatement, args);
 					});
 		}
 

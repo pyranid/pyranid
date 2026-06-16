@@ -181,6 +181,9 @@ public interface Query {
 	 * settings and this query's {@link #queryTimeout(Duration)}, {@link #fetchSize(Integer)}, and
 	 * {@link #maxRows(Integer)} settings, so it can override them when needed.
 	 * <p>
+	 * For non-transactional PostgreSQL streams, Pyranid may apply its automatic positive fetch size after this callback
+	 * unless this query explicitly configured {@link #fetchSize(Integer)}.
+	 * <p>
 	 * For driver-specific cancellation beyond {@link #queryTimeout(Duration)}, application code may capture the
 	 * {@link java.sql.PreparedStatement} here and call {@link java.sql.Statement#cancel()} from its own cancellation path.
 	 * Cancellation behavior is JDBC-driver-specific.

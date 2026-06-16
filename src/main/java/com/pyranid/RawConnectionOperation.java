@@ -24,8 +24,10 @@ import java.util.Optional;
 /**
  * Performs raw JDBC work with a {@link Connection} managed by {@link Database#useRawConnection(RawConnectionOperation)}.
  * <p>
- * The connection is valid only for the duration of the callback. Do not close it, retain it, or manage transaction lifecycle
- * directly from it.
+ * The connection is valid only for the duration of the callback. Do not close it, retain it, manage transaction lifecycle
+ * directly from it, or mutate connection-wide state such as schema, catalog, client info, holdability, type map, or network
+ * timeout. Pyranid guards those operations and routes {@link java.sql.Statement#getConnection()} and
+ * {@link java.sql.DatabaseMetaData#getConnection()} back to the managed handle.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 4.2.0

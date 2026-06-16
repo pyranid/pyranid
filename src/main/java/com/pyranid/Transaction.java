@@ -21,7 +21,6 @@ import org.jspecify.annotations.Nullable;
 
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
-import java.lang.ref.WeakReference;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
@@ -76,8 +75,6 @@ public final class Transaction {
 	private final ReentrantLock connectionLock;
 	@NonNull
 	private final Logger logger;
-	@NonNull
-	private final WeakReference<Thread> ownerThreadReference;
 
 	@NonNull
 	private final AtomicBoolean rollbackOnly;
@@ -124,7 +121,6 @@ public final class Transaction {
 		this.postTransactionOperations = new CopyOnWriteArrayList();
 		this.connectionLock = new ReentrantLock();
 		this.logger = Logger.getLogger(Transaction.class.getName());
-		this.ownerThreadReference = new WeakReference<>(Thread.currentThread());
 	}
 
 	@Override
@@ -289,9 +285,9 @@ public final class Transaction {
 	 * {@link TransactionResult#IN_DOUBT} if the commit call failed and Pyranid cannot prove whether the database
 	 * committed or rolled back.
 	 * <p>
-	 * If the operation throws, Pyranid wraps the thrown value in a {@link PostTransactionOperationException}. If the
-	 * transaction already has a primary failure, the wrapper is suppressed onto that primary failure; otherwise,
-	 * {@link Database#transaction(TransactionalOperation)} throws the wrapper directly.
+	 * If the operation throws, Pyranid wraps the thrown value in a {@link PostTransactionOperationException}. If another
+	 * transaction or cleanup failure is already primary, the wrapper is suppressed onto that primary failure; otherwise,
+	 * {@link Database#transaction(TransactionalOperation)} throws the wrapper as the primary failure.
 	 *
 	 * @param postTransactionOperation the post-transaction operation to add
 	 */
@@ -362,11 +358,6 @@ public final class Transaction {
 		} finally {
 			getConnectionLock().unlock();
 		}
-	}
-
-	@NonNull
-	Boolean isOwnedByCurrentThread() {
-		return this.ownerThreadReference.get() == Thread.currentThread();
 	}
 
 	@NonNull

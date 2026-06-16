@@ -306,7 +306,7 @@ List<Employee> employees = database.query("""
 
 The stream must be consumed within the scope of the transaction or connection that created it. Do not let the stream escape from the callback.
 
-For PostgreSQL, Pyranid automatically configures streaming reads with an autocommit-disabled connection and a positive JDBC fetch size when no Pyranid transaction is active. Use [`Query::fetchSize(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchSize(java.lang.Integer)) to override the fetch size when needed. Other cursor-based drivers may require driver-specific transaction or fetch-size setup.
+For PostgreSQL, Pyranid automatically configures streaming reads with an autocommit-disabled connection and a positive JDBC fetch size when no Pyranid transaction is active. Use [`Query::fetchSize(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchSize(java.lang.Integer)) to override the fetch size when needed, including `0` when you deliberately want the driver default. Other cursor-based drivers may require driver-specific transaction or fetch-size setup.
 
 ```java
 List<Employee> employees = database.query("""
@@ -349,7 +349,7 @@ database.transaction(() -> {
 });
 ```
 
-The `Connection` passed to your callback is a Pyranid-managed guarded handle. Do not close it, retain it, or perform transaction lifecycle operations on it. Methods such as `close()`, `commit()`, `rollback()`, `setAutoCommit(...)`, `setTransactionIsolation(...)`, and JDBC savepoint controls throw immediately. Use `Database::transaction(...)`, `Database::participate(...)`, and `Transaction` savepoint APIs for transaction management. Close any `Statement` or `ResultSet` instances you create inside the callback.
+The `Connection` passed to your callback is a Pyranid-managed guarded handle. Do not close it, retain it, perform transaction lifecycle operations on it, or mutate connection-wide state on it. Methods such as `close()`, `commit()`, `rollback()`, `setAutoCommit(...)`, `setTransactionIsolation(...)`, `setCatalog(...)`, `setSchema(...)`, `setClientInfo(...)`, `setNetworkTimeout(...)`, and JDBC savepoint controls throw immediately. `Statement::getConnection()` and `DatabaseMetaData::getConnection()` also return the guarded Pyranid handle. Use `Database::transaction(...)`, `Database::participate(...)`, and `Transaction` savepoint APIs for transaction management. Close any `Statement` or `ResultSet` instances you create inside the callback.
 
 ## Statements
 
@@ -694,7 +694,7 @@ Post-transaction callbacks receive a [`TransactionResult`](https://javadoc.pyran
 * [`ROLLED_BACK`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#ROLLED_BACK) if the transaction completed on the rollback path before commit was attempted
 * [`IN_DOUBT`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#IN_DOUBT) if Pyranid attempted commit but the commit call failed, so the final database outcome is unknown
 
-Post-transaction callbacks are fail-fast. If a callback throws, Pyranid wraps the failure in a [`PostTransactionOperationException`](https://javadoc.pyranid.com/com/pyranid/PostTransactionOperationException.html). When there is no primary transaction failure, `transaction()` throws this exception directly. When the transaction operation or commit already failed, Pyranid suppresses it onto the primary exception. Check [`getTransactionResult()`](https://javadoc.pyranid.com/com/pyranid/PostTransactionOperationException.html#getTransactionResult()) to distinguish a successful commit followed by callback failure from a failed or in-doubt transaction.
+Post-transaction callbacks are fail-fast. If a callback throws, Pyranid wraps the failure in a [`PostTransactionOperationException`](https://javadoc.pyranid.com/com/pyranid/PostTransactionOperationException.html). When there is no other transaction or cleanup failure, `transaction()` throws this exception as the primary failure. When the transaction operation, commit, rollback, or cleanup already failed, Pyranid suppresses it onto the primary exception. Check [`getTransactionResult()`](https://javadoc.pyranid.com/com/pyranid/PostTransactionOperationException.html#getTransactionResult()) to distinguish a successful commit followed by callback failure from a failed or in-doubt transaction.
 
 ## ResultSet Mapping
 
@@ -807,7 +807,7 @@ car = database.query("SELECT some_id AS car_id, some_color AS color FROM car LIM
 
 Temporal result-set mapping uses JDBC `ResultSetMetaData` for the returned column. Zone-less `TIMESTAMP` values are wall-clock values; when mapping them to `Instant`, `OffsetDateTime`, `ZonedDateTime`, or `Date`, Pyranid interprets that wall clock in `Database.Builder::timeZone(...)`. Mapping a zone-less `TIMESTAMP` to `LocalDateTime` keeps the wall clock unchanged. `TIMESTAMP WITH TIME ZONE` values already identify an instant; mapping to `Instant` preserves that instant, and mapping to `ZonedDateTime` represents it in the configured `timeZone(...)`.
 
-Some JDBC drivers expose temporal columns as ISO-8601 strings instead of JDBC temporal objects. For JavaBean and record mapping, Pyranid parses those strings when the target property or component is `LocalDate`, `LocalTime`, or `LocalDateTime`.
+Some JDBC drivers expose temporal columns as strings instead of JDBC temporal objects. For JavaBean and record mapping, Pyranid parses ISO-8601 strings and common JDBC timestamp strings such as `2020-01-02 03:04:05` when the target property or component is `LocalDate`, `LocalTime`, `LocalDateTime`, `Instant`, `OffsetDateTime`, or `ZonedDateTime`.
 
 Pyranid preserves the fractional-second precision returned by your JDBC driver; it does not round or truncate `Instant`, `OffsetDateTime`, or `ZonedDateTime` values to milliseconds. The maximum precision is still determined by the database column and driver (for example, PostgreSQL timestamps are stored at microsecond precision).
 
@@ -1593,7 +1593,7 @@ Because transaction context is thread-local, async frameworks that resume work o
 
 ### Streaming Results
 
-[`fetchStream(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchStream(java.lang.Class,java.util.function.Function)) streams rows only for as long as the callback is executing. Do not return the stream or consume it asynchronously after the callback returns. PostgreSQL streams automatically use an autocommit-disabled connection and a positive fetch size outside explicit Pyranid transactions; [`Query::fetchSize(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchSize(java.lang.Integer)) can override that fetch size. For other cursor-based drivers, follow the driver's transaction and fetch-size requirements.
+[`fetchStream(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchStream(java.lang.Class,java.util.function.Function)) streams rows only for as long as the callback is executing. Do not return the stream or consume it asynchronously after the callback returns. PostgreSQL streams automatically use an autocommit-disabled connection and a positive fetch size outside explicit Pyranid transactions; [`Query::fetchSize(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchSize(java.lang.Integer)) can override that fetch size, including `0` when you deliberately want the driver default. For other cursor-based drivers, follow the driver's transaction and fetch-size requirements.
 
 Inside a Pyranid transaction, the stream must be closed by the thread that opened it. Do not hand a transactional stream to another thread for closing or asynchronous consumption.
 

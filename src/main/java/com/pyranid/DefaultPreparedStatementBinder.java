@@ -164,8 +164,12 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		if (normalizedParameter instanceof LocalTime localTime) {
-			if (!trySetObject(preparedStatement, parameterIndex, localTime, Types.TIME))
-				preparedStatement.setTime(parameterIndex, java.sql.Time.valueOf(localTime));
+			if (!trySetObject(preparedStatement, parameterIndex, localTime, Types.TIME)) {
+				if (localTime.getNano() == 0)
+					preparedStatement.setTime(parameterIndex, java.sql.Time.valueOf(localTime));
+				else
+					preparedStatement.setString(parameterIndex, localTime.toString());
+			}
 
 			return;
 		}

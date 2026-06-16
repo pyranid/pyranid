@@ -1159,7 +1159,8 @@ public final class Database {
 			requireNonNull(resultType);
 			requireNonNull(streamFunction);
 			PreparedQuery preparedQuery = prepare(this.bindings);
-			return this.database.queryForStream(preparedQuery.statement, resultType, effectivePreparedStatementCustomizer(), streamFunction, preparedQuery.parameters);
+			return this.database.queryForStream(preparedQuery.statement, resultType, effectivePreparedStatementCustomizer(),
+					this.fetchSize != null, streamFunction, preparedQuery.parameters);
 		}
 
 
@@ -1942,6 +1943,25 @@ public final class Database {
 		if (isTerminatorAfterQuestionMark(nextChar))
 			return false;
 
+		if (questionMarkIndex + 1 < sql.length()) {
+			char immediateNextChar = sql.charAt(questionMarkIndex + 1);
+			if (immediateNextChar == '|' || immediateNextChar == '&') {
+				if (questionMarkIndex + 2 < sql.length() && sql.charAt(questionMarkIndex + 2) == immediateNextChar)
+					return false;
+
+				String previousKeyword = keywordBefore(sql, previousIndex);
+				if (previousKeyword != null && QUESTION_MARK_PREFIX_KEYWORDS.contains(previousKeyword)
+						&& !isNamedParameterKeywordBefore(sql, previousIndex, previousKeyword))
+					return false;
+
+				String nextKeyword = keywordAfter(sql, nextIndex);
+				if (nextKeyword != null && QUESTION_MARK_SUFFIX_KEYWORDS.contains(nextKeyword))
+					return false;
+
+				return true;
+			}
+		}
+
 		String previousKeyword = keywordBefore(sql, previousIndex);
 		if (previousKeyword != null && QUESTION_MARK_PREFIX_KEYWORDS.contains(previousKeyword))
 			return false;
@@ -1949,12 +1969,6 @@ public final class Database {
 		String nextKeyword = keywordAfter(sql, nextIndex);
 		if (nextKeyword != null && QUESTION_MARK_SUFFIX_KEYWORDS.contains(nextKeyword))
 			return false;
-
-		if (questionMarkIndex + 1 < sql.length()) {
-			char immediateNextChar = sql.charAt(questionMarkIndex + 1);
-			if (immediateNextChar == '|' || immediateNextChar == '&')
-				return true;
-		}
 
 		return true;
 	}
@@ -1994,6 +2008,16 @@ public final class Database {
 			--startIndex;
 
 		return sql.substring(startIndex + 1, endIndex).toUpperCase(Locale.ROOT);
+	}
+
+	private static boolean isNamedParameterKeywordBefore(@NonNull String sql,
+																											 int keywordEndIndex,
+																											 @NonNull String keyword) {
+		requireNonNull(sql);
+		requireNonNull(keyword);
+
+		int startIndex = keywordEndIndex - keyword.length() + 1;
+		return startIndex > 0 && sql.charAt(startIndex - 1) == ':';
 	}
 
 	@Nullable
@@ -2187,6 +2211,7 @@ public final class Database {
 	private <T, R> R queryForStream(@NonNull Statement statement,
 																	@NonNull Class<T> resultSetRowType,
 																	@Nullable PreparedStatementCustomizer preparedStatementCustomizer,
+																	boolean queryFetchSizeConfigured,
 																	@NonNull Function<Stream<@Nullable T>, R> streamFunction,
 																	Object @Nullable ... parameters) {
 		requireNonNull(statement);
@@ -2199,7 +2224,8 @@ public final class Database {
 				.build();
 
 		List<Object> parametersAsList = parameters == null ? List.of() : Arrays.asList(parameters);
-		StreamingResultSet<T> iterator = new StreamingResultSet<>(this, statementContext, parametersAsList, preparedStatementCustomizer);
+		StreamingResultSet<T> iterator = new StreamingResultSet<>(this, statementContext, parametersAsList,
+				preparedStatementCustomizer, queryFetchSizeConfigured);
 
 		try {
 			try (Stream<@Nullable T> stream = StreamSupport.stream(Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED), false)
@@ -2747,9 +2773,15 @@ public final class Database {
 	 * transaction. Otherwise, Pyranid borrows a connection for the duration of the callback and closes it afterwards.
 	 * <p>
 	 * The {@link Connection} passed to {@code rawConnectionOperation} is a guarded handle. Normal JDBC operations are
-	 * delegated to the underlying driver connection, but lifecycle and transaction-management methods such as
-	 * {@link Connection#close()}, {@link Connection#commit()}, {@link Connection#rollback()}, and
-	 * {@link Connection#setAutoCommit(boolean)} throw {@link IllegalStateException}. Use Pyranid transaction APIs instead.
+	 * delegated to the underlying driver connection, but lifecycle, transaction-management, and connection-wide state
+	 * methods such as
+	 * {@link Connection#close()}, {@link Connection#commit()}, {@link Connection#rollback()},
+	 * {@link Connection#setAutoCommit(boolean)}, {@link Connection#setCatalog(String)}, {@link Connection#setSchema(String)}, and
+	 * {@link Connection#setNetworkTimeout(java.util.concurrent.Executor, int)} throw {@link IllegalStateException}. Use
+	 * Pyranid transaction APIs instead.
+	 * JDBC objects created from this handle are also guarded: {@link java.sql.Statement#getConnection()} and
+	 * {@link java.sql.DatabaseMetaData#getConnection()} return the Pyranid-managed handle, not the driver's underlying
+	 * connection.
 	 * <p>
 	 * The connection handle is valid only for the duration of the callback. Do not close it, retain it, or use it after this
 	 * method returns.
@@ -3414,17 +3446,20 @@ public final class Database {
 		private Boolean initialAutoCommit;
 		private boolean postgresqlStreamTransactionStarted;
 		private boolean connectionLockAcquired;
+		private final boolean queryFetchSizeConfigured;
 
 		private StreamingResultSet(@NonNull Database database,
 															 @NonNull StatementContext<T> statementContext,
 															 @NonNull List<Object> parameters,
-															 @Nullable PreparedStatementCustomizer preparedStatementCustomizer) {
+															 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
+															 boolean queryFetchSizeConfigured) {
 			this.database = requireNonNull(database);
 			this.statementContext = requireNonNull(statementContext);
 			this.parameters = requireNonNull(parameters);
 			this.preparedStatementCustomizer = preparedStatementCustomizer;
 			this.transaction = database.currentTransactionForDatabaseOperation();
 			this.connectionLock = this.transaction.isPresent() ? this.transaction.get().getConnectionLock() : null;
+			this.queryFetchSizeConfigured = queryFetchSizeConfigured;
 
 			open();
 		}
@@ -3474,13 +3509,12 @@ public final class Database {
 				configurePostgreSqlStreamingIfNeeded(databaseType);
 
 				this.preparedStatement = this.connection.prepareStatement(this.statementContext.getStatement().getSql());
-				if (databaseType == DatabaseType.POSTGRESQL)
-					this.preparedStatement.setFetchSize(DEFAULT_POSTGRESQL_STREAM_FETCH_SIZE);
 				Connection previousDatabaseTypeDetectionConnection = this.database.databaseTypeDetectionConnectionHolder.get();
 				this.database.databaseTypeDetectionConnectionHolder.set(this.connection);
 
 				try {
 					this.database.applyPreparedStatementCustomizer(this.statementContext, this.preparedStatement, this.preparedStatementCustomizer);
+					configurePostgreSqlStreamingFetchSizeIfNeeded(databaseType);
 					if (this.parameters.size() > 0)
 						this.database.performPreparedStatementBinding(this.statementContext, this.preparedStatement, this.parameters);
 					this.preparationDuration = Duration.ofNanos(nanoTime() - startTime);
@@ -3546,6 +3580,18 @@ public final class Database {
 				connection.setAutoCommit(false);
 
 			this.postgresqlStreamTransactionStarted = true;
+		}
+
+		private void configurePostgreSqlStreamingFetchSizeIfNeeded(@NonNull DatabaseType databaseType) throws SQLException {
+			requireNonNull(databaseType);
+
+			if (databaseType != DatabaseType.POSTGRESQL || this.transaction.isPresent() || this.queryFetchSizeConfigured)
+				return;
+
+			PreparedStatement preparedStatement = requireNonNull(this.preparedStatement);
+
+			if (preparedStatement.getFetchSize() <= 0)
+				preparedStatement.setFetchSize(DEFAULT_POSTGRESQL_STREAM_FETCH_SIZE);
 		}
 
 		@Override

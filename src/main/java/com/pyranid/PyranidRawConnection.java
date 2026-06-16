@@ -19,6 +19,9 @@ package com.pyranid;
 import org.jspecify.annotations.NonNull;
 
 import javax.annotation.concurrent.NotThreadSafe;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.sql.Array;
 import java.sql.Blob;
 import java.sql.CallableStatement;
@@ -27,7 +30,6 @@ import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.NClob;
 import java.sql.PreparedStatement;
-import java.sql.SQLClientInfoException;
 import java.sql.SQLException;
 import java.sql.SQLWarning;
 import java.sql.SQLXML;
@@ -62,19 +64,19 @@ final class PyranidRawConnection implements Connection {
 	@Override
 	public Statement createStatement() throws SQLException {
 		assertUsable();
-		return this.connection.createStatement();
+		return guardedStatement(this.connection.createStatement(), Statement.class);
 	}
 
 	@Override
 	public PreparedStatement prepareStatement(String sql) throws SQLException {
 		assertUsable();
-		return this.connection.prepareStatement(sql);
+		return guardedStatement(this.connection.prepareStatement(sql), PreparedStatement.class);
 	}
 
 	@Override
 	public CallableStatement prepareCall(String sql) throws SQLException {
 		assertUsable();
-		return this.connection.prepareCall(sql);
+		return guardedStatement(this.connection.prepareCall(sql), CallableStatement.class);
 	}
 
 	@Override
@@ -118,7 +120,7 @@ final class PyranidRawConnection implements Connection {
 	@Override
 	public DatabaseMetaData getMetaData() throws SQLException {
 		assertUsable();
-		return this.connection.getMetaData();
+		return guardedDatabaseMetaData(this.connection.getMetaData());
 	}
 
 	@Override
@@ -133,9 +135,8 @@ final class PyranidRawConnection implements Connection {
 	}
 
 	@Override
-	public void setCatalog(String catalog) throws SQLException {
-		assertUsable();
-		this.connection.setCatalog(catalog);
+	public void setCatalog(String catalog) {
+		throw guardedOperation("setCatalog");
 	}
 
 	@Override
@@ -171,7 +172,7 @@ final class PyranidRawConnection implements Connection {
 	public Statement createStatement(int resultSetType,
 																	 int resultSetConcurrency) throws SQLException {
 		assertUsable();
-		return this.connection.createStatement(resultSetType, resultSetConcurrency);
+		return guardedStatement(this.connection.createStatement(resultSetType, resultSetConcurrency), Statement.class);
 	}
 
 	@Override
@@ -179,7 +180,7 @@ final class PyranidRawConnection implements Connection {
 																						int resultSetType,
 																						int resultSetConcurrency) throws SQLException {
 		assertUsable();
-		return this.connection.prepareStatement(sql, resultSetType, resultSetConcurrency);
+		return guardedStatement(this.connection.prepareStatement(sql, resultSetType, resultSetConcurrency), PreparedStatement.class);
 	}
 
 	@Override
@@ -187,7 +188,7 @@ final class PyranidRawConnection implements Connection {
 																			 int resultSetType,
 																			 int resultSetConcurrency) throws SQLException {
 		assertUsable();
-		return this.connection.prepareCall(sql, resultSetType, resultSetConcurrency);
+		return guardedStatement(this.connection.prepareCall(sql, resultSetType, resultSetConcurrency), CallableStatement.class);
 	}
 
 	@Override
@@ -197,15 +198,13 @@ final class PyranidRawConnection implements Connection {
 	}
 
 	@Override
-	public void setTypeMap(Map<String, Class<?>> map) throws SQLException {
-		assertUsable();
-		this.connection.setTypeMap(map);
+	public void setTypeMap(Map<String, Class<?>> map) {
+		throw guardedOperation("setTypeMap");
 	}
 
 	@Override
-	public void setHoldability(int holdability) throws SQLException {
-		assertUsable();
-		this.connection.setHoldability(holdability);
+	public void setHoldability(int holdability) {
+		throw guardedOperation("setHoldability");
 	}
 
 	@Override
@@ -239,7 +238,7 @@ final class PyranidRawConnection implements Connection {
 																	 int resultSetConcurrency,
 																	 int resultSetHoldability) throws SQLException {
 		assertUsable();
-		return this.connection.createStatement(resultSetType, resultSetConcurrency, resultSetHoldability);
+		return guardedStatement(this.connection.createStatement(resultSetType, resultSetConcurrency, resultSetHoldability), Statement.class);
 	}
 
 	@Override
@@ -248,7 +247,7 @@ final class PyranidRawConnection implements Connection {
 																						int resultSetConcurrency,
 																						int resultSetHoldability) throws SQLException {
 		assertUsable();
-		return this.connection.prepareStatement(sql, resultSetType, resultSetConcurrency, resultSetHoldability);
+		return guardedStatement(this.connection.prepareStatement(sql, resultSetType, resultSetConcurrency, resultSetHoldability), PreparedStatement.class);
 	}
 
 	@Override
@@ -257,28 +256,28 @@ final class PyranidRawConnection implements Connection {
 																			 int resultSetConcurrency,
 																			 int resultSetHoldability) throws SQLException {
 		assertUsable();
-		return this.connection.prepareCall(sql, resultSetType, resultSetConcurrency, resultSetHoldability);
+		return guardedStatement(this.connection.prepareCall(sql, resultSetType, resultSetConcurrency, resultSetHoldability), CallableStatement.class);
 	}
 
 	@Override
 	public PreparedStatement prepareStatement(String sql,
 																						int autoGeneratedKeys) throws SQLException {
 		assertUsable();
-		return this.connection.prepareStatement(sql, autoGeneratedKeys);
+		return guardedStatement(this.connection.prepareStatement(sql, autoGeneratedKeys), PreparedStatement.class);
 	}
 
 	@Override
 	public PreparedStatement prepareStatement(String sql,
 																						int[] columnIndexes) throws SQLException {
 		assertUsable();
-		return this.connection.prepareStatement(sql, columnIndexes);
+		return guardedStatement(this.connection.prepareStatement(sql, columnIndexes), PreparedStatement.class);
 	}
 
 	@Override
 	public PreparedStatement prepareStatement(String sql,
 																						String[] columnNames) throws SQLException {
 		assertUsable();
-		return this.connection.prepareStatement(sql, columnNames);
+		return guardedStatement(this.connection.prepareStatement(sql, columnNames), PreparedStatement.class);
 	}
 
 	@Override
@@ -313,15 +312,13 @@ final class PyranidRawConnection implements Connection {
 
 	@Override
 	public void setClientInfo(String name,
-														String value) throws SQLClientInfoException {
-		assertUsable();
-		this.connection.setClientInfo(name, value);
+														String value) {
+		throw guardedOperation("setClientInfo");
 	}
 
 	@Override
-	public void setClientInfo(Properties properties) throws SQLClientInfoException {
-		assertUsable();
-		this.connection.setClientInfo(properties);
+	public void setClientInfo(Properties properties) {
+		throw guardedOperation("setClientInfo");
 	}
 
 	@Override
@@ -351,9 +348,8 @@ final class PyranidRawConnection implements Connection {
 	}
 
 	@Override
-	public void setSchema(String schema) throws SQLException {
-		assertUsable();
-		this.connection.setSchema(schema);
+	public void setSchema(String schema) {
+		throw guardedOperation("setSchema");
 	}
 
 	@Override
@@ -369,9 +365,8 @@ final class PyranidRawConnection implements Connection {
 
 	@Override
 	public void setNetworkTimeout(Executor executor,
-																int milliseconds) throws SQLException {
-		assertUsable();
-		this.connection.setNetworkTimeout(executor, milliseconds);
+																int milliseconds) {
+		throw guardedOperation("setNetworkTimeout");
 	}
 
 	@Override
@@ -381,43 +376,37 @@ final class PyranidRawConnection implements Connection {
 	}
 
 	@Override
-	public void beginRequest() throws SQLException {
-		assertUsable();
-		this.connection.beginRequest();
+	public void beginRequest() {
+		throw guardedOperation("beginRequest");
 	}
 
 	@Override
-	public void endRequest() throws SQLException {
-		assertUsable();
-		this.connection.endRequest();
+	public void endRequest() {
+		throw guardedOperation("endRequest");
 	}
 
 	@Override
 	public boolean setShardingKeyIfValid(ShardingKey shardingKey,
 																			 ShardingKey superShardingKey,
-																			 int timeout) throws SQLException {
-		assertUsable();
-		return this.connection.setShardingKeyIfValid(shardingKey, superShardingKey, timeout);
+																			 int timeout) {
+		throw guardedOperation("setShardingKeyIfValid");
 	}
 
 	@Override
 	public boolean setShardingKeyIfValid(ShardingKey shardingKey,
-																			 int timeout) throws SQLException {
-		assertUsable();
-		return this.connection.setShardingKeyIfValid(shardingKey, timeout);
+																			 int timeout) {
+		throw guardedOperation("setShardingKeyIfValid");
 	}
 
 	@Override
 	public void setShardingKey(ShardingKey shardingKey,
-														 ShardingKey superShardingKey) throws SQLException {
-		assertUsable();
-		this.connection.setShardingKey(shardingKey, superShardingKey);
+														 ShardingKey superShardingKey) {
+		throw guardedOperation("setShardingKey");
 	}
 
 	@Override
-	public void setShardingKey(ShardingKey shardingKey) throws SQLException {
-		assertUsable();
-		this.connection.setShardingKey(shardingKey);
+	public void setShardingKey(ShardingKey shardingKey) {
+		throw guardedOperation("setShardingKey");
 	}
 
 	@Override
@@ -455,6 +444,79 @@ final class PyranidRawConnection implements Connection {
 			return false;
 
 		return iface.isInstance(this.connection) || this.connection.isWrapperFor(iface);
+	}
+
+	@NonNull
+	private <T> T guardedStatement(@NonNull T statement,
+																 @NonNull Class<T> statementInterface) {
+		requireNonNull(statement);
+		requireNonNull(statementInterface);
+
+		return statementInterface.cast(Proxy.newProxyInstance(
+				statementInterface.getClassLoader(),
+				new Class<?>[]{statementInterface},
+				(proxy, method, args) -> invokeGuardedJdbcObject(proxy, statement, method, args)));
+	}
+
+	@NonNull
+	private DatabaseMetaData guardedDatabaseMetaData(@NonNull DatabaseMetaData databaseMetaData) {
+		requireNonNull(databaseMetaData);
+
+		return (DatabaseMetaData) Proxy.newProxyInstance(
+				DatabaseMetaData.class.getClassLoader(),
+				new Class<?>[]{DatabaseMetaData.class},
+				(proxy, method, args) -> invokeGuardedJdbcObject(proxy, databaseMetaData, method, args));
+	}
+
+	private Object invokeGuardedJdbcObject(@NonNull Object proxy,
+																				 @NonNull Object target,
+																				 @NonNull Method method,
+																				 Object[] args) throws Throwable {
+		requireNonNull(proxy);
+		requireNonNull(target);
+		requireNonNull(method);
+
+		if (method.getDeclaringClass() == Object.class) {
+			return switch (method.getName()) {
+				case "equals" -> proxy == (args == null ? null : args[0]);
+				case "hashCode" -> System.identityHashCode(proxy);
+				case "toString" -> format("Pyranid-managed %s", target);
+				default -> invoke(method, target, args);
+			};
+		}
+
+		assertUsable();
+
+		if ("getConnection".equals(method.getName()) && method.getParameterCount() == 0
+				&& Connection.class.isAssignableFrom(method.getReturnType()))
+			return this;
+
+		if ("unwrap".equals(method.getName()) && args != null && args.length == 1 && args[0] instanceof Class<?> iface) {
+			if (iface.isInstance(proxy))
+				return iface.cast(proxy);
+
+			throw new SQLException(format(
+					"Cannot unwrap Pyranid-managed JDBC object to %s because that could bypass Pyranid connection lifecycle management",
+					iface.getName()));
+		}
+
+		if ("isWrapperFor".equals(method.getName()) && args != null && args.length == 1 && args[0] instanceof Class<?> iface)
+			return iface.isInstance(proxy);
+
+		return invoke(method, target, args);
+	}
+
+	private Object invoke(@NonNull Method method,
+												@NonNull Object target,
+												Object[] args) throws Throwable {
+		requireNonNull(method);
+		requireNonNull(target);
+
+		try {
+			return method.invoke(target, args);
+		} catch (InvocationTargetException e) {
+			throw e.getCause();
+		}
 	}
 
 	@Override

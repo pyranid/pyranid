@@ -439,6 +439,11 @@ final class MetricsCollectorDispatcher {
 
 	private void ignoreMetricsFailure(@NonNull Throwable throwable) {
 		requireNonNull(throwable);
-		this.logger.log(Level.FINE, "Metrics collector failure ignored", throwable);
+
+		try {
+			this.logger.log(Level.FINE, "Metrics collector failure ignored", throwable);
+		} catch (Throwable ignored) {
+			// Metrics containment must hold even if user-installed JUL handlers are broken.
+		}
 	}
 }
