@@ -2,7 +2,7 @@
 
 All notable changes to Pyranid will be documented in this file.
 
-## 4.2.0-SNAPSHOT
+## 4.2.0
 
 ### Added
 
