@@ -1691,6 +1691,37 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				return Optional.of(java.sql.Time.valueOf(offsetTime.toLocalTime()));
 		}
 
+		if (resultSetValue instanceof String string) {
+			if (LocalDate.class.isAssignableFrom(targetClass)) {
+				try {
+					return Optional.of(LocalDate.parse(string));
+				} catch (DateTimeParseException e) {
+					throw new DatabaseException(format("Unable to convert value '%s' to LocalDate", resultSetValue), e);
+				}
+			}
+
+			if (LocalTime.class.isAssignableFrom(targetClass)) {
+				try {
+					return Optional.of(LocalTime.parse(string));
+				} catch (DateTimeParseException e) {
+					throw new DatabaseException(format("Unable to convert value '%s' to LocalTime", resultSetValue), e);
+				}
+			}
+
+			if (LocalDateTime.class.isAssignableFrom(targetClass)) {
+				try {
+					return Optional.of(LocalDateTime.parse(string));
+				} catch (DateTimeParseException ignored) {
+				}
+
+				try {
+					return Optional.of(OffsetDateTime.parse(string).atZoneSameInstant(statementContext.getTimeZone()).toLocalDateTime());
+				} catch (DateTimeParseException e) {
+					throw new DatabaseException(format("Unable to convert value '%s' to LocalDateTime", resultSetValue), e);
+				}
+			}
+		}
+
 		if (UUID.class.isAssignableFrom(targetClass)) {
 			return Optional.ofNullable(uuidFromValue(resultSetValue));
 		} else if (ZoneId.class.isAssignableFrom(targetClass)) {

@@ -807,6 +807,8 @@ car = database.query("SELECT some_id AS car_id, some_color AS color FROM car LIM
 
 Temporal result-set mapping uses JDBC `ResultSetMetaData` for the returned column. Zone-less `TIMESTAMP` values are wall-clock values; when mapping them to `Instant`, `OffsetDateTime`, `ZonedDateTime`, or `Date`, Pyranid interprets that wall clock in `Database.Builder::timeZone(...)`. Mapping a zone-less `TIMESTAMP` to `LocalDateTime` keeps the wall clock unchanged. `TIMESTAMP WITH TIME ZONE` values already identify an instant; mapping to `Instant` preserves that instant, and mapping to `ZonedDateTime` represents it in the configured `timeZone(...)`.
 
+Some JDBC drivers expose temporal columns as ISO-8601 strings instead of JDBC temporal objects. For JavaBean and record mapping, Pyranid parses those strings when the target property or component is `LocalDate`, `LocalTime`, or `LocalDateTime`.
+
 Pyranid preserves the fractional-second precision returned by your JDBC driver; it does not round or truncate `Instant`, `OffsetDateTime`, or `ZonedDateTime` values to milliseconds. The maximum precision is still determined by the database column and driver (for example, PostgreSQL timestamps are stored at microsecond precision).
 
 ### SQL ARRAY and JSON Results
@@ -1525,7 +1527,7 @@ mvn -q -P integration verify
 
 The `integration` Maven profile runs JDBC integration tests against PostgreSQL, MySQL, and SQLite. PostgreSQL and MySQL use Testcontainers and require a working local Docker environment; SQLite uses a temporary local database file. The initial Docker images are pinned to `postgres:17-alpine` and `mysql:8.4`, and can be overridden with `-Dpostgres.integration.image=...` and `-Dmysql.integration.image=...`.
 
-The portable integration suites cover named binding, scalar/object/record mapping, JDBC-generated keys, transaction commit/rollback, batch chunking, guarded raw connection access, statement row limits, health checks, and exception wrapping. The PostgreSQL suite also covers core pgjdbc behavior such as JSONB, SQL arrays, `RETURNING`, temporal binding/mapping, and exception metadata. It does not run pgvector extension tests; verify pgvector manually if your release depends on that feature.
+The portable integration suites cover named binding, repeated parameters, `IN` expansion, null binding/mapping, numeric and temporal conversions, JDBC-generated keys, transaction commit/rollback, transaction options where supported, batch chunking, streaming, guarded raw connection access, statement row limits, health checks, and exception wrapping. The PostgreSQL suite also covers core pgjdbc behavior such as JSONB, SQL arrays, `RETURNING`, temporal binding/mapping, and exception metadata. It does not run pgvector extension tests; verify pgvector manually if the release depends on that feature.
 
 Cache-sensitive changes should also be checked with the JMH benchmark profile:
 

@@ -19,10 +19,12 @@ package com.pyranid;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 import javax.sql.DataSource;
 import java.io.PrintWriter;
+import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -30,6 +32,9 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.time.Duration;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -40,6 +45,9 @@ import static java.util.Objects.requireNonNull;
 
 abstract class AbstractPortableJdbcIntegrationTests {
 	public record PersonRow(Long personId, String name, String emailAddress, Locale locale) {}
+	public record NullableRow(Long itemId, String note) {}
+	public record NumericRow(Integer intValue, Long longValue, BigDecimal decimalValue, Double doubleValue) {}
+	public record TemporalRow(LocalDate eventDate, LocalTime eventTime, LocalDateTime eventTimestamp) {}
 
 	public static class PersonBean {
 		private Long personId;
@@ -87,10 +95,10 @@ abstract class AbstractPortableJdbcIntegrationTests {
 	protected abstract String generatedKeyTableSql(@NonNull String tableName);
 
 	@Test
-	public void testDatabaseTypeDetectionUsesGenericForPortableDrivers() {
+	public void testDatabaseTypeDetectionUsesExpectedType() {
 		Database db = database();
 
-		Assertions.assertEquals(DatabaseType.GENERIC, db.getDatabaseType());
+		Assertions.assertEquals(expectedDatabaseType(), db.getDatabaseType());
 	}
 
 	@Test
@@ -141,6 +149,111 @@ abstract class AbstractPortableJdbcIntegrationTests {
 	}
 
 	@Test
+	public void testNullBindingAndResultMapping() {
+		Database db = database();
+		String table = "pyranid_nullable_items";
+		recreateTable(db, table, "CREATE TABLE " + table + " (item_id BIGINT PRIMARY KEY, note VARCHAR(100) NULL)");
+
+		db.query("INSERT INTO " + table + " (item_id, note) VALUES (:itemId, :note)")
+				.bind("itemId", 1L)
+				.bind("note", null)
+				.execute();
+
+		NullableRow row = db.query("SELECT item_id, note FROM " + table + " WHERE note IS NULL")
+				.fetchObject(NullableRow.class)
+				.orElseThrow();
+
+		Assertions.assertEquals(Long.valueOf(1L), row.itemId());
+		Assertions.assertNull(row.note());
+	}
+
+	@Test
+	public void testRepeatedParametersAndInListExpansion() {
+		Database db = database();
+		String table = "pyranid_parameter_items";
+		recreateTable(db, table, "CREATE TABLE " + table + " (item_id BIGINT PRIMARY KEY, name VARCHAR(64) NOT NULL)");
+
+		for (long i = 1L; i <= 4L; ++i)
+			db.query("INSERT INTO " + table + " (item_id, name) VALUES (:itemId, :name)")
+					.bind("itemId", i)
+					.bind("name", "item-" + i)
+					.execute();
+
+		List<String> names = db.query("SELECT name FROM " + table
+						+ " WHERE item_id = :selectedId OR item_id IN (:otherIds) OR item_id = :selectedId"
+						+ " ORDER BY item_id")
+				.bind("selectedId", 2L)
+				.bind("otherIds", Parameters.inList(List.of(1L, 3L)))
+				.fetchList(String.class);
+
+		Assertions.assertEquals(List.of("item-1", "item-2", "item-3"), names);
+	}
+
+	@Test
+	public void testNumericConversions() {
+		Database db = database();
+		String table = "pyranid_numeric_items";
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "item_id BIGINT PRIMARY KEY, "
+				+ "int_value INTEGER NOT NULL, "
+				+ "long_value BIGINT NOT NULL, "
+				+ "decimal_value DECIMAL(19, 4) NOT NULL, "
+				+ "double_value DOUBLE PRECISION NOT NULL"
+				+ ")");
+
+		db.query("INSERT INTO " + table
+						+ " (item_id, int_value, long_value, decimal_value, double_value)"
+						+ " VALUES (:itemId, :intValue, :longValue, :decimalValue, :doubleValue)")
+				.bind("itemId", 1L)
+				.bind("intValue", 42)
+				.bind("longValue", 4_000_000_000L)
+				.bind("decimalValue", new BigDecimal("1234.5000"))
+				.bind("doubleValue", 9.25D)
+				.execute();
+
+		NumericRow row = db.query("SELECT int_value, long_value, decimal_value, double_value FROM " + table)
+				.fetchObject(NumericRow.class)
+				.orElseThrow();
+
+		Assertions.assertEquals(Integer.valueOf(42), row.intValue());
+		Assertions.assertEquals(Long.valueOf(4_000_000_000L), row.longValue());
+		Assertions.assertEquals(0, row.decimalValue().compareTo(new BigDecimal("1234.5")));
+		Assertions.assertEquals(9.25D, row.doubleValue(), 0.000001D);
+	}
+
+	@Test
+	public void testTemporalRoundTrip() {
+		Database db = database();
+		String table = "pyranid_temporal_items";
+		LocalDate eventDate = LocalDate.of(2020, 1, 2);
+		LocalTime eventTime = LocalTime.of(3, 4, 5);
+		LocalDateTime eventTimestamp = LocalDateTime.of(2020, 1, 2, 3, 4, 5);
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "item_id BIGINT PRIMARY KEY, "
+				+ "event_date DATE NOT NULL, "
+				+ "event_time TIME NOT NULL, "
+				+ "event_timestamp TIMESTAMP NOT NULL"
+				+ ")");
+
+		db.query("INSERT INTO " + table
+						+ " (item_id, event_date, event_time, event_timestamp)"
+						+ " VALUES (:itemId, :eventDate, :eventTime, :eventTimestamp)")
+				.bind("itemId", 1L)
+				.bind("eventDate", eventDate)
+				.bind("eventTime", eventTime)
+				.bind("eventTimestamp", eventTimestamp)
+				.execute();
+
+		TemporalRow row = db.query("SELECT event_date, event_time, event_timestamp FROM " + table)
+				.fetchObject(TemporalRow.class)
+				.orElseThrow();
+
+		Assertions.assertEquals(eventDate, row.eventDate());
+		Assertions.assertEquals(eventTime, row.eventTime());
+		Assertions.assertEquals(eventTimestamp, row.eventTimestamp());
+	}
+
+	@Test
 	public void testGeneratedKeyRoundTrip() {
 		Database db = database();
 		String table = "pyranid_generated_key_items";
@@ -148,7 +261,7 @@ abstract class AbstractPortableJdbcIntegrationTests {
 
 		Long id = db.query("INSERT INTO " + table + " (name) VALUES (:name)")
 				.bind("name", "generated")
-				.executeReturningGeneratedKey(Long.class)
+				.executeReturningGeneratedKey(Long.class, "id")
 				.orElseThrow();
 		String name = db.query("SELECT name FROM " + table + " WHERE id = :id")
 				.bind("id", id)
@@ -190,6 +303,32 @@ abstract class AbstractPortableJdbcIntegrationTests {
 	}
 
 	@Test
+	public void testTransactionReadOnlyOption() {
+		Assumptions.assumeTrue(supportsReadOnlyTransactions());
+
+		Database db = database();
+
+		db.transaction(TransactionOptions.withReadOnly(true).build(), () ->
+				db.useRawConnection(connection -> {
+					Assertions.assertTrue(connection.isReadOnly());
+					return Optional.empty();
+				}));
+	}
+
+	@Test
+	public void testTransactionIsolationOption() {
+		Assumptions.assumeTrue(supportsTransactionIsolationOptions());
+
+		Database db = database();
+
+		db.transaction(TransactionOptions.withIsolation(TransactionIsolation.READ_COMMITTED).build(), () ->
+				db.useRawConnection(connection -> {
+					Assertions.assertEquals(Connection.TRANSACTION_READ_COMMITTED, connection.getTransactionIsolation());
+					return Optional.empty();
+				}));
+	}
+
+	@Test
 	public void testBatchChunkingExecutesAllParameterGroups() {
 		Database db = database();
 		String table = "pyranid_batch_items";
@@ -210,6 +349,24 @@ abstract class AbstractPortableJdbcIntegrationTests {
 
 		Assertions.assertEquals(5, updateCounts.size());
 		Assertions.assertEquals(List.of("one", "two", "three", "four", "five"), names);
+	}
+
+	@Test
+	public void testFetchStreamConsumesRowsWithinCallback() {
+		Database db = database();
+		String table = "pyranid_stream_items";
+		recreateTable(db, table, "CREATE TABLE " + table + " (item_id BIGINT PRIMARY KEY, name VARCHAR(64) NOT NULL)");
+
+		for (long i = 1L; i <= 4L; ++i)
+			db.query("INSERT INTO " + table + " (item_id, name) VALUES (:itemId, :name)")
+					.bind("itemId", i)
+					.bind("name", "item-" + i)
+					.execute();
+
+		List<String> names = db.query("SELECT name FROM " + table + " ORDER BY item_id")
+				.fetchStream(String.class, stream -> stream.toList());
+
+		Assertions.assertEquals(List.of("item-1", "item-2", "item-3", "item-4"), names);
 	}
 
 	@Test
@@ -316,6 +473,19 @@ abstract class AbstractPortableJdbcIntegrationTests {
 	@NonNull
 	protected Database database() {
 		return Database.withDataSource(dataSource()).build();
+	}
+
+	@NonNull
+	protected DatabaseType expectedDatabaseType() {
+		return DatabaseType.GENERIC;
+	}
+
+	protected boolean supportsReadOnlyTransactions() {
+		return true;
+	}
+
+	protected boolean supportsTransactionIsolationOptions() {
+		return true;
 	}
 
 	protected static final class DriverManagerDataSource implements DataSource {
