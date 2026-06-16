@@ -27,7 +27,9 @@ import java.util.Optional;
  * The connection is valid only for the duration of the callback. Do not close it, retain it, manage transaction lifecycle
  * directly from it, or mutate connection-wide state such as schema, catalog, client info, holdability, type map, or network
  * timeout. Pyranid guards those operations and routes {@link java.sql.Statement#getConnection()} and
- * {@link java.sql.DatabaseMetaData#getConnection()} back to the managed handle.
+ * {@link java.sql.DatabaseMetaData#getConnection()} back to the managed handle. {@link java.sql.ResultSet#getStatement()}
+ * returns a guarded statement, and guarded JDBC objects refuse driver-specific {@code unwrap(...)} calls that could expose
+ * the driver's underlying connection.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 4.2.0

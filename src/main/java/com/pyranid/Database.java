@@ -2780,8 +2780,9 @@ public final class Database {
 	 * {@link Connection#setNetworkTimeout(java.util.concurrent.Executor, int)} throw {@link IllegalStateException}. Use
 	 * Pyranid transaction APIs instead.
 	 * JDBC objects created from this handle are also guarded: {@link java.sql.Statement#getConnection()} and
-	 * {@link java.sql.DatabaseMetaData#getConnection()} return the Pyranid-managed handle, not the driver's underlying
-	 * connection.
+	 * {@link java.sql.DatabaseMetaData#getConnection()} return the Pyranid-managed handle, and
+	 * {@link ResultSet#getStatement()} returns a guarded statement. Guarded statements, resultsets, and metadata refuse
+	 * driver-specific {@code unwrap(...)} calls that could expose the driver's underlying connection.
 	 * <p>
 	 * The connection handle is valid only for the duration of the callback. Do not close it, retain it, or use it after this
 	 * method returns.
@@ -3791,6 +3792,7 @@ public final class Database {
 				return cleanupFailure;
 
 			boolean shouldCommit = this.thrown == null && this.exception == null && this.callbackThrowable == null && !this.openFailed;
+			boolean streamTransactionCleanupFailed = false;
 
 			try {
 				if (shouldCommit)
@@ -3798,6 +3800,7 @@ public final class Database {
 				else
 					this.connection.rollback();
 			} catch (Throwable cleanupException) {
+				streamTransactionCleanupFailed = true;
 				cleanupFailure = cleanupFailure == null ? cleanupException : addSuppressed(cleanupFailure, cleanupException);
 			}
 
@@ -3805,11 +3808,29 @@ public final class Database {
 				try {
 					this.connection.setAutoCommit(true);
 				} catch (Throwable cleanupException) {
+					streamTransactionCleanupFailed = true;
 					cleanupFailure = cleanupFailure == null ? cleanupException : addSuppressed(cleanupFailure, cleanupException);
 				}
 			}
 
+			if (streamTransactionCleanupFailed)
+				cleanupFailure = abortPostgreSqlStreamConnection(cleanupFailure);
+
 			this.postgresqlStreamTransactionStarted = false;
+			return cleanupFailure;
+		}
+
+		@Nullable
+		private Throwable abortPostgreSqlStreamConnection(@Nullable Throwable cleanupFailure) {
+			if (this.connection == null)
+				return cleanupFailure;
+
+			try {
+				this.connection.abort(Runnable::run);
+			} catch (Throwable cleanupException) {
+				cleanupFailure = cleanupFailure == null ? cleanupException : addSuppressed(cleanupFailure, cleanupException);
+			}
+
 			return cleanupFailure;
 		}
 

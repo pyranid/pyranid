@@ -349,7 +349,7 @@ database.transaction(() -> {
 });
 ```
 
-The `Connection` passed to your callback is a Pyranid-managed guarded handle. Do not close it, retain it, perform transaction lifecycle operations on it, or mutate connection-wide state on it. Methods such as `close()`, `commit()`, `rollback()`, `setAutoCommit(...)`, `setTransactionIsolation(...)`, `setCatalog(...)`, `setSchema(...)`, `setClientInfo(...)`, `setNetworkTimeout(...)`, and JDBC savepoint controls throw immediately. `Statement::getConnection()` and `DatabaseMetaData::getConnection()` also return the guarded Pyranid handle. Use `Database::transaction(...)`, `Database::participate(...)`, and `Transaction` savepoint APIs for transaction management. Close any `Statement` or `ResultSet` instances you create inside the callback.
+The `Connection` passed to your callback is a Pyranid-managed guarded handle. Do not close it, retain it, perform transaction lifecycle operations on it, or mutate connection-wide state on it. Methods such as `close()`, `commit()`, `rollback()`, `setAutoCommit(...)`, `setTransactionIsolation(...)`, `setCatalog(...)`, `setSchema(...)`, `setClientInfo(...)`, `setNetworkTimeout(...)`, and JDBC savepoint controls throw immediately. `Statement::getConnection()` and `DatabaseMetaData::getConnection()` return the guarded Pyranid handle, and `ResultSet::getStatement()` returns a guarded statement. Guarded statements, resultsets, and metadata refuse driver-specific `unwrap(...)` calls that could expose the driver's underlying connection. Use `Database::transaction(...)`, `Database::participate(...)`, and `Transaction` savepoint APIs for transaction management. Close any `Statement` or `ResultSet` instances you create inside the callback.
 
 ## Statements
 

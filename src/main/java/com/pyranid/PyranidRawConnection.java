@@ -30,6 +30,7 @@ import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.NClob;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.SQLWarning;
 import java.sql.SQLXML;
@@ -503,7 +504,66 @@ final class PyranidRawConnection implements Connection {
 		if ("isWrapperFor".equals(method.getName()) && args != null && args.length == 1 && args[0] instanceof Class<?> iface)
 			return iface.isInstance(proxy);
 
-		return invoke(method, target, args);
+		Object result = invoke(method, target, args);
+
+		if (result instanceof ResultSet resultSet)
+			return guardedResultSet(resultSet, proxy instanceof Statement statement ? statement : null);
+
+		return result;
+	}
+
+	@NonNull
+	private ResultSet guardedResultSet(@NonNull ResultSet resultSet,
+																		 Statement statement) {
+		requireNonNull(resultSet);
+
+		return (ResultSet) Proxy.newProxyInstance(
+				ResultSet.class.getClassLoader(),
+				new Class<?>[]{ResultSet.class},
+				(proxy, method, args) -> invokeGuardedResultSet(proxy, resultSet, statement, method, args));
+	}
+
+	private Object invokeGuardedResultSet(@NonNull Object proxy,
+																				@NonNull ResultSet resultSet,
+																				Statement statement,
+																				@NonNull Method method,
+																				Object[] args) throws Throwable {
+		requireNonNull(proxy);
+		requireNonNull(resultSet);
+		requireNonNull(method);
+
+		if (method.getDeclaringClass() == Object.class) {
+			return switch (method.getName()) {
+				case "equals" -> proxy == (args == null ? null : args[0]);
+				case "hashCode" -> System.identityHashCode(proxy);
+				case "toString" -> format("Pyranid-managed %s", resultSet);
+				default -> invoke(method, resultSet, args);
+			};
+		}
+
+		assertUsable();
+
+		if ("getStatement".equals(method.getName()) && method.getParameterCount() == 0) {
+			if (statement != null)
+				return statement;
+
+			Statement resultSetStatement = (Statement) invoke(method, resultSet, args);
+			return resultSetStatement == null ? null : guardedStatement(resultSetStatement, Statement.class);
+		}
+
+		if ("unwrap".equals(method.getName()) && args != null && args.length == 1 && args[0] instanceof Class<?> iface) {
+			if (iface.isInstance(proxy))
+				return iface.cast(proxy);
+
+			throw new SQLException(format(
+					"Cannot unwrap Pyranid-managed JDBC object to %s because that could bypass Pyranid connection lifecycle management",
+					iface.getName()));
+		}
+
+		if ("isWrapperFor".equals(method.getName()) && args != null && args.length == 1 && args[0] instanceof Class<?> iface)
+			return iface.isInstance(proxy);
+
+		return invoke(method, resultSet, args);
 	}
 
 	private Object invoke(@NonNull Method method,
