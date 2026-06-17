@@ -66,6 +66,11 @@ interface DatabaseDialect {
 	PreparedStatement prepareStreamingStatement(@NonNull Connection connection,
 																							@NonNull StatementContext<?> statementContext) throws SQLException;
 
+	@NonNull
+	PreparedStatement prepareGeneratedKeysStatement(@NonNull Connection connection,
+																									@NonNull StatementContext<?> statementContext,
+																									@NonNull String @NonNull [] keyColumnNames) throws SQLException;
+
 	void configureStreamingPreparedStatement(@NonNull PreparedStatement preparedStatement,
 																					 @NonNull DatabaseStreamState databaseStreamState,
 																					 boolean transactionPresent,

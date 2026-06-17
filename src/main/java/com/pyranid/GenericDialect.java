@@ -24,6 +24,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Types;
 import java.util.List;
 import java.util.Locale;
@@ -122,6 +123,20 @@ class GenericDialect implements DatabaseDialect {
 		requireNonNull(statementContext);
 
 		return connection.prepareStatement(statementContext.getStatement().getSql());
+	}
+
+	@NonNull
+	@Override
+	public PreparedStatement prepareGeneratedKeysStatement(@NonNull Connection connection,
+																												@NonNull StatementContext<?> statementContext,
+																												@NonNull String @NonNull [] keyColumnNames) throws SQLException {
+		requireNonNull(connection);
+		requireNonNull(statementContext);
+		requireNonNull(keyColumnNames);
+
+		return keyColumnNames.length == 0
+				? connection.prepareStatement(statementContext.getStatement().getSql(), Statement.RETURN_GENERATED_KEYS)
+				: connection.prepareStatement(statementContext.getStatement().getSql(), keyColumnNames);
 	}
 
 	@Override

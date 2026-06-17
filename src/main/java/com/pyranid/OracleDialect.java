@@ -19,6 +19,8 @@ package com.pyranid;
 import org.jspecify.annotations.NonNull;
 
 import java.nio.ByteBuffer;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.util.Locale;
@@ -49,6 +51,22 @@ final class OracleDialect extends GenericDialect {
 		byteBuffer.putLong(uuid.getMostSignificantBits());
 		byteBuffer.putLong(uuid.getLeastSignificantBits());
 		return byteBuffer.array();
+	}
+
+	@NonNull
+	@Override
+	public PreparedStatement prepareGeneratedKeysStatement(@NonNull Connection connection,
+																												@NonNull StatementContext<?> statementContext,
+																												@NonNull String @NonNull [] keyColumnNames) throws SQLException {
+		requireNonNull(connection);
+		requireNonNull(statementContext);
+		requireNonNull(keyColumnNames);
+
+		if (keyColumnNames.length == 0)
+			throw new IllegalArgumentException("Oracle generated-key retrieval requires explicit key column names; "
+					+ "call executeReturningGeneratedKey(..., \"ID\") or executeReturningGeneratedKeys(..., \"ID\")");
+
+		return super.prepareGeneratedKeysStatement(connection, statementContext, keyColumnNames);
 	}
 
 	@Override

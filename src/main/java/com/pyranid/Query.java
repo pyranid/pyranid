@@ -256,6 +256,9 @@ public interface Query {
 	 * This uses JDBC {@link java.sql.Statement#RETURN_GENERATED_KEYS}. It is intended for database-generated values such
 	 * as identity/auto-increment primary keys. If your SQL returns rows directly via database syntax such as PostgreSQL
 	 * {@code RETURNING} or SQL Server {@code OUTPUT}, use {@link #executeForObject(Class)} instead.
+	 * <p>
+	 * Oracle requires explicit generated-key column names; use {@link #executeReturningGeneratedKey(Class, String...)}
+	 * instead.
 	 *
 	 * @param resultType the type to marshal the generated-key row to
 	 * @param <T>        the result type
@@ -274,7 +277,7 @@ public interface Query {
 	 * This uses JDBC {@link java.sql.Connection#prepareStatement(String, String[])} with the supplied key column names.
 	 * Some drivers require column names to return generated keys for specific columns, especially when more than one
 	 * generated value is available. If {@code keyColumnNames} is empty, this behaves like
-	 * {@link #executeReturningGeneratedKey(Class)}.
+	 * {@link #executeReturningGeneratedKey(Class)}, except for dialects such as Oracle which require explicit names.
 	 *
 	 * @param resultType      the type to marshal the generated-key row to
 	 * @param keyColumnNames generated-key column names requested from the driver
@@ -295,6 +298,9 @@ public interface Query {
 	 * This uses JDBC {@link java.sql.Statement#RETURN_GENERATED_KEYS}. It is intended for database-generated values such
 	 * as identity/auto-increment primary keys. If your SQL returns rows directly via database syntax such as PostgreSQL
 	 * {@code RETURNING} or SQL Server {@code OUTPUT}, use {@link #executeForList(Class)} instead.
+	 * <p>
+	 * Oracle requires explicit generated-key column names; use {@link #executeReturningGeneratedKeys(Class, String...)}
+	 * instead.
 	 *
 	 * @param resultType the type to marshal each generated-key row to
 	 * @param <T>        the result type
@@ -312,7 +318,7 @@ public interface Query {
 	 * This uses JDBC {@link java.sql.Connection#prepareStatement(String, String[])} with the supplied key column names.
 	 * Some drivers require column names to return generated keys for specific columns, especially when more than one
 	 * generated value is available. If {@code keyColumnNames} is empty, this behaves like
-	 * {@link #executeReturningGeneratedKeys(Class)}.
+	 * {@link #executeReturningGeneratedKeys(Class)}, except for dialects such as Oracle which require explicit names.
 	 *
 	 * @param resultType      the type to marshal each generated-key row to
 	 * @param keyColumnNames generated-key column names requested from the driver

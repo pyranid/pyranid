@@ -2432,9 +2432,8 @@ public final class Database {
 	private PreparedStatementFactory generatedKeysPreparedStatementFactory(@NonNull String @NonNull [] keyColumnNames) {
 		requireNonNull(keyColumnNames);
 
-		return (connection, statementContext) -> keyColumnNames.length == 0
-				? connection.prepareStatement(statementContext.getStatement().getSql(), java.sql.Statement.RETURN_GENERATED_KEYS)
-				: connection.prepareStatement(statementContext.getStatement().getSql(), keyColumnNames);
+		return (connection, statementContext) -> getDatabaseDialect(connection)
+				.prepareGeneratedKeysStatement(connection, statementContext, keyColumnNames);
 	}
 
 	/**
