@@ -17,10 +17,13 @@
 package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import javax.sql.DataSource;
 import java.nio.file.Path;
+import java.util.List;
 
 /**
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
@@ -29,6 +32,28 @@ import java.nio.file.Path;
 public class SqliteIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 	@TempDir
 	private Path tempDir;
+
+	@Test
+	public void testSqliteReturningMapsMultipleGeneratedRows() {
+		Database db = database();
+		String table = "pyranid_sqlite_returning_keys";
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+				+ "name TEXT NOT NULL"
+				+ ")");
+
+		List<Long> ids = db.query("INSERT INTO " + table + " (name) VALUES (:firstName), (:secondName) RETURNING id")
+				.bind("firstName", "Ada")
+				.bind("secondName", "Grace")
+				.executeForList(Long.class);
+
+		Assertions.assertEquals(2, ids.size());
+		Assertions.assertTrue(ids.get(0) > 0L);
+		Assertions.assertTrue(ids.get(1) > ids.get(0));
+		Assertions.assertEquals(List.of("Ada", "Grace"), db.query("SELECT name FROM " + table + " WHERE id IN (:ids) ORDER BY id")
+				.bind("ids", Parameters.inList(ids))
+				.fetchList(String.class));
+	}
 
 	@NonNull
 	@Override

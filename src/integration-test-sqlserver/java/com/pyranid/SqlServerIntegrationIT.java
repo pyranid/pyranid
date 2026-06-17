@@ -17,12 +17,15 @@
 package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.MSSQLServerContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import javax.sql.DataSource;
+import java.util.List;
 
 /**
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
@@ -38,6 +41,28 @@ public class SqlServerIntegrationIT extends AbstractPortableJdbcIntegrationTests
 	@Container
 	private static final MSSQLServerContainer<?> SQL_SERVER = new MSSQLServerContainer<>(SQL_SERVER_IMAGE)
 			.acceptLicense();
+
+	@Test
+	public void testSqlServerOutputMapsMultipleGeneratedRows() {
+		Database db = database();
+		String table = "pyranid_sqlserver_output_keys";
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "id BIGINT IDENTITY(1,1) PRIMARY KEY, "
+				+ "name VARCHAR(64) NOT NULL"
+				+ ")");
+
+		List<Long> ids = db.query("INSERT INTO " + table + " (name) OUTPUT inserted.id VALUES (:firstName), (:secondName)")
+				.bind("firstName", "Ada")
+				.bind("secondName", "Grace")
+				.executeForList(Long.class);
+
+		Assertions.assertEquals(2, ids.size());
+		Assertions.assertTrue(ids.get(0) > 0L);
+		Assertions.assertTrue(ids.get(1) > ids.get(0));
+		Assertions.assertEquals(List.of("Ada", "Grace"), db.query("SELECT name FROM " + table + " WHERE id IN (:ids) ORDER BY id")
+				.bind("ids", Parameters.inList(ids))
+				.fetchList(String.class));
+	}
 
 	@NonNull
 	@Override

@@ -146,6 +146,28 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 	}
 
 	@Test
+	public void testPostgreSqlReturningMapsMultipleGeneratedRows() {
+		Database db = database();
+		String table = "pyranid_pg_returning_keys";
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "id BIGSERIAL PRIMARY KEY, "
+				+ "name TEXT NOT NULL"
+				+ ")");
+
+		List<Long> ids = db.query("INSERT INTO " + table + " (name) VALUES (:firstName), (:secondName) RETURNING id")
+				.bind("firstName", "Ada")
+				.bind("secondName", "Grace")
+				.executeForList(Long.class);
+
+		Assertions.assertEquals(2, ids.size());
+		Assertions.assertTrue(ids.get(0) > 0L);
+		Assertions.assertTrue(ids.get(1) > ids.get(0));
+		Assertions.assertEquals(List.of("Ada", "Grace"), db.query("SELECT name FROM " + table + " WHERE id IN (:ids) ORDER BY id")
+				.bind("ids", Parameters.inList(ids))
+				.fetchList(String.class));
+	}
+
+	@Test
 	public void testJsonbQuestionMarkOperatorsRoundTrip() {
 		Database db = Database.withDataSource(dataSource())
 				.databaseType(DatabaseType.POSTGRESQL)

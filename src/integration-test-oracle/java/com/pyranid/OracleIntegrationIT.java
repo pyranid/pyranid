@@ -17,6 +17,8 @@
 package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.oracle.OracleContainer;
@@ -39,6 +41,23 @@ public class OracleIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 	private static final OracleContainer ORACLE = new OracleContainer(ORACLE_IMAGE)
 			.withUsername("pyranid")
 			.withPassword("pyranid");
+
+	@Test
+	public void testOracleGeneratedKeysRejectNoColumnNameBeforeRowIdTrap() {
+		Database db = database();
+		String table = "pyr_oracle_key_guard";
+		recreateTable(db, table, dialectProfile().generatedKeyTableSql(table));
+
+		DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("INSERT INTO " + table + " (name) VALUES (:name)")
+						.bind("name", "Ada")
+						.executeReturningGeneratedKey(Long.class));
+
+		Assertions.assertInstanceOf(IllegalArgumentException.class, exception.getCause());
+		Assertions.assertTrue(exception.getMessage().contains("Oracle generated-key retrieval requires explicit key column names"));
+		Assertions.assertEquals(0L, countRows(db, table),
+				"Oracle no-column generated-key guard should reject before executing the insert");
+	}
 
 	@NonNull
 	@Override
