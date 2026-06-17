@@ -48,7 +48,7 @@ Java 17+
 <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid</artifactId>
-  <version>4.2.0</version>
+  <version>4.3.0-SNAPSHOT</version>
 </dependency>
 ```
 
