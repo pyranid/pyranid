@@ -21,10 +21,15 @@ import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.AfterAllCallback;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.extension.ExtensionContext;
+import org.junit.jupiter.api.extension.TestWatcher;
 
 import javax.sql.DataSource;
 import java.io.PrintWriter;
 import java.math.BigDecimal;
+import java.lang.reflect.Method;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -39,11 +44,18 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
 
 import static java.util.Objects.requireNonNull;
 
+@ExtendWith(AbstractPortableJdbcIntegrationTests.PortableCoverageGuard.class)
 abstract class AbstractPortableJdbcIntegrationTests {
+	private static final int MINIMUM_EXECUTED_PORTABLE_CONTRACT_TESTS = 14;
+	private static final ConcurrentMap<Class<?>, PortableCoverage> PORTABLE_COVERAGE = new ConcurrentHashMap<>();
+
 	public record PersonRow(Long personId, String name, String emailAddress, Locale locale) {}
 	public record NullableRow(Long itemId, String note) {}
 	public record NumericRow(Integer intValue, Long longValue, BigDecimal decimalValue, Double doubleValue) {}
@@ -541,6 +553,85 @@ abstract class AbstractPortableJdbcIntegrationTests {
 	@NonNull
 	protected CapabilityFlags capabilityFlags() {
 		return CapabilityFlags.DEFAULT;
+	}
+
+	static final class PortableCoverageGuard implements TestWatcher, AfterAllCallback {
+		@Override
+		public void testSuccessful(ExtensionContext context) {
+			countPortableTest(context, true);
+		}
+
+		@Override
+		public void testFailed(ExtensionContext context,
+													 Throwable cause) {
+			countPortableTest(context, true);
+		}
+
+		@Override
+		public void testAborted(ExtensionContext context,
+														Throwable cause) {
+			countPortableTest(context, false);
+		}
+
+		@Override
+		public void testDisabled(ExtensionContext context,
+														 Optional<String> reason) {
+			countPortableTest(context, false);
+		}
+
+		@Override
+		public void afterAll(ExtensionContext context) {
+			Class<?> testClass = context.getRequiredTestClass();
+			PortableCoverage portableCoverage = PORTABLE_COVERAGE.remove(testClass);
+
+			if (isMethodFilteredTestRun())
+				return;
+
+			int executedPortableTests = portableCoverage == null ? 0 : portableCoverage.executedPortableTests.get();
+			int skippedPortableTests = portableCoverage == null ? 0 : portableCoverage.skippedPortableTests.get();
+
+			Assertions.assertTrue(executedPortableTests >= MINIMUM_EXECUTED_PORTABLE_CONTRACT_TESTS, () ->
+					"Expected " + testClass.getSimpleName() + " to execute at least "
+							+ MINIMUM_EXECUTED_PORTABLE_CONTRACT_TESTS + " inherited portable contract tests, but executed "
+							+ executedPortableTests + " and skipped " + skippedPortableTests
+							+ ". Check capability flags and assumptions; integration legs should not pass by skipping "
+							+ "the portable contract.");
+		}
+
+		private static void countPortableTest(ExtensionContext context,
+																				 boolean executed) {
+			if (!isPortableContractTest(context))
+				return;
+
+			PortableCoverage portableCoverage = PORTABLE_COVERAGE.computeIfAbsent(
+					context.getRequiredTestClass(), ignored -> new PortableCoverage());
+
+			if (executed)
+				portableCoverage.executedPortableTests.incrementAndGet();
+			else
+				portableCoverage.skippedPortableTests.incrementAndGet();
+		}
+
+		private static boolean isPortableContractTest(ExtensionContext context) {
+			Optional<Method> testMethod = context.getTestMethod();
+
+			return testMethod.isPresent()
+					&& testMethod.get().getDeclaringClass().equals(AbstractPortableJdbcIntegrationTests.class);
+		}
+
+		private static boolean isMethodFilteredTestRun() {
+			return containsMethodFilter(System.getProperty("it.test"))
+					|| containsMethodFilter(System.getProperty("test"));
+		}
+
+		private static boolean containsMethodFilter(@Nullable String testSelector) {
+			return testSelector != null && testSelector.contains("#");
+		}
+	}
+
+	private static final class PortableCoverage {
+		private final AtomicInteger executedPortableTests = new AtomicInteger();
+		private final AtomicInteger skippedPortableTests = new AtomicInteger();
 	}
 
 	protected static final class DriverManagerDataSource implements DataSource {
