@@ -37,6 +37,8 @@ import java.util.UUID;
  */
 @Testcontainers
 public class SqlServerIntegrationIT extends AbstractPortableJdbcIntegrationTests {
+	public record MergeActionRow(String mergeAction, Long id, String name) {}
+
 	private static final String SQL_SERVER_IMAGE_NAME =
 			System.getProperty("sqlserver.integration.image", "mcr.microsoft.com/mssql/server:2022-latest");
 	private static final DockerImageName SQL_SERVER_IMAGE = DockerImageName.parse(SQL_SERVER_IMAGE_NAME)
@@ -65,6 +67,85 @@ public class SqlServerIntegrationIT extends AbstractPortableJdbcIntegrationTests
 		Assertions.assertTrue(ids.get(1) > ids.get(0));
 		Assertions.assertEquals(List.of("Ada", "Grace"), db.query("SELECT name FROM " + table + " WHERE id IN (:ids) ORDER BY id")
 				.bind("ids", Parameters.inList(ids))
+				.fetchList(String.class));
+	}
+
+	@Test
+	public void testSqlServerOutputIntoWorksForTriggerTable() {
+		Database db = database();
+		String table = "pyranid_sqlserver_trigger_output";
+		String outputTable = "pyranid_sqlserver_trigger_output_ids";
+		String logTable = "pyranid_sqlserver_trigger_output_log";
+		recreateTable(db, outputTable, "CREATE TABLE " + outputTable + " (id BIGINT NOT NULL)");
+		recreateTable(db, logTable, "CREATE TABLE " + logTable + " (name VARCHAR(64) NOT NULL)");
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "id BIGINT IDENTITY(1,1) PRIMARY KEY, "
+				+ "name VARCHAR(64) NOT NULL"
+				+ ")");
+		db.query("CREATE TRIGGER " + table + "_ai ON " + table + " AFTER INSERT AS "
+						+ "INSERT INTO " + logTable + " (name) SELECT name FROM inserted")
+				.execute();
+
+		DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("INSERT INTO " + table + " (name) OUTPUT inserted.id VALUES (:name)")
+						.bind("name", "plain-output")
+						.executeForList(Long.class));
+
+		Assertions.assertTrue(exception.getMessage().contains("enabled triggers"),
+				"SQL Server should reject plain OUTPUT against a table with enabled triggers");
+		Assertions.assertEquals(Long.valueOf(0L), db.query("SELECT COUNT(*) FROM " + table)
+				.fetchObject(Long.class)
+				.orElseThrow());
+
+		db.query("INSERT INTO " + table + " (name) OUTPUT inserted.id INTO " + outputTable + " VALUES (:firstName), (:secondName)")
+				.bind("firstName", "Ada")
+				.bind("secondName", "Grace")
+				.execute();
+
+		List<Long> ids = db.query("SELECT id FROM " + outputTable + " ORDER BY id")
+				.fetchList(Long.class);
+		Assertions.assertEquals(2, ids.size());
+		Assertions.assertTrue(ids.get(0) > 0L);
+		Assertions.assertTrue(ids.get(1) > ids.get(0));
+		Assertions.assertEquals(List.of("Ada", "Grace"), db.query("SELECT name FROM " + table + " ORDER BY id")
+				.fetchList(String.class));
+		Assertions.assertEquals(List.of("Ada", "Grace"), db.query("SELECT name FROM " + logTable + " ORDER BY name")
+				.fetchList(String.class));
+	}
+
+	@Test
+	public void testSqlServerMergeOutputsActionAndRows() {
+		Database db = database();
+		String table = "pyranid_sqlserver_merge_items";
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "id BIGINT IDENTITY(1,1) PRIMARY KEY, "
+				+ "email VARCHAR(100) NOT NULL UNIQUE, "
+				+ "name VARCHAR(64) NOT NULL"
+				+ ")");
+		Long existingId = db.query("INSERT INTO " + table + " (email, name) OUTPUT inserted.id VALUES (:email, :name)")
+				.bind("email", "ada@example.com")
+				.bind("name", "Ada")
+				.executeForObject(Long.class)
+				.orElseThrow();
+
+		List<MergeActionRow> rows = db.query("MERGE " + table + " AS target "
+						+ "USING (VALUES (:existingEmail, :updatedName), (:newEmail, :newName)) AS source(email, name) "
+						+ "ON target.email = source.email "
+						+ "WHEN MATCHED THEN UPDATE SET name = source.name "
+						+ "WHEN NOT MATCHED THEN INSERT (email, name) VALUES (source.email, source.name) "
+						+ "OUTPUT $action AS merge_action, inserted.id, inserted.name;")
+				.bind("existingEmail", "ada@example.com")
+				.bind("updatedName", "Ada Updated")
+				.bind("newEmail", "grace@example.com")
+				.bind("newName", "Grace")
+				.executeForList(MergeActionRow.class);
+
+		Assertions.assertEquals(2, rows.size());
+		Assertions.assertTrue(rows.stream().anyMatch(row ->
+				"UPDATE".equals(row.mergeAction()) && existingId.equals(row.id()) && "Ada Updated".equals(row.name())));
+		Assertions.assertTrue(rows.stream().anyMatch(row ->
+				"INSERT".equals(row.mergeAction()) && row.id() > existingId && "Grace".equals(row.name())));
+		Assertions.assertEquals(List.of("Ada Updated", "Grace"), db.query("SELECT name FROM " + table + " ORDER BY email")
 				.fetchList(String.class));
 	}
 
