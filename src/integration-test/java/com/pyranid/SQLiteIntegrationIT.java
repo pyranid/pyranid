@@ -42,6 +42,12 @@ public class SQLiteIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 		return "CREATE TABLE " + tableName + " (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL)";
 	}
 
+	@NonNull
+	@Override
+	protected DatabaseType expectedDatabaseType() {
+		return DatabaseType.SQLITE;
+	}
+
 	@Override
 	protected boolean supportsReadOnlyTransactions() {
 		return false;

@@ -18,6 +18,7 @@ package com.pyranid;
 
 import org.hsqldb.jdbc.JDBCDataSource;
 import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
@@ -26,6 +27,7 @@ import java.io.PrintWriter;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.sql.Connection;
+import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.Optional;
@@ -65,6 +67,57 @@ public class DatabaseTypeDetectionTests {
 				.build();
 
 		Assertions.assertEquals(DatabaseType.POSTGRESQL, db.getDatabaseType());
+	}
+
+	@Test
+	public void testDatabaseTypeDetectionRecognizesPostgreSqlSignatures() {
+		assertDetectedDatabaseType(DatabaseType.POSTGRESQL, "PostgreSQL", null, null, null);
+		assertDetectedDatabaseType(DatabaseType.POSTGRESQL, "Postgres", null, null, null);
+		assertDetectedDatabaseType(DatabaseType.POSTGRESQL, "Unknown", null, "jdbc:postgresql://localhost/pyranid", null);
+		assertDetectedDatabaseType(DatabaseType.POSTGRESQL, "Unknown", null, null, "PostgreSQL JDBC Driver");
+	}
+
+	@Test
+	public void testDatabaseTypeDetectionRecognizesOracleSignatures() {
+		assertDetectedDatabaseType(DatabaseType.ORACLE, "Oracle", null, null, null);
+		assertDetectedDatabaseType(DatabaseType.ORACLE, "Unknown", null, "jdbc:oracle:thin:@localhost:1521/freepdb1", null);
+		assertDetectedDatabaseType(DatabaseType.ORACLE, "Unknown", null, "jdbc:oracle:oci:@pyranid", null);
+		assertDetectedDatabaseType(DatabaseType.ORACLE, "Unknown", null, null, "Oracle JDBC driver");
+	}
+
+	@Test
+	public void testDatabaseTypeDetectionRecognizesMysqlAndMariadbSignatures() {
+		assertDetectedDatabaseType(DatabaseType.MYSQL, "MySQL", "8.4.0", null, "MySQL Connector/J");
+		assertDetectedDatabaseType(DatabaseType.MYSQL, "MySQL", null, null, "MySQL Connector/J", true);
+		assertDetectedDatabaseType(DatabaseType.MYSQL, "Unknown", null, "jdbc:mysql://localhost/pyranid", null);
+		assertDetectedDatabaseType(DatabaseType.MYSQL, "Unknown", null, "jdbc:mysql:loadbalance://localhost/pyranid", null);
+		assertDetectedDatabaseType(DatabaseType.MYSQL, "Unknown", null, "jdbc:mysql+srv://example.com/pyranid", null);
+		assertDetectedDatabaseType(DatabaseType.MYSQL, "Unknown", null, null, "MySQL Connector/J");
+		assertDetectedDatabaseType(DatabaseType.MARIADB, "MariaDB", "11.4.3-MariaDB", null, null);
+		assertDetectedDatabaseType(DatabaseType.MARIADB, "MySQL", "11.4.3-MariaDB", "jdbc:mysql://localhost/pyranid", "MySQL Connector/J");
+		assertDetectedDatabaseType(DatabaseType.MARIADB, "Unknown", null, "jdbc:mariadb://localhost/pyranid", null);
+		assertDetectedDatabaseType(DatabaseType.MARIADB, "Unknown", null, "jdbc:mysql://localhost/pyranid", "MariaDB Connector/J");
+	}
+
+	@Test
+	public void testDatabaseTypeDetectionRecognizesSqliteSignatures() {
+		assertDetectedDatabaseType(DatabaseType.SQLITE, "SQLite", null, null, null);
+		assertDetectedDatabaseType(DatabaseType.SQLITE, "Unknown", null, "jdbc:sqlite:/tmp/pyranid.db", null);
+		assertDetectedDatabaseType(DatabaseType.SQLITE, "Unknown", null, null, "SQLite JDBC");
+	}
+
+	@Test
+	public void testDatabaseTypeDetectionRecognizesSqlServerSignatures() {
+		assertDetectedDatabaseType(DatabaseType.SQL_SERVER, "Microsoft SQL Server", null, null, null);
+		assertDetectedDatabaseType(DatabaseType.SQL_SERVER, "Unknown", null, "jdbc:sqlserver://localhost:1433", null);
+		assertDetectedDatabaseType(DatabaseType.SQL_SERVER, "Unknown", null, "jdbc:jtds:sqlserver://localhost:1433/pyranid", null);
+		assertDetectedDatabaseType(DatabaseType.SQL_SERVER, "Unknown", null, null, "Microsoft JDBC Driver 13.4 for SQL Server");
+		assertDetectedDatabaseType(DatabaseType.SQL_SERVER, "Unknown", null, null, "jTDS Type 4 JDBC Driver for MS SQL Server");
+	}
+
+	@Test
+	public void testDatabaseTypeDetectionFallsBackToGeneric() {
+		assertDetectedDatabaseType(DatabaseType.GENERIC, "HSQL Database Engine", "2.7.4", "jdbc:hsqldb:mem:pyranid", "HSQL Database Engine Driver");
 	}
 
 	@Test
@@ -164,6 +217,95 @@ public class DatabaseTypeDetectionTests {
 		ready.countDown();
 		Assertions.assertTrue(start.await(5, TimeUnit.SECONDS), "Timed out waiting to start detection");
 		return db.getDatabaseType();
+	}
+
+	private static void assertDetectedDatabaseType(@NonNull DatabaseType expectedDatabaseType,
+																								 @Nullable String databaseProductName,
+																								 @Nullable String databaseProductVersion,
+																								 @Nullable String url,
+																								 @Nullable String driverName) {
+		assertDetectedDatabaseType(expectedDatabaseType, databaseProductName, databaseProductVersion, url, driverName, false);
+	}
+
+	private static void assertDetectedDatabaseType(@NonNull DatabaseType expectedDatabaseType,
+																								 @Nullable String databaseProductName,
+																								 @Nullable String databaseProductVersion,
+																								 @Nullable String url,
+																								 @Nullable String driverName,
+																								 boolean throwOnProductVersion) {
+		requireNonNull(expectedDatabaseType);
+
+		DatabaseType databaseType = DatabaseType.fromConnection(metadataConnection(
+				databaseProductName, databaseProductVersion, url, driverName, throwOnProductVersion));
+
+		Assertions.assertEquals(expectedDatabaseType, databaseType);
+	}
+
+	@NonNull
+	private static Connection metadataConnection(@Nullable String databaseProductName,
+																							 @Nullable String databaseProductVersion,
+																							 @Nullable String url,
+																							 @Nullable String driverName) {
+		return metadataConnection(databaseProductName, databaseProductVersion, url, driverName, false);
+	}
+
+	@NonNull
+	private static Connection metadataConnection(@Nullable String databaseProductName,
+																							 @Nullable String databaseProductVersion,
+																							 @Nullable String url,
+																							 @Nullable String driverName,
+																							 boolean throwOnProductVersion) {
+		DatabaseMetaData databaseMetaData = metadata(databaseProductName, databaseProductVersion, url, driverName, throwOnProductVersion);
+
+		return (Connection) Proxy.newProxyInstance(Connection.class.getClassLoader(), new Class<?>[]{Connection.class},
+				(proxy, method, args) -> {
+					if ("getMetaData".equals(method.getName()) && method.getParameterCount() == 0)
+						return databaseMetaData;
+
+					if ("toString".equals(method.getName()) && method.getParameterCount() == 0)
+						return "metadataConnection";
+
+					throw new UnsupportedOperationException("Unexpected connection method: " + method.getName());
+				});
+	}
+
+	@NonNull
+	private static DatabaseMetaData metadata(@Nullable String databaseProductName,
+																					 @Nullable String databaseProductVersion,
+																					 @Nullable String url,
+																					 @Nullable String driverName) {
+		return metadata(databaseProductName, databaseProductVersion, url, driverName, false);
+	}
+
+	@NonNull
+	private static DatabaseMetaData metadata(@Nullable String databaseProductName,
+																					 @Nullable String databaseProductVersion,
+																					 @Nullable String url,
+																					 @Nullable String driverName,
+																					 boolean throwOnProductVersion) {
+		return (DatabaseMetaData) Proxy.newProxyInstance(DatabaseMetaData.class.getClassLoader(), new Class<?>[]{DatabaseMetaData.class},
+				(proxy, method, args) -> {
+					if ("getDatabaseProductName".equals(method.getName()) && method.getParameterCount() == 0)
+						return databaseProductName;
+
+					if ("getDatabaseProductVersion".equals(method.getName()) && method.getParameterCount() == 0) {
+						if (throwOnProductVersion)
+							throw new SQLException("product version unavailable");
+
+						return databaseProductVersion;
+					}
+
+					if ("getURL".equals(method.getName()) && method.getParameterCount() == 0)
+						return url;
+
+					if ("getDriverName".equals(method.getName()) && method.getParameterCount() == 0)
+						return driverName;
+
+					if ("toString".equals(method.getName()) && method.getParameterCount() == 0)
+						return "metadata";
+
+					throw new UnsupportedOperationException("Unexpected metadata method: " + method.getName());
+				});
 	}
 
 	@NonNull

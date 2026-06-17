@@ -17,6 +17,7 @@
 package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
@@ -44,7 +45,31 @@ public enum DatabaseType {
 	/**
 	 * An Oracle database.
 	 */
-	ORACLE;
+	ORACLE,
+	/**
+	 * A MySQL database.
+	 *
+	 * @since 4.3.0
+	 */
+	MYSQL,
+	/**
+	 * A MariaDB database.
+	 *
+	 * @since 4.3.0
+	 */
+	MARIADB,
+	/**
+	 * A SQLite database.
+	 *
+	 * @since 4.3.0
+	 */
+	SQLITE,
+	/**
+	 * A Microsoft SQL Server database.
+	 *
+	 * @since 4.3.0
+	 */
+	SQL_SERVER;
 
 	/**
 	 * Determines the type of database to which the given {@code dataSource} connects.
@@ -80,11 +105,13 @@ public enum DatabaseType {
 		try {
 			DatabaseMetaData databaseMetaData = connection.getMetaData();
 			String databaseProductName = databaseMetaData.getDatabaseProductName();
+			String databaseProductVersion = databaseProductVersion(databaseMetaData);
 			String url = databaseMetaData.getURL();
 			String driverName = databaseMetaData.getDriverName();
 
 			// All of our checks are against databases with English names
 			String databaseProductNameLowercase = databaseProductName == null ? "" : databaseProductName.toLowerCase(Locale.ENGLISH);
+			String databaseProductVersionLowercase = databaseProductVersion == null ? "" : databaseProductVersion.toLowerCase(Locale.ENGLISH);
 			String urlLowercase = url == null ? "" : url.toLowerCase(Locale.ENGLISH);
 			String driverNameLowercase = driverName == null ? "" : driverName.toLowerCase(Locale.ENGLISH);
 
@@ -96,13 +123,99 @@ public enum DatabaseType {
 			if (databaseProductNameLowercase.contains("postgresql") || databaseProductNameLowercase.equals("postgres"))  // some proxies shorten it
 				return DatabaseType.POSTGRESQL;
 
-			// Fallbacks if product name is absent/weird but we're clearly using the PG driver/URL
+			if (databaseProductNameLowercase.contains("mariadb"))
+				return DatabaseType.MARIADB;
+
+			if (databaseProductNameLowercase.contains("mysql"))
+				return mysqlFamilyDatabaseType(databaseProductVersionLowercase, driverNameLowercase);
+
+			if (databaseProductNameLowercase.contains("sqlite"))
+				return DatabaseType.SQLITE;
+
+			if (isSqlServerProductName(databaseProductNameLowercase))
+				return DatabaseType.SQL_SERVER;
+
+			// Fallbacks if product name is absent/weird but we're clearly using a vendor driver/URL
 			if (urlLowercase.startsWith("jdbc:postgresql:") || driverNameLowercase.contains("postgresql"))
 				return DatabaseType.POSTGRESQL;
+
+			if (urlLowercase.startsWith("jdbc:oracle:") || driverNameLowercase.contains("oracle jdbc"))
+				return DatabaseType.ORACLE;
+
+			if (urlLowercase.startsWith("jdbc:mariadb:") || driverNameLowercase.contains("mariadb"))
+				return DatabaseType.MARIADB;
+
+			if (isMysqlUrl(urlLowercase) || driverNameLowercase.contains("mysql"))
+				return mysqlFamilyDatabaseType(databaseProductVersionLowercase, driverNameLowercase);
+
+			if (urlLowercase.startsWith("jdbc:sqlite:") || driverNameLowercase.contains("sqlite"))
+				return DatabaseType.SQLITE;
+
+			if (isSqlServerUrl(urlLowercase) || isSqlServerDriverName(driverNameLowercase))
+				return DatabaseType.SQL_SERVER;
 
 			return DatabaseType.GENERIC;
 		} catch (SQLException e) {
 			throw new DatabaseException("Unable to inspect database metadata to determine its type", e);
 		}
+	}
+
+	@Nullable
+	private static String databaseProductVersion(@NonNull DatabaseMetaData databaseMetaData) {
+		requireNonNull(databaseMetaData);
+
+		try {
+			return databaseMetaData.getDatabaseProductVersion();
+		} catch (SQLException e) {
+			return null;
+		}
+	}
+
+	@NonNull
+	DatabaseDialect dialect() {
+		return switch (this) {
+			case POSTGRESQL -> PostgresDialect.INSTANCE;
+			case GENERIC, ORACLE, MYSQL, MARIADB, SQLITE, SQL_SERVER -> GenericDialect.INSTANCE;
+		};
+	}
+
+	@NonNull
+	private static DatabaseType mysqlFamilyDatabaseType(@NonNull String databaseProductVersionLowercase,
+																										 @NonNull String driverNameLowercase) {
+		requireNonNull(databaseProductVersionLowercase);
+		requireNonNull(driverNameLowercase);
+
+		if (databaseProductVersionLowercase.contains("mariadb") || driverNameLowercase.contains("mariadb"))
+			return DatabaseType.MARIADB;
+
+		return DatabaseType.MYSQL;
+	}
+
+	private static boolean isMysqlUrl(@NonNull String urlLowercase) {
+		requireNonNull(urlLowercase);
+
+		return urlLowercase.startsWith("jdbc:mysql:") || urlLowercase.startsWith("jdbc:mysql+srv:");
+	}
+
+	private static boolean isSqlServerProductName(@NonNull String databaseProductNameLowercase) {
+		requireNonNull(databaseProductNameLowercase);
+
+		return databaseProductNameLowercase.contains("microsoft sql server")
+				|| databaseProductNameLowercase.equals("sql server")
+				|| databaseProductNameLowercase.equals("sqlserver");
+	}
+
+	private static boolean isSqlServerUrl(@NonNull String urlLowercase) {
+		requireNonNull(urlLowercase);
+
+		return urlLowercase.startsWith("jdbc:sqlserver:") || urlLowercase.startsWith("jdbc:jtds:sqlserver:");
+	}
+
+	private static boolean isSqlServerDriverName(@NonNull String driverNameLowercase) {
+		requireNonNull(driverNameLowercase);
+
+		return driverNameLowercase.contains("microsoft jdbc driver")
+				|| driverNameLowercase.contains("sql server")
+				|| driverNameLowercase.contains("jtds");
 	}
 }

@@ -93,6 +93,8 @@ public final class Database {
 	@NonNull
 	private final AtomicReference<@Nullable DatabaseType> databaseType;
 	@NonNull
+	private final AtomicReference<@Nullable DatabaseDialect> databaseDialect;
+	@NonNull
 	private final ThreadLocal<Connection> databaseTypeDetectionConnectionHolder;
 	@NonNull
 	private final ZoneId timeZone;
@@ -131,6 +133,7 @@ public final class Database {
 
 		this.dataSource = requireNonNull(builder.dataSource);
 		this.databaseType = new AtomicReference<>(builder.databaseType);
+		this.databaseDialect = new AtomicReference<>(builder.databaseType == null ? null : builder.databaseType.dialect());
 		this.databaseTypeDetectionConnectionHolder = new ThreadLocal<>();
 		this.timeZone = builder.timeZone == null ? ZoneId.systemDefault() : builder.timeZone;
 		this.ambiguousTimestampBindingStrategy = builder.ambiguousTimestampBindingStrategy == null
@@ -1408,9 +1411,10 @@ public final class Database {
 			if (!this.parsedSql.hasQuestionMarkOperators)
 				return this.sqlFragments;
 
-			return this.database.getDatabaseType() == DatabaseType.POSTGRESQL
-					? this.parsedSql.postgresqlSqlFragments
-					: this.sqlFragments;
+			return this.database.getDatabaseDialect().sqlFragmentsForOperators(
+					this.parsedSql.hasQuestionMarkOperators,
+					this.sqlFragments,
+					this.parsedSql.postgresqlSqlFragments);
 		}
 
 		private void appendPlaceholders(@NonNull StringBuilder sql,
@@ -2949,6 +2953,21 @@ public final class Database {
 	DatabaseType peekDatabaseType() {
 		DatabaseType cachedDatabaseType = this.databaseType.get();
 		return cachedDatabaseType == null ? DatabaseType.GENERIC : cachedDatabaseType;
+	}
+
+	@NonNull
+	private DatabaseDialect getDatabaseDialect() {
+		DatabaseDialect cachedDatabaseDialect = this.databaseDialect.get();
+
+		if (cachedDatabaseDialect != null)
+			return cachedDatabaseDialect;
+
+		DatabaseDialect detectedDatabaseDialect = getDatabaseType().dialect();
+
+		if (this.databaseDialect.compareAndSet(null, detectedDatabaseDialect))
+			return detectedDatabaseDialect;
+
+		return requireNonNull(this.databaseDialect.get());
 	}
 
 	private void warmDatabaseTypeCacheForMetricsIfNeeded(@NonNull StatementContext<?> statementContext) {

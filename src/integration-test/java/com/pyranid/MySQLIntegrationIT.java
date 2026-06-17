@@ -52,4 +52,10 @@ public class MySQLIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 	protected String generatedKeyTableSql(@NonNull String tableName) {
 		return "CREATE TABLE " + tableName + " (id BIGINT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(64) NOT NULL)";
 	}
+
+	@NonNull
+	@Override
+	protected DatabaseType expectedDatabaseType() {
+		return DatabaseType.MYSQL;
+	}
 }
