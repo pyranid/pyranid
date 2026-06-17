@@ -442,6 +442,31 @@ abstract class AbstractPortableJdbcIntegrationTests {
 	}
 
 	@Test
+	public void testSqlArrayParameterUnsupportedDatabasesThrowClearException() {
+		Assumptions.assumeFalse(capabilityFlags().supportsSqlArrays());
+
+		Database db = database();
+		DialectProfile dialectProfile = dialectProfile();
+		String table = "pyranid_array_guard_items";
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "item_id " + dialectProfile.bigIntPrimaryKey() + ", "
+				+ "item_value " + dialectProfile.varchar(64) + " NULL"
+				+ ")");
+
+		DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("INSERT INTO " + table + " (item_id, item_value) VALUES (:itemId, :itemValue)")
+						.bind("itemId", 1L)
+						.bind("itemValue", Parameters.sqlArrayOf("text", List.of("alpha", "beta")))
+						.execute());
+
+		Assertions.assertInstanceOf(IllegalArgumentException.class, exception.getCause());
+		Assertions.assertTrue(exception.getMessage().contains("SqlArrayParameter is not supported"));
+		Assertions.assertTrue(exception.getMessage().contains("DatabaseType." + expectedDatabaseType().name()));
+		Assertions.assertEquals(0L, countRows(db, table),
+				"SQL ARRAY guard should reject before executing the statement");
+	}
+
+	@Test
 	public void testDatabaseExceptionWrapsDuplicateKeyWithStatementContext() {
 		Database db = database();
 		DialectProfile dialectProfile = dialectProfile();

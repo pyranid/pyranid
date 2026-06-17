@@ -114,6 +114,40 @@ public class MySqlIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 				.orElseThrow());
 	}
 
+	@Test
+	public void testMySqlJsonParameterBindsAsTextForNativeJsonColumn() {
+		Database db = database();
+		String table = "pyranid_mysql_json_items";
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "id BIGINT AUTO_INCREMENT PRIMARY KEY, "
+				+ "payload JSON NULL"
+				+ ")");
+
+		Long id = db.query("INSERT INTO " + table + " (payload) VALUES (:payload)")
+				.bind("payload", Parameters.json("{\"kind\":\"integration\",\"count\":3,\"tags\":[\"alpha\",\"beta\"]}"))
+				.executeReturningGeneratedKey(Long.class)
+				.orElseThrow();
+		db.query("INSERT INTO " + table + " (payload) VALUES (:payload)")
+				.bind("payload", Parameters.json(null))
+				.execute();
+
+		Assertions.assertEquals("integration", db.query("SELECT JSON_UNQUOTE(JSON_EXTRACT(payload, '$.kind')) FROM " + table + " WHERE id = :id")
+				.bind("id", id)
+				.fetchObject(String.class)
+				.orElseThrow());
+		Assertions.assertEquals(Integer.valueOf(3), db.query("SELECT CAST(JSON_EXTRACT(payload, '$.count') AS UNSIGNED) FROM " + table + " WHERE id = :id")
+				.bind("id", id)
+				.fetchObject(Integer.class)
+				.orElseThrow());
+		Assertions.assertEquals("beta", db.query("SELECT JSON_UNQUOTE(JSON_EXTRACT(payload, '$.tags[1]')) FROM " + table + " WHERE id = :id")
+				.bind("id", id)
+				.fetchObject(String.class)
+				.orElseThrow());
+		Assertions.assertEquals(Long.valueOf(1L), db.query("SELECT COUNT(*) FROM " + table + " WHERE payload IS NULL")
+				.fetchObject(Long.class)
+				.orElseThrow());
+	}
+
 	@NonNull
 	@Override
 	protected DataSource dataSource() {
