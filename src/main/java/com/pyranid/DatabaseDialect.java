@@ -85,6 +85,18 @@ interface DatabaseDialect {
 	@NonNull
 	DatabaseExceptionMetadata databaseExceptionMetadata(@Nullable Throwable cause);
 
+	boolean isUniqueConstraintViolation(@NonNull DatabaseExceptionMetadata metadata,
+																			@Nullable Throwable cause);
+
+	boolean isForeignKeyViolation(@NonNull DatabaseExceptionMetadata metadata,
+																@Nullable Throwable cause);
+
+	boolean isDeadlock(@NonNull DatabaseExceptionMetadata metadata,
+										 @Nullable Throwable cause);
+
+	boolean isTransient(@NonNull DatabaseExceptionMetadata metadata,
+											@Nullable Throwable cause);
+
 	@Nullable
 	Object unwrapResultSetValue(@NonNull Object resultSetValue);
 

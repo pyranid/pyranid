@@ -17,6 +17,7 @@
 package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 
 import java.nio.ByteBuffer;
 import java.sql.Connection;
@@ -56,8 +57,8 @@ final class OracleDialect extends GenericDialect {
 	@NonNull
 	@Override
 	public PreparedStatement prepareGeneratedKeysStatement(@NonNull Connection connection,
-																												@NonNull StatementContext<?> statementContext,
-																												@NonNull String @NonNull [] keyColumnNames) throws SQLException {
+																													@NonNull StatementContext<?> statementContext,
+																													@NonNull String @NonNull [] keyColumnNames) throws SQLException {
 		requireNonNull(connection);
 		requireNonNull(statementContext);
 		requireNonNull(keyColumnNames);
@@ -67,6 +68,38 @@ final class OracleDialect extends GenericDialect {
 					+ "call executeReturningGeneratedKey(..., \"ID\") or executeReturningGeneratedKeys(..., \"ID\")");
 
 		return super.prepareGeneratedKeysStatement(connection, statementContext, keyColumnNames);
+	}
+
+	@Override
+	public boolean isUniqueConstraintViolation(@NonNull DatabaseExceptionMetadata metadata,
+																						 @Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return hasErrorCode(metadata, cause, 1);
+	}
+
+	@Override
+	public boolean isForeignKeyViolation(@NonNull DatabaseExceptionMetadata metadata,
+																			 @Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return hasErrorCode(metadata, cause, 2291, 2292);
+	}
+
+	@Override
+	public boolean isDeadlock(@NonNull DatabaseExceptionMetadata metadata,
+														@Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return hasErrorCode(metadata, cause, 60);
+	}
+
+	@Override
+	public boolean isTransient(@NonNull DatabaseExceptionMetadata metadata,
+														 @Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return super.isTransient(metadata, cause) || hasErrorCode(metadata, cause, 60, 8177);
 	}
 
 	@Override

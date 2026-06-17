@@ -458,6 +458,7 @@ abstract class AbstractPortableJdbcIntegrationTests {
 						.execute());
 
 		Assertions.assertInstanceOf(SQLException.class, exception.getCause());
+		Assertions.assertTrue(exception.isUniqueConstraintViolation());
 		Assertions.assertTrue(exception.getMessage().contains("sql=INSERT INTO " + table + " (email) VALUES (?)"));
 		Assertions.assertTrue(exception.getMessage().contains("parameterCount=1"));
 	}

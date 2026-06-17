@@ -220,6 +220,14 @@ final class PostgresDialect extends GenericDialect {
 		return builder.build();
 	}
 
+	@Override
+	public boolean isDeadlock(@NonNull DatabaseExceptionMetadata metadata,
+														@Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return hasSqlState(metadata, cause, "40P01");
+	}
+
 	@Nullable
 	@Override
 	public Object unwrapResultSetValue(@NonNull Object resultSetValue) {

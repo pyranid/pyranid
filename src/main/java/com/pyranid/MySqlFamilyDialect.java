@@ -17,6 +17,7 @@
 package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -42,8 +43,8 @@ abstract class MySqlFamilyDialect extends UuidStringDialect {
 
 	@Override
 	public void configureStreamingPreparedStatement(@NonNull PreparedStatement preparedStatement,
-																									@NonNull DatabaseStreamState databaseStreamState,
-																									boolean transactionPresent,
+																										@NonNull DatabaseStreamState databaseStreamState,
+																										boolean transactionPresent,
 																									boolean queryFetchSizeConfigured) throws SQLException {
 		requireNonNull(preparedStatement);
 		requireNonNull(databaseStreamState);
@@ -52,5 +53,37 @@ abstract class MySqlFamilyDialect extends UuidStringDialect {
 			return;
 
 		preparedStatement.setFetchSize(Integer.MIN_VALUE);
+	}
+
+	@Override
+	public boolean isUniqueConstraintViolation(@NonNull DatabaseExceptionMetadata metadata,
+																						 @Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return hasErrorCode(metadata, cause, 1062);
+	}
+
+	@Override
+	public boolean isForeignKeyViolation(@NonNull DatabaseExceptionMetadata metadata,
+																			 @Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return hasErrorCode(metadata, cause, 1451, 1452);
+	}
+
+	@Override
+	public boolean isDeadlock(@NonNull DatabaseExceptionMetadata metadata,
+														@Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return hasErrorCode(metadata, cause, 1213);
+	}
+
+	@Override
+	public boolean isTransient(@NonNull DatabaseExceptionMetadata metadata,
+														 @Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return super.isTransient(metadata, cause) || hasErrorCode(metadata, cause, 1213, 1205);
 	}
 }

@@ -75,6 +75,10 @@ public class DatabaseException extends RuntimeException {
 	private final String table;
 	@Nullable
 	private final String where;
+	private final boolean uniqueConstraintViolation;
+	private final boolean foreignKeyViolation;
+	private final boolean deadlock;
+	private final boolean transientException;
 
 	/**
 	 * Creates a {@code DatabaseException} with the given {@code message}.
@@ -130,6 +134,10 @@ public class DatabaseException extends RuntimeException {
 		this.severity = metadata.severity;
 		this.table = metadata.table;
 		this.where = metadata.where;
+		this.uniqueConstraintViolation = databaseDialect.isUniqueConstraintViolation(metadata, cause);
+		this.foreignKeyViolation = databaseDialect.isForeignKeyViolation(metadata, cause);
+		this.deadlock = databaseDialect.isDeadlock(metadata, cause);
+		this.transientException = databaseDialect.isTransient(metadata, cause);
 	}
 
 	@Override
@@ -197,6 +205,59 @@ public class DatabaseException extends RuntimeException {
 	@NonNull
 	public Optional<String> getSqlState() {
 		return Optional.ofNullable(this.sqlState);
+	}
+
+	/**
+	 * Determines if this exception is recognized as a unique constraint violation.
+	 * <p>
+	 * This method is intentionally conservative: it returns {@code true} only when Pyranid recognizes a database-specific
+	 * error code or SQLState as a unique or primary-key uniqueness violation.
+	 *
+	 * @return {@code true} if this exception is recognized as a unique constraint violation
+	 * @since 4.3.0
+	 */
+	public boolean isUniqueConstraintViolation() {
+		return this.uniqueConstraintViolation;
+	}
+
+	/**
+	 * Determines if this exception is recognized as a foreign-key violation.
+	 * <p>
+	 * This method is intentionally conservative: it returns {@code true} only when Pyranid recognizes a database-specific
+	 * error code or SQLState as a foreign-key violation.
+	 *
+	 * @return {@code true} if this exception is recognized as a foreign-key violation
+	 * @since 4.3.0
+	 */
+	public boolean isForeignKeyViolation() {
+		return this.foreignKeyViolation;
+	}
+
+	/**
+	 * Determines if this exception is recognized as a deadlock.
+	 * <p>
+	 * This method is intentionally conservative: it returns {@code true} only when Pyranid recognizes a database-specific
+	 * error code or SQLState as a deadlock.
+	 *
+	 * @return {@code true} if this exception is recognized as a deadlock
+	 * @since 4.3.0
+	 */
+	public boolean isDeadlock() {
+		return this.deadlock;
+	}
+
+	/**
+	 * Determines if this exception is recognized as transient.
+	 * <p>
+	 * This method is intentionally conservative: it returns {@code true} for JDBC transient/recoverable exception classes,
+	 * SQLState classes for connection exceptions and transaction rollbacks, or database-specific deadlock/lock-timeout
+	 * signals recognized by Pyranid. A {@code true} result does not guarantee that retrying the operation will succeed.
+	 *
+	 * @return {@code true} if this exception is recognized as transient
+	 * @since 4.3.0
+	 */
+	public boolean isTransient() {
+		return this.transientException;
 	}
 
 	/**

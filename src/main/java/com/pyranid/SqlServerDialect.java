@@ -17,6 +17,7 @@
 package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
@@ -32,6 +33,30 @@ final class SqlServerDialect extends UuidStringDialect {
 	static final SqlServerDialect INSTANCE = new SqlServerDialect();
 
 	private SqlServerDialect() {}
+
+	@Override
+	public boolean isUniqueConstraintViolation(@NonNull DatabaseExceptionMetadata metadata,
+																						 @Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return hasErrorCode(metadata, cause, 2627, 2601);
+	}
+
+	@Override
+	public boolean isDeadlock(@NonNull DatabaseExceptionMetadata metadata,
+														@Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return hasErrorCode(metadata, cause, 1205);
+	}
+
+	@Override
+	public boolean isTransient(@NonNull DatabaseExceptionMetadata metadata,
+														 @Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return super.isTransient(metadata, cause) || hasErrorCode(metadata, cause, 1205, 1222);
+	}
 
 	@Override
 	public boolean isTimestampWithTimeZone(@NonNull ResultSetMetaData resultSetMetaData,

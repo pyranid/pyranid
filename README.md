@@ -1361,6 +1361,13 @@ For convenience, [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/D
 * `errorCode` (optional)
 * `sqlState` (optional)
 
+It also exposes conservative classification predicates:
+
+* `isUniqueConstraintViolation()`
+* `isForeignKeyViolation()`
+* `isDeadlock()`
+* `isTransient()`
+
 For PostgreSQL, the following properties are also available:
 
 * `column` (optional)
@@ -1382,7 +1389,7 @@ For PostgreSQL, the following properties are also available:
 
 ### Practical Application
 
-Here we detect if a specific constraint was violated by examining [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html).
+Here we detect if a unique constraint was violated by examining [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html).
 We then handle that case specially by rolling back to a known-good savepoint.
 
 ```java
@@ -1398,10 +1405,10 @@ database.transaction(() -> {
       .bind("accountId", accountId)
       .bind("awardType", AwardType.BIG)
       .execute();
-  } catch(DatabaseException e) {
-    // Detect a unique constraint violation and gracefully continue on.
-    if("account_award_unique_idx".equals(e.getConstraint().orElse(null))) {
-      out.printf("The %s award was already given to account ID %s\n", AwardType.BIG, accountId); 
+	  } catch(DatabaseException e) {
+	    // Detect a unique constraint violation and gracefully continue on.
+	    if(e.isUniqueConstraintViolation()) {
+	      out.printf("The %s award was already given to account ID %s\n", AwardType.BIG, accountId);
       // Puts transaction back in good state (prior to constraint violation)
       transaction.rollback(savepoint);
     } else {      

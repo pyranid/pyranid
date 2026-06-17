@@ -23,12 +23,21 @@ import org.jspecify.annotations.Nullable;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSetMetaData;
+import java.sql.SQLRecoverableException;
 import java.sql.SQLException;
+import java.sql.SQLTransientException;
 import java.sql.Statement;
 import java.sql.Types;
+import java.util.ArrayDeque;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Deque;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
+import java.util.function.Predicate;
 
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
@@ -166,6 +175,40 @@ class GenericDialect implements DatabaseDialect {
 		return DatabaseExceptionMetadata.fromCause(cause);
 	}
 
+	@Override
+	public boolean isUniqueConstraintViolation(@NonNull DatabaseExceptionMetadata metadata,
+																						 @Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return hasSqlState(metadata, cause, "23505");
+	}
+
+	@Override
+	public boolean isForeignKeyViolation(@NonNull DatabaseExceptionMetadata metadata,
+																			 @Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return hasSqlState(metadata, cause, "23503");
+	}
+
+	@Override
+	public boolean isDeadlock(@NonNull DatabaseExceptionMetadata metadata,
+														@Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return false;
+	}
+
+	@Override
+	public boolean isTransient(@NonNull DatabaseExceptionMetadata metadata,
+														 @Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return hasSqlException(cause, sqlException -> sqlException instanceof SQLTransientException
+				|| sqlException instanceof SQLRecoverableException)
+				|| hasSqlStateClass(metadata, cause, "08", "40");
+	}
+
 	@Nullable
 	@Override
 	public Object unwrapResultSetValue(@NonNull Object resultSetValue) {
@@ -187,5 +230,108 @@ class GenericDialect implements DatabaseDialect {
 
 		String normalizedTypeName = typeName.toUpperCase(Locale.ROOT);
 		return normalizedTypeName.contains("WITH TIME ZONE") || normalizedTypeName.contains("TIMESTAMPTZ");
+	}
+
+	protected boolean hasErrorCode(@NonNull DatabaseExceptionMetadata metadata,
+																 @Nullable Throwable cause,
+																 int @NonNull ... errorCodes) {
+		requireNonNull(metadata);
+		requireNonNull(errorCodes);
+
+		for (int errorCode : errorCodes)
+			if (metadata.errorCode != null && metadata.errorCode == errorCode)
+				return true;
+
+		return hasSqlException(cause, sqlException -> {
+			for (int errorCode : errorCodes)
+				if (sqlException.getErrorCode() == errorCode)
+					return true;
+
+			return false;
+		});
+	}
+
+	protected boolean hasSqlState(@NonNull DatabaseExceptionMetadata metadata,
+																@Nullable Throwable cause,
+																@NonNull String @NonNull ... sqlStates) {
+		requireNonNull(metadata);
+		requireNonNull(sqlStates);
+
+		Set<String> sqlStatesSet = Set.copyOf(Arrays.asList(sqlStates));
+
+		if (metadata.sqlState != null && sqlStatesSet.contains(metadata.sqlState))
+			return true;
+
+		return hasSqlException(cause, sqlException -> sqlException.getSQLState() != null
+				&& sqlStatesSet.contains(sqlException.getSQLState()));
+	}
+
+	protected boolean hasSqlStateClass(@NonNull DatabaseExceptionMetadata metadata,
+																		 @Nullable Throwable cause,
+																		 @NonNull String @NonNull ... sqlStateClasses) {
+		requireNonNull(metadata);
+		requireNonNull(sqlStateClasses);
+
+		Set<String> sqlStateClassesSet = Set.copyOf(Arrays.asList(sqlStateClasses));
+
+		if (metadata.sqlState != null && metadata.sqlState.length() >= 2
+				&& sqlStateClassesSet.contains(metadata.sqlState.substring(0, 2)))
+			return true;
+
+		return hasSqlException(cause, sqlException -> {
+			String sqlState = sqlException.getSQLState();
+			return sqlState != null && sqlState.length() >= 2 && sqlStateClassesSet.contains(sqlState.substring(0, 2));
+		});
+	}
+
+	protected boolean hasSqlException(@Nullable Throwable cause,
+																		@NonNull Predicate<@NonNull SQLException> predicate) {
+		requireNonNull(predicate);
+
+		if (cause == null)
+			return false;
+
+		Set<Throwable> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+		Deque<Throwable> stack = new ArrayDeque<>();
+		stack.add(cause);
+
+		while (!stack.isEmpty()) {
+			Throwable throwable = stack.removeFirst();
+
+			if (!visited.add(throwable))
+				continue;
+
+			if (throwable instanceof SQLException sqlException) {
+				if (predicate.test(sqlException))
+					return true;
+
+				enqueueCause(sqlException, stack, visited);
+
+				SQLException nextException = sqlException.getNextException();
+				while (nextException != null && visited.add(nextException)) {
+					if (predicate.test(nextException))
+						return true;
+
+					enqueueCause(nextException, stack, visited);
+					nextException = nextException.getNextException();
+				}
+			} else {
+				enqueueCause(throwable, stack, visited);
+			}
+		}
+
+		return false;
+	}
+
+	private void enqueueCause(@NonNull Throwable throwable,
+														@NonNull Deque<Throwable> stack,
+														@NonNull Set<Throwable> visited) {
+		requireNonNull(throwable);
+		requireNonNull(stack);
+		requireNonNull(visited);
+
+		Throwable cause = throwable.getCause();
+		if (cause != null && cause != throwable && !visited.contains(cause))
+			stack.add(cause);
 	}
 }
