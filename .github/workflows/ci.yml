@@ -57,6 +57,10 @@ jobs:
             profiles: integration
             test: SqliteIntegrationIT
             experimental: false
+          - name: MariaDB
+            profiles: integration,it-mariadb
+            test: MariaDbIntegrationIT
+            experimental: false
           - name: SQL Server
             profiles: integration,it-sqlserver
             test: SqlServerIntegrationIT

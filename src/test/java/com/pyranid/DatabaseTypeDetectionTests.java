@@ -93,10 +93,10 @@ public class DatabaseTypeDetectionTests {
 		assertDetectedDatabaseType(DatabaseType.MYSQL, "Unknown", null, "jdbc:mysql:loadbalance://localhost/pyranid", null);
 		assertDetectedDatabaseType(DatabaseType.MYSQL, "Unknown", null, "jdbc:mysql+srv://example.com/pyranid", null);
 		assertDetectedDatabaseType(DatabaseType.MYSQL, "Unknown", null, null, "MySQL Connector/J");
-		assertDetectedDatabaseType(DatabaseType.MARIADB, "MariaDB", "11.4.3-MariaDB", null, null);
-		assertDetectedDatabaseType(DatabaseType.MARIADB, "MySQL", "11.4.3-MariaDB", "jdbc:mysql://localhost/pyranid", "MySQL Connector/J");
-		assertDetectedDatabaseType(DatabaseType.MARIADB, "Unknown", null, "jdbc:mariadb://localhost/pyranid", null);
-		assertDetectedDatabaseType(DatabaseType.MARIADB, "Unknown", null, "jdbc:mysql://localhost/pyranid", "MariaDB Connector/J");
+		assertDetectedDatabaseType(DatabaseType.MARIA_DB, "MariaDB", "11.4.3-MariaDB", null, null);
+		assertDetectedDatabaseType(DatabaseType.MARIA_DB, "MySQL", "11.4.3-MariaDB", "jdbc:mysql://localhost/pyranid", "MySQL Connector/J");
+		assertDetectedDatabaseType(DatabaseType.MARIA_DB, "Unknown", null, "jdbc:mariadb://localhost/pyranid", null);
+		assertDetectedDatabaseType(DatabaseType.MARIA_DB, "Unknown", null, "jdbc:mysql://localhost/pyranid", "MariaDB Connector/J");
 	}
 
 	@Test

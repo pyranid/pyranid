@@ -74,7 +74,7 @@ public class DatabaseExceptionClassificationTests {
 
 	@Test
 	public void testMySqlFamilyClassification() {
-		for (DatabaseType databaseType : List.of(DatabaseType.MYSQL, DatabaseType.MARIADB)) {
+		for (DatabaseType databaseType : List.of(DatabaseType.MYSQL, DatabaseType.MARIA_DB)) {
 			DatabaseException unique = databaseException(databaseType, new SQLException("duplicate", "23000", 1062));
 			Assertions.assertTrue(unique.isUniqueConstraintViolation());
 			Assertions.assertFalse(unique.isForeignKeyViolation());

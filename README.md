@@ -1534,11 +1534,12 @@ Before cutting a release, run the local verification gates from the `pyranid/` p
 mvn -q verify
 mvn -q javadoc:javadoc
 mvn -q -P integration verify
+mvn -q -P integration,it-mariadb -Dit.test=MariaDbIntegrationIT verify
 ```
 
-The `integration` Maven profile runs JDBC integration tests against PostgreSQL, MySQL, and SQLite. PostgreSQL and MySQL use Testcontainers and require a working local Docker environment; SQLite uses a temporary local database file. The initial Docker images are pinned to `postgres:17-alpine` and `mysql:8.4`, and can be overridden with `-Dpostgres.integration.image=...` and `-Dmysql.integration.image=...`.
+The `integration` Maven profile runs JDBC integration tests against PostgreSQL, MySQL, and SQLite. PostgreSQL and MySQL use Testcontainers and require a working local Docker environment; SQLite uses a temporary local database file. Add `it-mariadb`, `it-sqlserver`, or `it-oracle` for the optional MariaDB, SQL Server, and Oracle integration source sets. The initial Docker images are pinned to `postgres:17-alpine`, `mysql:8.4`, `mariadb:11.4`, `mcr.microsoft.com/mssql/server:2022-latest`, and `gvenzl/oracle-free:23-slim-faststart`, and can be overridden with `-Dpostgres.integration.image=...`, `-Dmysql.integration.image=...`, `-Dmariadb.integration.image=...`, `-Dsqlserver.integration.image=...`, and `-Doracle.integration.image=...`.
 
-The portable integration suites cover named binding, repeated parameters, `IN` expansion, null binding/mapping, numeric and temporal conversions, JDBC-generated keys, transaction commit/rollback, transaction options where supported, batch chunking, streaming, guarded raw connection access, statement row limits, health checks, and exception wrapping. The PostgreSQL suite also covers core pgjdbc behavior such as JSONB, SQL arrays, `RETURNING`, temporal binding/mapping, and exception metadata. It does not run pgvector extension tests; verify pgvector manually if the release depends on that feature.
+The portable integration suites cover named binding, repeated parameters, `IN` expansion, null binding/mapping, numeric and temporal conversions, JDBC-generated keys, transaction commit/rollback, transaction options where supported, batch chunking, streaming, guarded raw connection access, statement row limits, health checks, and exception wrapping. The PostgreSQL suite also covers core pgjdbc behavior such as JSONB, SQL arrays, `RETURNING`, temporal binding/mapping, and exception metadata. The MariaDB suite covers detection, text UUID binding, native JSON-alias binding, and `INSERT ... RETURNING`. It does not run pgvector extension tests; verify pgvector manually if the release depends on that feature.
 
 Cache-sensitive changes should also be checked with the JMH benchmark profile:
 

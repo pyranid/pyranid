@@ -227,9 +227,10 @@ public interface Query {
 	 * If the stream participates in a Pyranid transaction, it must also be closed by the thread that opened it.
 	 * <p>
 	 * Supported dialects apply driver-specific streaming setup automatically. PostgreSQL streams use a positive JDBC
-	 * fetch size and an autocommit-disabled connection when no Pyranid transaction is active; MySQL-family streams use
-	 * forward-only/read-only statements and the MySQL streaming fetch-size sentinel. Use {@link #fetchSize(Integer)} to
-	 * override fetch-size behavior when needed.
+	 * fetch size and an autocommit-disabled connection when no Pyranid transaction is active; MySQL streams use
+	 * forward-only/read-only statements and the MySQL streaming fetch-size sentinel; MariaDB streams use
+	 * forward-only/read-only statements without the MySQL sentinel. Use {@link #fetchSize(Integer)} to override
+	 * fetch-size behavior when needed.
 	 *
 	 * @param resultType     the type to marshal each row to
 	 * @param streamFunction function that consumes the stream and returns a result

@@ -562,27 +562,47 @@ public class DatabaseTests {
 	}
 
 	@Test
-	public void testMySqlFamilyStreamUsesForwardOnlyReadOnlyAndStreamingFetchSize() {
-		for (DatabaseType databaseType : List.of(DatabaseType.MYSQL, DatabaseType.MARIADB)) {
-			MySqlFamilyStreamTrackingDataSource dataSource =
-					new MySqlFamilyStreamTrackingDataSource(createInMemoryDataSource("testMySqlFamilyStream" + databaseType.name()));
-			Database database = Database.withDataSource(dataSource)
-					.databaseType(databaseType)
-					.build();
+	public void testMySqlStreamUsesForwardOnlyReadOnlyAndStreamingFetchSize() {
+		MySqlFamilyStreamTrackingDataSource dataSource =
+				new MySqlFamilyStreamTrackingDataSource(createInMemoryDataSource("testMySqlStream"));
+		Database database = Database.withDataSource(dataSource)
+				.databaseType(DatabaseType.MYSQL)
+				.build();
 
-			List<Integer> values = database.query("SELECT 1 FROM (VALUES (0)) AS t(x)")
-					.fetchStream(Integer.class, stream -> stream.toList());
+		List<Integer> values = database.query("SELECT 1 FROM (VALUES (0)) AS t(x)")
+				.fetchStream(Integer.class, stream -> stream.toList());
 
-			Assertions.assertEquals(List.of(1), values);
-			Assertions.assertEquals(1, dataSource.forwardOnlyReadOnlyPrepareStatementCalls.get(),
-					format("Expected %s stream to prepare a forward-only/read-only statement", databaseType));
-			Assertions.assertEquals(0, dataSource.defaultPrepareStatementCalls.get(),
-					format("Expected %s stream not to use the default prepared statement shape", databaseType));
-			Assertions.assertEquals(Integer.MIN_VALUE, dataSource.fetchSizeAtExecute.get(),
-					format("Expected %s stream to use MySQL streaming fetch size", databaseType));
-			Assertions.assertFalse(dataSource.autoCommitChanged.get(),
-					format("Expected %s stream not to use PostgreSQL autocommit transaction setup", databaseType));
-		}
+		Assertions.assertEquals(List.of(1), values);
+		Assertions.assertEquals(1, dataSource.forwardOnlyReadOnlyPrepareStatementCalls.get(),
+				"Expected MySQL stream to prepare a forward-only/read-only statement");
+		Assertions.assertEquals(0, dataSource.defaultPrepareStatementCalls.get(),
+				"Expected MySQL stream not to use the default prepared statement shape");
+		Assertions.assertEquals(Integer.MIN_VALUE, dataSource.fetchSizeAtExecute.get(),
+				"Expected MySQL stream to use MySQL streaming fetch size");
+		Assertions.assertFalse(dataSource.autoCommitChanged.get(),
+				"Expected MySQL stream not to use PostgreSQL autocommit transaction setup");
+	}
+
+	@Test
+	public void testMariaDbStreamUsesForwardOnlyReadOnlyWithoutMySqlFetchSize() {
+		MySqlFamilyStreamTrackingDataSource dataSource =
+				new MySqlFamilyStreamTrackingDataSource(createInMemoryDataSource("testMariaDbStream"));
+		Database database = Database.withDataSource(dataSource)
+				.databaseType(DatabaseType.MARIA_DB)
+				.build();
+
+		List<Integer> values = database.query("SELECT 1 FROM (VALUES (0)) AS t(x)")
+				.fetchStream(Integer.class, stream -> stream.toList());
+
+		Assertions.assertEquals(List.of(1), values);
+		Assertions.assertEquals(1, dataSource.forwardOnlyReadOnlyPrepareStatementCalls.get(),
+				"Expected MariaDB stream to prepare a forward-only/read-only statement");
+		Assertions.assertEquals(0, dataSource.defaultPrepareStatementCalls.get(),
+				"Expected MariaDB stream not to use the default prepared statement shape");
+		Assertions.assertNotEquals(Integer.MIN_VALUE, dataSource.fetchSizeAtExecute.get(),
+				"Expected MariaDB stream not to use Connector/J's MySQL-only streaming fetch size");
+		Assertions.assertFalse(dataSource.autoCommitChanged.get(),
+				"Expected MariaDB stream not to use PostgreSQL autocommit transaction setup");
 	}
 
 	@Test
@@ -4028,7 +4048,7 @@ public class DatabaseTests {
 		PreparedStatementBinder binder = PreparedStatementBinder.withDefaultConfiguration();
 		UUID uuid = UUID.fromString("f81d4fae-7dec-11d0-a765-00a0c91e6bf6");
 
-		for (DatabaseType databaseType : List.of(DatabaseType.MYSQL, DatabaseType.MARIADB, DatabaseType.SQLITE, DatabaseType.SQL_SERVER)) {
+		for (DatabaseType databaseType : List.of(DatabaseType.MYSQL, DatabaseType.MARIA_DB, DatabaseType.SQLITE, DatabaseType.SQL_SERVER)) {
 			StatementContext<?> ctx = statementContextFor(databaseType);
 			AtomicReference<Object> boundValue = new AtomicReference<>();
 			PreparedStatement preparedStatement = preparedStatementCapturingObject(boundValue);
@@ -4072,7 +4092,7 @@ public class DatabaseTests {
 		PreparedStatementBinder binder = PreparedStatementBinder.withDefaultConfiguration();
 		PreparedStatement preparedStatement = preparedStatementWithDefaultBehavior();
 
-		for (DatabaseType databaseType : List.of(DatabaseType.MYSQL, DatabaseType.MARIADB, DatabaseType.SQLITE, DatabaseType.SQL_SERVER, DatabaseType.ORACLE)) {
+		for (DatabaseType databaseType : List.of(DatabaseType.MYSQL, DatabaseType.MARIA_DB, DatabaseType.SQLITE, DatabaseType.SQL_SERVER, DatabaseType.ORACLE)) {
 			StatementContext<?> ctx = statementContextFor(databaseType);
 
 			IllegalArgumentException exception = Assertions.assertThrows(IllegalArgumentException.class, () ->
@@ -4090,7 +4110,7 @@ public class DatabaseTests {
 		PreparedStatementBinder binder = PreparedStatementBinder.withDefaultConfiguration();
 		PreparedStatement preparedStatement = preparedStatementWithDefaultBehavior();
 
-		for (DatabaseType databaseType : List.of(DatabaseType.MYSQL, DatabaseType.MARIADB, DatabaseType.SQLITE, DatabaseType.SQL_SERVER, DatabaseType.ORACLE)) {
+		for (DatabaseType databaseType : List.of(DatabaseType.MYSQL, DatabaseType.MARIA_DB, DatabaseType.SQLITE, DatabaseType.SQL_SERVER, DatabaseType.ORACLE)) {
 			StatementContext<?> ctx = statementContextFor(databaseType);
 
 			IllegalArgumentException exception = Assertions.assertThrows(IllegalArgumentException.class, () ->

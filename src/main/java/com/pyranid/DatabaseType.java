@@ -57,7 +57,7 @@ public enum DatabaseType {
 	 *
 	 * @since 4.3.0
 	 */
-	MARIADB,
+	MARIA_DB,
 	/**
 	 * A SQLite database.
 	 *
@@ -124,7 +124,7 @@ public enum DatabaseType {
 				return DatabaseType.POSTGRESQL;
 
 			if (databaseProductNameLowercase.contains("mariadb"))
-				return DatabaseType.MARIADB;
+				return DatabaseType.MARIA_DB;
 
 			if (databaseProductNameLowercase.contains("mysql"))
 				return mysqlFamilyDatabaseType(databaseProductVersionLowercase, driverNameLowercase);
@@ -143,7 +143,7 @@ public enum DatabaseType {
 				return DatabaseType.ORACLE;
 
 			if (urlLowercase.startsWith("jdbc:mariadb:") || driverNameLowercase.contains("mariadb"))
-				return DatabaseType.MARIADB;
+				return DatabaseType.MARIA_DB;
 
 			if (isMysqlUrl(urlLowercase) || driverNameLowercase.contains("mysql"))
 				return mysqlFamilyDatabaseType(databaseProductVersionLowercase, driverNameLowercase);
@@ -177,7 +177,7 @@ public enum DatabaseType {
 			case POSTGRESQL -> PostgresDialect.INSTANCE;
 			case ORACLE -> OracleDialect.INSTANCE;
 			case MYSQL -> MySqlDialect.INSTANCE;
-			case MARIADB -> MariaDbDialect.INSTANCE;
+			case MARIA_DB -> MariaDbDialect.INSTANCE;
 			case SQLITE -> SqliteDialect.INSTANCE;
 			case SQL_SERVER -> SqlServerDialect.INSTANCE;
 			case GENERIC -> GenericDialect.INSTANCE;
@@ -191,7 +191,7 @@ public enum DatabaseType {
 		requireNonNull(driverNameLowercase);
 
 		if (databaseProductVersionLowercase.contains("mariadb") || driverNameLowercase.contains("mariadb"))
-			return DatabaseType.MARIADB;
+			return DatabaseType.MARIA_DB;
 
 		return DatabaseType.MYSQL;
 	}

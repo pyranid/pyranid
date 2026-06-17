@@ -18,6 +18,11 @@ package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
 
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+
+import static java.util.Objects.requireNonNull;
+
 /**
  * MariaDB-specific behavior.
  */
@@ -26,4 +31,13 @@ final class MariaDbDialect extends MySqlFamilyDialect {
 	static final MariaDbDialect INSTANCE = new MariaDbDialect();
 
 	private MariaDbDialect() {}
+
+	@Override
+	public void configureStreamingPreparedStatement(@NonNull PreparedStatement preparedStatement,
+																									@NonNull DatabaseStreamState databaseStreamState,
+																									boolean transactionPresent,
+																									boolean queryFetchSizeConfigured) throws SQLException {
+		requireNonNull(preparedStatement);
+		requireNonNull(databaseStreamState);
+	}
 }
