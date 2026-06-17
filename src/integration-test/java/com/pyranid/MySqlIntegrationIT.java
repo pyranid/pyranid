@@ -26,7 +26,11 @@ import org.testcontainers.utility.DockerImageName;
 
 import javax.sql.DataSource;
 import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
 import java.util.UUID;
+
+import static java.util.Objects.requireNonNull;
 
 /**
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
@@ -148,6 +152,47 @@ public class MySqlIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 				.orElseThrow());
 	}
 
+	@Test
+	public void testMySqlStreamingResultSetBlocksAdditionalStatementsUntilClosed() {
+		Database db = database();
+		String table = "pyranid_mysql_streaming_items";
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "item_id BIGINT PRIMARY KEY, "
+				+ "name VARCHAR(64) NOT NULL"
+				+ ")");
+
+		for (long i = 1L; i <= 5L; ++i)
+			db.query("INSERT INTO " + table + " (item_id, name) VALUES (:itemId, :name)")
+					.bind("itemId", i)
+					.bind("name", "item-" + i)
+					.execute();
+
+		Optional<String> firstName = db.transaction(() -> {
+			String first = db.query("SELECT name FROM " + table + " ORDER BY item_id")
+					.fetchStream(String.class, stream -> {
+						String firstStreamedName = stream.findFirst().orElseThrow();
+
+						DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
+								db.query("SELECT COUNT(*) FROM " + table)
+										.fetchObject(Long.class)
+										.orElseThrow());
+						Assertions.assertTrue(hasStreamingResultSetStillActiveMessage(exception),
+								() -> "Expected Connector/J to reject a second statement while the streaming result set is open; got "
+										+ exception);
+
+						return firstStreamedName;
+					});
+
+			Assertions.assertEquals(Long.valueOf(5L), db.query("SELECT COUNT(*) FROM " + table)
+					.fetchObject(Long.class)
+					.orElseThrow());
+
+			return Optional.of(first);
+		});
+
+		Assertions.assertEquals("item-1", firstName.orElseThrow());
+	}
+
 	@NonNull
 	@Override
 	protected DataSource dataSource() {
@@ -179,5 +224,21 @@ public class MySqlIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 				.supportsServerSideStreaming(true)
 				.supportsNativeJson(true)
 				.build();
+	}
+
+	private static boolean hasStreamingResultSetStillActiveMessage(@NonNull Throwable throwable) {
+		requireNonNull(throwable);
+
+		for (Throwable current = throwable; current != null; current = current.getCause()) {
+			String message = current.getMessage();
+			if (message == null)
+				continue;
+
+			String messageLowercase = message.toLowerCase(Locale.ROOT);
+			if (messageLowercase.contains("streaming result set") && messageLowercase.contains("still active"))
+				return true;
+		}
+
+		return false;
 	}
 }
