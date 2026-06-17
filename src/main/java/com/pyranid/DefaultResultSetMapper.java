@@ -1700,6 +1700,22 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		if (resultSetValue instanceof String string) {
+			if (BigDecimal.class.isAssignableFrom(targetClass)) {
+				try {
+					return Optional.of(new BigDecimal(string));
+				} catch (NumberFormatException e) {
+					throw new DatabaseException(format("Unable to convert value '%s' to BigDecimal", resultSetValue), e);
+				}
+			}
+
+			if (BigInteger.class.isAssignableFrom(targetClass)) {
+				try {
+					return Optional.of(exactBigInteger(new BigDecimal(string)));
+				} catch (NumberFormatException e) {
+					throw new DatabaseException(format("Unable to convert value '%s' to BigInteger", resultSetValue), e);
+				}
+			}
+
 			if (LocalDate.class.isAssignableFrom(targetClass)) {
 				try {
 					return Optional.of(localDateFromString(string));

@@ -25,6 +25,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import javax.sql.DataSource;
+import java.math.BigInteger;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -38,6 +39,8 @@ import static java.util.Objects.requireNonNull;
  */
 @Testcontainers
 public class MySqlIntegrationIT extends AbstractPortableJdbcIntegrationTests {
+	public record UnsignedBigIntRow(BigInteger unsignedValue) {}
+
 	private static final String MYSQL_IMAGE_NAME =
 			System.getProperty("mysql.integration.image", "mysql:8.4");
 	private static final DockerImageName MYSQL_IMAGE = DockerImageName.parse(MYSQL_IMAGE_NAME)
@@ -116,6 +119,28 @@ public class MySqlIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 		Assertions.assertEquals(id.toString(), db.query("SELECT id FROM " + table)
 				.fetchObject(String.class)
 				.orElseThrow());
+	}
+
+	@Test
+	public void testMySqlUnsignedBigIntMapsToBigInteger() {
+		Database db = database();
+		String table = "pyranid_mysql_unsigned_items";
+		BigInteger unsignedValue = new BigInteger("9223372036854775808");
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "id BIGINT AUTO_INCREMENT PRIMARY KEY, "
+				+ "unsigned_value BIGINT UNSIGNED NOT NULL"
+				+ ")");
+
+		db.query("INSERT INTO " + table + " (unsigned_value) VALUES (" + unsignedValue + ")")
+				.execute();
+
+		Assertions.assertEquals(unsignedValue, db.query("SELECT unsigned_value FROM " + table)
+				.fetchObject(BigInteger.class)
+				.orElseThrow());
+		Assertions.assertEquals(unsignedValue, db.query("SELECT unsigned_value FROM " + table)
+				.fetchObject(UnsignedBigIntRow.class)
+				.orElseThrow()
+				.unsignedValue());
 	}
 
 	@Test

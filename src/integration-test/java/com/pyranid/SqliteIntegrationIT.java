@@ -22,6 +22,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import javax.sql.DataSource;
+import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
@@ -31,6 +32,8 @@ import java.util.UUID;
  * @since 4.2.0
  */
 public class SqliteIntegrationIT extends AbstractPortableJdbcIntegrationTests {
+	public record DecimalTextRow(BigDecimal amount) {}
+
 	@TempDir
 	private Path tempDir;
 
@@ -75,6 +78,32 @@ public class SqliteIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 				.fetchObject(UUID.class)
 				.orElseThrow());
 		Assertions.assertEquals(id.toString(), db.query("SELECT id FROM " + table)
+				.fetchObject(String.class)
+				.orElseThrow());
+	}
+
+	@Test
+	public void testSqliteDecimalTextPreservesBigDecimalPrecision() {
+		Database db = database();
+		String table = "pyranid_sqlite_decimal_text_items";
+		BigDecimal amount = new BigDecimal("12345678901234567890.123456789012345678");
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+				+ "amount TEXT NOT NULL"
+				+ ")");
+
+		db.query("INSERT INTO " + table + " (amount) VALUES (:amount)")
+				.bind("amount", amount.toPlainString())
+				.execute();
+
+		Assertions.assertEquals(0, amount.compareTo(db.query("SELECT amount FROM " + table)
+				.fetchObject(BigDecimal.class)
+				.orElseThrow()));
+		Assertions.assertEquals(0, amount.compareTo(db.query("SELECT amount FROM " + table)
+				.fetchObject(DecimalTextRow.class)
+				.orElseThrow()
+				.amount()));
+		Assertions.assertEquals(amount.toPlainString(), db.query("SELECT amount FROM " + table)
 				.fetchObject(String.class)
 				.orElseThrow());
 	}

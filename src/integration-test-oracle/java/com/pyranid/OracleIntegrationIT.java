@@ -25,6 +25,7 @@ import org.testcontainers.oracle.OracleContainer;
 import org.testcontainers.utility.DockerImageName;
 
 import javax.sql.DataSource;
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -37,6 +38,8 @@ import java.util.UUID;
  */
 @Testcontainers
 public class OracleIntegrationIT extends AbstractPortableJdbcIntegrationTests {
+	public record OracleNumberRow(BigInteger bigValue, Integer intValue, Long longValue) {}
+
 	private static final String ORACLE_IMAGE_NAME =
 			System.getProperty("oracle.integration.image", "gvenzl/oracle-free:23-slim-faststart");
 	private static final DockerImageName ORACLE_IMAGE = DockerImageName.parse(ORACLE_IMAGE_NAME)
@@ -161,6 +164,33 @@ public class OracleIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 		Assertions.assertTrue(db.query("SELECT value FROM " + table + " WHERE id = 1")
 				.fetchObject(String.class)
 				.isEmpty());
+	}
+
+	@Test
+	public void testOracleNumberMapsToBigIntegerAndNarrowsExactly() {
+		Database db = database();
+		String table = "pyr_oracle_number_items";
+		BigInteger bigValue = new BigInteger("12345678901234567890123456789012345678");
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "id NUMBER(10,0) PRIMARY KEY, "
+				+ "big_value NUMBER(38,0) NOT NULL, "
+				+ "int_value NUMBER(10,0) NOT NULL, "
+				+ "long_value NUMBER(19,0) NOT NULL"
+				+ ")");
+
+		db.query("INSERT INTO " + table + " (id, big_value, int_value, long_value) VALUES (1, "
+						+ bigValue + ", 42, 4000000000)")
+				.execute();
+
+		Assertions.assertEquals(bigValue, db.query("SELECT big_value FROM " + table)
+				.fetchObject(BigInteger.class)
+				.orElseThrow());
+		OracleNumberRow row = db.query("SELECT big_value, int_value, long_value FROM " + table)
+				.fetchObject(OracleNumberRow.class)
+				.orElseThrow();
+		Assertions.assertEquals(bigValue, row.bigValue());
+		Assertions.assertEquals(Integer.valueOf(42), row.intValue());
+		Assertions.assertEquals(Long.valueOf(4_000_000_000L), row.longValue());
 	}
 
 	@NonNull

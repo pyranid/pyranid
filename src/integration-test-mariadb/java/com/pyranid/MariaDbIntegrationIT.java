@@ -25,6 +25,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import javax.sql.DataSource;
+import java.math.BigInteger;
 import java.util.List;
 import java.util.UUID;
 
@@ -34,6 +35,8 @@ import java.util.UUID;
  */
 @Testcontainers
 public class MariaDbIntegrationIT extends AbstractPortableJdbcIntegrationTests {
+	public record UnsignedBigIntRow(BigInteger unsignedValue) {}
+
 	private static final String MARIA_DB_IMAGE_NAME =
 			System.getProperty("mariadb.integration.image", "mariadb:11.4");
 	private static final DockerImageName MARIA_DB_IMAGE = DockerImageName.parse(MARIA_DB_IMAGE_NAME)
@@ -66,6 +69,28 @@ public class MariaDbIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 		Assertions.assertEquals(id.toString(), db.query("SELECT id FROM " + table)
 				.fetchObject(String.class)
 				.orElseThrow());
+	}
+
+	@Test
+	public void testMariaDbUnsignedBigIntMapsToBigInteger() {
+		Database db = database();
+		String table = "pyranid_mariadb_unsigned_items";
+		BigInteger unsignedValue = new BigInteger("9223372036854775808");
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "id BIGINT AUTO_INCREMENT PRIMARY KEY, "
+				+ "unsigned_value BIGINT UNSIGNED NOT NULL"
+				+ ")");
+
+		db.query("INSERT INTO " + table + " (unsigned_value) VALUES (" + unsignedValue + ")")
+				.execute();
+
+		Assertions.assertEquals(unsignedValue, db.query("SELECT unsigned_value FROM " + table)
+				.fetchObject(BigInteger.class)
+				.orElseThrow());
+		Assertions.assertEquals(unsignedValue, db.query("SELECT unsigned_value FROM " + table)
+				.fetchObject(UnsignedBigIntRow.class)
+				.orElseThrow()
+				.unsignedValue());
 	}
 
 	@Test
