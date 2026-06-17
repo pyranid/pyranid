@@ -69,6 +69,7 @@ public class MySqlIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 	@Override
 	protected CapabilityFlags capabilityFlags() {
 		return CapabilityFlags.builder()
+				.supportsServerSideStreaming(true)
 				.supportsNativeJson(true)
 				.build();
 	}

@@ -181,7 +181,7 @@ public interface Query {
 	 * settings and this query's {@link #queryTimeout(Duration)}, {@link #fetchSize(Integer)}, and
 	 * {@link #maxRows(Integer)} settings, so it can override them when needed.
 	 * <p>
-	 * For non-transactional PostgreSQL streams, Pyranid may apply its automatic positive fetch size after this callback
+	 * For dialect-managed streams, Pyranid may apply driver-specific stream settings after this callback
 	 * unless this query explicitly configured {@link #fetchSize(Integer)}.
 	 * <p>
 	 * For driver-specific cancellation beyond {@link #queryTimeout(Duration)}, application code may capture the
@@ -226,9 +226,10 @@ public interface Query {
 	 * The stream must be consumed within the scope of the transaction or connection that created it.
 	 * If the stream participates in a Pyranid transaction, it must also be closed by the thread that opened it.
 	 * <p>
-	 * PostgreSQL streams are configured automatically with a positive JDBC fetch size and an autocommit-disabled
-	 * connection when no Pyranid transaction is active. Use {@link #fetchSize(Integer)} to override
-	 * the fetch size when needed. Other cursor-based drivers may require driver-specific transaction or fetch-size setup.
+	 * Supported dialects apply driver-specific streaming setup automatically. PostgreSQL streams use a positive JDBC
+	 * fetch size and an autocommit-disabled connection when no Pyranid transaction is active; MySQL-family streams use
+	 * forward-only/read-only statements and the MySQL streaming fetch-size sentinel. Use {@link #fetchSize(Integer)} to
+	 * override fetch-size behavior when needed.
 	 *
 	 * @param resultType     the type to marshal each row to
 	 * @param streamFunction function that consumes the stream and returns a result

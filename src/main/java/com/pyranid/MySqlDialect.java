@@ -21,7 +21,7 @@ import org.jspecify.annotations.NonNull;
 /**
  * MySQL-specific behavior.
  */
-final class MySqlDialect extends UuidStringDialect {
+final class MySqlDialect extends MySqlFamilyDialect {
 	@NonNull
 	static final MySqlDialect INSTANCE = new MySqlDialect();
 

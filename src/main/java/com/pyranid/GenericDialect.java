@@ -114,6 +114,16 @@ class GenericDialect implements DatabaseDialect {
 		return DatabaseStreamState.none();
 	}
 
+	@NonNull
+	@Override
+	public PreparedStatement prepareStreamingStatement(@NonNull Connection connection,
+																										 @NonNull StatementContext<?> statementContext) throws SQLException {
+		requireNonNull(connection);
+		requireNonNull(statementContext);
+
+		return connection.prepareStatement(statementContext.getStatement().getSql());
+	}
+
 	@Override
 	public void configureStreamingPreparedStatement(@NonNull PreparedStatement preparedStatement,
 																									@NonNull DatabaseStreamState databaseStreamState,

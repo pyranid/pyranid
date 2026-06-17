@@ -21,7 +21,7 @@ import org.jspecify.annotations.NonNull;
 /**
  * MariaDB-specific behavior.
  */
-final class MariaDbDialect extends UuidStringDialect {
+final class MariaDbDialect extends MySqlFamilyDialect {
 	@NonNull
 	static final MariaDbDialect INSTANCE = new MariaDbDialect();
 

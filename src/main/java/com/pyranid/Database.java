@@ -3506,7 +3506,7 @@ public final class Database {
 				this.databaseStreamDialect = databaseDialectForStreamingConnection();
 				this.databaseStreamState = this.databaseStreamDialect.configureStreamingConnection(requireNonNull(this.connection), this.transaction.isPresent());
 
-				this.preparedStatement = this.connection.prepareStatement(this.statementContext.getStatement().getSql());
+				this.preparedStatement = this.databaseStreamDialect.prepareStreamingStatement(requireNonNull(this.connection), this.statementContext);
 				Connection previousDatabaseTypeDetectionConnection = this.database.databaseTypeDetectionConnectionHolder.get();
 				this.database.databaseTypeDetectionConnectionHolder.set(this.connection);
 

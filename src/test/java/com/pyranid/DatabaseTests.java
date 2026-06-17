@@ -562,6 +562,47 @@ public class DatabaseTests {
 	}
 
 	@Test
+	public void testMySqlFamilyStreamUsesForwardOnlyReadOnlyAndStreamingFetchSize() {
+		for (DatabaseType databaseType : List.of(DatabaseType.MYSQL, DatabaseType.MARIADB)) {
+			MySqlFamilyStreamTrackingDataSource dataSource =
+					new MySqlFamilyStreamTrackingDataSource(createInMemoryDataSource("testMySqlFamilyStream" + databaseType.name()));
+			Database database = Database.withDataSource(dataSource)
+					.databaseType(databaseType)
+					.build();
+
+			List<Integer> values = database.query("SELECT 1 FROM (VALUES (0)) AS t(x)")
+					.fetchStream(Integer.class, stream -> stream.toList());
+
+			Assertions.assertEquals(List.of(1), values);
+			Assertions.assertEquals(1, dataSource.forwardOnlyReadOnlyPrepareStatementCalls.get(),
+					format("Expected %s stream to prepare a forward-only/read-only statement", databaseType));
+			Assertions.assertEquals(0, dataSource.defaultPrepareStatementCalls.get(),
+					format("Expected %s stream not to use the default prepared statement shape", databaseType));
+			Assertions.assertEquals(Integer.MIN_VALUE, dataSource.fetchSizeAtExecute.get(),
+					format("Expected %s stream to use MySQL streaming fetch size", databaseType));
+			Assertions.assertFalse(dataSource.autoCommitChanged.get(),
+					format("Expected %s stream not to use PostgreSQL autocommit transaction setup", databaseType));
+		}
+	}
+
+	@Test
+	public void testMySqlFamilyStreamHonorsExplicitQueryFetchSize() {
+		MySqlFamilyStreamTrackingDataSource dataSource =
+				new MySqlFamilyStreamTrackingDataSource(createInMemoryDataSource("testMySqlFamilyStreamQueryFetchSize"));
+		Database database = Database.withDataSource(dataSource)
+				.databaseType(DatabaseType.MYSQL)
+				.build();
+
+		List<Integer> values = database.query("SELECT 1 FROM (VALUES (0)) AS t(x)")
+				.fetchSize(9)
+				.fetchStream(Integer.class, stream -> stream.toList());
+
+		Assertions.assertEquals(List.of(1), values);
+		Assertions.assertEquals(9, dataSource.fetchSizeAtExecute.get(),
+				"Expected explicit query fetch size to override MySQL streaming fetch-size default");
+	}
+
+	@Test
 	public void testQueryRejectsPositionalParameters() {
 		Database db = Database.withDataSource(createInMemoryDataSource("testQueryRejectsPositionalParameters")).build();
 
@@ -5464,6 +5505,145 @@ public class DatabaseTests {
 			return (Connection) Proxy.newProxyInstance(
 					Connection.class.getClassLoader(),
 					new Class<?>[]{Connection.class},
+					handler);
+		}
+	}
+
+	@NotThreadSafe
+	private static final class MySqlFamilyStreamTrackingDataSource implements DataSource {
+		private final DataSource delegate;
+		private final AtomicInteger defaultPrepareStatementCalls;
+		private final AtomicInteger forwardOnlyReadOnlyPrepareStatementCalls;
+		private final AtomicInteger fetchSizeAtExecute;
+		private final AtomicBoolean autoCommitChanged;
+
+		private MySqlFamilyStreamTrackingDataSource(@NonNull DataSource delegate) {
+			this.delegate = requireNonNull(delegate);
+			this.defaultPrepareStatementCalls = new AtomicInteger();
+			this.forwardOnlyReadOnlyPrepareStatementCalls = new AtomicInteger();
+			this.fetchSizeAtExecute = new AtomicInteger(Integer.MIN_VALUE + 1);
+			this.autoCommitChanged = new AtomicBoolean();
+		}
+
+		@Override
+		public Connection getConnection() throws SQLException {
+			return wrapConnection(this.delegate.getConnection());
+		}
+
+		@Override
+		public Connection getConnection(String username,
+																		String password) throws SQLException {
+			return wrapConnection(this.delegate.getConnection(username, password));
+		}
+
+		@Override
+		public java.io.PrintWriter getLogWriter() throws SQLException {
+			return this.delegate.getLogWriter();
+		}
+
+		@Override
+		public void setLogWriter(java.io.PrintWriter out) throws SQLException {
+			this.delegate.setLogWriter(out);
+		}
+
+		@Override
+		public void setLoginTimeout(int seconds) throws SQLException {
+			this.delegate.setLoginTimeout(seconds);
+		}
+
+		@Override
+		public int getLoginTimeout() throws SQLException {
+			return this.delegate.getLoginTimeout();
+		}
+
+		@Override
+		public java.util.logging.Logger getParentLogger() throws java.sql.SQLFeatureNotSupportedException {
+			return this.delegate.getParentLogger();
+		}
+
+		@Override
+		public <T> T unwrap(Class<T> iface) throws SQLException {
+			return this.delegate.unwrap(iface);
+		}
+
+		@Override
+		public boolean isWrapperFor(Class<?> iface) throws SQLException {
+			return this.delegate.isWrapperFor(iface);
+		}
+
+		@NonNull
+		private Connection wrapConnection(@NonNull Connection connection) {
+			requireNonNull(connection);
+
+			InvocationHandler handler = (proxy, method, args) -> {
+				String methodName = method.getName();
+
+				if ("setAutoCommit".equals(methodName))
+					this.autoCommitChanged.set(true);
+
+				if ("prepareStatement".equals(methodName)) {
+					if (args != null && args.length == 1 && args[0] instanceof String)
+						this.defaultPrepareStatementCalls.incrementAndGet();
+					else if (args != null && args.length == 3
+							&& args[1] instanceof Integer resultSetType
+							&& args[2] instanceof Integer resultSetConcurrency
+							&& resultSetType == ResultSet.TYPE_FORWARD_ONLY
+							&& resultSetConcurrency == ResultSet.CONCUR_READ_ONLY)
+						this.forwardOnlyReadOnlyPrepareStatementCalls.incrementAndGet();
+				}
+
+				try {
+					Object result = method.invoke(connection, args);
+
+					if ("prepareStatement".equals(methodName) && result instanceof PreparedStatement preparedStatement)
+						return wrapPreparedStatement(preparedStatement, (Connection) proxy);
+
+					return result;
+				} catch (InvocationTargetException e) {
+					throw e.getTargetException();
+				}
+			};
+
+			return (Connection) Proxy.newProxyInstance(
+					Connection.class.getClassLoader(),
+					new Class<?>[]{Connection.class},
+					handler);
+		}
+
+		@NonNull
+		private PreparedStatement wrapPreparedStatement(@NonNull PreparedStatement preparedStatement,
+																									 @NonNull Connection connectionProxy) {
+			requireNonNull(preparedStatement);
+			requireNonNull(connectionProxy);
+
+			AtomicInteger fetchSize = new AtomicInteger(Integer.MIN_VALUE + 1);
+
+			InvocationHandler handler = (proxy, method, args) -> {
+				String methodName = method.getName();
+
+				if ("setFetchSize".equals(methodName) && args != null && args.length == 1 && args[0] instanceof Integer configuredFetchSize) {
+					fetchSize.set(configuredFetchSize);
+
+					if (configuredFetchSize == Integer.MIN_VALUE)
+						return null;
+				} else if ("getFetchSize".equals(methodName) && fetchSize.get() != Integer.MIN_VALUE + 1) {
+					return fetchSize.get();
+				} else if ("getConnection".equals(methodName)) {
+					return connectionProxy;
+				} else if ("executeQuery".equals(methodName) && (args == null || args.length == 0)) {
+					this.fetchSizeAtExecute.set(fetchSize.get() == Integer.MIN_VALUE + 1 ? preparedStatement.getFetchSize() : fetchSize.get());
+				}
+
+				try {
+					return method.invoke(preparedStatement, args);
+				} catch (InvocationTargetException e) {
+					throw e.getTargetException();
+				}
+			};
+
+			return (PreparedStatement) Proxy.newProxyInstance(
+					PreparedStatement.class.getClassLoader(),
+					new Class<?>[]{PreparedStatement.class},
 					handler);
 		}
 	}
