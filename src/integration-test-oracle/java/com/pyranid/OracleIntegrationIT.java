@@ -26,6 +26,9 @@ import org.testcontainers.utility.DockerImageName;
 
 import javax.sql.DataSource;
 import java.nio.ByteBuffer;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.UUID;
 
 /**
@@ -82,6 +85,82 @@ public class OracleIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 		Assertions.assertArrayEquals(uuidBytes(id), db.query("SELECT id FROM " + table)
 				.fetchObject(byte[].class)
 				.orElseThrow());
+	}
+
+	@Test
+	public void testOracleTimestampWithTimeZoneRoundTrip() {
+		Database db = Database.withDataSource(dataSource())
+				.timeZone(ZoneId.of("UTC"))
+				.build();
+		String table = "pyr_oracle_tstz_items";
+		OffsetDateTime eventAt = OffsetDateTime.parse("2020-11-01T01:30:15.123456-04:00");
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "id NUMBER(10,0) PRIMARY KEY, "
+				+ "event_at TIMESTAMP(6) WITH TIME ZONE NOT NULL"
+				+ ")");
+
+		db.query("INSERT INTO " + table + " (id, event_at) VALUES (:id, :eventAt)")
+				.bind("id", 1)
+				.bind("eventAt", eventAt)
+				.execute();
+
+		Assertions.assertEquals(eventAt.toInstant(), db.query("SELECT event_at FROM " + table)
+				.fetchObject(OffsetDateTime.class)
+				.orElseThrow()
+				.toInstant());
+		Assertions.assertEquals(eventAt.toInstant(), db.query("SELECT event_at FROM " + table)
+				.fetchObject(Instant.class)
+				.orElseThrow());
+	}
+
+	@Test
+	public void testOracleTimestampWithLocalTimeZoneMapsStoredInstant() {
+		Database db = Database.withDataSource(dataSource())
+				.timeZone(ZoneId.of("UTC"))
+				.build();
+		String table = "pyr_oracle_ltz_items";
+		OffsetDateTime eventAt = OffsetDateTime.parse("2020-11-01T01:30:15.123456-04:00");
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "id NUMBER(10,0) PRIMARY KEY, "
+				+ "event_at TIMESTAMP(6) WITH LOCAL TIME ZONE NOT NULL"
+				+ ")");
+
+		db.transaction(() -> {
+			db.query("ALTER SESSION SET TIME_ZONE = '+00:00'").execute();
+			db.query("INSERT INTO " + table + " (id, event_at) VALUES (1, "
+							+ "TO_TIMESTAMP_TZ('2020-11-01 01:30:15.123456 -04:00', 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM'))")
+					.execute();
+
+			Assertions.assertEquals(eventAt.toInstant(), db.query("SELECT event_at FROM " + table)
+					.fetchObject(OffsetDateTime.class)
+					.orElseThrow()
+					.toInstant());
+			Assertions.assertEquals(eventAt.toInstant(), db.query("SELECT event_at FROM " + table)
+					.fetchObject(Instant.class)
+					.orElseThrow());
+		});
+	}
+
+	@Test
+	public void testOracleEmptyStringIsStoredAsNull() {
+		Database db = database();
+		String table = "pyr_oracle_empty_text";
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "id NUMBER(10,0) PRIMARY KEY, "
+				+ "value VARCHAR2(64) NULL"
+				+ ")");
+
+		db.query("INSERT INTO " + table + " (id, value) VALUES (:id, :value)")
+				.bind("id", 1)
+				.bind("value", "")
+				.execute();
+
+		Assertions.assertEquals(1L, db.query("SELECT COUNT(*) FROM " + table + " WHERE value IS NULL")
+				.fetchObject(Long.class)
+				.orElseThrow());
+		Assertions.assertTrue(db.query("SELECT value FROM " + table + " WHERE id = 1")
+				.fetchObject(String.class)
+				.isEmpty());
 	}
 
 	@NonNull

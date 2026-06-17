@@ -25,6 +25,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import javax.sql.DataSource;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.UUID;
 
@@ -85,6 +88,31 @@ public class SqlServerIntegrationIT extends AbstractPortableJdbcIntegrationTests
 				.orElseThrow());
 		Assertions.assertEquals(id.toString(), db.query("SELECT LOWER(CONVERT(varchar(36), id)) FROM " + table)
 				.fetchObject(String.class)
+				.orElseThrow());
+	}
+
+	@Test
+	public void testSqlServerDatetimeOffsetRoundTrip() {
+		Database db = Database.withDataSource(dataSource())
+				.timeZone(ZoneId.of("UTC"))
+				.build();
+		String table = "pyranid_sqlserver_temporal_items";
+		OffsetDateTime eventAt = OffsetDateTime.parse("2020-11-01T01:30:15.123456700-04:00");
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "id INT PRIMARY KEY, "
+				+ "event_at DATETIMEOFFSET(7) NOT NULL"
+				+ ")");
+
+		db.query("INSERT INTO " + table + " (id, event_at) VALUES (:id, :eventAt)")
+				.bind("id", 1)
+				.bind("eventAt", eventAt)
+				.execute();
+
+		Assertions.assertEquals(eventAt, db.query("SELECT event_at FROM " + table)
+				.fetchObject(OffsetDateTime.class)
+				.orElseThrow());
+		Assertions.assertEquals(eventAt.toInstant(), db.query("SELECT event_at FROM " + table)
+				.fetchObject(Instant.class)
 				.orElseThrow());
 	}
 

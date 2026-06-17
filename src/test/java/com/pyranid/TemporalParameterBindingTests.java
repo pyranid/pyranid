@@ -147,6 +147,27 @@ public class TemporalParameterBindingTests {
 		Assertions.assertEquals(Types.TIMESTAMP_WITH_TIMEZONE, capture.sqlType);
 	}
 
+	@Test
+	public void metadataAvailableVendorTimestampWithTimeZoneNamesOverrideAmbiguousBindingStrategy() {
+		Instant instant = Instant.parse("2020-01-02T03:04:05Z");
+
+		for (String parameterTypeName : new String[]{"datetimeoffset", "TIMESTAMP WITH LOCAL TIME ZONE"}) {
+			BindingCapture capture = new BindingCapture();
+			capture.parameterSqlType = Types.TIMESTAMP;
+			capture.parameterTypeName = parameterTypeName;
+
+			database(capture, ZoneId.of("America/New_York"), TIMESTAMP_WITHOUT_TIME_ZONE)
+					.query("UPDATE t SET created_at=:createdAt")
+					.bind("createdAt", instant)
+					.execute();
+
+			Assertions.assertEquals("setObject", capture.methodName);
+			Assertions.assertEquals(1, capture.parameterIndex);
+			Assertions.assertEquals(OffsetDateTime.ofInstant(instant, ZoneOffset.UTC), capture.value);
+			Assertions.assertEquals(Types.TIMESTAMP_WITH_TIMEZONE, capture.sqlType);
+		}
+	}
+
 	@NonNull
 	private Database database(@NonNull BindingCapture capture,
 														@NonNull ZoneId zone,

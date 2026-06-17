@@ -487,25 +487,28 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 				return false;
 
 			String normalizedTypeName = typeName.toUpperCase(Locale.ROOT);
-			return normalizedTypeName.contains("WITH TIME ZONE") || normalizedTypeName.contains("TIMESTAMPTZ");
+			return normalizedTypeName.contains("WITH TIME ZONE")
+					|| normalizedTypeName.contains("WITH LOCAL TIME ZONE")
+					|| normalizedTypeName.contains("TIMESTAMPTZ")
+					|| normalizedTypeName.contains("DATETIMEOFFSET");
 		}
 
-			private boolean isTimestampWithoutTimeZone() {
-				if (getSqlType() == Types.TIMESTAMP && !isTimestampWithTimeZone())
-					return true;
+		private boolean isTimestampWithoutTimeZone() {
+			if (getSqlType() == Types.TIMESTAMP && !isTimestampWithTimeZone())
+				return true;
 
-				String typeName = this.typeName;
+			String typeName = this.typeName;
 
-				if (typeName == null)
-					return false;
+			if (typeName == null)
+				return false;
 
-				return typeName.toUpperCase(Locale.ROOT).contains("TIMESTAMP") && !isTimestampWithTimeZone();
-			}
-
-			private boolean isUnknown() {
-				return getSqlType() == Types.OTHER && this.typeName == null;
-			}
+			return typeName.toUpperCase(Locale.ROOT).contains("TIMESTAMP") && !isTimestampWithTimeZone();
 		}
+
+		private boolean isUnknown() {
+			return getSqlType() == Types.OTHER && this.typeName == null;
+		}
+	}
 
 	static void setNullWithFallback(@NonNull PreparedStatement preparedStatement,
 																	@NonNull Integer parameterIndex,
