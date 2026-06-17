@@ -76,7 +76,6 @@ public final class Database {
 	@NonNull
 	private static final ThreadLocal<Deque<Transaction>> TRANSACTION_STACK_HOLDER;
 	private static final int DEFAULT_PARSED_SQL_CACHE_CAPACITY = 1024;
-	private static final int DEFAULT_POSTGRESQL_STREAM_FETCH_SIZE = 256;
 	private static final int MAX_DIAGNOSTIC_MESSAGE_LENGTH = 1024;
 	private static final int MAX_DIAGNOSTIC_SQL_LENGTH = 2048;
 	@NonNull
@@ -582,7 +581,21 @@ public final class Database {
 		requireNonNull(message);
 		requireNonNull(cause);
 
-		return new DatabaseException(format("%s [%s]", boundedDiagnosticMessage(message), statementDiagnostic(statementContext)), cause);
+		return new DatabaseException(format("%s [%s]", boundedDiagnosticMessage(message), statementDiagnostic(statementContext)), cause,
+				databaseDialectForException(statementContext, cause));
+	}
+
+	@NonNull
+	private static DatabaseDialect databaseDialectForException(@NonNull StatementContext<?> statementContext,
+																														 @NonNull Throwable cause) {
+		requireNonNull(statementContext);
+		requireNonNull(cause);
+
+		try {
+			return statementContext.getDatabaseDialect();
+		} catch (Throwable ignored) {
+			return DatabaseDialect.forExceptionCause(cause);
+		}
 	}
 
 	@NonNull
@@ -1414,7 +1427,7 @@ public final class Database {
 			return this.database.getDatabaseDialect().sqlFragmentsForOperators(
 					this.parsedSql.hasQuestionMarkOperators,
 					this.sqlFragments,
-					this.parsedSql.postgresqlSqlFragments);
+					this.parsedSql.questionMarkOperatorFragmentIndexes);
 		}
 
 		private void appendPlaceholders(@NonNull StringBuilder sql,
@@ -1447,7 +1460,7 @@ public final class Database {
 		@NonNull
 		private final List<String> sqlFragments;
 		@NonNull
-		private final List<String> postgresqlSqlFragments;
+		private final List<@NonNull List<@NonNull Integer>> questionMarkOperatorFragmentIndexes;
 		private final boolean hasQuestionMarkOperators;
 		@NonNull
 		private final List<String> parameterNames;
@@ -1464,53 +1477,12 @@ public final class Database {
 			requireNonNull(distinctParameterNames);
 
 			this.sqlFragments = sqlFragments;
-			this.postgresqlSqlFragments = postgresqlSqlFragments(sqlFragments, questionMarkOperatorFragmentIndexes);
+			this.questionMarkOperatorFragmentIndexes = questionMarkOperatorFragmentIndexes.stream()
+					.map(List::copyOf)
+					.toList();
 			this.hasQuestionMarkOperators = questionMarkOperatorFragmentIndexes.stream().anyMatch(indexes -> !indexes.isEmpty());
 			this.parameterNames = parameterNames;
 			this.distinctParameterNames = distinctParameterNames;
-		}
-
-		@NonNull
-		private static List<String> postgresqlSqlFragments(@NonNull List<String> sqlFragments,
-																											 @NonNull List<@NonNull List<@NonNull Integer>> questionMarkOperatorFragmentIndexes) {
-			requireNonNull(sqlFragments);
-			requireNonNull(questionMarkOperatorFragmentIndexes);
-
-			if (sqlFragments.size() != questionMarkOperatorFragmentIndexes.size())
-				throw new IllegalArgumentException("SQL fragments and question-mark operator indexes must have the same size");
-
-			List<String> postgresqlSqlFragments = new ArrayList<>(sqlFragments.size());
-
-			for (int i = 0; i < sqlFragments.size(); ++i)
-				postgresqlSqlFragments.add(postgresqlSqlFragment(sqlFragments.get(i), questionMarkOperatorFragmentIndexes.get(i)));
-
-			return List.copyOf(postgresqlSqlFragments);
-		}
-
-		@NonNull
-		private static String postgresqlSqlFragment(@NonNull String sqlFragment,
-																							 @NonNull List<@NonNull Integer> questionMarkOperatorIndexes) {
-			requireNonNull(sqlFragment);
-			requireNonNull(questionMarkOperatorIndexes);
-
-			if (questionMarkOperatorIndexes.isEmpty())
-				return sqlFragment;
-
-			StringBuilder postgresqlSqlFragment = new StringBuilder(sqlFragment.length() + questionMarkOperatorIndexes.size());
-			int previousIndex = 0;
-
-			for (Integer questionMarkOperatorIndex : questionMarkOperatorIndexes) {
-				if (questionMarkOperatorIndex == null || questionMarkOperatorIndex < previousIndex || questionMarkOperatorIndex >= sqlFragment.length()
-						|| sqlFragment.charAt(questionMarkOperatorIndex) != '?')
-					throw new IllegalArgumentException("Invalid question-mark operator index");
-
-				postgresqlSqlFragment.append(sqlFragment, previousIndex, questionMarkOperatorIndex);
-				postgresqlSqlFragment.append("??");
-				previousIndex = questionMarkOperatorIndex + 1;
-			}
-
-			postgresqlSqlFragment.append(sqlFragment, previousIndex, sqlFragment.length());
-			return postgresqlSqlFragment.toString();
 		}
 	}
 
@@ -2956,13 +2928,18 @@ public final class Database {
 	}
 
 	@NonNull
-	private DatabaseDialect getDatabaseDialect() {
+	DatabaseDialect getDatabaseDialect() {
+		return getDatabaseDialect(this.databaseTypeDetectionConnectionHolder.get());
+	}
+
+	@NonNull
+	DatabaseDialect getDatabaseDialect(@Nullable Connection connection) {
 		DatabaseDialect cachedDatabaseDialect = this.databaseDialect.get();
 
 		if (cachedDatabaseDialect != null)
 			return cachedDatabaseDialect;
 
-		DatabaseDialect detectedDatabaseDialect = getDatabaseType().dialect();
+		DatabaseDialect detectedDatabaseDialect = getDatabaseType(connection).dialect();
 
 		if (this.databaseDialect.compareAndSet(null, detectedDatabaseDialect))
 			return detectedDatabaseDialect;
@@ -3462,9 +3439,10 @@ public final class Database {
 		@Nullable
 		private Throwable cleanupFailure;
 		private long connectionHeldStartTime;
-		@Nullable
-		private Boolean initialAutoCommit;
-		private boolean postgresqlStreamTransactionStarted;
+		@NonNull
+		private DatabaseDialect databaseStreamDialect = GenericDialect.INSTANCE;
+		@NonNull
+		private DatabaseStreamState databaseStreamState = DatabaseStreamState.none();
 		private boolean connectionLockAcquired;
 		private final boolean queryFetchSizeConfigured;
 
@@ -3525,8 +3503,8 @@ public final class Database {
 				}
 				startTime = nanoTime();
 
-				DatabaseType databaseType = databaseTypeForStreamingConnection();
-				configurePostgreSqlStreamingIfNeeded(databaseType);
+				this.databaseStreamDialect = databaseDialectForStreamingConnection();
+				this.databaseStreamState = this.databaseStreamDialect.configureStreamingConnection(requireNonNull(this.connection), this.transaction.isPresent());
 
 				this.preparedStatement = this.connection.prepareStatement(this.statementContext.getStatement().getSql());
 				Connection previousDatabaseTypeDetectionConnection = this.database.databaseTypeDetectionConnectionHolder.get();
@@ -3534,7 +3512,8 @@ public final class Database {
 
 				try {
 					this.database.applyPreparedStatementCustomizer(this.statementContext, this.preparedStatement, this.preparedStatementCustomizer);
-					configurePostgreSqlStreamingFetchSizeIfNeeded(databaseType);
+					this.databaseStreamDialect.configureStreamingPreparedStatement(this.preparedStatement, this.databaseStreamState,
+							this.transaction.isPresent(), this.queryFetchSizeConfigured);
 					if (this.parameters.size() > 0)
 						this.database.performPreparedStatementBinding(this.statementContext, this.preparedStatement, this.parameters);
 					this.preparationDuration = Duration.ofNanos(nanoTime() - startTime);
@@ -3579,39 +3558,12 @@ public final class Database {
 		}
 
 		@NonNull
-		private DatabaseType databaseTypeForStreamingConnection() {
+		private DatabaseDialect databaseDialectForStreamingConnection() {
 			try {
-				return this.database.getDatabaseType(requireNonNull(this.connection));
+				return this.database.getDatabaseDialect(requireNonNull(this.connection));
 			} catch (DatabaseException e) {
-				return this.database.peekDatabaseType();
+				return this.database.peekDatabaseType().dialect();
 			}
-		}
-
-		private void configurePostgreSqlStreamingIfNeeded(@NonNull DatabaseType databaseType) throws SQLException {
-			requireNonNull(databaseType);
-
-			if (databaseType != DatabaseType.POSTGRESQL || this.transaction.isPresent())
-				return;
-
-			Connection connection = requireNonNull(this.connection);
-			this.initialAutoCommit = connection.getAutoCommit();
-
-			if (Boolean.TRUE.equals(this.initialAutoCommit))
-				connection.setAutoCommit(false);
-
-			this.postgresqlStreamTransactionStarted = true;
-		}
-
-		private void configurePostgreSqlStreamingFetchSizeIfNeeded(@NonNull DatabaseType databaseType) throws SQLException {
-			requireNonNull(databaseType);
-
-			if (databaseType != DatabaseType.POSTGRESQL || this.transaction.isPresent() || this.queryFetchSizeConfigured)
-				return;
-
-			PreparedStatement preparedStatement = requireNonNull(this.preparedStatement);
-
-			if (preparedStatement.getFetchSize() <= 0)
-				preparedStatement.setFetchSize(DEFAULT_POSTGRESQL_STREAM_FETCH_SIZE);
 		}
 
 		@Override
@@ -3744,7 +3696,7 @@ public final class Database {
 					}
 				}
 
-				cleanupFailure = completePostgreSqlStreamTransactionIfNeeded(cleanupFailure);
+				cleanupFailure = completeDialectStreamingConnectionIfNeeded(cleanupFailure);
 
 				if (this.connection != null && this.transaction.isEmpty()) {
 					Duration heldDuration = this.connectionHeldStartTime == 0L
@@ -3806,50 +3758,16 @@ public final class Database {
 		}
 
 		@Nullable
-		private Throwable completePostgreSqlStreamTransactionIfNeeded(@Nullable Throwable cleanupFailure) {
-			if (!this.postgresqlStreamTransactionStarted || this.connection == null)
-				return cleanupFailure;
-
-			boolean shouldCommit = this.thrown == null && this.exception == null && this.callbackThrowable == null && !this.openFailed;
-			boolean streamTransactionCleanupFailed = false;
-
-			try {
-				if (shouldCommit)
-					this.connection.commit();
-				else
-					this.connection.rollback();
-			} catch (Throwable cleanupException) {
-				streamTransactionCleanupFailed = true;
-				cleanupFailure = cleanupFailure == null ? cleanupException : addSuppressed(cleanupFailure, cleanupException);
-			}
-
-			if (Boolean.TRUE.equals(this.initialAutoCommit)) {
-				try {
-					this.connection.setAutoCommit(true);
-				} catch (Throwable cleanupException) {
-					streamTransactionCleanupFailed = true;
-					cleanupFailure = cleanupFailure == null ? cleanupException : addSuppressed(cleanupFailure, cleanupException);
-				}
-			}
-
-			if (streamTransactionCleanupFailed)
-				cleanupFailure = abortPostgreSqlStreamConnection(cleanupFailure);
-
-			this.postgresqlStreamTransactionStarted = false;
-			return cleanupFailure;
-		}
-
-		@Nullable
-		private Throwable abortPostgreSqlStreamConnection(@Nullable Throwable cleanupFailure) {
+		private Throwable completeDialectStreamingConnectionIfNeeded(@Nullable Throwable cleanupFailure) {
 			if (this.connection == null)
 				return cleanupFailure;
 
-			try {
-				this.connection.abort(Runnable::run);
-			} catch (Throwable cleanupException) {
-				cleanupFailure = cleanupFailure == null ? cleanupException : addSuppressed(cleanupFailure, cleanupException);
-			}
+			boolean streamSucceeded = this.thrown == null && this.exception == null && this.callbackThrowable == null && !this.openFailed;
+			cleanupFailure = this.databaseStreamDialect.completeStreamingConnection(requireNonNull(this.connection),
+					this.databaseStreamState, streamSucceeded, cleanupFailure);
 
+			this.databaseStreamDialect = GenericDialect.INSTANCE;
+			this.databaseStreamState = DatabaseStreamState.none();
 			return cleanupFailure;
 		}
 

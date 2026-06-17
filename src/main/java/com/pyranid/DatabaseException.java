@@ -102,79 +102,34 @@ public class DatabaseException extends RuntimeException {
 	 */
 	public DatabaseException(@Nullable String message,
 													 @Nullable Throwable cause) {
+		this(message, cause, DatabaseDialect.forExceptionCause(cause));
+	}
+
+	DatabaseException(@Nullable String message,
+										@Nullable Throwable cause,
+										@NonNull DatabaseDialect databaseDialect) {
 		super(message, cause);
 
-		Integer errorCode = null;
-		String sqlState = null;
-		String column = null;
-		String constraint = null;
-		String datatype = null;
-		String detail = null;
-		String file = null;
-		String hint = null;
-		Integer internalPosition = null;
-		String internalQuery = null;
-		Integer line = null;
-		String dbmsMessage = null;
-		Integer position = null;
-		String routine = null;
-		String schema = null;
-		String severity = null;
-		String table = null;
-		String where = null;
+		DatabaseExceptionMetadata metadata = databaseDialect.databaseExceptionMetadata(cause);
 
-		if (cause instanceof SQLException sqlException) {
-			errorCode = sqlException.getErrorCode();
-			sqlState = sqlException.getSQLState();
-		}
-
-		if (cause != null) {
-			// Special handling for Postgres
-			if ("org.postgresql.util.PSQLException".equals(cause.getClass().getName())) {
-				org.postgresql.util.PSQLException psqlException = (org.postgresql.util.PSQLException) cause;
-				org.postgresql.util.ServerErrorMessage serverErrorMessage = psqlException.getServerErrorMessage();
-
-				if (serverErrorMessage != null) {
-					column = serverErrorMessage.getColumn();
-					constraint = serverErrorMessage.getConstraint();
-					datatype = serverErrorMessage.getDatatype();
-					detail = serverErrorMessage.getDetail();
-					file = serverErrorMessage.getFile();
-					hint = serverErrorMessage.getHint();
-					internalQuery = serverErrorMessage.getInternalQuery();
-					dbmsMessage = serverErrorMessage.getMessage();
-					routine = serverErrorMessage.getRoutine();
-					schema = serverErrorMessage.getSchema();
-					severity = serverErrorMessage.getSeverity();
-					if (serverErrorMessage.getSQLState() != null)
-						sqlState = serverErrorMessage.getSQLState();
-					table = serverErrorMessage.getTable();
-					where = serverErrorMessage.getWhere();
-					internalPosition = serverErrorMessage.getInternalPosition();
-					line = serverErrorMessage.getLine();
-					position = serverErrorMessage.getPosition();
-				}
-			}
-		}
-
-		this.errorCode = errorCode;
-		this.sqlState = sqlState;
-		this.column = column;
-		this.constraint = constraint;
-		this.datatype = datatype;
-		this.detail = detail;
-		this.file = file;
-		this.hint = hint;
-		this.internalPosition = internalPosition;
-		this.internalQuery = internalQuery;
-		this.line = line;
-		this.dbmsMessage = dbmsMessage;
-		this.position = position;
-		this.routine = routine;
-		this.schema = schema;
-		this.severity = severity;
-		this.table = table;
-		this.where = where;
+		this.errorCode = metadata.errorCode;
+		this.sqlState = metadata.sqlState;
+		this.column = metadata.column;
+		this.constraint = metadata.constraint;
+		this.datatype = metadata.datatype;
+		this.detail = metadata.detail;
+		this.file = metadata.file;
+		this.hint = metadata.hint;
+		this.internalPosition = metadata.internalPosition;
+		this.internalQuery = metadata.internalQuery;
+		this.line = metadata.line;
+		this.dbmsMessage = metadata.dbmsMessage;
+		this.position = metadata.position;
+		this.routine = metadata.routine;
+		this.schema = metadata.schema;
+		this.severity = metadata.severity;
+		this.table = metadata.table;
+		this.where = metadata.where;
 	}
 
 	@Override

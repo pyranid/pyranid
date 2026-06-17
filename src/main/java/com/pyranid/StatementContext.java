@@ -53,6 +53,10 @@ public final class StatementContext<T> {
 	@NonNull
 	private final Supplier<@NonNull DatabaseType> databaseTypeSupplier;
 	@NonNull
+	private final Supplier<@NonNull DatabaseDialect> databaseDialectSupplier;
+	@Nullable
+	private volatile DatabaseDialect databaseDialect;
+	@NonNull
 	private final Supplier<@NonNull DatabaseType> diagnosticDatabaseTypeSupplier;
 	@NonNull
 	private final ZoneId timeZone;
@@ -70,6 +74,7 @@ public final class StatementContext<T> {
 				: Collections.unmodifiableList(new ArrayList<>(builder.parameters));
 		this.resultSetRowType = builder.resultSetRowType;
 		this.databaseTypeSupplier = builder.databaseTypeSupplier;
+		this.databaseDialectSupplier = builder.databaseDialectSupplier;
 		this.diagnosticDatabaseTypeSupplier = builder.diagnosticDatabaseTypeSupplier;
 		this.timeZone = builder.timeZone;
 		this.ambiguousTimestampBindingStrategy = builder.ambiguousTimestampBindingStrategy;
@@ -152,6 +157,18 @@ public final class StatementContext<T> {
 	}
 
 	@NonNull
+	DatabaseDialect getDatabaseDialect() {
+		DatabaseDialect cachedDatabaseDialect = this.databaseDialect;
+
+		if (cachedDatabaseDialect != null)
+			return cachedDatabaseDialect;
+
+		DatabaseDialect databaseDialect = this.databaseDialectSupplier.get();
+		this.databaseDialect = databaseDialect;
+		return databaseDialect;
+	}
+
+	@NonNull
 	private DatabaseType getDiagnosticDatabaseType() {
 		return this.diagnosticDatabaseTypeSupplier.get();
 	}
@@ -207,6 +224,8 @@ public final class StatementContext<T> {
 		@NonNull
 		private final Supplier<@NonNull DatabaseType> databaseTypeSupplier;
 		@NonNull
+		private final Supplier<@NonNull DatabaseDialect> databaseDialectSupplier;
+		@NonNull
 		private final Supplier<@NonNull DatabaseType> diagnosticDatabaseTypeSupplier;
 		@NonNull
 		private final ZoneId timeZone;
@@ -224,6 +243,7 @@ public final class StatementContext<T> {
 
 			this.statement = statement;
 			this.databaseTypeSupplier = database::getDatabaseType;
+			this.databaseDialectSupplier = database::getDatabaseDialect;
 			this.diagnosticDatabaseTypeSupplier = database::peekDatabaseType;
 			this.timeZone = database.getTimeZone();
 			this.ambiguousTimestampBindingStrategy = database.getAmbiguousTimestampBindingStrategy();

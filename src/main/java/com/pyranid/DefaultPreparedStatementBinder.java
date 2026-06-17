@@ -17,12 +17,10 @@
 package com.pyranid;
 
 import com.pyranid.CustomParameterBinder.BindingResult;
-import com.pyranid.JsonParameter.BindingPreference;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
 import javax.annotation.concurrent.ThreadSafe;
-import java.nio.ByteBuffer;
 import java.sql.Array;
 import java.sql.ParameterMetaData;
 import java.sql.PreparedStatement;
@@ -237,6 +235,13 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		if (normalizedParameter instanceof SqlArrayParameter<?> sqlArrayParameter) {
+			DatabaseDialect databaseDialect = statementContext.getDatabaseDialect();
+
+			if (!databaseDialect.supportsSqlArray())
+				throw new IllegalArgumentException(format("%s is not supported for %s.%s; use %s.inList(...) for expanded IN-list parameters",
+						SqlArrayParameter.class.getSimpleName(), DatabaseType.class.getSimpleName(),
+						statementContext.getDatabaseType().name(), Parameters.class.getSimpleName()));
+
 			Object[] elements = sqlArrayParameter.getElements().orElse(null);
 
 			if (elements == null) {
@@ -263,22 +268,13 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		if (normalizedParameter instanceof VectorParameter vectorParameter) {
-			if (statementContext.getDatabaseType() != DatabaseType.POSTGRESQL)
-				throw new IllegalArgumentException(format("%s supported only on %s.%s",
-						VectorParameter.class.getSimpleName(), DatabaseType.class.getSimpleName(), DatabaseType.POSTGRESQL.name()));
-
+			DatabaseDialect databaseDialect = statementContext.getDatabaseDialect();
 			double[] elements = vectorParameter.getElements().orElse(null);
-
-			if (elements == null) {
-				Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(parameterSqlTypeResolver, parameterIndex);
-				setNullWithFallback(preparedStatement, parameterIndex, Types.OTHER, "vector",
-						sqlTypeOptional.map(ParameterSqlType::getSqlType).orElse(null));
-			} else {
-				org.postgresql.util.PGobject pg = new org.postgresql.util.PGobject();
-				pg.setType("vector");
-				pg.setValue(toPostgresVectorLiteralValue(elements));
-				preparedStatement.setObject(parameterIndex, pg);
-			}
+			Optional<ParameterSqlType> sqlTypeOptional = elements == null && databaseDialect.supportsVector()
+					? determineParameterSqlType(parameterSqlTypeResolver, parameterIndex)
+					: Optional.empty();
+			databaseDialect.bindVector(preparedStatement, parameterIndex, elements,
+					sqlTypeOptional.map(ParameterSqlType::getSqlType).orElse(null));
 
 			return;
 		}
@@ -288,26 +284,11 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 			if (json == null) {
 				Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(parameterSqlTypeResolver, parameterIndex);
-
-				if (statementContext.getDatabaseType() == DatabaseType.POSTGRESQL) {
-					String typeName = jsonParameter.getBindingPreference() == BindingPreference.TEXT ? "json" : "jsonb";
-					setNullWithFallback(preparedStatement, parameterIndex, Types.OTHER, typeName,
-							sqlTypeOptional.map(ParameterSqlType::getSqlType).orElse(null));
-				} else {
-					setNullWithFallback(preparedStatement, parameterIndex, Types.LONGVARCHAR, null,
-							sqlTypeOptional.map(ParameterSqlType::getSqlType).orElse(null));
-				}
+				statementContext.getDatabaseDialect().bindNullJson(preparedStatement, parameterIndex,
+						jsonParameter.getBindingPreference(), sqlTypeOptional.map(ParameterSqlType::getSqlType).orElse(null));
 			} else {
-				// For now, only special handling for PostgreSQL.
-				// Later, we can add more handling for other DB types.
-				if (statementContext.getDatabaseType() == DatabaseType.POSTGRESQL) {
-					org.postgresql.util.PGobject pg = new org.postgresql.util.PGobject();
-					pg.setType(jsonParameter.getBindingPreference() == BindingPreference.TEXT ? "json" : "jsonb");
-					pg.setValue(json);
-					preparedStatement.setObject(parameterIndex, pg);
-				} else {
-					preparedStatement.setString(parameterIndex, json);
-				}
+				statementContext.getDatabaseDialect().bindJson(preparedStatement, parameterIndex, json,
+						jsonParameter.getBindingPreference());
 			}
 
 			return;
@@ -526,11 +507,11 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			}
 		}
 
-	private static void setNullWithFallback(@NonNull PreparedStatement preparedStatement,
-																					@NonNull Integer parameterIndex,
-																					@NonNull Integer primarySqlType,
-																					@Nullable String typeName,
-																					@Nullable Integer fallbackSqlType) throws SQLException {
+	static void setNullWithFallback(@NonNull PreparedStatement preparedStatement,
+																	@NonNull Integer parameterIndex,
+																	@NonNull Integer primarySqlType,
+																	@Nullable String typeName,
+																	@Nullable Integer fallbackSqlType) throws SQLException {
 		requireNonNull(preparedStatement);
 		requireNonNull(parameterIndex);
 		requireNonNull(primarySqlType);
@@ -665,29 +646,10 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 				.toList();
 	}
 
-	@NonNull
-	protected String toPostgresVectorLiteralValue(double @NonNull [] elements) {
-		requireNonNull(elements);
-
-		StringBuilder sb = new StringBuilder(2 + elements.length * 8);
-
-		sb.append('[');
-
-		for (int i = 0; i < elements.length; i++) {
-			if (i > 0) sb.append(", ");
-			// Use Java default formatting (locale-independent) which is fine for pgvector
-			sb.append(Double.toString(elements[i]));
-		}
-
-		sb.append(']');
-
-		return sb.toString();
-	}
-
 	/**
 	 * Massages a parameter into a JDBC-friendly format if needed.
 	 * <p>
-	 * For example, we need to do special work to prepare a {@link UUID} for Oracle.
+	 * For example, some databases need {@link UUID} values converted before binding.
 	 *
 	 * @param statementContext current SQL context
 	 * @param parameter        the parameter to (possibly) massage
@@ -721,13 +683,8 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		if (parameter instanceof TimeZone)
 			return ((TimeZone) parameter).getID();
 
-		// Special handling for Oracle
-		if (parameter instanceof UUID uuid && statementContext.getDatabaseType() == DatabaseType.ORACLE) {
-			ByteBuffer byteBuffer = ByteBuffer.wrap(new byte[16]);
-			byteBuffer.putLong(uuid.getMostSignificantBits());
-			byteBuffer.putLong(uuid.getLeastSignificantBits());
-			return byteBuffer.array();
-		}
+		if (parameter instanceof UUID uuid)
+			return statementContext.getDatabaseDialect().normalizeUuid(uuid);
 
 		return parameter;
 	}

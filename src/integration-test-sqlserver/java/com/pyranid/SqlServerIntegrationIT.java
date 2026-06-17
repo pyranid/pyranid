@@ -30,19 +30,19 @@ import javax.sql.DataSource;
  */
 @Testcontainers
 public class SqlServerIntegrationIT extends AbstractPortableJdbcIntegrationTests {
-	private static final String SQLSERVER_IMAGE_NAME =
+	private static final String SQL_SERVER_IMAGE_NAME =
 			System.getProperty("sqlserver.integration.image", "mcr.microsoft.com/mssql/server:2022-latest");
-	private static final DockerImageName SQLSERVER_IMAGE = DockerImageName.parse(SQLSERVER_IMAGE_NAME)
+	private static final DockerImageName SQL_SERVER_IMAGE = DockerImageName.parse(SQL_SERVER_IMAGE_NAME)
 			.asCompatibleSubstituteFor("mcr.microsoft.com/mssql/server");
 
 	@Container
-	private static final MSSQLServerContainer<?> SQLSERVER = new MSSQLServerContainer<>(SQLSERVER_IMAGE)
+	private static final MSSQLServerContainer<?> SQL_SERVER = new MSSQLServerContainer<>(SQL_SERVER_IMAGE)
 			.acceptLicense();
 
 	@NonNull
 	@Override
 	protected DataSource dataSource() {
-		return new DriverManagerDataSource(SQLSERVER.getJdbcUrl(), SQLSERVER.getUsername(), SQLSERVER.getPassword());
+		return new DriverManagerDataSource(SQL_SERVER.getJdbcUrl(), SQL_SERVER.getUsername(), SQL_SERVER.getPassword());
 	}
 
 	@NonNull

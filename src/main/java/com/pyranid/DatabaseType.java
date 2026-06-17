@@ -175,7 +175,12 @@ public enum DatabaseType {
 	DatabaseDialect dialect() {
 		return switch (this) {
 			case POSTGRESQL -> PostgresDialect.INSTANCE;
-			case GENERIC, ORACLE, MYSQL, MARIADB, SQLITE, SQL_SERVER -> GenericDialect.INSTANCE;
+			case ORACLE -> OracleDialect.INSTANCE;
+			case MYSQL -> MySqlDialect.INSTANCE;
+			case MARIADB -> MariaDbDialect.INSTANCE;
+			case SQLITE -> SqliteDialect.INSTANCE;
+			case SQL_SERVER -> SqlServerDialect.INSTANCE;
+			case GENERIC -> GenericDialect.INSTANCE;
 		};
 	}
 

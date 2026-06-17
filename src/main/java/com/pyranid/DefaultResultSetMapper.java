@@ -819,12 +819,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		int cols = resultSetMetaData.getColumnCount();
 		StringBuilder sig = new StringBuilder(64 + cols * 48).append(cols);
-		DatabaseType databaseType = statementContext.getDatabaseType();
+		DatabaseDialect databaseDialect = statementContext.getDatabaseDialect();
 
 		for (int i = 1; i <= cols; i++) {
 			String labelNorm = normalizeColumnLabel(resultSetMetaData.getColumnLabel(i));
 			int jdbcType = resultSetMetaData.getColumnType(i);
-			boolean tsTz = TemporalReaders.isTimestampWithTimeZone(resultSetMetaData, i, databaseType);
+			boolean tsTz = databaseDialect.isTimestampWithTimeZone(resultSetMetaData, i);
 			boolean timeTz = TemporalReaders.isTimeWithTimeZone(resultSetMetaData, i);
 			String typeName = Objects.toString(resultSetMetaData.getColumnTypeName(i), "").toUpperCase(Locale.ROOT);
 			sig.append('|').append(labelNorm)
@@ -1027,7 +1027,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		} else if (resultClass == ZonedDateTime.class) {
 			value = TemporalReaders.asZonedDateTime(resultSet, 1, statementContext, resultSetMetaData);
 		} else if (resultClass == java.sql.Timestamp.class) {
-			boolean withTz = TemporalReaders.isTimestampWithTimeZone(resultSetMetaData, 1, statementContext.getDatabaseType());
+			boolean withTz = statementContext.getDatabaseDialect().isTimestampWithTimeZone(resultSetMetaData, 1);
 
 			if (withTz) {
 				Instant inst = TemporalReaders.asInstant(resultSet, 1, statementContext, resultSetMetaData);
@@ -1466,7 +1466,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		Object resultSetValue;
 
 		int jdbcType = resultSetMetaData.getColumnType(columnIndex);
-		boolean tsTz = TemporalReaders.isTimestampWithTimeZone(resultSetMetaData, columnIndex, statementContext.getDatabaseType());
+		boolean tsTz = statementContext.getDatabaseDialect().isTimestampWithTimeZone(resultSetMetaData, columnIndex);
 		boolean timeTz = TemporalReaders.isTimeWithTimeZone(resultSetMetaData, columnIndex);
 
 		if (tsTz) {
@@ -1480,7 +1480,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		} else if (jdbcType == Types.TIME) {
 			resultSetValue = TemporalReaders.asLocalTime(resultSet, columnIndex);
 		} else {
-			// Non-temporal or unknown: take the driver’s native object (PGobject, BigDecimal, etc.)
+			// Non-temporal or unknown: take the driver's native object (BigDecimal, SQLXML, etc.)
 			resultSetValue = resultSet.getObject(columnIndex);
 
 			if (resultSetValue instanceof Array sqlArray)
@@ -1516,6 +1516,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 																																 @NonNull TargetType targetType) {
 		requireNonNull(statementContext);
 		requireNonNull(targetType);
+
+		if (resultSetValue == null)
+			return Optional.empty();
+
+		resultSetValue = statementContext.getDatabaseDialect().unwrapResultSetValue(resultSetValue);
 
 		if (resultSetValue == null)
 			return Optional.empty();
@@ -1764,9 +1769,6 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			}
 		} else if (targetClass.isEnum()) {
 			return Optional.ofNullable(extractEnumValue(targetClass, resultSetValue));
-		} else if ("org.postgresql.util.PGobject".equals(resultSetValue.getClass().getName())) {
-			org.postgresql.util.PGobject pgObject = (org.postgresql.util.PGobject) resultSetValue;
-			return Optional.ofNullable(pgObject.getValue());
 		}
 
 		if (Boolean.class.isAssignableFrom(targetClass)) {
@@ -2379,24 +2381,6 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	protected static final class TemporalReaders {
 		private TemporalReaders() {}
 
-		/**
-		 * Detect if the current column is TIMESTAMP WITH TIME ZONE (or equivalent)
-		 */
-		public static boolean isTimestampWithTimeZone(ResultSetMetaData md, int col, DatabaseType dbType) throws SQLException {
-			int jdbcType = md.getColumnType(col);
-			if (jdbcType == Types.TIMESTAMP_WITH_TIMEZONE) return true;
-
-			@Nullable String typeName = md.getColumnTypeName(col);
-			if (typeName == null) return false;
-			String u = typeName.toUpperCase(Locale.ROOT);
-
-			// Heuristics for drivers that still report plain TIMESTAMP:
-			// PostgreSQL: TIMESTAMPTZ, "timestamp with time zone"
-			// Oracle: "TIMESTAMP WITH TIME ZONE"
-			// HSQLDB: "TIMESTAMP WITH TIME ZONE"
-			return u.contains("WITH TIME ZONE") || u.contains("TIMESTAMPTZ");
-		}
-
 		public static boolean isTimeWithTimeZone(ResultSetMetaData md, int col) throws SQLException {
 			int jdbcType = md.getColumnType(col);
 			if (jdbcType == Types.TIME_WITH_TIMEZONE) return true;
@@ -2419,7 +2403,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		// ==== Targeted readers =====================================================
 
 		public static Instant asInstant(ResultSet rs, int col, StatementContext<?> ctx, ResultSetMetaData resultSetMetaData) throws SQLException {
-			boolean withTz = isTimestampWithTimeZone(resultSetMetaData, col, ctx.getDatabaseType());
+			boolean withTz = ctx.getDatabaseDialect().isTimestampWithTimeZone(resultSetMetaData, col);
 			return asInstant(rs, col, ctx, withTz);
 		}
 
@@ -2470,7 +2454,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		public static OffsetDateTime asOffsetDateTime(ResultSet rs, int col, StatementContext<?> ctx, ResultSetMetaData resultSetMetaData) throws SQLException {
-			boolean withTz = isTimestampWithTimeZone(resultSetMetaData, col, ctx.getDatabaseType());
+			boolean withTz = ctx.getDatabaseDialect().isTimestampWithTimeZone(resultSetMetaData, col);
 			return asOffsetDateTime(rs, col, ctx, withTz);
 		}
 
@@ -2500,7 +2484,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		public static LocalDateTime asLocalDateTime(ResultSet rs, int col, StatementContext<?> ctx, ResultSetMetaData resultSetMetaData) throws SQLException {
-			boolean withTz = isTimestampWithTimeZone(resultSetMetaData, col, ctx.getDatabaseType());
+			boolean withTz = ctx.getDatabaseDialect().isTimestampWithTimeZone(resultSetMetaData, col);
 			return asLocalDateTime(rs, col, ctx, withTz);
 		}
 
@@ -2818,9 +2802,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		// Build per-column readers (decided once)
 		final ColumnReader[] readers = new ColumnReader[cols + 1]; // 1-based indexing
+		DatabaseDialect databaseDialect = ctx.getDatabaseDialect();
 		for (int i = 1; i <= cols; i++) {
 			int jdbcType = resultSetMetaData.getColumnType(i);
-			boolean tsTz = TemporalReaders.isTimestampWithTimeZone(resultSetMetaData, i, ctx.getDatabaseType());
+			boolean tsTz = databaseDialect.isTimestampWithTimeZone(resultSetMetaData, i);
 			boolean timeTz = TemporalReaders.isTimeWithTimeZone(resultSetMetaData, i);
 			if (tsTz) {
 				readers[i] = (r, c, col) -> TemporalReaders.asOffsetDateTime(r, col, c, true);

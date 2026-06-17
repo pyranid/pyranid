@@ -1558,6 +1558,36 @@ public class DatabaseTests {
 	}
 
 	@Test
+	public void testDialectTimestampWithTimeZoneDetectionRecognizesVendorTypeNames() throws SQLException {
+		Assertions.assertTrue(DatabaseType.SQL_SERVER.dialect().isTimestampWithTimeZone(
+						singleColumnResultSetMetaData("v", Types.TIMESTAMP, "datetimeoffset"), 1),
+				"Expected SQL Server datetimeoffset to be treated as timestamp with time zone");
+		Assertions.assertTrue(DatabaseType.ORACLE.dialect().isTimestampWithTimeZone(
+						singleColumnResultSetMetaData("v", Types.TIMESTAMP, "TIMESTAMP WITH LOCAL TIME ZONE"), 1),
+				"Expected Oracle TIMESTAMP WITH LOCAL TIME ZONE to be treated as timestamp with time zone");
+		Assertions.assertTrue(DatabaseType.POSTGRESQL.dialect().isTimestampWithTimeZone(
+						singleColumnResultSetMetaData("v", Types.TIMESTAMP, "timestamptz"), 1),
+				"Expected PostgreSQL timestamptz to be treated as timestamp with time zone");
+		Assertions.assertFalse(DatabaseType.MYSQL.dialect().isTimestampWithTimeZone(
+						singleColumnResultSetMetaData("v", Types.TIMESTAMP, "datetime"), 1),
+				"Expected MySQL datetime to remain timestamp without time zone");
+	}
+
+	@Test
+	public void testPostgresDialectUnwrapsPgObjectDuringStandardMapping() throws SQLException {
+		Database db = Database.withDataSource(createInMemoryDataSource("pgobject_mapping"))
+				.databaseType(DatabaseType.POSTGRESQL)
+				.build();
+		org.postgresql.util.PGobject pgObject = new org.postgresql.util.PGobject();
+		pgObject.setType("jsonb");
+		pgObject.setValue("{\"enabled\":true}");
+
+		String mapped = mapSingleColumn(db, "v", Types.OTHER, "jsonb", pgObject, String.class).orElseThrow();
+
+		Assertions.assertEquals("{\"enabled\":true}", mapped);
+	}
+
+	@Test
 	public void testTimestampLiteralMappingRespectsDatabaseTimeZone() {
 		// Same SQL literal interpreted under two different DB zones
 		LocalDateTime ldt = LocalDateTime.of(2020, 1, 2, 3, 4, 5, 123_000_000);
@@ -3897,27 +3927,42 @@ public class DatabaseTests {
 		StatementContext<?> ctx = statementContextFor(DatabaseType.ORACLE);
 		UUID uuid = UUID.fromString("f81d4fae-7dec-11d0-a765-00a0c91e6bf6");
 		AtomicReference<Object> boundValue = new AtomicReference<>();
-
-		PreparedStatement preparedStatement = (PreparedStatement) Proxy.newProxyInstance(
-				PreparedStatement.class.getClassLoader(),
-				new Class<?>[]{PreparedStatement.class},
-				(proxy, method, args) -> {
-					String name = method.getName();
-					if ("setObject".equals(name)) {
-						boundValue.set(args[1]);
-						return null;
-					}
-					if ("getParameterMetaData".equals(name))
-						return null;
-					if ("toString".equals(name))
-						return "PreparedStatement<oracle-uuid>";
-					return defaultValue(method.getReturnType());
-				});
+		PreparedStatement preparedStatement = preparedStatementCapturingObject(boundValue);
 
 		binder.bindParameter(ctx, preparedStatement, 1, uuid);
 
 		Assertions.assertTrue(boundValue.get() instanceof byte[], "Expected Oracle UUID binding to normalize to byte[]");
 		Assertions.assertArrayEquals(uuidBytes(uuid), (byte[]) boundValue.get(), "Expected Oracle UUID binding to use RFC-4122 bytes");
+	}
+
+	@Test
+	public void testUuidBinding_mysqlSqliteAndSqlServerBindAsText() throws SQLException {
+		PreparedStatementBinder binder = PreparedStatementBinder.withDefaultConfiguration();
+		UUID uuid = UUID.fromString("f81d4fae-7dec-11d0-a765-00a0c91e6bf6");
+
+		for (DatabaseType databaseType : List.of(DatabaseType.MYSQL, DatabaseType.MARIADB, DatabaseType.SQLITE, DatabaseType.SQL_SERVER)) {
+			StatementContext<?> ctx = statementContextFor(databaseType);
+			AtomicReference<Object> boundValue = new AtomicReference<>();
+			PreparedStatement preparedStatement = preparedStatementCapturingObject(boundValue);
+
+			binder.bindParameter(ctx, preparedStatement, 1, uuid);
+
+			Assertions.assertEquals(uuid.toString(), boundValue.get(),
+					format("Expected %s UUID binding to normalize to text", databaseType));
+		}
+	}
+
+	@Test
+	public void testUuidBinding_genericRetainsUuidObject() throws SQLException {
+		PreparedStatementBinder binder = PreparedStatementBinder.withDefaultConfiguration();
+		StatementContext<?> ctx = statementContextFor(DatabaseType.GENERIC);
+		UUID uuid = UUID.fromString("f81d4fae-7dec-11d0-a765-00a0c91e6bf6");
+		AtomicReference<Object> boundValue = new AtomicReference<>();
+		PreparedStatement preparedStatement = preparedStatementCapturingObject(boundValue);
+
+		binder.bindParameter(ctx, preparedStatement, 1, uuid);
+
+		Assertions.assertSame(uuid, boundValue.get(), "Expected GENERIC UUID binding to preserve the UUID object");
 	}
 
 	@Test
@@ -3932,6 +3977,42 @@ public class DatabaseTests {
 		Assertions.assertEquals(1, capture.setNullCalls, "Expected one setNull call");
 		Assertions.assertEquals(Integer.valueOf(Types.ARRAY), capture.sqlType, "Expected Types.ARRAY for SQL ARRAY null binding");
 		Assertions.assertEquals("text", capture.typeName, "Expected ARRAY base type name to be used");
+	}
+
+	@Test
+	public void testSqlArrayParameter_unsupportedDatabasesThrowClearException() {
+		PreparedStatementBinder binder = PreparedStatementBinder.withDefaultConfiguration();
+		PreparedStatement preparedStatement = preparedStatementWithDefaultBehavior();
+
+		for (DatabaseType databaseType : List.of(DatabaseType.MYSQL, DatabaseType.MARIADB, DatabaseType.SQLITE, DatabaseType.SQL_SERVER, DatabaseType.ORACLE)) {
+			StatementContext<?> ctx = statementContextFor(databaseType);
+
+			IllegalArgumentException exception = Assertions.assertThrows(IllegalArgumentException.class, () ->
+					binder.bindParameter(ctx, preparedStatement, 1, Parameters.sqlArrayOf("text", List.of("alpha", "beta"))));
+
+			Assertions.assertTrue(exception.getMessage().contains("SqlArrayParameter is not supported"),
+					"Expected clear SQL ARRAY unsupported message");
+			Assertions.assertTrue(exception.getMessage().contains(databaseType.name()),
+					"Expected unsupported message to mention the database type");
+		}
+	}
+
+	@Test
+	public void testNullSqlArrayParameter_unsupportedDatabasesThrowClearException() {
+		PreparedStatementBinder binder = PreparedStatementBinder.withDefaultConfiguration();
+		PreparedStatement preparedStatement = preparedStatementWithDefaultBehavior();
+
+		for (DatabaseType databaseType : List.of(DatabaseType.MYSQL, DatabaseType.MARIADB, DatabaseType.SQLITE, DatabaseType.SQL_SERVER, DatabaseType.ORACLE)) {
+			StatementContext<?> ctx = statementContextFor(databaseType);
+
+			IllegalArgumentException exception = Assertions.assertThrows(IllegalArgumentException.class, () ->
+					binder.bindParameter(ctx, preparedStatement, 1, Parameters.sqlArrayOf("text", (List<String>) null)));
+
+			Assertions.assertTrue(exception.getMessage().contains("SqlArrayParameter is not supported"),
+					"Expected clear SQL ARRAY unsupported message");
+			Assertions.assertTrue(exception.getMessage().contains(databaseType.name()),
+					"Expected unsupported message to mention the database type");
+		}
 	}
 
 	@Test
@@ -5023,6 +5104,41 @@ public class DatabaseTests {
 						return null;
 					if ("toString".equals(name))
 						return "PreparedStatement<null-capture>";
+					return defaultValue(method.getReturnType());
+				});
+	}
+
+	@NonNull
+	private PreparedStatement preparedStatementCapturingObject(@NonNull AtomicReference<Object> boundValue) {
+		requireNonNull(boundValue);
+
+		return (PreparedStatement) Proxy.newProxyInstance(
+				PreparedStatement.class.getClassLoader(),
+				new Class<?>[]{PreparedStatement.class},
+				(proxy, method, args) -> {
+					String name = method.getName();
+					if ("setObject".equals(name)) {
+						boundValue.set(args[1]);
+						return null;
+					}
+					if ("getParameterMetaData".equals(name))
+						return null;
+					if ("toString".equals(name))
+						return "PreparedStatement<object-capture>";
+					return defaultValue(method.getReturnType());
+				});
+	}
+
+	@NonNull
+	private PreparedStatement preparedStatementWithDefaultBehavior() {
+		return (PreparedStatement) Proxy.newProxyInstance(
+				PreparedStatement.class.getClassLoader(),
+				new Class<?>[]{PreparedStatement.class},
+				(proxy, method, args) -> {
+					if ("getParameterMetaData".equals(method.getName()))
+						return null;
+					if ("toString".equals(method.getName()))
+						return "PreparedStatement<default-behavior>";
 					return defaultValue(method.getReturnType());
 				});
 	}

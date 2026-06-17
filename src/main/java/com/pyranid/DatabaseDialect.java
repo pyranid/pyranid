@@ -16,9 +16,16 @@
 
 package com.pyranid;
 
+import com.pyranid.JsonParameter.BindingPreference;
 import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Internal strategy for database-specific behavior.
@@ -27,5 +34,59 @@ interface DatabaseDialect {
 	@NonNull
 	List<String> sqlFragmentsForOperators(boolean hasQuestionMarkOperators,
 																				@NonNull List<String> sqlFragments,
-																				@NonNull List<String> postgresqlSqlFragments);
+																				@NonNull List<@NonNull List<@NonNull Integer>> questionMarkOperatorFragmentIndexes);
+
+	boolean supportsSqlArray();
+
+	boolean supportsVector();
+
+	@NonNull
+	Object normalizeUuid(@NonNull UUID uuid);
+
+	void bindJson(@NonNull PreparedStatement preparedStatement,
+								@NonNull Integer parameterIndex,
+								@NonNull String json,
+								@NonNull BindingPreference bindingPreference) throws SQLException;
+
+	void bindNullJson(@NonNull PreparedStatement preparedStatement,
+										@NonNull Integer parameterIndex,
+										@NonNull BindingPreference bindingPreference,
+										@Nullable Integer fallbackSqlType) throws SQLException;
+
+	void bindVector(@NonNull PreparedStatement preparedStatement,
+									@NonNull Integer parameterIndex,
+									double @Nullable [] elements,
+									@Nullable Integer fallbackSqlType) throws SQLException;
+
+	@NonNull
+	DatabaseStreamState configureStreamingConnection(@NonNull Connection connection,
+																									 boolean transactionPresent) throws SQLException;
+
+	void configureStreamingPreparedStatement(@NonNull PreparedStatement preparedStatement,
+																					 @NonNull DatabaseStreamState databaseStreamState,
+																					 boolean transactionPresent,
+																					 boolean queryFetchSizeConfigured) throws SQLException;
+
+	@Nullable
+	Throwable completeStreamingConnection(@NonNull Connection connection,
+																				@NonNull DatabaseStreamState databaseStreamState,
+																				boolean streamSucceeded,
+																				@Nullable Throwable cleanupFailure);
+
+	@NonNull
+	DatabaseExceptionMetadata databaseExceptionMetadata(@Nullable Throwable cause);
+
+	@Nullable
+	Object unwrapResultSetValue(@NonNull Object resultSetValue);
+
+	boolean isTimestampWithTimeZone(@NonNull ResultSetMetaData resultSetMetaData,
+																	@NonNull Integer columnIndex) throws SQLException;
+
+	@NonNull
+	static DatabaseDialect forExceptionCause(@Nullable Throwable cause) {
+		if (cause != null && "org.postgresql.util.PSQLException".equals(cause.getClass().getName()))
+			return PostgresDialect.INSTANCE;
+
+		return GenericDialect.INSTANCE;
+	}
 }
