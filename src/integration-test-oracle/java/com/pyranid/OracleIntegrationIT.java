@@ -25,6 +25,8 @@ import org.testcontainers.oracle.OracleContainer;
 import org.testcontainers.utility.DockerImageName;
 
 import javax.sql.DataSource;
+import java.nio.ByteBuffer;
+import java.util.UUID;
 
 /**
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
@@ -57,6 +59,29 @@ public class OracleIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 		Assertions.assertTrue(exception.getMessage().contains("Oracle generated-key retrieval requires explicit key column names"));
 		Assertions.assertEquals(0L, countRows(db, table),
 				"Oracle no-column generated-key guard should reject before executing the insert");
+	}
+
+	@Test
+	public void testOracleRawUuidRoundTrip() {
+		Database db = database();
+		String table = "pyr_oracle_uuid_items";
+		UUID id = UUID.fromString("f81d4fae-7dec-11d0-a765-00a0c91e6bf6");
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "id RAW(16) PRIMARY KEY, "
+				+ "name VARCHAR2(64) NOT NULL"
+				+ ")");
+
+		db.query("INSERT INTO " + table + " (id, name) VALUES (:id, :name)")
+				.bind("id", id)
+				.bind("name", "raw uuid")
+				.execute();
+
+		Assertions.assertEquals(id, db.query("SELECT id FROM " + table)
+				.fetchObject(UUID.class)
+				.orElseThrow());
+		Assertions.assertArrayEquals(uuidBytes(id), db.query("SELECT id FROM " + table)
+				.fetchObject(byte[].class)
+				.orElseThrow());
 	}
 
 	@NonNull
@@ -140,5 +165,12 @@ public class OracleIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 				.supportsTemporalRoundTrip(false)
 				.hasNativeBoolean(false)
 				.build();
+	}
+
+	private static byte[] uuidBytes(UUID uuid) {
+		ByteBuffer byteBuffer = ByteBuffer.wrap(new byte[16]);
+		byteBuffer.putLong(uuid.getMostSignificantBits());
+		byteBuffer.putLong(uuid.getLeastSignificantBits());
+		return byteBuffer.array();
 	}
 }

@@ -24,6 +24,7 @@ import org.junit.jupiter.api.io.TempDir;
 import javax.sql.DataSource;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
@@ -53,6 +54,29 @@ public class SqliteIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 		Assertions.assertEquals(List.of("Ada", "Grace"), db.query("SELECT name FROM " + table + " WHERE id IN (:ids) ORDER BY id")
 				.bind("ids", Parameters.inList(ids))
 				.fetchList(String.class));
+	}
+
+	@Test
+	public void testSqliteUuidTextRoundTrip() {
+		Database db = database();
+		String table = "pyranid_sqlite_uuid_items";
+		UUID id = UUID.fromString("f81d4fae-7dec-11d0-a765-00a0c91e6bf6");
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "id TEXT PRIMARY KEY, "
+				+ "name TEXT NOT NULL"
+				+ ")");
+
+		db.query("INSERT INTO " + table + " (id, name) VALUES (:id, :name)")
+				.bind("id", id)
+				.bind("name", "text uuid")
+				.execute();
+
+		Assertions.assertEquals(id, db.query("SELECT id FROM " + table)
+				.fetchObject(UUID.class)
+				.orElseThrow());
+		Assertions.assertEquals(id.toString(), db.query("SELECT id FROM " + table)
+				.fetchObject(String.class)
+				.orElseThrow());
 	}
 
 	@NonNull

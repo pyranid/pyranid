@@ -40,6 +40,7 @@ import java.time.ZoneId;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
@@ -165,6 +166,29 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 		Assertions.assertEquals(List.of("Ada", "Grace"), db.query("SELECT name FROM " + table + " WHERE id IN (:ids) ORDER BY id")
 				.bind("ids", Parameters.inList(ids))
 				.fetchList(String.class));
+	}
+
+	@Test
+	public void testPostgreSqlNativeUuidRoundTrip() {
+		Database db = database();
+		String table = "pyranid_pg_uuid_items";
+		UUID id = UUID.fromString("f81d4fae-7dec-11d0-a765-00a0c91e6bf6");
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "id UUID PRIMARY KEY, "
+				+ "name TEXT NOT NULL"
+				+ ")");
+
+		db.query("INSERT INTO " + table + " (id, name) VALUES (:id, :name)")
+				.bind("id", id)
+				.bind("name", "native uuid")
+				.execute();
+
+		Assertions.assertEquals(id, db.query("SELECT id FROM " + table)
+				.fetchObject(UUID.class)
+				.orElseThrow());
+		Assertions.assertEquals(id.toString(), db.query("SELECT id::text FROM " + table)
+				.fetchObject(String.class)
+				.orElseThrow());
 	}
 
 	@Test
