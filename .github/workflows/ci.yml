@@ -37,9 +37,34 @@ jobs:
       - name: Build Javadoc
         run: mvn -B -ntp javadoc:javadoc
 
-  postgresql-integration:
-    name: PostgreSQL Integration (JDK 21)
+  integration:
+    name: ${{ matrix.name }} Integration (JDK 21)
     runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: PostgreSQL
+            profiles: integration
+            test: PostgreSqlIntegrationIT
+            experimental: false
+          - name: MySQL
+            profiles: integration
+            test: MySqlIntegrationIT
+            experimental: false
+          - name: SQLite
+            profiles: integration
+            test: SqliteIntegrationIT
+            experimental: false
+          - name: SQL Server
+            profiles: integration,it-sqlserver
+            test: SqlServerIntegrationIT
+            experimental: true
+          - name: Oracle
+            profiles: integration,it-oracle
+            test: OracleIntegrationIT
+            experimental: true
     steps:
       - name: Check out
         uses: actions/checkout@v6
@@ -51,5 +76,7 @@ jobs:
           java-version: '21'
           cache: maven
 
-      - name: Verify integration profile
-        run: mvn -B -ntp -P integration verify
+      - name: Verify ${{ matrix.name }} integration profile
+        env:
+          ACCEPT_EULA: 'Y'
+        run: mvn -B -ntp -P${{ matrix.profiles }} -Dit.test=${{ matrix.test }} verify

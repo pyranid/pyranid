@@ -26,7 +26,7 @@ import java.nio.file.Path;
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 4.2.0
  */
-public class SQLiteIntegrationIT extends AbstractPortableJdbcIntegrationTests {
+public class SqliteIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 	@TempDir
 	private Path tempDir;
 
@@ -38,23 +38,28 @@ public class SQLiteIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 
 	@NonNull
 	@Override
-	protected String generatedKeyTableSql(@NonNull String tableName) {
-		return "CREATE TABLE " + tableName + " (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL)";
-	}
-
-	@NonNull
-	@Override
 	protected DatabaseType expectedDatabaseType() {
 		return DatabaseType.SQLITE;
 	}
 
+	@NonNull
 	@Override
-	protected boolean supportsReadOnlyTransactions() {
-		return false;
+	protected DialectProfile dialectProfile() {
+		return new DialectProfile() {
+			@NonNull
+			@Override
+			String autoIncrementPrimaryKey(@NonNull String columnName) {
+				return columnName + " INTEGER PRIMARY KEY AUTOINCREMENT";
+			}
+		};
 	}
 
+	@NonNull
 	@Override
-	protected boolean supportsTransactionIsolationOptions() {
-		return false;
+	protected CapabilityFlags capabilityFlags() {
+		return CapabilityFlags.builder()
+				.supportsReadOnlyTransactions(false)
+				.supportsTransactionIsolationOptions(false)
+				.build();
 	}
 }

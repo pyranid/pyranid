@@ -29,7 +29,7 @@ import javax.sql.DataSource;
  * @since 4.2.0
  */
 @Testcontainers
-public class MySQLIntegrationIT extends AbstractPortableJdbcIntegrationTests {
+public class MySqlIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 	private static final String MYSQL_IMAGE_NAME =
 			System.getProperty("mysql.integration.image", "mysql:8.4");
 	private static final DockerImageName MYSQL_IMAGE = DockerImageName.parse(MYSQL_IMAGE_NAME)
@@ -49,13 +49,27 @@ public class MySQLIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 
 	@NonNull
 	@Override
-	protected String generatedKeyTableSql(@NonNull String tableName) {
-		return "CREATE TABLE " + tableName + " (id BIGINT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(64) NOT NULL)";
+	protected DatabaseType expectedDatabaseType() {
+		return DatabaseType.MYSQL;
 	}
 
 	@NonNull
 	@Override
-	protected DatabaseType expectedDatabaseType() {
-		return DatabaseType.MYSQL;
+	protected DialectProfile dialectProfile() {
+		return new DialectProfile() {
+			@NonNull
+			@Override
+			String autoIncrementPrimaryKey(@NonNull String columnName) {
+				return columnName + " BIGINT AUTO_INCREMENT PRIMARY KEY";
+			}
+		};
+	}
+
+	@NonNull
+	@Override
+	protected CapabilityFlags capabilityFlags() {
+		return CapabilityFlags.builder()
+				.supportsNativeJson(true)
+				.build();
 	}
 }

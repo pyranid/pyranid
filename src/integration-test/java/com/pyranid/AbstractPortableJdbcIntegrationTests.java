@@ -91,9 +91,6 @@ abstract class AbstractPortableJdbcIntegrationTests {
 	@NonNull
 	protected abstract DataSource dataSource();
 
-	@NonNull
-	protected abstract String generatedKeyTableSql(@NonNull String tableName);
-
 	@Test
 	public void testDatabaseTypeDetectionUsesExpectedType() {
 		Database db = database();
@@ -151,8 +148,12 @@ abstract class AbstractPortableJdbcIntegrationTests {
 	@Test
 	public void testNullBindingAndResultMapping() {
 		Database db = database();
+		DialectProfile dialectProfile = dialectProfile();
 		String table = "pyranid_nullable_items";
-		recreateTable(db, table, "CREATE TABLE " + table + " (item_id BIGINT PRIMARY KEY, note VARCHAR(100) NULL)");
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "item_id " + dialectProfile.bigIntPrimaryKey() + ", "
+				+ "note " + dialectProfile.varchar(100) + " NULL"
+				+ ")");
 
 		db.query("INSERT INTO " + table + " (item_id, note) VALUES (:itemId, :note)")
 				.bind("itemId", 1L)
@@ -170,8 +171,12 @@ abstract class AbstractPortableJdbcIntegrationTests {
 	@Test
 	public void testRepeatedParametersAndInListExpansion() {
 		Database db = database();
+		DialectProfile dialectProfile = dialectProfile();
 		String table = "pyranid_parameter_items";
-		recreateTable(db, table, "CREATE TABLE " + table + " (item_id BIGINT PRIMARY KEY, name VARCHAR(64) NOT NULL)");
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "item_id " + dialectProfile.bigIntPrimaryKey() + ", "
+				+ "name " + dialectProfile.varchar(64) + " NOT NULL"
+				+ ")");
 
 		for (long i = 1L; i <= 4L; ++i)
 			db.query("INSERT INTO " + table + " (item_id, name) VALUES (:itemId, :name)")
@@ -192,13 +197,14 @@ abstract class AbstractPortableJdbcIntegrationTests {
 	@Test
 	public void testNumericConversions() {
 		Database db = database();
+		DialectProfile dialectProfile = dialectProfile();
 		String table = "pyranid_numeric_items";
 		recreateTable(db, table, "CREATE TABLE " + table + " ("
-				+ "item_id BIGINT PRIMARY KEY, "
-				+ "int_value INTEGER NOT NULL, "
-				+ "long_value BIGINT NOT NULL, "
-				+ "decimal_value DECIMAL(19, 4) NOT NULL, "
-				+ "double_value DOUBLE PRECISION NOT NULL"
+				+ "item_id " + dialectProfile.bigIntPrimaryKey() + ", "
+				+ "int_value " + dialectProfile.integer() + " NOT NULL, "
+				+ "long_value " + dialectProfile.bigInt() + " NOT NULL, "
+				+ "decimal_value " + dialectProfile.decimal(19, 4) + " NOT NULL, "
+				+ "double_value " + dialectProfile.doublePrecision() + " NOT NULL"
 				+ ")");
 
 		db.query("INSERT INTO " + table
@@ -223,16 +229,19 @@ abstract class AbstractPortableJdbcIntegrationTests {
 
 	@Test
 	public void testTemporalRoundTrip() {
+		Assumptions.assumeTrue(capabilityFlags().supportsTemporalRoundTrip());
+
 		Database db = database();
+		DialectProfile dialectProfile = dialectProfile();
 		String table = "pyranid_temporal_items";
 		LocalDate eventDate = LocalDate.of(2020, 1, 2);
 		LocalTime eventTime = LocalTime.of(3, 4, 5);
 		LocalDateTime eventTimestamp = LocalDateTime.of(2020, 1, 2, 3, 4, 5);
 		recreateTable(db, table, "CREATE TABLE " + table + " ("
-				+ "item_id BIGINT PRIMARY KEY, "
-				+ "event_date DATE NOT NULL, "
-				+ "event_time TIME NOT NULL, "
-				+ "event_timestamp TIMESTAMP NOT NULL"
+				+ "item_id " + dialectProfile.bigIntPrimaryKey() + ", "
+				+ "event_date " + dialectProfile.date() + " NOT NULL, "
+				+ "event_time " + dialectProfile.time() + " NOT NULL, "
+				+ "event_timestamp " + dialectProfile.timestamp() + " NOT NULL"
 				+ ")");
 
 		db.query("INSERT INTO " + table
@@ -257,11 +266,11 @@ abstract class AbstractPortableJdbcIntegrationTests {
 	public void testGeneratedKeyRoundTrip() {
 		Database db = database();
 		String table = "pyranid_generated_key_items";
-		recreateTable(db, table, generatedKeyTableSql(table));
+		recreateTable(db, table, dialectProfile().generatedKeyTableSql(table));
 
 		Long id = db.query("INSERT INTO " + table + " (name) VALUES (:name)")
 				.bind("name", "generated")
-				.executeReturningGeneratedKey(Long.class, "id")
+				.executeReturningGeneratedKey(Long.class, dialectProfile().generatedKeyColumnName())
 				.orElseThrow();
 		String name = db.query("SELECT name FROM " + table + " WHERE id = :id")
 				.bind("id", id)
@@ -275,8 +284,12 @@ abstract class AbstractPortableJdbcIntegrationTests {
 	@Test
 	public void testTransactionCommitAndRollback() {
 		Database db = database();
+		DialectProfile dialectProfile = dialectProfile();
 		String table = "pyranid_transaction_items";
-		recreateTable(db, table, "CREATE TABLE " + table + " (item_id BIGINT PRIMARY KEY, name VARCHAR(64) NOT NULL)");
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "item_id " + dialectProfile.bigIntPrimaryKey() + ", "
+				+ "name " + dialectProfile.varchar(64) + " NOT NULL"
+				+ ")");
 
 		db.transaction(() ->
 				db.query("INSERT INTO " + table + " (item_id, name) VALUES (:itemId, :name)")
@@ -304,7 +317,7 @@ abstract class AbstractPortableJdbcIntegrationTests {
 
 	@Test
 	public void testTransactionReadOnlyOption() {
-		Assumptions.assumeTrue(supportsReadOnlyTransactions());
+		Assumptions.assumeTrue(capabilityFlags().supportsReadOnlyTransactions());
 
 		Database db = database();
 
@@ -317,7 +330,7 @@ abstract class AbstractPortableJdbcIntegrationTests {
 
 	@Test
 	public void testTransactionIsolationOption() {
-		Assumptions.assumeTrue(supportsTransactionIsolationOptions());
+		Assumptions.assumeTrue(capabilityFlags().supportsTransactionIsolationOptions());
 
 		Database db = database();
 
@@ -331,8 +344,12 @@ abstract class AbstractPortableJdbcIntegrationTests {
 	@Test
 	public void testBatchChunkingExecutesAllParameterGroups() {
 		Database db = database();
+		DialectProfile dialectProfile = dialectProfile();
 		String table = "pyranid_batch_items";
-		recreateTable(db, table, "CREATE TABLE " + table + " (item_id BIGINT PRIMARY KEY, name VARCHAR(64) NOT NULL)");
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "item_id " + dialectProfile.bigIntPrimaryKey() + ", "
+				+ "name " + dialectProfile.varchar(64) + " NOT NULL"
+				+ ")");
 		List<Map<@NonNull String, @Nullable Object>> rows = List.of(
 				Map.of("itemId", 1L, "name", "one"),
 				Map.of("itemId", 2L, "name", "two"),
@@ -354,8 +371,12 @@ abstract class AbstractPortableJdbcIntegrationTests {
 	@Test
 	public void testFetchStreamConsumesRowsWithinCallback() {
 		Database db = database();
+		DialectProfile dialectProfile = dialectProfile();
 		String table = "pyranid_stream_items";
-		recreateTable(db, table, "CREATE TABLE " + table + " (item_id BIGINT PRIMARY KEY, name VARCHAR(64) NOT NULL)");
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "item_id " + dialectProfile.bigIntPrimaryKey() + ", "
+				+ "name " + dialectProfile.varchar(64) + " NOT NULL"
+				+ ")");
 
 		for (long i = 1L; i <= 4L; ++i)
 			db.query("INSERT INTO " + table + " (item_id, name) VALUES (:itemId, :name)")
@@ -378,7 +399,7 @@ abstract class AbstractPortableJdbcIntegrationTests {
 			Assertions.assertThrows(IllegalStateException.class, connection::commit);
 			Assertions.assertThrows(IllegalStateException.class, () -> connection.setAutoCommit(false));
 
-			try (PreparedStatement statement = connection.prepareStatement("SELECT 1");
+			try (PreparedStatement statement = connection.prepareStatement(dialectProfile().validationQuery());
 					 ResultSet resultSet = statement.executeQuery()) {
 				Assertions.assertTrue(resultSet.next());
 				Assertions.assertEquals(1, resultSet.getInt(1));
@@ -393,8 +414,12 @@ abstract class AbstractPortableJdbcIntegrationTests {
 	@Test
 	public void testMaxRowsSettingLimitsResultSet() {
 		Database db = database();
+		DialectProfile dialectProfile = dialectProfile();
 		String table = "pyranid_max_rows_items";
-		recreateTable(db, table, "CREATE TABLE " + table + " (item_id BIGINT PRIMARY KEY, name VARCHAR(64) NOT NULL)");
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "item_id " + dialectProfile.bigIntPrimaryKey() + ", "
+				+ "name " + dialectProfile.varchar(64) + " NOT NULL"
+				+ ")");
 
 		for (long i = 1L; i <= 3L; ++i)
 			db.query("INSERT INTO " + table + " (item_id, name) VALUES (:itemId, :name)")
@@ -419,8 +444,9 @@ abstract class AbstractPortableJdbcIntegrationTests {
 	@Test
 	public void testDatabaseExceptionWrapsDuplicateKeyWithStatementContext() {
 		Database db = database();
+		DialectProfile dialectProfile = dialectProfile();
 		String table = "pyranid_unique_items";
-		recreateTable(db, table, "CREATE TABLE " + table + " (email VARCHAR(100) NOT NULL UNIQUE)");
+		recreateTable(db, table, "CREATE TABLE " + table + " (email " + dialectProfile.varchar(100) + " NOT NULL UNIQUE)");
 
 		db.query("INSERT INTO " + table + " (email) VALUES (:email)")
 				.bind("email", "secret@example.com")
@@ -440,12 +466,13 @@ abstract class AbstractPortableJdbcIntegrationTests {
 																	 @NonNull String tableName) {
 		requireNonNull(db);
 		requireNonNull(tableName);
+		DialectProfile dialectProfile = dialectProfile();
 
 		recreateTable(db, tableName, "CREATE TABLE " + tableName + " ("
-				+ "person_id BIGINT PRIMARY KEY, "
-				+ "name VARCHAR(100) NOT NULL, "
-				+ "email_address VARCHAR(100) NOT NULL, "
-				+ "locale VARCHAR(32) NOT NULL"
+				+ "person_id " + dialectProfile.bigIntPrimaryKey() + ", "
+				+ "name " + dialectProfile.varchar(100) + " NOT NULL, "
+				+ "email_address " + dialectProfile.varchar(100) + " NOT NULL, "
+				+ "locale " + dialectProfile.varchar(32) + " NOT NULL"
 				+ ")");
 	}
 
@@ -456,7 +483,7 @@ abstract class AbstractPortableJdbcIntegrationTests {
 		requireNonNull(tableName);
 		requireNonNull(createTableSql);
 
-		db.query("DROP TABLE IF EXISTS " + tableName).execute();
+		db.query(dialectProfile().dropTableSql(tableName)).execute();
 		db.query(createTableSql).execute();
 	}
 
@@ -480,12 +507,14 @@ abstract class AbstractPortableJdbcIntegrationTests {
 		return DatabaseType.GENERIC;
 	}
 
-	protected boolean supportsReadOnlyTransactions() {
-		return true;
+	@NonNull
+	protected DialectProfile dialectProfile() {
+		return DialectProfile.DEFAULT;
 	}
 
-	protected boolean supportsTransactionIsolationOptions() {
-		return true;
+	@NonNull
+	protected CapabilityFlags capabilityFlags() {
+		return CapabilityFlags.DEFAULT;
 	}
 
 	protected static final class DriverManagerDataSource implements DataSource {
