@@ -347,7 +347,8 @@ public interface Query {
 	List<Long> executeBatch(@NonNull List<@NonNull Map<@NonNull String, @Nullable Object>> parameterGroups);
 
 	/**
-	 * Executes a DML statement that returns a single row (e.g., with {@code RETURNING} clause).
+	 * Executes a DML statement that returns a single row (for example, with PostgreSQL/SQLite/MariaDB
+	 * {@code RETURNING} or SQL Server {@code OUTPUT}).
 	 *
 	 * @param resultType the type to marshal the row to
 	 * @param <T>        the result type
@@ -358,7 +359,8 @@ public interface Query {
 	<T> Optional<T> executeForObject(@NonNull Class<T> resultType);
 
 	/**
-	 * Executes a DML statement that returns multiple rows (e.g., with {@code RETURNING} clause).
+	 * Executes a DML statement that returns multiple rows (for example, with PostgreSQL/SQLite/MariaDB
+	 * {@code RETURNING} or SQL Server {@code OUTPUT}).
 	 *
 	 * @param resultType the type to marshal each row to
 	 * @param <T>        the result type

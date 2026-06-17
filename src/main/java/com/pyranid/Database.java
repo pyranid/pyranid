@@ -2438,7 +2438,8 @@ public final class Database {
 
 	/**
 	 * Executes a SQL Data Manipulation Language (DML) statement, such as {@code INSERT}, {@code UPDATE}, or {@code DELETE},
-	 * which returns 0 or 1 rows, e.g. with Postgres/Oracle's {@code RETURNING} clause.
+	 * which returns 0 or 1 rows with database-native syntax such as PostgreSQL/SQLite/MariaDB {@code RETURNING}
+	 * or SQL Server {@code OUTPUT}.
 	 *
 	 * @param sql              the SQL query to execute
 	 * @param resultSetRowType the type to which the {@link ResultSet} row should be marshaled
@@ -2459,7 +2460,8 @@ public final class Database {
 
 	/**
 	 * Executes a SQL Data Manipulation Language (DML) statement, such as {@code INSERT}, {@code UPDATE}, or {@code DELETE},
-	 * which returns 0 or 1 rows, e.g. with Postgres/Oracle's {@code RETURNING} clause.
+	 * which returns 0 or 1 rows with database-native syntax such as PostgreSQL/SQLite/MariaDB {@code RETURNING}
+	 * or SQL Server {@code OUTPUT}.
 	 *
 	 * @param statement        the SQL statement to execute
 	 * @param resultSetRowType the type to which {@link ResultSet} rows should be marshaled
@@ -2493,7 +2495,8 @@ public final class Database {
 
 	/**
 	 * Executes a SQL Data Manipulation Language (DML) statement, such as {@code INSERT}, {@code UPDATE}, or {@code DELETE},
-	 * which returns any number of rows, e.g. with Postgres/Oracle's {@code RETURNING} clause.
+	 * which returns any number of rows with database-native syntax such as PostgreSQL/SQLite/MariaDB {@code RETURNING}
+	 * or SQL Server {@code OUTPUT}.
 	 *
 	 * @param sql              the SQL to execute
 	 * @param resultSetRowType the type to which {@link ResultSet} rows should be marshaled
@@ -2513,7 +2516,8 @@ public final class Database {
 
 	/**
 	 * Executes a SQL Data Manipulation Language (DML) statement, such as {@code INSERT}, {@code UPDATE}, or {@code DELETE},
-	 * which returns any number of rows, e.g. with Postgres/Oracle's {@code RETURNING} clause.
+	 * which returns any number of rows with database-native syntax such as PostgreSQL/SQLite/MariaDB {@code RETURNING}
+	 * or SQL Server {@code OUTPUT}.
 	 *
 	 * @param statement        the SQL statement to execute
 	 * @param resultSetRowType the type to which {@link ResultSet} rows should be marshaled

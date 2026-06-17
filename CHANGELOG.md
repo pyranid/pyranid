@@ -2,6 +2,17 @@
 
 All notable changes to Pyranid will be documented in this file.
 
+## 4.3.0
+
+### Added
+
+- Added first-class database type detection and dialect behavior for MySQL, MariaDB, SQLite, and SQL Server, with more robust Oracle detection.
+- Added conservative `DatabaseException` classification predicates for unique constraint violations, foreign-key violations, deadlocks, and transient failures across supported database types.
+- Added dialect-specific UUID binding for MySQL, MariaDB, SQLite, SQL Server, Oracle, and PostgreSQL.
+- Added guarded SQL ARRAY binding so unsupported databases fail with a clear Pyranid exception instead of leaking driver-specific failures.
+- Added MySQL/MariaDB streaming setup, SQL Server `datetimeoffset` mapping, Oracle timestamp-with-time-zone handling, and stricter generated-key handling for Oracle.
+- Added SQL Server, Oracle, and MariaDB integration-test profiles, plus broader portable integration coverage for vendor-specific JSON, UUID, temporal, generated-key, exception, numeric, and DML-returning behavior.
+
 ## 4.2.0
 
 ### Added

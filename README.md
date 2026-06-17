@@ -310,7 +310,7 @@ List<Employee> employees = database.query("""
 
 The stream must be consumed within the scope of the transaction or connection that created it. Do not let the stream escape from the callback.
 
-For PostgreSQL, Pyranid automatically configures streaming reads with an autocommit-disabled connection and a positive JDBC fetch size when no Pyranid transaction is active. Use [`Query::fetchSize(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchSize(java.lang.Integer)) to override the fetch size when needed, including `0` when you deliberately want the driver default. Other cursor-based drivers may require driver-specific transaction or fetch-size setup.
+Supported dialects apply driver-specific streaming setup automatically. PostgreSQL streams use an autocommit-disabled connection and a positive JDBC fetch size when no Pyranid transaction is active. MySQL streams use forward-only/read-only statements and Connector/J's streaming fetch-size sentinel. MariaDB streams use forward-only/read-only statements without the MySQL sentinel. Use [`Query::fetchSize(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchSize(java.lang.Integer)) to override the dialect default when needed, including `0` when you deliberately want the driver default.
 
 ```java
 List<Employee> employees = database.query("""
@@ -363,8 +363,9 @@ long updateCount = database.query("UPDATE car SET color=:color")
   .bind("color", Color.RED)
   .execute();
 
-// Return single or multiple objects via the SQL RETURNING clause for DML statements.
-// Applicable for Postgres and Oracle.  SQL Sever uses an OUTPUT clause
+// Return single or multiple objects via database-native DML-returning syntax.
+// PostgreSQL, SQLite, and MariaDB use RETURNING. SQL Server uses OUTPUT.
+// Oracle users should prefer JDBC-generated keys with explicit key column names.
 Optional<BigInteger> insertedCarId = database.query("""
   INSERT INTO car (id, color)
   VALUES (nextval('car_seq'), :color)
@@ -384,7 +385,7 @@ List<Car> repaintedCars = database.query("""
   .executeForList(Car.class);
 
 // For identity/auto-increment columns, use JDBC-generated keys.
-// This is useful for databases that do not support RETURNING for inserts.
+// Oracle requires explicit generated-key column names.
 Optional<BigInteger> generatedCarId = database.query("""
   INSERT INTO car (color)
   VALUES (:color)
@@ -630,7 +631,7 @@ database.transaction(
   });
 ```
 
-`TransactionOptions::withReadOnly(true)` maps to JDBC [`Connection::setReadOnly(true)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html#setReadOnly(boolean)) for the physical transaction connection. Pyranid restores the connection's original read-only setting before returning it to the pool. Read-only behavior is enforced, optimized, routed, or ignored by the JDBC driver and DBMS; Pyranid does not parse SQL to reject writes itself.
+`TransactionOptions::withReadOnly(true)` maps to JDBC [`Connection::setReadOnly(true)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html#setReadOnly(boolean)) for the physical transaction connection. Pyranid restores the connection's original read-only setting before returning it to the pool. Read-only behavior is enforced, optimized, routed, or ignored by the JDBC driver and DBMS. SQL Server, Oracle, and SQLite drivers may treat it as advisory or ignore it for normal transactions. Pyranid does not parse SQL to reject writes itself.
 
 ### Post-Transaction Operations
 
@@ -1069,7 +1070,7 @@ Special support is provided for IN-list, JSON/JSONB, vector, and SQL ARRAY param
 
 #### JSON/JSONB
 
-Useful for storing "stringified" JSON data by taking advantage of the DBMS' native JSON storage facilities, if available (e.g. PostgreSQL's `JSONB` type).
+Useful for storing "stringified" JSON data by taking advantage of the DBMS' native JSON storage facilities, if available (for example, PostgreSQL `JSONB`, MySQL/MariaDB `JSON`, SQLite JSON text, SQL Server `nvarchar` + `ISJSON`, or Oracle `JSON`/`CLOB` columns).
 
 Supported methods:
 
@@ -1095,7 +1096,7 @@ database.query("INSERT INTO example (data) VALUES (:data)")
   .execute();
 ```
 
-By default, Pyranid will use your database's binary JSON format if supported and fall back to a text representation otherwise.
+By default, Pyranid will use your database's binary/native JSON format if supported and fall back to a text representation otherwise. MySQL-family databases bind JSON as text to avoid driver character-set traps.
 
 If you want to force text storage (e.g. if whitespace is important), specify a binding preference like this:
 
@@ -1141,7 +1142,7 @@ database.query("INSERT INTO vector_embedding (embedding, content) VALUES (:embed
 
 #### SQL ARRAY
 
-Single-dimension array binding is supported out-of-the-box.
+Single-dimension SQL ARRAY binding is supported out-of-the-box for databases whose JDBC drivers support `Connection::createArrayOf`, such as PostgreSQL. MySQL, MariaDB, SQLite, SQL Server, and Oracle are guarded as unsupported and fail with a clear `DatabaseException`; use IN-list expansion, JSON, or a database-specific custom binder for those engines.
 
 Supported methods:
 
@@ -1179,7 +1180,7 @@ database.query("""
   .execute();
 ```
 
-If you need support for multidimensional array binding, implement a [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) as outlined below. 
+If you need support for multidimensional array binding, database-specific collection types, or table-valued parameters, implement a [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) as outlined below.
 
 ### Custom Parameters
 
@@ -1368,6 +1369,8 @@ It also exposes conservative classification predicates:
 * `isDeadlock()`
 * `isTransient()`
 
+These predicates are intentionally conservative and database-type-aware. They recognize well-known SQLState and vendor error codes for PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, Oracle, and generic JDBC transient/recoverable exception classes; they return `false` when Pyranid cannot reliably classify the failure.
+
 For PostgreSQL, the following properties are also available:
 
 * `column` (optional)
@@ -1537,9 +1540,9 @@ mvn -q -P integration verify
 mvn -q -P integration,it-mariadb -Dit.test=MariaDbIntegrationIT verify
 ```
 
-The `integration` Maven profile runs JDBC integration tests against PostgreSQL, MySQL, and SQLite. PostgreSQL and MySQL use Testcontainers and require a working local Docker environment; SQLite uses a temporary local database file. Add `it-mariadb`, `it-sqlserver`, or `it-oracle` for the optional MariaDB, SQL Server, and Oracle integration source sets. The initial Docker images are pinned to `postgres:17-alpine`, `mysql:8.4`, `mariadb:11.4`, `mcr.microsoft.com/mssql/server:2022-latest`, and `gvenzl/oracle-free:23-slim-faststart`, and can be overridden with `-Dpostgres.integration.image=...`, `-Dmysql.integration.image=...`, `-Dmariadb.integration.image=...`, `-Dsqlserver.integration.image=...`, and `-Doracle.integration.image=...`.
+The `integration` Maven profile runs JDBC integration tests against PostgreSQL, MySQL, and SQLite. PostgreSQL and MySQL use Testcontainers and require a working local Docker environment; SQLite uses a temporary local database file. Add `it-mariadb`, `it-sqlserver`, or `it-oracle` for the optional MariaDB, SQL Server, and Oracle integration source sets. SQL Server requires the Microsoft container EULA; the test container calls `acceptLicense()`, and CI/local runs should provide `ACCEPT_EULA=Y` when required by the environment. The initial Docker images are pinned to `postgres:17-alpine`, `mysql:8.4`, `mariadb:11.4`, `mcr.microsoft.com/mssql/server:2022-latest`, and `gvenzl/oracle-free:23-slim-faststart`, and can be overridden with `-Dpostgres.integration.image=...`, `-Dmysql.integration.image=...`, `-Dmariadb.integration.image=...`, `-Dsqlserver.integration.image=...`, and `-Doracle.integration.image=...`.
 
-The portable integration suites cover named binding, repeated parameters, `IN` expansion, null binding/mapping, numeric and temporal conversions, JDBC-generated keys, transaction commit/rollback, transaction options where supported, batch chunking, streaming, guarded raw connection access, statement row limits, health checks, and exception wrapping. The PostgreSQL suite also covers core pgjdbc behavior such as JSONB, SQL arrays, `RETURNING`, temporal binding/mapping, and exception metadata. The MariaDB suite covers detection, text UUID binding, native JSON-alias binding, and `INSERT ... RETURNING`. It does not run pgvector extension tests; verify pgvector manually if the release depends on that feature.
+The portable integration suites cover named binding, repeated parameters, `IN` expansion, null binding/mapping, numeric and temporal conversions, JDBC-generated keys, transaction commit/rollback, transaction options where supported, batch chunking, streaming, guarded raw connection access, statement row limits, health checks, SQL ARRAY guards, and exception wrapping/classification. Vendor suites add coverage for PostgreSQL JSONB, SQL arrays, UUIDs, `RETURNING`, temporal binding/mapping, and exception metadata; MySQL/MariaDB JSON, UUID strings, unsigned numerics, streaming, and MariaDB `INSERT ... RETURNING`; SQLite `RETURNING`, UUID text, and decimal text precision; SQL Server `OUTPUT`, trigger-safe `OUTPUT INTO`, `MERGE ... OUTPUT`, `uniqueidentifier`, and `datetimeoffset`; and Oracle explicit generated-key columns, UUID `RAW(16)`, empty-string-as-null, timestamp-with-time-zone, and `NUMBER` mapping. It does not run pgvector extension tests; verify pgvector manually if the release depends on that feature.
 
 Cache-sensitive changes should also be checked with the JMH benchmark profile:
 
@@ -1553,7 +1556,7 @@ Artifact signing and Maven Central publishing are isolated in the `release` prof
 
 ## Production Notes
 
-Pyranid is a zero-runtime-dependency library, but applications still need to provide the JDBC driver for their database. PostgreSQL-specific helpers such as JSONB, `text[]`, and pgvector parameters require pgjdbc on the application classpath; pgvector also requires the database extension to be installed.
+Pyranid is a zero-runtime-dependency library, but applications still need to provide the JDBC driver for their database. PostgreSQL-specific helpers such as JSONB, `text[]`, and pgvector parameters require pgjdbc on the application classpath; pgvector also requires the database extension to be installed. SQL Server, Oracle, MySQL, MariaDB, and SQLite driver artifacts are used only for tests in Pyranid itself and are not forced onto application classpaths by the core jar.
 
 ### SQL Injection and Dynamic SQL
 
@@ -1581,7 +1584,7 @@ Pyranid exception messages include bounded SQL and parameter counts, not raw par
 
 ### Startup and Database Type Detection
 
-[`Database.Builder::build()`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#build()) does not validate connectivity or inspect JDBC metadata. If you do not configure [`Database.Builder::databaseType(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#databaseType(com.pyranid.DatabaseType)), Pyranid detects the database type lazily when code first requests database-type-sensitive behavior. Calling [`Database::getDatabaseType()`](https://javadoc.pyranid.com/com/pyranid/Database.html#getDatabaseType()) outside an active query may acquire a fresh connection; configure `databaseType(...)` explicitly when using small pools, database proxies, or startup paths that must avoid surprise connection checkouts.
+[`Database.Builder::build()`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#build()) does not validate connectivity or inspect JDBC metadata. If you do not configure [`Database.Builder::databaseType(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#databaseType(com.pyranid.DatabaseType)), Pyranid detects the database type lazily when code first requests database-type-sensitive behavior. Detection recognizes PostgreSQL, Oracle, MySQL, MariaDB, SQLite, and SQL Server from JDBC product, URL, driver, and MariaDB-version signals, then falls back to `GENERIC`. Calling [`Database::getDatabaseType()`](https://javadoc.pyranid.com/com/pyranid/Database.html#getDatabaseType()) outside an active query may acquire a fresh connection; configure `databaseType(...)` explicitly when using small pools, database proxies, or startup paths that must avoid surprise connection checkouts.
 
 Use [`Database::performHealthCheck(Duration)`](https://javadoc.pyranid.com/com/pyranid/Database.html#performHealthCheck(java.time.Duration)) when you want an explicit startup or readiness validation step:
 
@@ -1605,7 +1608,7 @@ Because transaction context is thread-local, async frameworks that resume work o
 
 ### Streaming Results
 
-[`Query::fetchStream(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchStream(java.lang.Class,java.util.function.Function)) streams rows only for as long as the callback is executing. Do not return the stream or consume it asynchronously after the callback returns. PostgreSQL streams automatically use an autocommit-disabled connection and a positive fetch size outside explicit Pyranid transactions; [`Query::fetchSize(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchSize(java.lang.Integer)) can override that fetch size, including `0` when you deliberately want the driver default. For other cursor-based drivers, follow the driver's transaction and fetch-size requirements.
+[`Query::fetchStream(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchStream(java.lang.Class,java.util.function.Function)) streams rows only for as long as the callback is executing. Do not return the stream or consume it asynchronously after the callback returns. PostgreSQL streams automatically use an autocommit-disabled connection and a positive fetch size outside explicit Pyranid transactions. MySQL streams use forward-only/read-only statements and Connector/J's streaming fetch-size sentinel; MariaDB streams use forward-only/read-only statements without that sentinel. [`Query::fetchSize(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchSize(java.lang.Integer)) can override the dialect default, including `0` when you deliberately want the driver default.
 
 Inside a Pyranid transaction, the stream must be closed by the thread that opened it. Do not hand a transactional stream to another thread for closing or asynchronous consumption.
 

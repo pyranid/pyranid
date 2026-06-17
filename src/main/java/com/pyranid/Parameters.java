@@ -49,6 +49,9 @@ public final class Parameters {
 	 * <p>
 	 * You may determine available {@code baseTypeName} values for your database by examining metadata exposed via {@link Database#readDatabaseMetaData(DatabaseMetaDataReader)}.
 	 * <p>
+	 * SQL ARRAY binding requires JDBC driver support for {@link java.sql.Connection#createArrayOf(String, Object[])}.
+	 * Unsupported dialects, including MySQL, MariaDB, SQLite, SQL Server, and Oracle, fail with a clear {@link DatabaseException}.
+	 * <p>
 	 * For non-SQL array binding where you need to preserve the Java element type for custom binders,
 	 * use {@link #arrayOf(Class, Object)} instead.
 	 *
@@ -68,6 +71,9 @@ public final class Parameters {
 	 * Acquires a SQL ARRAY parameter for a native Java array given an appropriate <a href="https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Array.html#getBaseTypeName()" target="_blank">{@code java.sql.Array#getBaseTypeName()}</a>.
 	 * <p>
 	 * You may determine available {@code baseTypeName} values for your database by examining metadata exposed via {@link Database#readDatabaseMetaData(DatabaseMetaDataReader)}.
+	 * <p>
+	 * SQL ARRAY binding requires JDBC driver support for {@link java.sql.Connection#createArrayOf(String, Object[])}.
+	 * Unsupported dialects, including MySQL, MariaDB, SQLite, SQL Server, and Oracle, fail with a clear {@link DatabaseException}.
 	 * <p>
 	 * For non-SQL array binding where you need to preserve the Java element type for custom binders,
 	 * use {@link #arrayOf(Class, Object)} instead.
