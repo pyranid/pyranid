@@ -599,6 +599,30 @@ public final class Database {
 	}
 
 	@NonNull
+	private DatabaseException databaseExceptionWithRawConnectionContext(@Nullable Connection connection,
+																																			@NonNull Exception cause) {
+		requireNonNull(cause);
+
+		return new DatabaseException(cause.getMessage(), cause, databaseDialectForRawConnectionException(connection, cause));
+	}
+
+	@NonNull
+	private DatabaseDialect databaseDialectForRawConnectionException(@Nullable Connection connection,
+																																	@NonNull Throwable cause) {
+		requireNonNull(cause);
+
+		if (connection != null) {
+			try {
+				return getDatabaseDialect(connection);
+			} catch (Throwable ignored) {
+				// Fall through to cause-based classification below.
+			}
+		}
+
+		return DatabaseDialect.forExceptionCause(cause);
+	}
+
+	@NonNull
 	private static String statementDiagnostic(@NonNull StatementContext<?> statementContext) {
 		requireNonNull(statementContext);
 
@@ -3059,7 +3083,7 @@ public final class Database {
 				thrown = e;
 				throw e;
 			} catch (Exception e) {
-				DatabaseException wrapped = new DatabaseException(e);
+				DatabaseException wrapped = databaseExceptionWithRawConnectionContext(connection, e);
 				thrown = wrapped;
 				throw wrapped;
 			} finally {
@@ -3106,7 +3130,7 @@ public final class Database {
 				throw e;
 			} catch (Exception e) {
 				DatabaseException wrapped = acquiredConnection
-						? new DatabaseException(e)
+						? databaseExceptionWithRawConnectionContext(connection, e)
 						: new DatabaseException("Unable to acquire database connection", e);
 				thrown = wrapped;
 				throw wrapped;

@@ -258,6 +258,10 @@ public interface Query {
 	 * as identity/auto-increment primary keys. If your SQL returns rows directly via database syntax such as PostgreSQL
 	 * {@code RETURNING} or SQL Server {@code OUTPUT}, use {@link #executeForObject(Class)} instead.
 	 * <p>
+	 * For SQL Server multi-row identity inserts, use {@code OUTPUT} with {@link #executeForList(Class)} instead of JDBC
+	 * generated keys. For MySQL {@code INSERT ... ON DUPLICATE KEY UPDATE}, use the {@code LAST_INSERT_ID(id)} idiom if
+	 * you need the existing row's ID returned on the update path.
+	 * <p>
 	 * Oracle requires explicit generated-key column names; use {@link #executeReturningGeneratedKey(Class, String...)}
 	 * instead.
 	 *
@@ -279,6 +283,10 @@ public interface Query {
 	 * Some drivers require column names to return generated keys for specific columns, especially when more than one
 	 * generated value is available. If {@code keyColumnNames} is empty, this behaves like
 	 * {@link #executeReturningGeneratedKey(Class)}, except for dialects such as Oracle which require explicit names.
+	 * <p>
+	 * For SQL Server multi-row identity inserts, use {@code OUTPUT} with {@link #executeForList(Class)} instead of JDBC
+	 * generated keys. For MySQL {@code INSERT ... ON DUPLICATE KEY UPDATE}, use the {@code LAST_INSERT_ID(id)} idiom if
+	 * you need the existing row's ID returned on the update path.
 	 *
 	 * @param resultType      the type to marshal the generated-key row to
 	 * @param keyColumnNames generated-key column names requested from the driver
@@ -300,6 +308,10 @@ public interface Query {
 	 * as identity/auto-increment primary keys. If your SQL returns rows directly via database syntax such as PostgreSQL
 	 * {@code RETURNING} or SQL Server {@code OUTPUT}, use {@link #executeForList(Class)} instead.
 	 * <p>
+	 * For SQL Server multi-row identity inserts, use {@code OUTPUT} with {@link #executeForList(Class)} instead of JDBC
+	 * generated keys. For MySQL {@code INSERT ... ON DUPLICATE KEY UPDATE}, use the {@code LAST_INSERT_ID(id)} idiom if
+	 * you need the existing row's ID returned on the update path.
+	 * <p>
 	 * Oracle requires explicit generated-key column names; use {@link #executeReturningGeneratedKeys(Class, String...)}
 	 * instead.
 	 *
@@ -320,6 +332,10 @@ public interface Query {
 	 * Some drivers require column names to return generated keys for specific columns, especially when more than one
 	 * generated value is available. If {@code keyColumnNames} is empty, this behaves like
 	 * {@link #executeReturningGeneratedKeys(Class)}, except for dialects such as Oracle which require explicit names.
+	 * <p>
+	 * For SQL Server multi-row identity inserts, use {@code OUTPUT} with {@link #executeForList(Class)} instead of JDBC
+	 * generated keys. For MySQL {@code INSERT ... ON DUPLICATE KEY UPDATE}, use the {@code LAST_INSERT_ID(id)} idiom if
+	 * you need the existing row's ID returned on the update path.
 	 *
 	 * @param resultType      the type to marshal each generated-key row to
 	 * @param keyColumnNames generated-key column names requested from the driver

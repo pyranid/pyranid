@@ -225,6 +225,8 @@ public class DatabaseException extends RuntimeException {
 	 * <p>
 	 * This method is intentionally conservative: it returns {@code true} only when Pyranid recognizes a database-specific
 	 * error code or SQLState as a foreign-key violation.
+	 * For example, SQL Server error {@code 547} is not classified as a foreign-key violation by code alone because the
+	 * same error code also covers other constraint failures, such as {@code CHECK} constraints.
 	 *
 	 * @return {@code true} if this exception is recognized as a foreign-key violation
 	 * @since 4.3.0

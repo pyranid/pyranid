@@ -70,7 +70,7 @@
 		<postgres.integration.image>postgres:17-alpine</postgres.integration.image>
 		<mysql.integration.image>mysql:8.4</mysql.integration.image>
 		<mariadb.integration.image>mariadb:11.4</mariadb.integration.image>
-		<sqlserver.integration.image>mcr.microsoft.com/mssql/server:2022-latest</sqlserver.integration.image>
+		<sqlserver.integration.image>mcr.microsoft.com/mssql/server:2022-CU25-ubuntu-22.04</sqlserver.integration.image>
 		<oracle.integration.image>gvenzl/oracle-free:23-slim-faststart</oracle.integration.image>
 	</properties>
 

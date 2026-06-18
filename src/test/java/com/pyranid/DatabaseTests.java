@@ -3186,6 +3186,22 @@ public class DatabaseTests {
 	}
 
 	@Test
+	public void testUseRawConnectionWrapsExceptionWithConfiguredDatabaseTypeClassification() {
+		Database db = Database.withDataSource(createInMemoryDataSource("useRawConnectionExceptionClassification"))
+				.databaseType(DatabaseType.SQL_SERVER)
+				.build();
+		SQLException cause = new SQLException("unique", null, 2627);
+
+		DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
+				db.useRawConnection(connection -> {
+					throw cause;
+				}));
+
+		Assertions.assertSame(cause, exception.getCause());
+		Assertions.assertTrue(exception.isUniqueConstraintViolation());
+	}
+
+	@Test
 	public void testUseRawConnectionRetainedHandleFailsAfterCallback() {
 		Database db = Database.withDataSource(createInMemoryDataSource("useRawConnectionRetained")).build();
 		AtomicReference<Connection> connectionReference = new AtomicReference<>();

@@ -40,7 +40,7 @@ public class SqlServerIntegrationIT extends AbstractPortableJdbcIntegrationTests
 	public record MergeActionRow(String mergeAction, Long id, String name) {}
 
 	private static final String SQL_SERVER_IMAGE_NAME =
-			System.getProperty("sqlserver.integration.image", "mcr.microsoft.com/mssql/server:2022-latest");
+			System.getProperty("sqlserver.integration.image", "mcr.microsoft.com/mssql/server:2022-CU25-ubuntu-22.04");
 	private static final DockerImageName SQL_SERVER_IMAGE = DockerImageName.parse(SQL_SERVER_IMAGE_NAME)
 			.asCompatibleSubstituteFor("mcr.microsoft.com/mssql/server");
 
