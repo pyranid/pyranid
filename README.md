@@ -64,7 +64,7 @@ Java 8+ (legacy; only critical fixes will be applied)
 
 ### Direct Download
 
-For released builds, you can download the Pyranid jar directly from [Maven Central](https://repo1.maven.org/maven2/com/pyranid/pyranid/).  No other dependencies are required by the core artifact.
+For released builds, you can download the Pyranid jar directly from [Maven Central](https://repo1.maven.org/maven2/com/pyranid/pyranid/4.3.0/pyranid-4.3.0.jar.  No other dependencies are required by the core artifact.
 
 ## Configuration
 
