@@ -64,7 +64,7 @@ Java 8+ (legacy; only critical fixes will be applied)
 
 ### Direct Download
 
-For released builds, you can download the Pyranid jar directly from [Maven Central](https://repo1.maven.org/maven2/com/pyranid/pyranid/4.3.0/pyranid-4.3.0.jar.  No other dependencies are required.
+For released builds, you can download the Pyranid jar directly from [Maven Central](https://repo1.maven.org/maven2/com/pyranid/pyranid/4.3.0/pyranid-4.3.0.jar).  No other dependencies are required.
 
 ## Configuration
 
@@ -1316,7 +1316,7 @@ PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCu
       @NonNull Object parameter
     ) throws SQLException {
       // Convert UUIDs to a comma-delimited string, or null for the empty list 
-      List<UUID> uuids = (List<UUID>) param;
+      List<UUID> uuids = (List<UUID>) parameter;
       String uuidsAsString = uuids.isEmpty()
         ? null
         : uuids.stream().map(Object::toString).collect(Collectors.joining(","));

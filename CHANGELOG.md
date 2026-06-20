@@ -2,6 +2,13 @@
 
 All notable changes to Pyranid will be documented in this file.
 
+## 4.3.1
+
+### Fixed
+
+- Corrected a broken Maven Central direct-download link in the README.
+- Fixed a non-compiling custom parameter binder code sample in the README.
+
 ## 4.3.0
 
 ### Added
