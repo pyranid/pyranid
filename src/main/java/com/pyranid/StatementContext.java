@@ -63,6 +63,9 @@ public final class StatementContext<T> {
 	@NonNull
 	private final AmbiguousTimestampBindingStrategy ambiguousTimestampBindingStrategy;
 	@NonNull
+	private final ParameterRedactor parameterRedactor;
+	private final boolean batchParameterGroups;
+	@NonNull
 	private final Queue<@NonNull AutoCloseable> cleanupOperations;
 
 	protected StatementContext(@NonNull Builder builder) {
@@ -78,6 +81,8 @@ public final class StatementContext<T> {
 		this.diagnosticDatabaseTypeSupplier = builder.diagnosticDatabaseTypeSupplier;
 		this.timeZone = builder.timeZone;
 		this.ambiguousTimestampBindingStrategy = builder.ambiguousTimestampBindingStrategy;
+		this.parameterRedactor = builder.parameterRedactor;
+		this.batchParameterGroups = builder.batchParameterGroups;
 		this.cleanupOperations = new ConcurrentLinkedQueue<>();
 	}
 
@@ -111,7 +116,7 @@ public final class StatementContext<T> {
 		components.add(format("statement=%s", getStatement()));
 
 		if (getParameters().size() > 0)
-			components.add(format("parameters=%s", getParameters()));
+			components.add(format("parameters=%s", getRedactedParameters()));
 
 		Class<T> resultSetRowType = getResultSetRowType().orElse(null);
 
@@ -133,6 +138,63 @@ public final class StatementContext<T> {
 	@NonNull
 	public List<@Nullable Object> getParameters() {
 		return this.parameters;
+	}
+
+	/**
+	 * Gets this statement's parameters rendered for diagnostics.
+	 * <p>
+	 * {@link SecureParameter} values render as their masks. Other non-batch values are rendered through the configured
+	 * {@link ParameterRedactor}. Batch executions render a bounded summary instead of individual group values.
+	 *
+	 * @return parameters rendered for diagnostics
+	 * @since 4.4.0
+	 */
+	@NonNull
+	public List<@Nullable Object> getRedactedParameters() {
+		if (this.batchParameterGroups)
+			return List.of(batchParameterSummary());
+
+		List<@Nullable Object> redactedParameters = new ArrayList<>(getParameters().size());
+
+		for (int i = 0; i < getParameters().size(); ++i) {
+			Object parameter = getParameters().get(i);
+			SecureParameter secureParameter = SecureParameterSupport.displaySecureParameter(parameter);
+
+			if (secureParameter != null)
+				redactedParameters.add(SecureParameterSupport.maskOf(secureParameter));
+			else
+				redactedParameters.add(this.parameterRedactor.redactParameter(this, i, parameter));
+		}
+
+		return Collections.unmodifiableList(redactedParameters);
+	}
+
+	@NonNull
+	private String batchParameterSummary() {
+		List<@Nullable Object> parameters = getParameters();
+		int groupCount = parameters.size();
+
+		if (groupCount == 0)
+			return "<batch: 0 groups x 0 parameters>";
+
+		Integer expectedParameterCount = null;
+		boolean mixedParameterCounts = false;
+
+		for (Object parameterGroup : parameters) {
+			int parameterCount = parameterGroup instanceof List<?> list ? list.size() : 0;
+
+			if (expectedParameterCount == null) {
+				expectedParameterCount = parameterCount;
+			} else if (expectedParameterCount != parameterCount) {
+				mixedParameterCounts = true;
+				break;
+			}
+		}
+
+		if (mixedParameterCounts)
+			return format("<batch: %s groups x mixed parameter counts>", groupCount);
+
+		return format("<batch: %s groups x %s parameters>", groupCount, expectedParameterCount);
 	}
 
 	@NonNull
@@ -231,10 +293,13 @@ public final class StatementContext<T> {
 		private final ZoneId timeZone;
 		@NonNull
 		private final AmbiguousTimestampBindingStrategy ambiguousTimestampBindingStrategy;
+		@NonNull
+		private final ParameterRedactor parameterRedactor;
 		@Nullable
 		private List<@Nullable Object> parameters;
 		@Nullable
 		private Class<T> resultSetRowType;
+		private boolean batchParameterGroups;
 
 		private Builder(@NonNull Statement statement,
 										@NonNull Database database) {
@@ -247,6 +312,7 @@ public final class StatementContext<T> {
 			this.diagnosticDatabaseTypeSupplier = database::peekDatabaseType;
 			this.timeZone = database.getTimeZone();
 			this.ambiguousTimestampBindingStrategy = database.getAmbiguousTimestampBindingStrategy();
+			this.parameterRedactor = database.getParameterRedactor();
 		}
 
 		@NonNull
@@ -264,6 +330,12 @@ public final class StatementContext<T> {
 		@NonNull
 		public Builder resultSetRowType(Class<T> resultSetRowType) {
 			this.resultSetRowType = resultSetRowType;
+			return this;
+		}
+
+		@NonNull
+		Builder batchParameterGroups(boolean batchParameterGroups) {
+			this.batchParameterGroups = batchParameterGroups;
 			return this;
 		}
 

@@ -32,6 +32,8 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.logging.Logger;
 
 import static java.lang.String.format;
@@ -127,20 +129,230 @@ public class ExceptionSuppressionTests {
 	}
 
 	@Test
-	public void testDatabaseExceptionIncludesStatementContextWithoutParameterValues() {
+	public void testDatabaseExceptionIncludesStatementContextWithRedactedParameterValues() {
 		Database db = Database.withDataSource(createInMemoryDataSource("statement_context_diagnostics")).build();
+
+		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("SELECT :secret, :token FROM missing_table")
+						.bind("secret", "super-secret")
+						.bind("token", Parameters.secure("raw-token", "<token>"))
+						.fetchList(String.class));
+
+		Assertions.assertTrue(ex.getMessage().contains("sql=SELECT ?, ? FROM missing_table"),
+				"Expected SQL in exception message");
+		Assertions.assertTrue(ex.getMessage().contains("statementId=1"),
+				"Expected default statement ID to use the numeric counter");
+		Assertions.assertTrue(ex.getMessage().contains("parameters=[super-secret, <token>]"),
+				"Expected parameter display values in exception message");
+		Assertions.assertFalse(ex.getMessage().contains("parameterCount="),
+				"Exception message should not include redundant parameter count");
+		Assertions.assertFalse(ex.getMessage().contains("raw-token"),
+				"Exception message must not include raw secured parameter values");
+	}
+
+	@Test
+	public void testDatabaseExceptionTruncatesLongParameterValues() {
+		Database db = Database.withDataSource(createInMemoryDataSource("statement_context_parameter_truncation")).build();
+		String longParameter = "x".repeat(1000);
+
+		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("SELECT :secret FROM missing_table")
+						.bind("secret", longParameter)
+						.fetchList(String.class));
+
+		Assertions.assertTrue(ex.getMessage().contains("parameters=["),
+				"Expected parameters in exception message");
+		Assertions.assertTrue(ex.getMessage().contains("... (truncated)"),
+				"Expected long parameter value to be truncated in exception message");
+		Assertions.assertFalse(ex.getMessage().contains(longParameter),
+				"Expected full long parameter value to be omitted");
+		Assertions.assertTrue(ex.getMessage().length() < 4096,
+				"Expected bounded exception message length");
+	}
+
+	@Test
+	public void testDatabaseExceptionTruncatesParameterListToTotalBudget() {
+		Database db = Database.withDataSource(createInMemoryDataSource("statement_context_parameter_list_truncation")).build();
+		StringBuilder sql = new StringBuilder("SELECT ");
+
+		for (int i = 0; i < 20; i++) {
+			if (i > 0)
+				sql.append(", ");
+
+			sql.append(":p").append(i);
+		}
+
+		sql.append(" FROM missing_table");
+
+		Query query = db.query(sql.toString());
+
+		for (int i = 0; i < 20; i++)
+			query.bind(format("p%s", i), format("value-%02d-%s", i, "x".repeat(300)));
+
+		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () -> query.fetchList(String.class));
+		String parameterDiagnostic = parameterDiagnostic(ex.getMessage());
+
+		Assertions.assertTrue(parameterDiagnostic.length() <= 2048,
+				"Expected parameter diagnostic to respect the total budget");
+		Assertions.assertTrue(parameterDiagnostic.contains("... (truncated)"),
+				"Expected total parameter diagnostic to be truncated");
+		Assertions.assertTrue(parameterDiagnostic.endsWith("]"),
+				"Expected truncated parameter diagnostic to remain bracketed");
+	}
+
+	@Test
+	public void testDatabaseExceptionMasksSecureInListValues() {
+		Database db = Database.withDataSource(createInMemoryDataSource("statement_context_secure_inlist_exception")).build();
+
+		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("SELECT * FROM missing_table WHERE token IN (:tokens)")
+						.bind("tokens", Parameters.secure(Parameters.inList(List.of("raw-token-1", "raw-token-2")), "<token>"))
+						.fetchList(String.class));
+
+		Assertions.assertTrue(ex.getMessage().contains("parameters=[<token>, <token>]"),
+				"Expected secure IN-list values to remain masked in exception diagnostics");
+		Assertions.assertFalse(ex.getMessage().contains("raw-token-1"));
+		Assertions.assertFalse(ex.getMessage().contains("raw-token-2"));
+	}
+
+	@Test
+	public void testDatabaseExceptionUsesBatchSummaryForBatchFailures() {
+		Database db = Database.withDataSource(createInMemoryDataSource("statement_context_batch_exception")).build();
+
+		db.query("CREATE TABLE batch_items (id INT PRIMARY KEY, token VARCHAR(255))").execute();
+
+		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("INSERT INTO batch_items (id, token) VALUES (:id, :token)")
+						.executeBatch(List.of(
+								Map.of("id", 1, "token", Parameters.secure("raw-token-1")),
+								Map.of("id", 1, "token", Parameters.secure("raw-token-2"))
+						)));
+
+		Assertions.assertTrue(ex.getMessage().contains("parameters=[<batch: 2 groups x 2 parameters>]"),
+				"Expected batch exception diagnostics to use the bounded batch summary");
+		Assertions.assertFalse(ex.getMessage().contains("raw-token-1"));
+		Assertions.assertFalse(ex.getMessage().contains("raw-token-2"));
+	}
+
+	@Test
+	public void testDatabaseExceptionSuppressesParameterRenderingFailure() {
+		RuntimeException redactionFailure = new RuntimeException("redaction boom");
+		Database db = Database.withDataSource(createInMemoryDataSource("statement_context_redaction_failure"))
+				.parameterRedactor((statementContext, parameterIndex, parameter) -> {
+					throw redactionFailure;
+				})
+				.build();
 
 		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
 				db.query("SELECT :secret FROM missing_table")
 						.bind("secret", "super-secret")
 						.fetchList(String.class));
 
-		Assertions.assertTrue(ex.getMessage().contains("sql=SELECT ? FROM missing_table"),
-				"Expected SQL in exception message");
-		Assertions.assertTrue(ex.getMessage().contains("parameterCount=1"),
-				"Expected parameter count in exception message");
-		Assertions.assertFalse(ex.getMessage().contains("super-secret"),
-				"Exception message must not include raw parameter values by default");
+		Assertions.assertTrue(ex.getMessage().contains("parameters=<unavailable>"),
+				"Expected explicit unavailable parameters marker");
+		Assertions.assertTrue(ex.getMessage().contains("parameterRenderingFailure=java.lang.RuntimeException: redaction boom"),
+				"Expected parameter rendering failure summary");
+		Assertions.assertSame(redactionFailure, Arrays.stream(ex.getSuppressed())
+				.filter(suppressed -> suppressed == redactionFailure)
+				.findFirst()
+				.orElse(null));
+	}
+
+	@Test
+	public void testDatabaseExceptionSuppressesSecureParameterMaskFailure() {
+		RuntimeException maskFailure = new RuntimeException("mask boom");
+		SecureParameter throwingMask = new SecureParameter() {
+			@NonNull
+			@Override
+			public Optional<Object> getValue() {
+				return Optional.of("raw-token");
+			}
+
+			@NonNull
+			@Override
+			public String getMask() {
+				throw maskFailure;
+			}
+		};
+		Database db = Database.withDataSource(createInMemoryDataSource("statement_context_mask_failure")).build();
+
+		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("SELECT :token FROM missing_table")
+						.bind("token", throwingMask)
+						.fetchList(String.class));
+
+		Assertions.assertTrue(ex.getMessage().contains("parameters=<unavailable>"),
+				"Expected explicit unavailable parameters marker");
+		Assertions.assertTrue(ex.getMessage().contains("parameterRenderingFailure=java.lang.RuntimeException: mask boom"),
+				"Expected mask rendering failure summary");
+		Assertions.assertFalse(ex.getMessage().contains("raw-token"));
+		Assertions.assertSame(maskFailure, Arrays.stream(ex.getSuppressed())
+				.filter(suppressed -> suppressed == maskFailure)
+				.findFirst()
+				.orElse(null));
+	}
+
+	@Test
+	public void testDatabaseExceptionSuppressesSecureParameterNullMaskFailure() {
+		SecureParameter nullMask = new SecureParameter() {
+			@NonNull
+			@Override
+			public Optional<Object> getValue() {
+				return Optional.of("raw-token");
+			}
+
+			@SuppressWarnings("DataFlowIssue")
+			@NonNull
+			@Override
+			public String getMask() {
+				return null;
+			}
+		};
+		Database db = Database.withDataSource(createInMemoryDataSource("statement_context_null_mask_failure")).build();
+
+		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("SELECT :token FROM missing_table")
+						.bind("token", nullMask)
+						.fetchList(String.class));
+
+		Assertions.assertTrue(ex.getMessage().contains("parameters=<unavailable>"),
+				"Expected explicit unavailable parameters marker");
+		Assertions.assertTrue(ex.getMessage().contains("parameterRenderingFailure=java.lang.NullPointerException"),
+				"Expected null-mask rendering failure summary");
+		Assertions.assertFalse(ex.getMessage().contains("raw-token"));
+		Assertions.assertTrue(Arrays.stream(ex.getSuppressed()).anyMatch(NullPointerException.class::isInstance),
+				"Expected null-mask failure to be suppressed");
+	}
+
+	@Test
+	public void testDatabaseExceptionParameterRenderingFailureSummaryDoesNotCallToString() {
+		RuntimeException redactionFailure = new RuntimeException("redaction boom") {
+			@Override
+			public String toString() {
+				throw new RuntimeException("toString boom");
+			}
+		};
+		Database db = Database.withDataSource(createInMemoryDataSource("statement_context_redaction_failure_to_string"))
+				.parameterRedactor((statementContext, parameterIndex, parameter) -> {
+					throw redactionFailure;
+				})
+				.build();
+
+		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("SELECT :secret FROM missing_table")
+						.bind("secret", "super-secret")
+						.fetchList(String.class));
+
+		Assertions.assertTrue(ex.getMessage().contains("parameters=<unavailable>"),
+				"Expected explicit unavailable parameters marker");
+		Assertions.assertTrue(ex.getMessage().contains("redaction boom"),
+				"Expected rendering failure message");
+		Assertions.assertFalse(ex.getMessage().contains("toString boom"),
+				"Expected rendering failure summary not to invoke Throwable.toString()");
+		Assertions.assertSame(redactionFailure, Arrays.stream(ex.getSuppressed())
+				.filter(suppressed -> suppressed == redactionFailure)
+				.findFirst()
+				.orElse(null));
 	}
 
 	@Test
@@ -269,6 +481,24 @@ public class ExceptionSuppressionTests {
 									&& suppressed.getCause() != null
 									&& "rollback failed".equals(suppressed.getCause().getMessage())),
 				"Expected suppressed rollback failure");
+	}
+
+	@NonNull
+	private String parameterDiagnostic(@NonNull String message) {
+		requireNonNull(message);
+
+		int parametersStart = message.indexOf("parameters=");
+
+		if (parametersStart < 0)
+			throw new AssertionError("Expected parameters diagnostic in message: " + message);
+
+		int valueStart = parametersStart + "parameters=".length();
+		int valueEnd = message.indexOf("]", valueStart);
+
+		if (valueEnd < 0)
+			throw new AssertionError("Expected closing parameter diagnostic bracket in message: " + message);
+
+		return message.substring(valueStart, valueEnd + 1);
 	}
 
 	@NonNull

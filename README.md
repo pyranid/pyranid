@@ -1066,7 +1066,7 @@ If parameter metadata is unavailable or non-identifying, `Instant` and `OffsetDa
 
 ### Special Parameters
 
-Special support is provided for IN-list, JSON/JSONB, vector, and SQL ARRAY parameters.
+Special support is provided for secure diagnostics wrappers, IN-list, JSON/JSONB, vector, and SQL ARRAY parameters.
 
 #### JSON/JSONB
 
@@ -1181,6 +1181,64 @@ database.query("""
 ```
 
 If you need support for multidimensional array binding, database-specific collection types, or table-valued parameters, implement a [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) as outlined below.
+
+#### Secure Parameters
+
+Use [`Parameters::secure(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) for sensitive values that should bind normally but render as a mask in Pyranid diagnostics.
+
+For example, a logger that renders the full [`StatementLog`](https://javadoc.pyranid.com/com/pyranid/StatementLog.html) will include Pyranid's parameter diagnostics:
+
+```java
+Database database = Database.withDataSource(dataSource)
+  .statementLogger(statementLog -> System.out.println(statementLog))
+  .build();
+```
+
+Before wrapping a sensitive value, that log output can display the raw bound value:
+
+```java
+database.query("""
+  INSERT INTO api_credential (account_id, token_hash)
+  VALUES (:accountId, :tokenHash)
+  """)
+  .bind("accountId", accountId)
+  .bind("tokenHash", tokenHash)
+  .execute();
+```
+
+```text
+parameters=[acct_123, token_hash_abc123]
+```
+
+After wrapping the value, Pyranid still binds `tokenHash` normally, but the same log output renders the mask:
+
+```java
+database.query("""
+  INSERT INTO api_credential (account_id, token_hash)
+  VALUES (:accountId, :tokenHash)
+  """)
+  .bind("accountId", accountId)
+  .bind("tokenHash", Parameters.secure(tokenHash))
+  .execute();
+```
+
+```text
+parameters=[acct_123, <redacted>]
+```
+
+[`Parameters::secure(Object)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) renders as `<redacted>`. Use [`Parameters::secure(Object, String)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object,java.lang.String)) for a custom display token.
+This is display-only: the underlying value is still passed to the JDBC [`PreparedStatement`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/PreparedStatement.html) as if it had not been wrapped.
+[`Parameters::secure(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) composes with [`Parameters::inList(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#inList(java.util.Collection)), [`Parameters::json(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#json(java.lang.String)), [`Parameters::sqlArrayOf(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#sqlArrayOf(java.lang.String,java.util.List)), typed parameters, [`Optional`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Optional.html) values, and `null` values.
+
+For broader policies, configure a database-wide [`ParameterRedactor`](https://javadoc.pyranid.com/com/pyranid/ParameterRedactor.html):
+
+```java
+Database database = Database.withDataSource(dataSource)
+  .parameterRedactor(ParameterRedactor.redactAll())
+  .build();
+```
+
+The default redactor is [`ParameterRedactor::none()`](https://javadoc.pyranid.com/com/pyranid/ParameterRedactor.html#none()), which leaves non-secure, non-batch values unchanged. [`ParameterRedactor::redactAll()`](https://javadoc.pyranid.com/com/pyranid/ParameterRedactor.html#redactAll()) masks every non-secure value. [`SecureParameter`](https://javadoc.pyranid.com/com/pyranid/SecureParameter.html) always wins; its wrapped value is never passed to the redactor.
 
 ### Custom Parameters
 
@@ -1451,6 +1509,34 @@ Database database = Database.withDataSource(dataSource)
 
 Keep logger implementations lightweight and failure-safe. If logging must never affect database writes, catch and handle exceptions inside your logger implementation, or use [`MetricsCollector`](https://javadoc.pyranid.com/com/pyranid/MetricsCollector.html) for best-effort observability.
 
+`StatementContext::toString()` and `StatementLog::toString()` use [`StatementContext::getRedactedParameters()`](https://javadoc.pyranid.com/com/pyranid/StatementContext.html#getRedactedParameters()). Values wrapped with [`Parameters::secure(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) render as their mask:
+
+```java
+Database database = Database.withDataSource(dataSource)
+  .statementLogger(statementLog -> System.out.println(statementLog))
+  .build();
+
+database.query("INSERT INTO api_credential (account_id, token_hash) VALUES (:accountId, :tokenHash)")
+  .bind("accountId", "acct_123")
+  .bind("tokenHash", Parameters.secure("token_hash_abc123"))
+  .execute();
+```
+
+The logged `StatementLog` includes a redacted parameter display:
+
+```text
+parameters=[acct_123, <redacted>]
+```
+
+Custom loggers can choose raw or display-safe parameters explicitly:
+
+```java
+statementLog.getStatementContext().getParameters();         // raw values, trusted code only
+statementLog.getStatementContext().getRedactedParameters(); // safe display values
+```
+
+Pyranid exception messages use the same bounded parameter display. Under the default [`ParameterRedactor::none()`](https://javadoc.pyranid.com/com/pyranid/ParameterRedactor.html#none()), non-secure, non-batch values render verbatim; wrap sensitive bind values with [`Parameters::secure(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) or configure [`Database.Builder::parameterRedactor(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#parameterRedactor(com.pyranid.ParameterRedactor)) when exception text may leave a trusted boundary.
+
 [`StatementLog`](https://javadoc.pyranid.com/com/pyranid/StatementLog.html) instances give you access to the following for each SQL statement executed:
 
 * `statementContext`
@@ -1580,7 +1666,7 @@ List<Employee> employees = database.query("""
   .fetchList(Employee.class);
 ```
 
-Pyranid exception messages include bounded SQL and parameter counts, not raw parameter values. Custom `StatementLogger` implementations receive the full `StatementLog`, including its `StatementContext`, so application logging code is responsible for redacting secrets before writing logs.
+Pyranid exception messages include bounded SQL and bounded parameter display values. Under the default [`ParameterRedactor::none()`](https://javadoc.pyranid.com/com/pyranid/ParameterRedactor.html#none()), non-secure, non-batch values render verbatim. Wrap sensitive bind values with [`Parameters::secure(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) or configure [`Database.Builder::parameterRedactor(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#parameterRedactor(com.pyranid.ParameterRedactor)) when values should not appear in diagnostics. Custom [`StatementLogger`](https://javadoc.pyranid.com/com/pyranid/StatementLogger.html) implementations that read [`StatementContext::getParameters()`](https://javadoc.pyranid.com/com/pyranid/StatementContext.html#getParameters()) receive raw values; use [`StatementContext::getRedactedParameters()`](https://javadoc.pyranid.com/com/pyranid/StatementContext.html#getRedactedParameters()) for safe display.
 
 ### Startup and Database Type Detection
 

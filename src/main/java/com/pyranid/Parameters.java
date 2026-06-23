@@ -45,6 +45,39 @@ public final class Parameters {
 	}
 
 	/**
+	 * Acquires a secure parameter with the default {@code <redacted>} diagnostics mask.
+	 * <p>
+	 * This is display-only: Pyranid binds the wrapped value exactly as if it had not been secured, but renders the mask
+	 * instead of the value in its own diagnostics.
+	 *
+	 * @param value the value to bind
+	 * @return a secure parameter for the given value
+	 * @since 4.4.0
+	 */
+	@NonNull
+	public static SecureParameter secure(@Nullable Object value) {
+		return secure(value, SecureParameterSupport.DEFAULT_MASK);
+	}
+
+	/**
+	 * Acquires a secure parameter with a custom diagnostics mask.
+	 * <p>
+	 * This is display-only: Pyranid binds the wrapped value exactly as if it had not been secured, but renders the mask
+	 * instead of the value in its own diagnostics.
+	 *
+	 * @param value the value to bind
+	 * @param mask  the value to render in diagnostics
+	 * @return a secure parameter for the given value
+	 * @since 4.4.0
+	 */
+	@NonNull
+	public static SecureParameter secure(@Nullable Object value,
+																			 @NonNull String mask) {
+		requireNonNull(mask);
+		return new DefaultSecureParameter(value, mask);
+	}
+
+	/**
 	 * Acquires a SQL ARRAY parameter for a {@link List} given an appropriate <a href="https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Array.html#getBaseTypeName()" target="_blank">{@code java.sql.Array#getBaseTypeName()}</a>.
 	 * <p>
 	 * You may determine available {@code baseTypeName} values for your database by examining metadata exposed via {@link Database#readDatabaseMetaData(DatabaseMetaDataReader)}.

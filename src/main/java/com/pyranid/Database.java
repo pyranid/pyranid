@@ -77,6 +77,8 @@ public final class Database {
 	private static final ThreadLocal<Deque<Transaction>> TRANSACTION_STACK_HOLDER;
 	private static final int DEFAULT_PARSED_SQL_CACHE_CAPACITY = 1024;
 	private static final int MAX_DIAGNOSTIC_MESSAGE_LENGTH = 1024;
+	private static final int MAX_DIAGNOSTIC_PARAMETER_LENGTH = 256;
+	private static final int MAX_DIAGNOSTIC_PARAMETERS_LENGTH = 2048;
 	private static final int MAX_DIAGNOSTIC_SQL_LENGTH = 2048;
 	@NonNull
 	private static final String TRUNCATED_SUFFIX = "... (truncated)";
@@ -107,6 +109,8 @@ public final class Database {
 	private final ResultSetMapper resultSetMapper;
 	@NonNull
 	private final StatementLogger statementLogger;
+	@NonNull
+	private final ParameterRedactor parameterRedactor;
 	@NonNull
 	private final MetricsCollectorDispatcher metricsCollectorDispatcher;
 	@Nullable
@@ -142,6 +146,7 @@ public final class Database {
 		this.preparedStatementBinder = builder.preparedStatementBinder == null ? PreparedStatementBinder.withDefaultConfiguration() : builder.preparedStatementBinder;
 		this.resultSetMapper = builder.resultSetMapper == null ? ResultSetMapper.withDefaultConfiguration() : builder.resultSetMapper;
 		this.statementLogger = builder.statementLogger == null ? (statementLog) -> {} : builder.statementLogger;
+		this.parameterRedactor = builder.parameterRedactor == null ? ParameterRedactor.none() : builder.parameterRedactor;
 		this.metricsCollectorDispatcher = new MetricsCollectorDispatcher(builder.metricsCollector);
 		this.queryTimeout = validateQueryTimeout(builder.queryTimeout);
 		this.fetchSize = validateNonNegativeStatementSetting("fetchSize", builder.fetchSize);
@@ -581,8 +586,15 @@ public final class Database {
 		requireNonNull(message);
 		requireNonNull(cause);
 
-		return new DatabaseException(format("%s [%s]", boundedDiagnosticMessage(message), statementDiagnostic(statementContext)), cause,
+		StatementDiagnostic statementDiagnostic = statementDiagnostic(statementContext);
+		DatabaseException databaseException = new DatabaseException(format("%s [%s]",
+				boundedDiagnosticMessage(message), statementDiagnostic.diagnostic()), cause,
 				databaseDialectForException(statementContext, cause));
+
+		if (statementDiagnostic.parameterRenderingFailure() != null)
+			databaseException.addSuppressed(statementDiagnostic.parameterRenderingFailure());
+
+		return databaseException;
 	}
 
 	@NonNull
@@ -623,12 +635,49 @@ public final class Database {
 	}
 
 	@NonNull
-	private static String statementDiagnostic(@NonNull StatementContext<?> statementContext) {
+	private static StatementDiagnostic statementDiagnostic(@NonNull StatementContext<?> statementContext) {
 		requireNonNull(statementContext);
 
 		Statement statement = statementContext.getStatement();
-		return format("statementId=%s, sql=%s, parameterCount=%s",
-				statement.getId(), boundedSql(statement.getSql()), statementContext.getParameters().size());
+		String parameters;
+		Throwable parameterRenderingFailure = null;
+
+		try {
+			parameters = boundedDiagnosticParameters(statementContext.getRedactedParameters());
+		} catch (Throwable t) {
+			parameters = "<unavailable>";
+			parameterRenderingFailure = t;
+		}
+
+		String diagnostic = format("statementId=%s, sql=%s, parameters=%s",
+				statement.getId(), boundedSql(statement.getSql()), parameters);
+
+		if (parameterRenderingFailure != null)
+			diagnostic = format("%s, parameterRenderingFailure=%s", diagnostic,
+					boundedDiagnosticParameter(parameterRenderingFailureDiagnostic(parameterRenderingFailure)));
+
+		return new StatementDiagnostic(diagnostic, parameterRenderingFailure);
+	}
+
+	private record StatementDiagnostic(@NonNull String diagnostic,
+																		 @Nullable Throwable parameterRenderingFailure) {}
+
+	@NonNull
+	private static String parameterRenderingFailureDiagnostic(@NonNull Throwable parameterRenderingFailure) {
+		requireNonNull(parameterRenderingFailure);
+
+		String message;
+
+		try {
+			message = parameterRenderingFailure.getMessage();
+		} catch (Throwable ignored) {
+			message = null;
+		}
+
+		if (message == null || message.trim().length() == 0)
+			return parameterRenderingFailure.getClass().getName();
+
+		return format("%s: %s", parameterRenderingFailure.getClass().getName(), message);
 	}
 
 	@NonNull
@@ -710,6 +759,56 @@ public final class Database {
 
 		int prefixLength = Math.max(0, MAX_DIAGNOSTIC_SQL_LENGTH - TRUNCATED_SUFFIX.length());
 		return compactSql.substring(0, prefixLength) + TRUNCATED_SUFFIX;
+	}
+
+	@NonNull
+	private static String boundedDiagnosticParameters(@NonNull List<@Nullable Object> parameters) {
+		requireNonNull(parameters);
+
+		StringBuilder parametersBuilder = new StringBuilder("[");
+
+		for (int i = 0; i < parameters.size(); ++i) {
+			String separator = i == 0 ? "" : ", ";
+			String renderedParameter = boundedDiagnosticParameter(parameters.get(i));
+			int requiredLength = parametersBuilder.length() + separator.length() + renderedParameter.length() + 1;
+
+			if (requiredLength > MAX_DIAGNOSTIC_PARAMETERS_LENGTH) {
+				int availableLength = MAX_DIAGNOSTIC_PARAMETERS_LENGTH
+						- parametersBuilder.length()
+						- separator.length()
+						- TRUNCATED_SUFFIX.length()
+						- 1;
+
+				parametersBuilder.append(separator);
+
+				if (availableLength > 0)
+					parametersBuilder.append(renderedParameter, 0, Math.min(availableLength, renderedParameter.length()));
+
+				parametersBuilder.append(TRUNCATED_SUFFIX).append(']');
+				if (parametersBuilder.length() > MAX_DIAGNOSTIC_PARAMETERS_LENGTH) {
+					parametersBuilder.setLength(MAX_DIAGNOSTIC_PARAMETERS_LENGTH - 1);
+					parametersBuilder.append(']');
+				}
+				return parametersBuilder.toString();
+			}
+
+			parametersBuilder.append(separator).append(renderedParameter);
+		}
+
+		parametersBuilder.append(']');
+		return parametersBuilder.toString();
+	}
+
+	@NonNull
+	private static String boundedDiagnosticParameter(@Nullable Object parameter) {
+		String renderedParameter = String.valueOf(parameter);
+		String compactParameter = DIAGNOSTIC_WHITESPACE_PATTERN.matcher(renderedParameter).replaceAll(" ").trim();
+
+		if (compactParameter.length() <= MAX_DIAGNOSTIC_PARAMETER_LENGTH)
+			return compactParameter;
+
+		int prefixLength = Math.max(0, MAX_DIAGNOSTIC_PARAMETER_LENGTH - TRUNCATED_SUFFIX.length());
+		return compactParameter.substring(0, prefixLength) + TRUNCATED_SUFFIX;
 	}
 
 	/**
@@ -1381,7 +1480,10 @@ public final class Database {
 					continue;
 				}
 
-				Object value = unwrapOptionalValue(bindings.get(parameterName));
+				SecureParameterSupport.SecureParameterUnwrapResult secureParameterUnwrapResult =
+						SecureParameterSupport.unwrapSecureAndOptionalParameterWithMetadata(bindings.get(parameterName));
+				SecureParameter secureParameter = secureParameterUnwrapResult.secureParameter();
+				Object value = secureParameterUnwrapResult.value();
 
 				if (value instanceof InListParameter inListParameter) {
 					Object[] elements = inListParameter.getElements();
@@ -1400,7 +1502,7 @@ public final class Database {
 											+ "SQL IN does not match NULL values; use an explicit IS NULL predicate instead.",
 									parameterName, this.originalSql, j));
 
-						parameters.add(element);
+						parameters.add(secureParameter == null ? element : Parameters.secure(element, SecureParameterSupport.maskOf(secureParameter)));
 					}
 				} else if (value instanceof Collection<?>) {
 					throw new IllegalArgumentException(format(
@@ -1415,7 +1517,7 @@ public final class Database {
 							Parameters.class.getSimpleName(), Parameters.class.getSimpleName(), Parameters.class.getSimpleName()));
 				} else {
 					sql.append('?');
-					parameters.add(value);
+					parameters.add(secureParameter == null ? value : secureParameter);
 				}
 			}
 
@@ -2642,6 +2744,7 @@ public final class Database {
 		StatementContext<List<Long>> statementContext = StatementContext.with(statement, this)
 				.parameters((List) parameterGroups)
 				.resultSetRowType(List.class)
+				.batchParameterGroups(true)
 				.build();
 
 		if (batchChunkSize == null || batchChunkSize >= parameterGroups.size()) {
@@ -2860,7 +2963,7 @@ public final class Database {
 			PreparedStatementBinder preparedStatementBinder = getPreparedStatementBinder();
 
 			for (int i = 0; i < parameters.size(); ++i) {
-				Object parameter = parameters.get(i);
+				Object parameter = SecureParameterSupport.unwrapSecureAndOptionalParameter(parameters.get(i));
 				Integer parameterIndex = i + 1;
 
 				if (parameter != null) {
@@ -3050,6 +3153,17 @@ public final class Database {
 	@NonNull
 	public AmbiguousTimestampBindingStrategy getAmbiguousTimestampBindingStrategy() {
 		return this.ambiguousTimestampBindingStrategy;
+	}
+
+	/**
+	 * Gets the configured redactor used for non-secure parameters in diagnostics.
+	 *
+	 * @return the configured parameter redactor
+	 * @since 4.4.0
+	 */
+	@NonNull
+	public ParameterRedactor getParameterRedactor() {
+		return this.parameterRedactor;
 	}
 
 	/**
@@ -3402,7 +3516,7 @@ public final class Database {
 	@NonNull
 	protected Object generateId() {
 		// "Unique" keys
-		return format("com.pyranid.%s", this.defaultIdGenerator.incrementAndGet());
+		return this.defaultIdGenerator.incrementAndGet();
 	}
 
 	@FunctionalInterface
@@ -3863,6 +3977,8 @@ public final class Database {
 		@Nullable
 		private StatementLogger statementLogger;
 		@Nullable
+		private ParameterRedactor parameterRedactor;
+		@Nullable
 		private MetricsCollector metricsCollector;
 		@Nullable
 		private Duration queryTimeout;
@@ -3972,6 +4088,23 @@ public final class Database {
 		@NonNull
 		public Builder statementLogger(@Nullable StatementLogger statementLogger) {
 			this.statementLogger = statementLogger;
+			return this;
+		}
+
+		/**
+		 * Configures the redactor used for non-secure parameters in diagnostics.
+		 * <p>
+		 * {@link SecureParameter} values always render via {@link SecureParameter#getMask()} and are never passed to this
+		 * redactor. Batch executions render a bounded batch summary instead of invoking the redactor for each batch value.
+		 * Specify {@code null} or omit this setter to render non-secure, non-batch values verbatim.
+		 *
+		 * @param parameterRedactor parameter redactor to use, or {@code null} for the default
+		 * @return this {@code Builder}, for chaining
+		 * @since 4.4.0
+		 */
+		@NonNull
+		public Builder parameterRedactor(@Nullable ParameterRedactor parameterRedactor) {
+			this.parameterRedactor = parameterRedactor;
 			return this;
 		}
 

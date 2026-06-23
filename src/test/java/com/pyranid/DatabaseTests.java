@@ -443,9 +443,8 @@ public class DatabaseTests {
 
 		Assertions.assertTrue(exception.getMessage().contains("Expected 1 row in resultset but got more than 1 instead"));
 		Assertions.assertTrue(exception.getMessage().contains("sql=SELECT name FROM employee WHERE email_address <> ? ORDER BY employee_id"));
-		Assertions.assertTrue(exception.getMessage().contains("parameterCount=1"));
-		Assertions.assertFalse(exception.getMessage().contains("secret-three@company.com"),
-				"Exception message must not include raw parameter values by default");
+		Assertions.assertTrue(exception.getMessage().contains("parameters=[secret-three@company.com]"));
+		Assertions.assertFalse(exception.getMessage().contains("parameterCount="));
 	}
 
 	@Test
@@ -2699,11 +2698,8 @@ public class DatabaseTests {
 
 		Assertions.assertTrue(exception.getMessage().contains("Expected 1 generated-key row but got more than 1 instead"));
 		Assertions.assertTrue(exception.getMessage().contains("sql=INSERT INTO generated_key_items (name) VALUES (?), (?)"));
-		Assertions.assertTrue(exception.getMessage().contains("parameterCount=2"));
-		Assertions.assertFalse(exception.getMessage().contains("secret-a"),
-				"Exception message must not include raw parameter values by default");
-		Assertions.assertFalse(exception.getMessage().contains("secret-b"),
-				"Exception message must not include raw parameter values by default");
+		Assertions.assertTrue(exception.getMessage().contains("parameters=[secret-a, secret-b]"));
+		Assertions.assertFalse(exception.getMessage().contains("parameterCount="));
 	}
 
 	@Test

@@ -100,12 +100,14 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		requireNonNull(parameter);
 		requireNonNull(parameterSqlTypeResolver);
 
-		TargetType explicitTargetType = (parameter instanceof TypedParameter typedParameter)
+		@Nullable Object effectiveParameter = SecureParameterSupport.unwrapSecureAndOptionalParameter(parameter);
+
+		TargetType explicitTargetType = (effectiveParameter instanceof TypedParameter typedParameter)
 				? TargetType.of(typedParameter.getExplicitType())
 				: null;
 
 		// Unwrap typed parameters if needed
-		Object rawParameter = (parameter instanceof TypedParameter typedParameter) ? typedParameter.getValue().orElse(null) : parameter;
+		Object rawParameter = (effectiveParameter instanceof TypedParameter typedParameter) ? typedParameter.getValue().orElse(null) : effectiveParameter;
 		Object unwrappedParameter = unwrapOptionalValue(rawParameter);
 
 		if (unwrappedParameter == null) {
@@ -122,7 +124,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 					&& tryCustomNullBinders(statementContext, preparedStatement, parameterIndex, sqlType, explicitTargetType))
 				return;
 
-			if (parameter instanceof TypedParameter typedParameter)
+			if (effectiveParameter instanceof TypedParameter typedParameter)
 				throw new DatabaseException(format("This parameter requires a CustomParameterBinder (even when null): %s. "
 								+ "Parameters.listOf/setOf/mapOf/arrayOf(Class, ...) are typed wrappers intended for use with custom binders. "
 								+ "Register a CustomParameterBinder that appliesTo(%s), "
@@ -145,7 +147,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 		// If this parameter was explicitly wrapped as a TypedParameter (e.g., Parameters.listOf/setOf/mapOf/arrayOf(Class, ...))
 		// and no CustomParameterBinder claimed it, fail fast with a clear message.
-		if (parameter instanceof TypedParameter typedParameter)
+		if (effectiveParameter instanceof TypedParameter typedParameter)
 			throw new DatabaseException(format("This parameter requires a CustomParameterBinder: %s. "
 							+ "Parameters.listOf/setOf/mapOf/arrayOf(Class, ...) are typed wrappers intended for use with custom binders. "
 							+ "Register a CustomParameterBinder that appliesTo(%s), "
