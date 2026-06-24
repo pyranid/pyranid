@@ -158,6 +158,7 @@
 				</executions>
 				<configuration>
 					<projectType>library</projectType>
+					<schemaVersion>1.5</schemaVersion>
 					<outputFormat>all</outputFormat>
 					<includeProvidedScope>false</includeProvidedScope>
 					<includeSystemScope>false</includeSystemScope>
