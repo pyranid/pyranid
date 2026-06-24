@@ -25,7 +25,7 @@ import java.util.Optional;
  * Wraps a bound parameter value so Pyranid can mask it in diagnostics while still binding the underlying value normally.
  * <p>
  * This is display-only: it does not change what is bound to the database. Pyranid's own diagnostic rendering reads
- * {@link #getMask()} directly and does not rely on an implementation's {@link #toString()} method.
+ * {@link #getMask()} directly and does not rely on an implementation's {@link Object#toString()} method.
  * <p>
  * Implementations should be threadsafe.
  *
