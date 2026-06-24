@@ -514,9 +514,9 @@ abstract class AbstractPortableJdbcIntegrationTests {
 				+ ")");
 
 		AtomicInteger attempts = new AtomicInteger();
-		RetryPolicy retryPolicy = RetryPolicy.of(3,
-				RetryPolicy.Condition.serializationFailureOrDeadlock(),
-				RetryPolicy.Backoff.fixed(Duration.ofMillis(10)));
+		RetryPolicy retryPolicy = RetryPolicy.ofMaxAttempts(3,
+				RetryPolicy.Backoff.fixed(Duration.ofMillis(10)),
+				RetryPolicy.Condition.serializationFailureOrDeadlock());
 
 		Long rowCount = db.transactionWithRetry(retryPolicy, () -> {
 			attempts.incrementAndGet();
@@ -544,9 +544,9 @@ abstract class AbstractPortableJdbcIntegrationTests {
 				.execute();
 
 		AtomicInteger attempts = new AtomicInteger();
-		RetryPolicy retryPolicy = RetryPolicy.of(4,
-				RetryPolicy.Condition.serializationFailureOrDeadlock(),
-				RetryPolicy.Backoff.fixed(Duration.ofMillis(10)));
+		RetryPolicy retryPolicy = RetryPolicy.ofMaxAttempts(4,
+				RetryPolicy.Backoff.fixed(Duration.ofMillis(10)),
+				RetryPolicy.Condition.serializationFailureOrDeadlock());
 
 		DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
 				db.transactionWithRetry(retryPolicy, () -> {

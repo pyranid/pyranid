@@ -30,13 +30,13 @@ public class RetryPolicyTests {
 	@Test
 	public void testRetryPolicyValidation() {
 		Assertions.assertThrows(NullPointerException.class, () ->
-				RetryPolicy.of(null, RetryPolicy.Condition.serializationFailureOrDeadlock(), RetryPolicy.Backoff.fixed(Duration.ZERO)));
+				RetryPolicy.ofMaxAttempts(null, RetryPolicy.Backoff.fixed(Duration.ZERO), RetryPolicy.Condition.serializationFailureOrDeadlock()));
 		Assertions.assertThrows(NullPointerException.class, () ->
-				RetryPolicy.of(1, null, RetryPolicy.Backoff.fixed(Duration.ZERO)));
+				RetryPolicy.ofMaxAttempts(1, RetryPolicy.Backoff.fixed(Duration.ZERO), null));
 		Assertions.assertThrows(NullPointerException.class, () ->
-				RetryPolicy.of(1, RetryPolicy.Condition.serializationFailureOrDeadlock(), null));
+				RetryPolicy.ofMaxAttempts(1, null, RetryPolicy.Condition.serializationFailureOrDeadlock()));
 		Assertions.assertThrows(IllegalArgumentException.class, () ->
-				RetryPolicy.of(0, RetryPolicy.Condition.serializationFailureOrDeadlock(), RetryPolicy.Backoff.fixed(Duration.ZERO)));
+				RetryPolicy.ofMaxAttempts(0, RetryPolicy.Backoff.fixed(Duration.ZERO), RetryPolicy.Condition.serializationFailureOrDeadlock()));
 	}
 
 	@Test

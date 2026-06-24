@@ -83,10 +83,10 @@ public class TransactionRetryTests {
 	public void testTransactionWithRetryDoesNotCallConditionOnFinalFailedAttempt() {
 		Database database = database("retry_final_no_condition");
 		AtomicInteger conditionCalls = new AtomicInteger();
-		RetryPolicy retryPolicy = RetryPolicy.of(1, failure -> {
+		RetryPolicy retryPolicy = RetryPolicy.ofMaxAttempts(1, RetryPolicy.Backoff.fixed(Duration.ZERO), failure -> {
 			conditionCalls.incrementAndGet();
 			return true;
-		}, RetryPolicy.Backoff.fixed(Duration.ZERO));
+		});
 
 		DatabaseException thrown = Assertions.assertThrows(DatabaseException.class, () ->
 				database.transactionWithRetry(retryPolicy, () -> {
@@ -131,8 +131,8 @@ public class TransactionRetryTests {
 	@Test
 	public void testTransactionWithRetryInterruptedBackoffRestoresInterruptFlag() {
 		Database database = database("retry_interrupt");
-		RetryPolicy retryPolicy = RetryPolicy.of(3, RetryPolicy.Condition.serializationFailure(),
-				RetryPolicy.Backoff.fixed(Duration.ofMillis(100)));
+		RetryPolicy retryPolicy = RetryPolicy.ofMaxAttempts(3, RetryPolicy.Backoff.fixed(Duration.ofMillis(100)),
+				RetryPolicy.Condition.serializationFailure());
 		DatabaseException failure = serializationFailure("interrupted");
 
 		try {
@@ -157,9 +157,9 @@ public class TransactionRetryTests {
 		Database database = database("retry_condition_failure");
 		RuntimeException conditionFailure = new RuntimeException("condition");
 		DatabaseException databaseFailure = serializationFailure("serialization");
-		RetryPolicy retryPolicy = RetryPolicy.of(3, failure -> {
+		RetryPolicy retryPolicy = RetryPolicy.ofMaxAttempts(3, RetryPolicy.Backoff.fixed(Duration.ZERO), failure -> {
 			throw conditionFailure;
-		}, RetryPolicy.Backoff.fixed(Duration.ZERO));
+		});
 
 		RuntimeException thrown = Assertions.assertThrows(RuntimeException.class, () ->
 				database.transactionWithRetry(retryPolicy, () -> {
@@ -175,9 +175,9 @@ public class TransactionRetryTests {
 		Database database = database("retry_backoff_failure");
 		RuntimeException backoffFailure = new RuntimeException("backoff");
 		DatabaseException databaseFailure = serializationFailure("serialization");
-		RetryPolicy retryPolicy = RetryPolicy.of(3, RetryPolicy.Condition.serializationFailure(), (attempt, failure) -> {
+		RetryPolicy retryPolicy = RetryPolicy.ofMaxAttempts(3, (attempt, failure) -> {
 			throw backoffFailure;
-		});
+		}, RetryPolicy.Condition.serializationFailure());
 
 		RuntimeException thrown = Assertions.assertThrows(RuntimeException.class, () ->
 				database.transactionWithRetry(retryPolicy, () -> {
@@ -267,7 +267,7 @@ public class TransactionRetryTests {
 	public void testTransactionWithRetryBackoffNullOrNegativeFailsFast() {
 		Database database = database("retry_backoff_bad_value");
 		DatabaseException nullDelayFailure = serializationFailure("null");
-		RetryPolicy nullDelayPolicy = RetryPolicy.of(3, RetryPolicy.Condition.serializationFailure(), (attempt, failure) -> null);
+		RetryPolicy nullDelayPolicy = RetryPolicy.ofMaxAttempts(3, (attempt, failure) -> null, RetryPolicy.Condition.serializationFailure());
 
 		NullPointerException nullDelay = Assertions.assertThrows(NullPointerException.class, () ->
 				database.transactionWithRetry(nullDelayPolicy, () -> {
@@ -276,8 +276,8 @@ public class TransactionRetryTests {
 		Assertions.assertArrayEquals(new Throwable[]{nullDelayFailure}, nullDelay.getSuppressed());
 
 		DatabaseException negativeDelayFailure = serializationFailure("negative");
-		RetryPolicy negativeDelayPolicy = RetryPolicy.of(3, RetryPolicy.Condition.serializationFailure(),
-				(attempt, failure) -> Duration.ofNanos(-1));
+		RetryPolicy negativeDelayPolicy = RetryPolicy.ofMaxAttempts(3, (attempt, failure) -> Duration.ofNanos(-1),
+				RetryPolicy.Condition.serializationFailure());
 
 		IllegalArgumentException negativeDelay = Assertions.assertThrows(IllegalArgumentException.class, () ->
 				database.transactionWithRetry(negativeDelayPolicy, () -> {
@@ -287,7 +287,7 @@ public class TransactionRetryTests {
 	}
 
 	private RetryPolicy retryPolicy(Integer maxAttempts) {
-		return RetryPolicy.of(maxAttempts, RetryPolicy.Condition.serializationFailure(), RetryPolicy.Backoff.fixed(Duration.ZERO));
+		return RetryPolicy.ofMaxAttempts(maxAttempts, RetryPolicy.Backoff.fixed(Duration.ZERO), RetryPolicy.Condition.serializationFailure());
 	}
 
 	private DatabaseException serializationFailure(String message) {

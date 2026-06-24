@@ -56,17 +56,17 @@ public final class RetryPolicy {
 	 * initial attempt plus up to two retries.
 	 *
 	 * @param maxAttempts total attempts, including the initial attempt
-	 * @param condition   determines whether a failed attempt is retryable
 	 * @param backoff     determines how long to wait before the next retry
+	 * @param condition   determines whether a failed attempt is retryable
 	 * @return a retry policy
 	 */
 	@NonNull
-	public static RetryPolicy of(@NonNull Integer maxAttempts,
-															 @NonNull Condition condition,
-															 @NonNull Backoff backoff) {
+	public static RetryPolicy ofMaxAttempts(@NonNull Integer maxAttempts,
+			@NonNull Backoff backoff,
+			@NonNull Condition condition) {
 		requireNonNull(maxAttempts);
-		requireNonNull(condition);
 		requireNonNull(backoff);
+		requireNonNull(condition);
 
 		if (maxAttempts < 1)
 			throw new IllegalArgumentException("maxAttempts must be at least 1");

@@ -640,10 +640,10 @@ Use [`Database::transactionWithRetry(...)`](https://javadoc.pyranid.com/com/pyra
 Retry behavior is explicit: you choose total attempts, the retry condition, and the backoff strategy.
 
 ```java
-RetryPolicy retryPolicy = RetryPolicy.of(
+RetryPolicy retryPolicy = RetryPolicy.ofMaxAttempts(
   3,
-  RetryPolicy.Condition.serializationFailureOrDeadlock(),
-  RetryPolicy.Backoff.fixed(Duration.ofMillis(25)));
+  RetryPolicy.Backoff.fixed(Duration.ofMillis(25)),
+  RetryPolicy.Condition.serializationFailureOrDeadlock());
 
 database.transactionWithRetry(retryPolicy, () -> {
   database.query("""
@@ -657,7 +657,7 @@ database.transactionWithRetry(retryPolicy, () -> {
 });
 ```
 
-`RetryPolicy.of(3, ...)` means three total attempts: the initial transaction plus up to two retries. Pyranid starts a fresh physical transaction for each attempt. The whole closure may run more than once, so keep non-idempotent external side effects outside the retried closure.
+`RetryPolicy.ofMaxAttempts(3, ...)` means three total attempts: the initial transaction plus up to two retries. Pyranid starts a fresh physical transaction for each attempt. The whole closure may run more than once, so keep non-idempotent external side effects outside the retried closure.
 
 ```java
 // Risky: the email may send more than once
@@ -689,12 +689,12 @@ For durable side effects, prefer the outbox pattern: write an outbox row inside 
 Fixed and exponential backoff are built in:
 
 ```java
-RetryPolicy exponentialRetryPolicy = RetryPolicy.of(
+RetryPolicy exponentialRetryPolicy = RetryPolicy.ofMaxAttempts(
   5,
-  RetryPolicy.Condition.serializationFailureOrDeadlock(),
   RetryPolicy.Backoff.exponential(
     Duration.ofMillis(25),
-    Duration.ofSeconds(1)));
+    Duration.ofSeconds(1)),
+  RetryPolicy.Condition.serializationFailureOrDeadlock());
 ```
 
 Timeouts can be classified with [`DatabaseException::isTimeout()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#isTimeout()) and opted into with [`RetryPolicy.Condition::timeout()`](https://javadoc.pyranid.com/com/pyranid/RetryPolicy.Condition.html#timeout()), but Pyranid does not treat them as automatically safe to retry. A timeout may surface after the database has already performed part or all of the work.

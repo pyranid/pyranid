@@ -384,12 +384,12 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 				return null;
 			});
 
-			RetryPolicy retryPolicy = RetryPolicy.of(5,
+			RetryPolicy retryPolicy = RetryPolicy.ofMaxAttempts(5,
+					RetryPolicy.Backoff.fixed(Duration.ofMillis(25)),
 					failure -> {
 						firstFailureWasSerialization.compareAndSet(null, failure.isSerializationFailure());
 						return failure.isSerializationFailure() || failure.isDeadlock();
-					},
-					RetryPolicy.Backoff.fixed(Duration.ofMillis(25)));
+					});
 
 			Integer finalValue = db.transactionWithRetry(retryPolicy, repeatableRead, () -> {
 				int attempt = attempts.incrementAndGet();
