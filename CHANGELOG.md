@@ -13,6 +13,7 @@ All notable changes to Pyranid will be documented in this file.
 - Added `Database.transactionWithRetry(...)` overloads for retrying whole transaction closures after retryable database failures.
 - Added `TransactionRetryResult` for successful retry diagnostics, including the successful value and failures recovered before success.
 - Added `DatabaseException.isSerializationFailure()` and `DatabaseException.isTimeout()` classification predicates.
+- Released artifacts now include a CycloneDX SBOM (`bom.json` and `bom.xml`).
 
 ### Changed
 
