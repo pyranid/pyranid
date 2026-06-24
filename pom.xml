@@ -59,7 +59,7 @@
 		<japicmp.maven.plugin.version>0.26.1</japicmp.maven.plugin.version>
 		<japicmp.baseline.version>4.1.0</japicmp.baseline.version>
 		<cyclonedx.maven.plugin.version>2.9.1</cyclonedx.maven.plugin.version>
-		<jacoco.maven.plugin.version>0.8.13</jacoco.maven.plugin.version>
+		<jacoco.maven.plugin.version>0.8.15</jacoco.maven.plugin.version>
 		<jmh.version>1.37</jmh.version>
 		<jmh.args>com.pyranid.*CacheBenchmark com.pyranid.ConcurrentLruMapBenchmark</jmh.args>
 		<testcontainers.version>1.21.4</testcontainers.version>
