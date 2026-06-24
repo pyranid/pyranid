@@ -92,7 +92,10 @@ abstract class MySqlFamilyDialect extends UuidStringDialect {
 																				@Nullable Throwable cause) {
 		requireNonNull(metadata);
 
-		return !hasErrorCode(metadata, cause, 1213) && super.isSerializationFailure(metadata, cause);
+		// Exclude deadlock (1213) and the lock-wait/execution timeouts (1205, 3024): MySQL surfaces all of these with
+		// SQLState 40001, but they are classified by their specific vendor codes (deadlock/timeout), not as generic
+		// serialization failures.
+		return !hasErrorCode(metadata, cause, 1213, 1205, 3024) && super.isSerializationFailure(metadata, cause);
 	}
 
 	@Override

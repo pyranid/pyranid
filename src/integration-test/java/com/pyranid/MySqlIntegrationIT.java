@@ -30,6 +30,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static java.util.Objects.requireNonNull;
 
@@ -119,6 +124,55 @@ public class MySqlIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 		Assertions.assertEquals(id.toString(), db.query("SELECT id FROM " + table)
 				.fetchObject(String.class)
 				.orElseThrow());
+	}
+
+	@Test
+	public void testLockWaitTimeoutClassifiedAsTimeout() throws Exception {
+		Database db = database();
+		String table = "pyranid_mysql_lock_timeout";
+		db.query("DROP TABLE IF EXISTS " + table).execute();
+		db.query("CREATE TABLE " + table + " (id INT PRIMARY KEY, val INT NOT NULL) ENGINE=InnoDB").execute();
+		db.query("INSERT INTO " + table + " (id, val) VALUES (1, 0)").execute();
+
+		CountDownLatch holderLocked = new CountDownLatch(1);
+		CountDownLatch releaseHolder = new CountDownLatch(1);
+		ExecutorService executor = Executors.newSingleThreadExecutor();
+
+		try {
+			// Lock holder: take a row lock and keep the transaction open until the contending update has timed out.
+			Future<?> holder = executor.submit(() -> {
+				db.transaction(() -> {
+					db.query("SELECT val FROM " + table + " WHERE id = 1 FOR UPDATE")
+							.fetchObject(Integer.class)
+							.orElseThrow();
+					holderLocked.countDown();
+					awaitLatch(releaseHolder);
+				});
+				return null;
+			});
+
+			awaitLatch(holderLocked);
+
+			DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
+					db.transaction(() -> {
+						db.query("SET innodb_lock_wait_timeout = 1").execute();
+						db.query("UPDATE " + table + " SET val = 5 WHERE id = 1").execute();
+					}));
+
+			releaseHolder.countDown();
+			holder.get(30, TimeUnit.SECONDS);
+
+			Assertions.assertTrue(exception.isTimeout(),
+					"InnoDB lock wait timeout (1205) should classify as a timeout");
+			Assertions.assertEquals(Integer.valueOf(1205), exception.getErrorCode().orElse(null));
+			// MySQL reports 1205 with SQLState 40001, but Pyranid excludes the timeout codes (1205/3024) from
+			// serialization classification, so a lock-wait timeout is a timeout only and is not retried by the
+			// default serializationFailureOrDeadlock() condition.
+			Assertions.assertFalse(exception.isSerializationFailure(),
+					"Lock-wait timeout should not be classified as a serialization failure");
+		} finally {
+			executor.shutdownNow();
+		}
 	}
 
 	@Test

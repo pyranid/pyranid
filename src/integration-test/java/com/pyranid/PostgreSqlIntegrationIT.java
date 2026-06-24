@@ -34,15 +34,23 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Logger;
 
 import static java.util.Objects.requireNonNull;
@@ -346,6 +354,93 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 		Assertions.assertEquals("23505", ex.getSqlState().orElse(null));
 		Assertions.assertTrue(ex.getConstraint().orElse("").contains("email"),
 				"Expected PostgreSQL constraint metadata to be extracted");
+	}
+
+	@Test
+	public void testTransactionWithRetryRecoversFromSerializationConflict() throws Exception {
+		Database db = Database.withDataSource(dataSource())
+				.databaseType(DatabaseType.POSTGRESQL)
+				.build();
+		String table = "pyranid_retry_serialization_conflict";
+		db.query("DROP TABLE IF EXISTS " + table).execute();
+		db.query("CREATE TABLE " + table + " (id INT PRIMARY KEY, val INT NOT NULL)").execute();
+		db.query("INSERT INTO " + table + " (id, val) VALUES (1, 0)").execute();
+
+		TransactionOptions repeatableRead = TransactionOptions.withIsolation(TransactionIsolation.REPEATABLE_READ).build();
+		CountDownLatch retrierHasRead = new CountDownLatch(1);
+		CountDownLatch conflicterCommitted = new CountDownLatch(1);
+		AtomicInteger attempts = new AtomicInteger();
+		AtomicReference<Boolean> firstFailureWasSerialization = new AtomicReference<>();
+
+		ExecutorService executor = Executors.newSingleThreadExecutor();
+
+		try {
+			// Concurrent committer: updates and commits the same row after the retrier has taken its snapshot.
+			Future<?> conflicter = executor.submit(() -> {
+				awaitLatch(retrierHasRead);
+				db.transaction(() ->
+						db.query("UPDATE " + table + " SET val = val + 1 WHERE id = 1").execute());
+				conflicterCommitted.countDown();
+				return null;
+			});
+
+			RetryPolicy retryPolicy = RetryPolicy.of(5,
+					failure -> {
+						firstFailureWasSerialization.compareAndSet(null, failure.isSerializationFailure());
+						return failure.isSerializationFailure() || failure.isDeadlock();
+					},
+					RetryPolicy.Backoff.fixed(Duration.ofMillis(25)));
+
+			Integer finalValue = db.transactionWithRetry(retryPolicy, repeatableRead, () -> {
+				int attempt = attempts.incrementAndGet();
+				// Establish this attempt's REPEATABLE READ snapshot by reading the row.
+				int current = db.query("SELECT val FROM " + table + " WHERE id = 1")
+						.fetchObject(Integer.class)
+						.orElseThrow();
+
+				if (attempt == 1) {
+					// Allow the concurrent transaction to update and commit the same row...
+					retrierHasRead.countDown();
+					// ...then proceed so our UPDATE collides with a committed concurrent change (SQLState 40001).
+					awaitLatch(conflicterCommitted);
+				}
+
+				db.query("UPDATE " + table + " SET val = :val WHERE id = 1")
+						.bind("val", current + 100)
+						.execute();
+
+				return Optional.of(current + 100);
+			}).orElseThrow();
+
+			conflicter.get(30, TimeUnit.SECONDS);
+
+			Assertions.assertEquals(2, attempts.get(),
+					"Expected exactly one serialization failure followed by a successful retry");
+			Assertions.assertEquals(Boolean.TRUE, firstFailureWasSerialization.get(),
+					"First failed attempt should be classified as a serialization failure");
+			Assertions.assertEquals(101, finalValue,
+					"Retry should read the committed concurrent value (1) and write 101");
+			Assertions.assertEquals(101, db.query("SELECT val FROM " + table + " WHERE id = 1")
+					.fetchObject(Integer.class)
+					.orElseThrow());
+		} finally {
+			executor.shutdownNow();
+		}
+	}
+
+	@Test
+	public void testStatementTimeoutClassifiedAsTimeout() {
+		Database db = database();
+
+		DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("SELECT pg_sleep(3)")
+						.queryTimeout(Duration.ofMillis(300))
+						.fetchObject(String.class));
+
+		Assertions.assertTrue(exception.isTimeout(),
+				"PostgreSQL statement cancellation (57014) should classify as a timeout");
+		Assertions.assertEquals("57014", exception.getSqlState().orElse(null));
+		Assertions.assertFalse(exception.isSerializationFailure());
 	}
 
 	@NonNull

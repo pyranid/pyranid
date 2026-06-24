@@ -46,6 +46,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
 
@@ -53,7 +55,7 @@ import static java.util.Objects.requireNonNull;
 
 @ExtendWith(AbstractPortableJdbcIntegrationTests.PortableCoverageGuard.class)
 abstract class AbstractPortableJdbcIntegrationTests {
-	private static final int MINIMUM_EXECUTED_PORTABLE_CONTRACT_TESTS = 14;
+	private static final int MINIMUM_EXECUTED_PORTABLE_CONTRACT_TESTS = 16;
 	private static final ConcurrentMap<Class<?>, PortableCoverage> PORTABLE_COVERAGE = new ConcurrentHashMap<>();
 
 	public record PersonRow(Long personId, String name, String emailAddress, Locale locale) {}
@@ -499,6 +501,77 @@ abstract class AbstractPortableJdbcIntegrationTests {
 		Assertions.assertTrue(exception.getMessage().contains("sql=INSERT INTO " + table + " (email) VALUES (?)"));
 		Assertions.assertTrue(exception.getMessage().contains("parameters=[secret@example.com]"));
 		Assertions.assertFalse(exception.getMessage().contains("parameterCount="));
+	}
+
+	@Test
+	public void testTransactionWithRetryCommitsWithoutRetryingOnSuccess() {
+		Database db = database();
+		DialectProfile dialectProfile = dialectProfile();
+		String table = "pyranid_retry_success";
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "id " + dialectProfile.bigIntPrimaryKey() + ", "
+				+ "name " + dialectProfile.varchar(100) + " NOT NULL"
+				+ ")");
+
+		AtomicInteger attempts = new AtomicInteger();
+		RetryPolicy retryPolicy = RetryPolicy.of(3,
+				RetryPolicy.Condition.serializationFailureOrDeadlock(),
+				RetryPolicy.Backoff.fixed(Duration.ofMillis(10)));
+
+		Long rowCount = db.transactionWithRetry(retryPolicy, () -> {
+			attempts.incrementAndGet();
+			db.query("INSERT INTO " + table + " (id, name) VALUES (:id, :name)")
+					.bind("id", 1L)
+					.bind("name", "Ada")
+					.execute();
+			return Optional.of(countRows(db, table));
+		}).orElseThrow();
+
+		Assertions.assertEquals(1, attempts.get(), "A successful transaction must not be retried");
+		Assertions.assertEquals(1L, rowCount.longValue());
+		Assertions.assertEquals(1L, countRows(db, table));
+	}
+
+	@Test
+	public void testTransactionWithRetryDoesNotRetryNonRetryableFailure() {
+		Database db = database();
+		DialectProfile dialectProfile = dialectProfile();
+		String table = "pyranid_retry_non_retryable";
+		recreateTable(db, table, "CREATE TABLE " + table + " (email " + dialectProfile.varchar(100) + " NOT NULL UNIQUE)");
+
+		db.query("INSERT INTO " + table + " (email) VALUES (:email)")
+				.bind("email", "ada@example.com")
+				.execute();
+
+		AtomicInteger attempts = new AtomicInteger();
+		RetryPolicy retryPolicy = RetryPolicy.of(4,
+				RetryPolicy.Condition.serializationFailureOrDeadlock(),
+				RetryPolicy.Backoff.fixed(Duration.ofMillis(10)));
+
+		DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
+				db.transactionWithRetry(retryPolicy, () -> {
+					attempts.incrementAndGet();
+					db.query("INSERT INTO " + table + " (email) VALUES (:email)")
+							.bind("email", "ada@example.com")
+							.execute();
+				}));
+
+		Assertions.assertEquals(1, attempts.get(), "A non-retryable failure must run exactly once");
+		Assertions.assertTrue(exception.isUniqueConstraintViolation());
+		Assertions.assertFalse(exception.isSerializationFailure());
+		Assertions.assertFalse(exception.isDeadlock());
+	}
+
+	protected static void awaitLatch(@NonNull CountDownLatch latch) {
+		requireNonNull(latch);
+
+		try {
+			if (!latch.await(30, TimeUnit.SECONDS))
+				throw new IllegalStateException("Timed out waiting for a test coordination latch");
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException("Interrupted waiting for a test coordination latch", e);
+		}
 	}
 
 	protected void createPeopleTable(@NonNull Database db,
