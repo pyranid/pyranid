@@ -97,6 +97,12 @@ interface DatabaseDialect {
 	boolean isTransient(@NonNull DatabaseExceptionMetadata metadata,
 											@Nullable Throwable cause);
 
+	boolean isSerializationFailure(@NonNull DatabaseExceptionMetadata metadata,
+																 @Nullable Throwable cause);
+
+	boolean isTimeout(@NonNull DatabaseExceptionMetadata metadata,
+										@Nullable Throwable cause);
+
 	@Nullable
 	Object unwrapResultSetValue(@NonNull Object resultSetValue);
 

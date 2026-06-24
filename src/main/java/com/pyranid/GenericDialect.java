@@ -26,6 +26,7 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLRecoverableException;
 import java.sql.SQLException;
 import java.sql.SQLTransientException;
+import java.sql.SQLTimeoutException;
 import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayDeque;
@@ -207,6 +208,23 @@ class GenericDialect implements DatabaseDialect {
 		return hasSqlException(cause, sqlException -> sqlException instanceof SQLTransientException
 				|| sqlException instanceof SQLRecoverableException)
 				|| hasSqlStateClass(metadata, cause, "08", "40");
+	}
+
+	@Override
+	public boolean isSerializationFailure(@NonNull DatabaseExceptionMetadata metadata,
+																				@Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return hasSqlState(metadata, cause, "40001");
+	}
+
+	@Override
+	public boolean isTimeout(@NonNull DatabaseExceptionMetadata metadata,
+													 @Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return hasSqlException(cause, sqlException -> sqlException instanceof SQLTimeoutException)
+				|| hasSqlState(metadata, cause, "57014");
 	}
 
 	@Nullable

@@ -461,6 +461,231 @@ public final class Database {
 		}
 	}
 
+	/**
+	 * Performs an operation transactionally, retrying according to the given retry policy.
+	 * <p>
+	 * The entire transaction closure may run more than once. Keep non-idempotent external side effects outside the closure
+	 * unless they are safe to repeat.
+	 * <p>
+	 * This method fails fast if called inside an active transaction for this {@code Database}. Retrying a nested unit cannot
+	 * restart the outer transaction safely.
+	 *
+	 * @param retryPolicy           retry policy to apply
+	 * @param transactionalOperation the operation to perform transactionally
+	 * @since 4.4.0
+	 */
+	public void transactionWithRetry(@NonNull RetryPolicy retryPolicy,
+																	 @NonNull TransactionalOperation transactionalOperation) {
+		requireNonNull(retryPolicy);
+		requireNonNull(transactionalOperation);
+
+		transactionWithRetry(retryPolicy, () -> {
+			transactionalOperation.perform();
+			return Optional.empty();
+		});
+	}
+
+	/**
+	 * Performs an operation transactionally with the given options, retrying according to the given retry policy.
+	 * <p>
+	 * The entire transaction closure may run more than once. Keep non-idempotent external side effects outside the closure
+	 * unless they are safe to repeat.
+	 * <p>
+	 * This method fails fast if called inside an active transaction for this {@code Database}. Retrying a nested unit cannot
+	 * restart the outer transaction safely.
+	 *
+	 * @param retryPolicy           retry policy to apply
+	 * @param transactionOptions     options to apply to each transaction attempt
+	 * @param transactionalOperation the operation to perform transactionally
+	 * @since 4.4.0
+	 */
+	public void transactionWithRetry(@NonNull RetryPolicy retryPolicy,
+																	 @NonNull TransactionOptions transactionOptions,
+																	 @NonNull TransactionalOperation transactionalOperation) {
+		requireNonNull(retryPolicy);
+		requireNonNull(transactionOptions);
+		requireNonNull(transactionalOperation);
+
+		transactionWithRetry(retryPolicy, transactionOptions, () -> {
+			transactionalOperation.perform();
+			return Optional.empty();
+		});
+	}
+
+	/**
+	 * Performs an operation transactionally and optionally returns a value, retrying according to the given retry policy.
+	 * <p>
+	 * The entire transaction closure may run more than once. Keep non-idempotent external side effects outside the closure
+	 * unless they are safe to repeat.
+	 * <p>
+	 * This method fails fast if called inside an active transaction for this {@code Database}. Retrying a nested unit cannot
+	 * restart the outer transaction safely.
+	 *
+	 * @param retryPolicy           retry policy to apply
+	 * @param transactionalOperation the operation to perform transactionally
+	 * @param <T>                    the type to be returned
+	 * @return the result of the transactional operation
+	 * @since 4.4.0
+	 */
+	@NonNull
+	public <T> Optional<T> transactionWithRetry(@NonNull RetryPolicy retryPolicy,
+																							@NonNull ReturningTransactionalOperation<T> transactionalOperation) {
+		requireNonNull(retryPolicy);
+		requireNonNull(transactionalOperation);
+
+		return transactionWithRetry(retryPolicy, TransactionOptions.DEFAULT, transactionalOperation);
+	}
+
+	/**
+	 * Performs an operation transactionally with the given options and optionally returns a value, retrying according to the
+	 * given retry policy.
+	 * <p>
+	 * The entire transaction closure may run more than once. Keep non-idempotent external side effects outside the closure
+	 * unless they are safe to repeat.
+	 * <p>
+	 * This method fails fast if called inside an active transaction for this {@code Database}. Retrying a nested unit cannot
+	 * restart the outer transaction safely.
+	 *
+	 * @param retryPolicy           retry policy to apply
+	 * @param transactionOptions     options to apply to each transaction attempt
+	 * @param transactionalOperation the operation to perform transactionally
+	 * @param <T>                    the type to be returned
+	 * @return the result of the transactional operation
+	 * @since 4.4.0
+	 */
+	@NonNull
+	public <T> Optional<T> transactionWithRetry(@NonNull RetryPolicy retryPolicy,
+																							@NonNull TransactionOptions transactionOptions,
+																							@NonNull ReturningTransactionalOperation<T> transactionalOperation) {
+		requireNonNull(retryPolicy);
+		requireNonNull(transactionOptions);
+		requireNonNull(transactionalOperation);
+
+		if (currentTransaction().isPresent())
+			throw new IllegalStateException("transactionWithRetry must not be called within an existing transaction");
+
+		List<DatabaseException> priorFailures = new ArrayList<>();
+
+		for (int attempt = 1; attempt <= retryPolicy.getMaxAttempts(); ++attempt) {
+			try {
+				return transaction(transactionOptions, transactionalOperation);
+			} catch (DatabaseException e) {
+				boolean finalAttempt = attempt == retryPolicy.getMaxAttempts();
+
+				if (finalAttempt) {
+					suppressPriorFailures(e, priorFailures);
+					throw e;
+				}
+
+				Boolean retryable;
+
+				try {
+					retryable = retryPolicy.getCondition().shouldRetry(e);
+				} catch (RuntimeException | Error conditionFailure) {
+					suppressRetryFailures(conditionFailure, e, priorFailures);
+					throw conditionFailure;
+				}
+
+				if (retryable == null) {
+					NullPointerException nullConditionFailure =
+							new NullPointerException("RetryPolicy.Condition returned null");
+					suppressRetryFailures(nullConditionFailure, e, priorFailures);
+					throw nullConditionFailure;
+				}
+
+				if (!retryable) {
+					suppressPriorFailures(e, priorFailures);
+					throw e;
+				}
+
+				priorFailures.add(e);
+
+				Duration delay;
+
+				try {
+					delay = retryPolicy.getBackoff().delayAfterFailedAttempt(attempt, e);
+				} catch (RuntimeException | Error backoffFailure) {
+					suppressPriorFailures(backoffFailure, priorFailures);
+					throw backoffFailure;
+				}
+
+				if (delay == null) {
+					NullPointerException nullBackoffFailure = new NullPointerException("RetryPolicy.Backoff returned null");
+					suppressPriorFailures(nullBackoffFailure, priorFailures);
+					throw nullBackoffFailure;
+				}
+
+				if (delay.isNegative()) {
+					IllegalArgumentException negativeBackoffFailure =
+							new IllegalArgumentException("RetryPolicy.Backoff returned a negative delay");
+					suppressPriorFailures(negativeBackoffFailure, priorFailures);
+					throw negativeBackoffFailure;
+				}
+
+				try {
+					sleepBackoff(delay);
+				} catch (InterruptedException interruptedException) {
+					Thread.currentThread().interrupt();
+					suppressPriorFailures(e, priorFailures);
+					e.addSuppressed(interruptedException);
+					throw e;
+				}
+			}
+		}
+
+		throw new AssertionError("unreachable");
+	}
+
+	private void sleepBackoff(@NonNull Duration delay) throws InterruptedException {
+		requireNonNull(delay);
+
+		if (delay.isZero())
+			return;
+
+		long millis;
+		int nanos;
+
+		try {
+			millis = delay.toMillis();
+			Duration remainder = delay.minusMillis(millis);
+			nanos = (int) Math.min(999_999L, Math.max(0L, remainder.toNanos()));
+		} catch (ArithmeticException e) {
+			millis = Long.MAX_VALUE;
+			nanos = 999_999;
+		}
+
+		Thread.sleep(millis, nanos);
+	}
+
+	private void suppressRetryFailures(@NonNull Throwable failure,
+																		 @NonNull DatabaseException currentFailure,
+																		 @NonNull List<@NonNull DatabaseException> priorFailures) {
+		requireNonNull(failure);
+		requireNonNull(currentFailure);
+		requireNonNull(priorFailures);
+
+		suppressPriorFailures(failure, priorFailures);
+		suppressIfDifferent(failure, currentFailure);
+	}
+
+	private void suppressPriorFailures(@NonNull Throwable failure,
+																		 @NonNull List<@NonNull DatabaseException> priorFailures) {
+		requireNonNull(failure);
+		requireNonNull(priorFailures);
+
+		for (DatabaseException priorFailure : priorFailures)
+			suppressIfDifferent(failure, priorFailure);
+	}
+
+	private void suppressIfDifferent(@NonNull Throwable failure,
+																	 @NonNull Throwable suppressed) {
+		requireNonNull(failure);
+		requireNonNull(suppressed);
+
+		if (failure != suppressed)
+			failure.addSuppressed(suppressed);
+	}
+
 	private boolean rollbackTransactionAfterFailure(@NonNull Transaction transaction,
 																								 @NonNull Throwable primary) {
 		requireNonNull(transaction);

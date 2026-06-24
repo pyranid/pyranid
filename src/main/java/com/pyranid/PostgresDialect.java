@@ -228,6 +228,22 @@ final class PostgresDialect extends GenericDialect {
 		return hasSqlState(metadata, cause, "40P01");
 	}
 
+	@Override
+	public boolean isSerializationFailure(@NonNull DatabaseExceptionMetadata metadata,
+																				@Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return hasSqlState(metadata, cause, "40001");
+	}
+
+	@Override
+	public boolean isTimeout(@NonNull DatabaseExceptionMetadata metadata,
+													 @Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return super.isTimeout(metadata, cause) || hasSqlState(metadata, cause, "57014");
+	}
+
 	@Nullable
 	@Override
 	public Object unwrapResultSetValue(@NonNull Object resultSetValue) {

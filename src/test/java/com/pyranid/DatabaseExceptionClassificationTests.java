@@ -22,6 +22,7 @@ import org.junit.jupiter.api.Test;
 
 import java.sql.SQLException;
 import java.sql.SQLRecoverableException;
+import java.sql.SQLTimeoutException;
 import java.sql.SQLTransientConnectionException;
 import java.util.List;
 
@@ -49,7 +50,11 @@ public class DatabaseExceptionClassificationTests {
 
 		DatabaseException serialization = databaseException(DatabaseType.GENERIC, new SQLException("serialization", "40001", 0));
 		Assertions.assertFalse(serialization.isDeadlock());
+		Assertions.assertTrue(serialization.isSerializationFailure());
 		Assertions.assertTrue(serialization.isTransient());
+
+		DatabaseException timeout = databaseException(DatabaseType.GENERIC, new SQLTimeoutException("timeout"));
+		Assertions.assertTrue(timeout.isTimeout());
 
 		DatabaseException syntax = databaseException(DatabaseType.GENERIC, new SQLException("syntax", "42000", 0));
 		assertUnclassified(syntax);
@@ -69,7 +74,18 @@ public class DatabaseExceptionClassificationTests {
 				new SQLException("deadlock", "40P01", 0));
 
 		Assertions.assertTrue(deadlock.isDeadlock());
+		Assertions.assertFalse(deadlock.isSerializationFailure());
 		Assertions.assertTrue(deadlock.isTransient());
+
+		DatabaseException serialization = databaseException(DatabaseType.POSTGRESQL,
+				new SQLException("serialization", "40001", 0));
+		Assertions.assertTrue(serialization.isSerializationFailure());
+
+		DatabaseException timeout = databaseException(DatabaseType.POSTGRESQL,
+				new SQLException("timeout", "57014", 0));
+		Assertions.assertTrue(timeout.isTimeout());
+		Assertions.assertTrue(databaseException(DatabaseType.POSTGRESQL, new SQLTimeoutException("driver timeout"))
+				.isTimeout());
 	}
 
 	@Test
@@ -86,11 +102,19 @@ public class DatabaseExceptionClassificationTests {
 
 			DatabaseException deadlock = databaseException(databaseType, new SQLException("deadlock", "40001", 1213));
 			Assertions.assertTrue(deadlock.isDeadlock());
+			Assertions.assertFalse(deadlock.isSerializationFailure());
 			Assertions.assertTrue(deadlock.isTransient());
+
+			DatabaseException serialization = databaseException(databaseType, new SQLException("serialization", "40001", 0));
+			Assertions.assertTrue(serialization.isSerializationFailure());
 
 			DatabaseException lockTimeout = databaseException(databaseType, new SQLException("lock timeout", "HY000", 1205));
 			Assertions.assertFalse(lockTimeout.isDeadlock());
+			Assertions.assertTrue(lockTimeout.isTimeout());
 			Assertions.assertTrue(lockTimeout.isTransient());
+
+			Assertions.assertTrue(databaseException(databaseType, new SQLException("execution timeout", "HY000", 3024))
+					.isTimeout());
 
 			DatabaseException broadIntegrity = databaseException(databaseType, new SQLException("constraint", "23000", 0));
 			Assertions.assertFalse(broadIntegrity.isUniqueConstraintViolation());
@@ -107,11 +131,19 @@ public class DatabaseExceptionClassificationTests {
 
 		DatabaseException deadlock = databaseException(DatabaseType.SQL_SERVER, new SQLException("deadlock", null, 1205));
 		Assertions.assertTrue(deadlock.isDeadlock());
+		Assertions.assertFalse(deadlock.isSerializationFailure());
 		Assertions.assertTrue(deadlock.isTransient());
+
+		Assertions.assertTrue(databaseException(DatabaseType.SQL_SERVER, new SQLException("snapshot", null, 3960))
+				.isSerializationFailure());
 
 		DatabaseException lockTimeout = databaseException(DatabaseType.SQL_SERVER, new SQLException("lock timeout", null, 1222));
 		Assertions.assertFalse(lockTimeout.isDeadlock());
+		Assertions.assertTrue(lockTimeout.isTimeout());
 		Assertions.assertTrue(lockTimeout.isTransient());
+
+		Assertions.assertTrue(databaseException(DatabaseType.SQL_SERVER, new SQLException("query timeout", null, -2))
+				.isTimeout());
 
 		DatabaseException broadConstraint = databaseException(DatabaseType.SQL_SERVER, new SQLException("constraint", null, 547));
 		Assertions.assertFalse(broadConstraint.isForeignKeyViolation());
@@ -132,7 +164,11 @@ public class DatabaseExceptionClassificationTests {
 
 		DatabaseException serialization = databaseException(DatabaseType.ORACLE, new SQLException("serialization", null, 8177));
 		Assertions.assertFalse(serialization.isDeadlock());
+		Assertions.assertTrue(serialization.isSerializationFailure());
 		Assertions.assertTrue(serialization.isTransient());
+
+		Assertions.assertTrue(databaseException(DatabaseType.ORACLE, new SQLException("cancel", null, 1013)).isTimeout());
+		Assertions.assertTrue(databaseException(DatabaseType.ORACLE, new SQLException("timeout", null, 51)).isTimeout());
 	}
 
 	@Test
@@ -143,6 +179,9 @@ public class DatabaseExceptionClassificationTests {
 
 		Assertions.assertTrue(databaseException(DatabaseType.SQLITE, new SQLException("busy", null, 5)).isTransient());
 		Assertions.assertTrue(databaseException(DatabaseType.SQLITE, new SQLException("locked", null, 6)).isTransient());
+		Assertions.assertTrue(databaseException(DatabaseType.SQLITE, new SQLException("busy", null, 5)).isTimeout());
+		Assertions.assertTrue(databaseException(DatabaseType.SQLITE, new SQLException("locked", null, 6)).isTimeout());
+		Assertions.assertFalse(databaseException(DatabaseType.SQLITE, new SQLException("busy", null, 5)).isSerializationFailure());
 	}
 
 	@Test
@@ -160,9 +199,11 @@ public class DatabaseExceptionClassificationTests {
 	}
 
 	private void assertUnclassified(@NonNull DatabaseException exception) {
-		Assertions.assertFalse(exception.isUniqueConstraintViolation());
-		Assertions.assertFalse(exception.isForeignKeyViolation());
-		Assertions.assertFalse(exception.isDeadlock());
-		Assertions.assertFalse(exception.isTransient());
+		Assertions.assertEquals(Boolean.FALSE, exception.isUniqueConstraintViolation());
+		Assertions.assertEquals(Boolean.FALSE, exception.isForeignKeyViolation());
+		Assertions.assertEquals(Boolean.FALSE, exception.isDeadlock());
+		Assertions.assertEquals(Boolean.FALSE, exception.isTransient());
+		Assertions.assertEquals(Boolean.FALSE, exception.isSerializationFailure());
+		Assertions.assertEquals(Boolean.FALSE, exception.isTimeout());
 	}
 }

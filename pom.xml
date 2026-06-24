@@ -209,6 +209,10 @@
 						<excludes>
 							<exclude>com.pyranid.Database#transaction(com.pyranid.TransactionIsolation, com.pyranid.TransactionalOperation)</exclude>
 							<exclude>com.pyranid.Database#transaction(com.pyranid.TransactionIsolation, com.pyranid.ReturningTransactionalOperation)</exclude>
+							<exclude>com.pyranid.DatabaseException#isUniqueConstraintViolation()</exclude>
+							<exclude>com.pyranid.DatabaseException#isForeignKeyViolation()</exclude>
+							<exclude>com.pyranid.DatabaseException#isDeadlock()</exclude>
+							<exclude>com.pyranid.DatabaseException#isTransient()</exclude>
 						</excludes>
 					</parameter>
 					<breakBuildBasedOnSemanticVersioning>true</breakBuildBasedOnSemanticVersioning>

@@ -45,6 +45,15 @@ final class SqliteDialect extends UuidStringDialect {
 			"SQLITE_LOCKED",
 			"SQLITE_LOCKED_SHAREDCACHE",
 			"SQLITE_LOCKED_VTAB");
+	@NonNull
+	private static final Set<String> TIMEOUT_RESULT_CODES = Set.of(
+			"SQLITE_BUSY",
+			"SQLITE_BUSY_RECOVERY",
+			"SQLITE_BUSY_SNAPSHOT",
+			"SQLITE_BUSY_TIMEOUT",
+			"SQLITE_LOCKED",
+			"SQLITE_LOCKED_SHAREDCACHE",
+			"SQLITE_LOCKED_VTAB");
 
 	private SqliteDialect() {}
 
@@ -74,6 +83,24 @@ final class SqliteDialect extends UuidStringDialect {
 		return super.isTransient(metadata, cause)
 				|| hasErrorCode(metadata, cause, 5, 6)
 				|| hasSqliteResultCode(cause, TRANSIENT_RESULT_CODES);
+	}
+
+	@Override
+	public boolean isSerializationFailure(@NonNull DatabaseExceptionMetadata metadata,
+																				@Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return false;
+	}
+
+	@Override
+	public boolean isTimeout(@NonNull DatabaseExceptionMetadata metadata,
+													 @Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return super.isTimeout(metadata, cause)
+				|| hasErrorCode(metadata, cause, 5, 6)
+				|| hasSqliteResultCode(cause, TIMEOUT_RESULT_CODES);
 	}
 
 	private boolean hasSqliteResultCode(@Nullable Throwable cause,

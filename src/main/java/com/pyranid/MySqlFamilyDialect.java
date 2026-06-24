@@ -86,4 +86,20 @@ abstract class MySqlFamilyDialect extends UuidStringDialect {
 
 		return super.isTransient(metadata, cause) || hasErrorCode(metadata, cause, 1213, 1205);
 	}
+
+	@Override
+	public boolean isSerializationFailure(@NonNull DatabaseExceptionMetadata metadata,
+																				@Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return !hasErrorCode(metadata, cause, 1213) && super.isSerializationFailure(metadata, cause);
+	}
+
+	@Override
+	public boolean isTimeout(@NonNull DatabaseExceptionMetadata metadata,
+													 @Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return super.isTimeout(metadata, cause) || hasErrorCode(metadata, cause, 1205, 3024);
+	}
 }

@@ -45,10 +45,10 @@ Similarly-flavored commercially-friendly OSS libraries are available.
 Java 17+
 
 ```xml
-<dependency>
+  <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid</artifactId>
-  <version>4.3.0</version>
+  <version>4.4.0-SNAPSHOT</version>
 </dependency>
 ```
 
@@ -632,6 +632,74 @@ database.transaction(
 ```
 
 `TransactionOptions::withReadOnly(true)` maps to JDBC [`Connection::setReadOnly(true)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html#setReadOnly(boolean)) for the physical transaction connection. Pyranid restores the connection's original read-only setting before returning it to the pool. Read-only behavior is enforced, optimized, routed, or ignored by the JDBC driver and DBMS. SQL Server, Oracle, and SQLite drivers may treat it as advisory or ignore it for normal transactions. Pyranid does not parse SQL to reject writes itself.
+
+### Retrying Serialization Failures
+
+Use [`Database::transactionWithRetry(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transactionWithRetry(com.pyranid.RetryPolicy,com.pyranid.TransactionalOperation)) when concurrent database transactions may safely be re-run after the database rolls one of them back, such as serialization conflicts or deadlocks.
+
+Retry behavior is explicit: you choose total attempts, the retry condition, and the backoff strategy.
+
+```java
+RetryPolicy retryPolicy = RetryPolicy.of(
+  3,
+  RetryPolicy.Condition.serializationFailureOrDeadlock(),
+  RetryPolicy.Backoff.fixed(Duration.ofMillis(25)));
+
+database.transactionWithRetry(retryPolicy, () -> {
+  database.query("""
+      UPDATE account
+      SET balance = balance - :amount
+      WHERE account_id = :accountId
+      """)
+    .bind("accountId", accountId)
+    .bind("amount", amount)
+    .execute();
+});
+```
+
+`RetryPolicy.of(3, ...)` means three total attempts: the initial transaction plus up to two retries. Pyranid starts a fresh physical transaction for each attempt. The whole closure may run more than once, so keep non-idempotent external side effects outside the retried closure.
+
+```java
+// Risky: the email may send more than once
+database.transactionWithRetry(retryPolicy, () -> {
+  database.query("UPDATE orders SET status = 'PAID' WHERE order_id = :orderId")
+    .bind("orderId", orderId)
+    .execute();
+
+  emailClient.sendReceipt(orderId);
+});
+```
+
+Instead, return enough information to run the side effect after the retry helper succeeds:
+
+```java
+Optional<ReceiptEmail> receiptEmail = database.transactionWithRetry(retryPolicy, () -> {
+  database.query("UPDATE orders SET status = 'PAID' WHERE order_id = :orderId")
+    .bind("orderId", orderId)
+    .execute();
+
+  return Optional.of(new ReceiptEmail(orderId));
+});
+
+receiptEmail.ifPresent(emailClient::sendReceipt);
+```
+
+For durable side effects, prefer the outbox pattern: write an outbox row inside the retried transaction and let a separate worker deliver it after commit.
+
+Fixed and exponential backoff are built in:
+
+```java
+RetryPolicy exponentialRetryPolicy = RetryPolicy.of(
+  5,
+  RetryPolicy.Condition.serializationFailureOrDeadlock(),
+  RetryPolicy.Backoff.exponential(
+    Duration.ofMillis(25),
+    Duration.ofSeconds(1)));
+```
+
+Timeouts can be classified with [`DatabaseException::isTimeout()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#isTimeout()) and opted into with [`RetryPolicy.Condition::timeout()`](https://javadoc.pyranid.com/com/pyranid/RetryPolicy.Condition.html#timeout()), but Pyranid does not treat them as automatically safe to retry. A timeout may surface after the database has already performed part or all of the work.
+
+Post-transaction operations registered with [`Transaction::addPostTransactionOperation(...)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#addPostTransactionOperation(java.util.function.Consumer)) remain per-attempt hooks. Under retry, a hook registered during a rolled-back attempt runs with `ROLLED_BACK`, and a hook registered during the successful attempt runs with `COMMITTED`.
 
 ### Post-Transaction Operations
 
@@ -1426,8 +1494,11 @@ It also exposes conservative classification predicates:
 * `isForeignKeyViolation()`
 * `isDeadlock()`
 * `isTransient()`
+* `isSerializationFailure()`
+* `isTimeout()`
 
 These predicates are intentionally conservative and database-type-aware. They recognize well-known SQLState and vendor error codes for PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, Oracle, and generic JDBC transient/recoverable exception classes; they return `false` when Pyranid cannot reliably classify the failure.
+The predicates return non-null `Boolean` values.
 
 For PostgreSQL, the following properties are also available:
 

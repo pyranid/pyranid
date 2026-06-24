@@ -9,9 +9,13 @@ All notable changes to Pyranid will be documented in this file.
 - Added `SecureParameter` and `Parameters.secure(...)` for display-only masking of sensitive bound parameter values in Pyranid diagnostics while preserving normal JDBC binding behavior.
 - Added `ParameterRedactor`, `ParameterRedactor.redactAll()`, `Database.Builder.parameterRedactor(...)`, and `Database.getParameterRedactor()` for opt-in database-wide redaction of non-secure parameters.
 - Added `StatementContext.getRedactedParameters()` for safe diagnostic rendering; `SecureParameter` masks take precedence over any configured redactor.
+- Added `RetryPolicy` with explicit retry attempts, retry conditions, and fixed/exponential backoff strategies.
+- Added `Database.transactionWithRetry(...)` overloads for retrying whole transaction closures after retryable database failures.
+- Added `DatabaseException.isSerializationFailure()` and `DatabaseException.isTimeout()` classification predicates.
 
 ### Changed
 
+- `DatabaseException` classification predicates now return non-null boxed `Boolean` values.
 - `StatementContext.toString()` and `StatementLog.toString()` now render redacted parameters instead of raw parameter values.
 - `DatabaseException` statement diagnostics now include bounded parameter display values in addition to SQL. Secure parameters are masked, and non-secure values are rendered through the configured `ParameterRedactor`.
 - Default generated statement IDs now render as numeric counters instead of `com.pyranid.N` strings.
@@ -20,6 +24,7 @@ All notable changes to Pyranid will be documented in this file.
 ### Migration Notes
 
 - `DatabaseException` messages now include `parameters=[...]` instead of `parameterCount=...`. Under the default `ParameterRedactor.none()`, non-secure, non-batch values render verbatim and are bounded for size; wrap sensitive values with `Parameters.secure(...)` or configure `Database.Builder.parameterRedactor(ParameterRedactor.redactAll())` if exception text may leave a trusted boundary.
+- `DatabaseException.isUniqueConstraintViolation()`, `isForeignKeyViolation()`, `isDeadlock()`, and `isTransient()` now return boxed `Boolean` instead of primitive `boolean`.
 - Default generated statement IDs now render as numeric counters instead of `com.pyranid.N` strings. Update log parsers or assertions that match the old format.
 - Batch diagnostics now render a bounded summary such as `<batch: 2000 groups x 3 parameters>` instead of individual group values. Use `StatementContext.getParameters()` only in trusted code that intentionally needs raw batch groups.
 

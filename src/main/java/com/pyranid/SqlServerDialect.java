@@ -59,6 +59,23 @@ final class SqlServerDialect extends UuidStringDialect {
 	}
 
 	@Override
+	public boolean isSerializationFailure(@NonNull DatabaseExceptionMetadata metadata,
+																				@Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return hasErrorCode(metadata, cause, 3960)
+				|| (!hasErrorCode(metadata, cause, 1205) && super.isSerializationFailure(metadata, cause));
+	}
+
+	@Override
+	public boolean isTimeout(@NonNull DatabaseExceptionMetadata metadata,
+													 @Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return super.isTimeout(metadata, cause) || hasErrorCode(metadata, cause, -2, 1222);
+	}
+
+	@Override
 	public boolean isTimestampWithTimeZone(@NonNull ResultSetMetaData resultSetMetaData,
 																				 @NonNull Integer columnIndex) throws SQLException {
 		requireNonNull(resultSetMetaData);

@@ -75,10 +75,18 @@ public class DatabaseException extends RuntimeException {
 	private final String table;
 	@Nullable
 	private final String where;
-	private final boolean uniqueConstraintViolation;
-	private final boolean foreignKeyViolation;
-	private final boolean deadlock;
-	private final boolean transientException;
+	@NonNull
+	private final Boolean uniqueConstraintViolation;
+	@NonNull
+	private final Boolean foreignKeyViolation;
+	@NonNull
+	private final Boolean deadlock;
+	@NonNull
+	private final Boolean transientException;
+	@NonNull
+	private final Boolean serializationFailure;
+	@NonNull
+	private final Boolean timeout;
 
 	/**
 	 * Creates a {@code DatabaseException} with the given {@code message}.
@@ -138,6 +146,8 @@ public class DatabaseException extends RuntimeException {
 		this.foreignKeyViolation = databaseDialect.isForeignKeyViolation(metadata, cause);
 		this.deadlock = databaseDialect.isDeadlock(metadata, cause);
 		this.transientException = databaseDialect.isTransient(metadata, cause);
+		this.serializationFailure = databaseDialect.isSerializationFailure(metadata, cause);
+		this.timeout = databaseDialect.isTimeout(metadata, cause);
 	}
 
 	@Override
@@ -216,7 +226,8 @@ public class DatabaseException extends RuntimeException {
 	 * @return {@code true} if this exception is recognized as a unique constraint violation
 	 * @since 4.3.0
 	 */
-	public boolean isUniqueConstraintViolation() {
+	@NonNull
+	public Boolean isUniqueConstraintViolation() {
 		return this.uniqueConstraintViolation;
 	}
 
@@ -231,7 +242,8 @@ public class DatabaseException extends RuntimeException {
 	 * @return {@code true} if this exception is recognized as a foreign-key violation
 	 * @since 4.3.0
 	 */
-	public boolean isForeignKeyViolation() {
+	@NonNull
+	public Boolean isForeignKeyViolation() {
 		return this.foreignKeyViolation;
 	}
 
@@ -244,7 +256,8 @@ public class DatabaseException extends RuntimeException {
 	 * @return {@code true} if this exception is recognized as a deadlock
 	 * @since 4.3.0
 	 */
-	public boolean isDeadlock() {
+	@NonNull
+	public Boolean isDeadlock() {
 		return this.deadlock;
 	}
 
@@ -258,8 +271,38 @@ public class DatabaseException extends RuntimeException {
 	 * @return {@code true} if this exception is recognized as transient
 	 * @since 4.3.0
 	 */
-	public boolean isTransient() {
+	@NonNull
+	public Boolean isTransient() {
 		return this.transientException;
+	}
+
+	/**
+	 * Determines if this exception is recognized as a serialization failure.
+	 * <p>
+	 * This method is intentionally conservative: it returns {@code true} only when Pyranid recognizes a database-specific
+	 * error code or SQLState as a serialization failure.
+	 *
+	 * @return {@code true} if this exception is recognized as a serialization failure
+	 * @since 4.4.0
+	 */
+	@NonNull
+	public Boolean isSerializationFailure() {
+		return this.serializationFailure;
+	}
+
+	/**
+	 * Determines if this exception is recognized as a timeout or cancellation.
+	 * <p>
+	 * This method is intentionally conservative: it returns {@code true} only when Pyranid recognizes a JDBC timeout,
+	 * database-specific timeout, or database-specific cancellation signal. A {@code true} result does not mean the operation
+	 * is automatically safe to retry.
+	 *
+	 * @return {@code true} if this exception is recognized as a timeout or cancellation
+	 * @since 4.4.0
+	 */
+	@NonNull
+	public Boolean isTimeout() {
+		return this.timeout;
 	}
 
 	/**

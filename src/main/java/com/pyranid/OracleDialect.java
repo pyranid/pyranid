@@ -103,6 +103,22 @@ final class OracleDialect extends GenericDialect {
 	}
 
 	@Override
+	public boolean isSerializationFailure(@NonNull DatabaseExceptionMetadata metadata,
+																				@Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return hasErrorCode(metadata, cause, 8177);
+	}
+
+	@Override
+	public boolean isTimeout(@NonNull DatabaseExceptionMetadata metadata,
+													 @Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return super.isTimeout(metadata, cause) || hasErrorCode(metadata, cause, 1013, 51);
+	}
+
+	@Override
 	public boolean isTimestampWithTimeZone(@NonNull ResultSetMetaData resultSetMetaData,
 																				 @NonNull Integer columnIndex) throws SQLException {
 		requireNonNull(resultSetMetaData);
