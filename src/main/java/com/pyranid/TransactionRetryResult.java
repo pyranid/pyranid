@@ -17,16 +17,19 @@
 package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 
 import javax.annotation.concurrent.ThreadSafe;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 
 import static java.util.Objects.requireNonNull;
 
 /**
  * Result of a successful {@link Database#transactionWithRetry(RetryPolicy, ReturningTransactionalOperation)} call.
+ * <p>
+ * Retry methods return this type instead of a bare {@link Optional} so callers can inspect failures that were recovered
+ * before the transaction eventually succeeded.
  * <p>
  * If retry attempts are exhausted, Pyranid throws the final {@link DatabaseException} instead of returning this type. Prior
  * failed attempts are attached to the thrown exception as suppressed exceptions.
@@ -36,14 +39,13 @@ import static java.util.Objects.requireNonNull;
  */
 @ThreadSafe
 public final class TransactionRetryResult<T> {
-	@NonNull
-	private final Optional<T> value;
+	@Nullable
+	private final T value;
 	@NonNull
 	private final List<@NonNull DatabaseException> failures;
 
-	private TransactionRetryResult(@NonNull Optional<T> value,
+	private TransactionRetryResult(@Nullable T value,
 																 @NonNull List<@NonNull DatabaseException> failures) {
-		requireNonNull(value);
 		requireNonNull(failures);
 
 		this.value = value;
@@ -56,7 +58,7 @@ public final class TransactionRetryResult<T> {
 		requireNonNull(value);
 		requireNonNull(failures);
 
-		return new TransactionRetryResult<>(value, failures);
+		return new TransactionRetryResult<>(value.orElse(null), failures);
 	}
 
 	/**
@@ -66,7 +68,7 @@ public final class TransactionRetryResult<T> {
 	 */
 	@NonNull
 	public Optional<T> getValue() {
-		return this.value;
+		return Optional.ofNullable(this.value);
 	}
 
 	/**
@@ -99,23 +101,5 @@ public final class TransactionRetryResult<T> {
 	@NonNull
 	public Boolean wasRetried() {
 		return !getFailures().isEmpty();
-	}
-
-	@Override
-	public boolean equals(Object object) {
-		if (this == object)
-			return true;
-
-		if (!(object instanceof TransactionRetryResult))
-			return false;
-
-		TransactionRetryResult<?> transactionRetryResult = (TransactionRetryResult<?>) object;
-		return Objects.equals(getValue(), transactionRetryResult.getValue())
-				&& Objects.equals(getFailures(), transactionRetryResult.getFailures());
-	}
-
-	@Override
-	public int hashCode() {
-		return Objects.hash(getValue(), getFailures());
 	}
 }

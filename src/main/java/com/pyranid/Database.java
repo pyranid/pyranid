@@ -467,6 +467,9 @@ public final class Database {
 	 * The entire transaction closure may run more than once. Keep non-idempotent external side effects outside the closure
 	 * unless they are safe to repeat.
 	 * <p>
+	 * Unlike {@link #transaction(TransactionalOperation)} and related transaction methods, retrying methods return
+	 * {@link TransactionRetryResult} so callers can inspect failures that were recovered before success.
+	 * <p>
 	 * This method fails fast if called inside an active transaction for this {@code Database}. Retrying a nested unit cannot
 	 * restart the outer transaction safely.
 	 *
@@ -492,6 +495,9 @@ public final class Database {
 	 * <p>
 	 * The entire transaction closure may run more than once. Keep non-idempotent external side effects outside the closure
 	 * unless they are safe to repeat.
+	 * <p>
+	 * Unlike {@link #transaction(TransactionOptions, TransactionalOperation)} and related transaction methods, retrying
+	 * methods return {@link TransactionRetryResult} so callers can inspect failures that were recovered before success.
 	 * <p>
 	 * This method fails fast if called inside an active transaction for this {@code Database}. Retrying a nested unit cannot
 	 * restart the outer transaction safely.
@@ -522,6 +528,9 @@ public final class Database {
 	 * The entire transaction closure may run more than once. Keep non-idempotent external side effects outside the closure
 	 * unless they are safe to repeat.
 	 * <p>
+	 * Unlike {@link #transaction(ReturningTransactionalOperation)} and related transaction methods, retrying methods return
+	 * {@link TransactionRetryResult} so callers can inspect failures that were recovered before success.
+	 * <p>
 	 * This method fails fast if called inside an active transaction for this {@code Database}. Retrying a nested unit cannot
 	 * restart the outer transaction safely.
 	 *
@@ -546,6 +555,10 @@ public final class Database {
 	 * <p>
 	 * The entire transaction closure may run more than once. Keep non-idempotent external side effects outside the closure
 	 * unless they are safe to repeat.
+	 * <p>
+	 * Unlike {@link #transaction(TransactionOptions, ReturningTransactionalOperation)} and related transaction methods,
+	 * retrying methods return {@link TransactionRetryResult} so callers can inspect failures that were recovered before
+	 * success.
 	 * <p>
 	 * This method fails fast if called inside an active transaction for this {@code Database}. Retrying a nested unit cannot
 	 * restart the outer transaction safely.
