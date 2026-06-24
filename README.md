@@ -48,7 +48,7 @@ Java 17+
   <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid</artifactId>
-  <version>4.4.0-SNAPSHOT</version>
+  <version>4.4.0</version>
 </dependency>
 ```
 
@@ -64,7 +64,7 @@ Java 8+ (legacy; only critical fixes will be applied)
 
 ### Direct Download
 
-For released builds, you can download the Pyranid jar directly from [Maven Central](https://repo1.maven.org/maven2/com/pyranid/pyranid/4.3.0/pyranid-4.3.0.jar).  No other dependencies are required.
+For released builds, you can download the Pyranid jar directly from [Maven Central](https://repo1.maven.org/maven2/com/pyranid/pyranid/4.4.0/pyranid-4.4.0.jar).  No other dependencies are required.
 
 ## Configuration
 
@@ -1801,7 +1801,7 @@ Use `com.pyranid:pyranid-otel` for OpenTelemetry export:
 <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid-otel</artifactId>
-  <version>1.0.0</version>
+  <version>1.1.0</version>
 </dependency>
 ```
 
