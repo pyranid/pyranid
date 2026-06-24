@@ -159,6 +159,8 @@
 				<configuration>
 					<projectType>library</projectType>
 					<outputFormat>all</outputFormat>
+					<includeProvidedScope>false</includeProvidedScope>
+					<includeSystemScope>false</includeSystemScope>
 				</configuration>
 			</plugin>
 			<plugin>

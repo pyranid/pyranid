@@ -15,6 +15,7 @@ jobs:
     name: Scorecard analysis
     runs-on: ubuntu-latest
     permissions:
+      contents: read          # allow actions/checkout to fetch the repository
       security-events: write   # upload SARIF to code-scanning
       id-token: write          # publish results to the OpenSSF API
     steps:
