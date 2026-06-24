@@ -11,6 +11,7 @@ All notable changes to Pyranid will be documented in this file.
 - Added `StatementContext.getRedactedParameters()` for safe diagnostic rendering; `SecureParameter` masks take precedence over any configured redactor.
 - Added `RetryPolicy` with explicit retry attempts, retry conditions, and fixed/exponential backoff strategies.
 - Added `Database.transactionWithRetry(...)` overloads for retrying whole transaction closures after retryable database failures.
+- Added `TransactionRetryResult` for successful retry diagnostics, including the successful value and failures recovered before success.
 - Added `DatabaseException.isSerializationFailure()` and `DatabaseException.isTimeout()` classification predicates.
 
 ### Changed

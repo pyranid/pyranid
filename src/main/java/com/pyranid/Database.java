@@ -472,16 +472,18 @@ public final class Database {
 	 *
 	 * @param retryPolicy           retry policy to apply
 	 * @param transactionalOperation the operation to perform transactionally
+	 * @return retry result containing any failures retried before success
 	 * @since 4.4.0
 	 */
-	public void transactionWithRetry(@NonNull RetryPolicy retryPolicy,
-																	 @NonNull TransactionalOperation transactionalOperation) {
+	@NonNull
+	public TransactionRetryResult<Void> transactionWithRetry(@NonNull RetryPolicy retryPolicy,
+																													@NonNull TransactionalOperation transactionalOperation) {
 		requireNonNull(retryPolicy);
 		requireNonNull(transactionalOperation);
 
-		transactionWithRetry(retryPolicy, () -> {
+		return transactionWithRetry(retryPolicy, () -> {
 			transactionalOperation.perform();
-			return Optional.empty();
+			return Optional.<Void>empty();
 		});
 	}
 
@@ -497,18 +499,20 @@ public final class Database {
 	 * @param retryPolicy           retry policy to apply
 	 * @param transactionOptions     options to apply to each transaction attempt
 	 * @param transactionalOperation the operation to perform transactionally
+	 * @return retry result containing any failures retried before success
 	 * @since 4.4.0
 	 */
-	public void transactionWithRetry(@NonNull RetryPolicy retryPolicy,
-																	 @NonNull TransactionOptions transactionOptions,
-																	 @NonNull TransactionalOperation transactionalOperation) {
+	@NonNull
+	public TransactionRetryResult<Void> transactionWithRetry(@NonNull RetryPolicy retryPolicy,
+																													@NonNull TransactionOptions transactionOptions,
+																													@NonNull TransactionalOperation transactionalOperation) {
 		requireNonNull(retryPolicy);
 		requireNonNull(transactionOptions);
 		requireNonNull(transactionalOperation);
 
-		transactionWithRetry(retryPolicy, transactionOptions, () -> {
+		return transactionWithRetry(retryPolicy, transactionOptions, () -> {
 			transactionalOperation.perform();
-			return Optional.empty();
+			return Optional.<Void>empty();
 		});
 	}
 
@@ -524,12 +528,12 @@ public final class Database {
 	 * @param retryPolicy           retry policy to apply
 	 * @param transactionalOperation the operation to perform transactionally
 	 * @param <T>                    the type to be returned
-	 * @return the result of the transactional operation
+	 * @return retry result containing the successful transaction value and any failures retried before success
 	 * @since 4.4.0
 	 */
 	@NonNull
-	public <T> Optional<T> transactionWithRetry(@NonNull RetryPolicy retryPolicy,
-																							@NonNull ReturningTransactionalOperation<T> transactionalOperation) {
+	public <T> TransactionRetryResult<T> transactionWithRetry(@NonNull RetryPolicy retryPolicy,
+																													 @NonNull ReturningTransactionalOperation<T> transactionalOperation) {
 		requireNonNull(retryPolicy);
 		requireNonNull(transactionalOperation);
 
@@ -550,13 +554,13 @@ public final class Database {
 	 * @param transactionOptions     options to apply to each transaction attempt
 	 * @param transactionalOperation the operation to perform transactionally
 	 * @param <T>                    the type to be returned
-	 * @return the result of the transactional operation
+	 * @return retry result containing the successful transaction value and any failures retried before success
 	 * @since 4.4.0
 	 */
 	@NonNull
-	public <T> Optional<T> transactionWithRetry(@NonNull RetryPolicy retryPolicy,
-																							@NonNull TransactionOptions transactionOptions,
-																							@NonNull ReturningTransactionalOperation<T> transactionalOperation) {
+	public <T> TransactionRetryResult<T> transactionWithRetry(@NonNull RetryPolicy retryPolicy,
+																													 @NonNull TransactionOptions transactionOptions,
+																													 @NonNull ReturningTransactionalOperation<T> transactionalOperation) {
 		requireNonNull(retryPolicy);
 		requireNonNull(transactionOptions);
 		requireNonNull(transactionalOperation);
@@ -568,7 +572,7 @@ public final class Database {
 
 		for (int attempt = 1; attempt <= retryPolicy.getMaxAttempts(); ++attempt) {
 			try {
-				return transaction(transactionOptions, transactionalOperation);
+				return TransactionRetryResult.of(transaction(transactionOptions, transactionalOperation), priorFailures);
 			} catch (DatabaseException e) {
 				boolean finalAttempt = attempt == retryPolicy.getMaxAttempts();
 

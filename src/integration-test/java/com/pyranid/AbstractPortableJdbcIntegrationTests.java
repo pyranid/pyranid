@@ -518,16 +518,19 @@ abstract class AbstractPortableJdbcIntegrationTests {
 				RetryPolicy.Backoff.fixed(Duration.ofMillis(10)),
 				RetryPolicy.Condition.serializationFailureOrDeadlock());
 
-		Long rowCount = db.transactionWithRetry(retryPolicy, () -> {
+		TransactionRetryResult<Long> retryResult = db.transactionWithRetry(retryPolicy, () -> {
 			attempts.incrementAndGet();
 			db.query("INSERT INTO " + table + " (id, name) VALUES (:id, :name)")
 					.bind("id", 1L)
 					.bind("name", "Ada")
 					.execute();
 			return Optional.of(countRows(db, table));
-		}).orElseThrow();
+		});
+		Long rowCount = retryResult.getValue().orElseThrow();
 
 		Assertions.assertEquals(1, attempts.get(), "A successful transaction must not be retried");
+		Assertions.assertEquals(List.of(), retryResult.getFailures());
+		Assertions.assertEquals(1, retryResult.getAttemptCount());
 		Assertions.assertEquals(1L, rowCount.longValue());
 		Assertions.assertEquals(1L, countRows(db, table));
 	}

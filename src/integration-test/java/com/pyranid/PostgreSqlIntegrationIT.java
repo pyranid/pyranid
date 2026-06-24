@@ -391,7 +391,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 						return failure.isSerializationFailure() || failure.isDeadlock();
 					});
 
-			Integer finalValue = db.transactionWithRetry(retryPolicy, repeatableRead, () -> {
+			TransactionRetryResult<Integer> retryResult = db.transactionWithRetry(retryPolicy, repeatableRead, () -> {
 				int attempt = attempts.incrementAndGet();
 				// Establish this attempt's REPEATABLE READ snapshot by reading the row.
 				int current = db.query("SELECT val FROM " + table + " WHERE id = 1")
@@ -410,12 +410,16 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 						.execute();
 
 				return Optional.of(current + 100);
-			}).orElseThrow();
+			});
+			Integer finalValue = retryResult.getValue().orElseThrow();
 
 			conflicter.get(30, TimeUnit.SECONDS);
 
 			Assertions.assertEquals(2, attempts.get(),
 					"Expected exactly one serialization failure followed by a successful retry");
+			Assertions.assertEquals(1, retryResult.getFailures().size());
+			Assertions.assertEquals(2, retryResult.getAttemptCount());
+			Assertions.assertTrue(retryResult.wasRetried());
 			Assertions.assertEquals(Boolean.TRUE, firstFailureWasSerialization.get(),
 					"First failed attempt should be classified as a serialization failure");
 			Assertions.assertEquals(101, finalValue,

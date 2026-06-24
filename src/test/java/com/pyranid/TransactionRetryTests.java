@@ -43,21 +43,40 @@ public class TransactionRetryTests {
 		AtomicInteger attempts = new AtomicInteger();
 		List<Long> transactionIds = new ArrayList<>();
 		RetryPolicy retryPolicy = retryPolicy(3);
+		DatabaseException firstFailure = serializationFailure("first");
 
-		Optional<String> result = database.transactionWithRetry(retryPolicy, () -> {
+		TransactionRetryResult<String> result = database.transactionWithRetry(retryPolicy, () -> {
 			transactionIds.add(database.currentTransaction().orElseThrow().id());
 
 			if (attempts.incrementAndGet() == 1)
-				throw serializationFailure("first");
+				throw firstFailure;
 
 			return Optional.of("success");
 		});
 
-		Assertions.assertEquals(Optional.of("success"), result);
+		Assertions.assertEquals(Optional.of("success"), result.getValue());
+		Assertions.assertEquals(List.of(firstFailure), result.getFailures());
+		Assertions.assertEquals(2, result.getAttemptCount());
+		Assertions.assertTrue(result.wasRetried());
+		Assertions.assertThrows(UnsupportedOperationException.class, () ->
+				result.getFailures().add(serializationFailure("mutation")));
 		Assertions.assertEquals(2, attempts.get());
 		Assertions.assertEquals(2, transactionIds.size());
 		Assertions.assertNotEquals(transactionIds.get(0), transactionIds.get(1),
 				"Each retry attempt should use a fresh Transaction");
+	}
+
+	@Test
+	public void testTransactionWithRetryReturnsResultWithoutFailuresWhenNoRetry() {
+		Database database = database("retry_no_failure");
+		RetryPolicy retryPolicy = retryPolicy(3);
+
+		TransactionRetryResult<String> result = database.transactionWithRetry(retryPolicy, () -> Optional.of("success"));
+
+		Assertions.assertEquals(Optional.of("success"), result.getValue());
+		Assertions.assertEquals(List.of(), result.getFailures());
+		Assertions.assertEquals(1, result.getAttemptCount());
+		Assertions.assertFalse(result.wasRetried());
 	}
 
 	@Test
@@ -195,13 +214,17 @@ public class TransactionRetryTests {
 		AtomicInteger attempts = new AtomicInteger();
 		List<TransactionResult> transactionResults = new ArrayList<>();
 
-		database.transactionWithRetry(retryPolicy, () -> {
+		TransactionRetryResult<Void> result = database.transactionWithRetry(retryPolicy, () -> {
 			database.currentTransaction().orElseThrow().addPostTransactionOperation(transactionResults::add);
 
 			if (attempts.incrementAndGet() == 1)
 				throw serializationFailure("first");
 		});
 
+		Assertions.assertEquals(Optional.empty(), result.getValue());
+		Assertions.assertEquals(1, result.getFailures().size());
+		Assertions.assertEquals(2, result.getAttemptCount());
+		Assertions.assertTrue(result.wasRetried());
 		Assertions.assertEquals(List.of(TransactionResult.ROLLED_BACK, TransactionResult.COMMITTED), transactionResults);
 	}
 

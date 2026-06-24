@@ -645,7 +645,7 @@ RetryPolicy retryPolicy = RetryPolicy.ofMaxAttempts(
   RetryPolicy.Backoff.fixed(Duration.ofMillis(25)),
   RetryPolicy.Condition.serializationFailureOrDeadlock());
 
-database.transactionWithRetry(retryPolicy, () -> {
+TransactionRetryResult<Void> retryResult = database.transactionWithRetry(retryPolicy, () -> {
   database.query("""
       UPDATE account
       SET balance = balance - :amount
@@ -658,6 +658,7 @@ database.transactionWithRetry(retryPolicy, () -> {
 ```
 
 `RetryPolicy.ofMaxAttempts(3, ...)` means three total attempts: the initial transaction plus up to two retries. Pyranid starts a fresh physical transaction for each attempt. The whole closure may run more than once, so keep non-idempotent external side effects outside the retried closure.
+[`TransactionRetryResult::getFailures()`](https://javadoc.pyranid.com/com/pyranid/TransactionRetryResult.html#getFailures()) contains failed attempts that Pyranid retried before the transaction eventually succeeded.
 
 ```java
 // Risky: the email may send more than once
@@ -673,7 +674,7 @@ database.transactionWithRetry(retryPolicy, () -> {
 Instead, return enough information to run the side effect after the retry helper succeeds:
 
 ```java
-Optional<ReceiptEmail> receiptEmail = database.transactionWithRetry(retryPolicy, () -> {
+TransactionRetryResult<ReceiptEmail> retryResult = database.transactionWithRetry(retryPolicy, () -> {
   database.query("UPDATE orders SET status = 'PAID' WHERE order_id = :orderId")
     .bind("orderId", orderId)
     .execute();
@@ -681,7 +682,11 @@ Optional<ReceiptEmail> receiptEmail = database.transactionWithRetry(retryPolicy,
   return Optional.of(new ReceiptEmail(orderId));
 });
 
-receiptEmail.ifPresent(emailClient::sendReceipt);
+retryResult.getValue().ifPresent(emailClient::sendReceipt);
+
+for (DatabaseException failure : retryResult.getFailures()) {
+  logger.info("Recovered transaction failure", failure);
+}
 ```
 
 For durable side effects, prefer the outbox pattern: write an outbox row inside the retried transaction and let a separate worker deliver it after commit.
