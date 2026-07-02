@@ -58,6 +58,43 @@ public class MySqlIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 			.withPassword("pyranid");
 
 	@Test
+	public void testSecureParameterValueScrubbedFromDuplicateEntryDiagnostics() {
+		// MySQL echoes the offending value in duplicate-key errors ("Duplicate entry 'x' for key ...").
+		// A SecureParameter value must be scrubbed from Pyranid-rendered diagnostics while the raw driver
+		// exception remains intact as the cause.
+		String secret = "mysql-leak-secret@example.com";
+		Database db = database();
+		String table = "pyranid_mysql_secure_leak";
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "id BIGINT AUTO_INCREMENT PRIMARY KEY, "
+				+ "email VARCHAR(100) NOT NULL UNIQUE"
+				+ ")");
+
+		db.query("INSERT INTO " + table + " (email) VALUES (:email)")
+				.bind("email", Parameters.secure(secret))
+				.execute();
+
+		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("INSERT INTO " + table + " (email) VALUES (:email)")
+						.bind("email", Parameters.secure(secret))
+						.execute());
+
+		Assertions.assertTrue(ex.isUniqueConstraintViolation(),
+				"Expected a recognized unique-constraint violation");
+		Assertions.assertFalse(ex.getMessage().contains(secret),
+				"Expected the secure value absent from DatabaseException.getMessage()");
+		Assertions.assertFalse(ex.toString().contains(secret),
+				"Expected the secure value absent from DatabaseException.toString()");
+		Assertions.assertTrue(ex.getMessage().contains("<redacted>"),
+				"Expected the mask present in the scrubbed message");
+
+		Throwable cause = ex.getCause();
+		Assertions.assertNotNull(cause);
+		Assertions.assertTrue(String.valueOf(cause.getMessage()).contains(secret),
+				"Expected the raw driver exception (the cause) to remain unsanitized");
+	}
+
+	@Test
 	public void testOnDuplicateKeyUpdateGeneratedKeyBehavior() {
 		Database db = database();
 		String table = "pyranid_mysql_upsert_keys";

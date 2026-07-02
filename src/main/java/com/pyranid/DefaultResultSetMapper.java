@@ -57,11 +57,16 @@ import java.util.Currency;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Hashtable;
 import java.util.IllformedLocaleException;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.NavigableMap;
+import java.util.SortedMap;
+import java.util.TreeMap;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -69,6 +74,7 @@ import java.util.TimeZone;
 import java.util.UUID;
 import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 
@@ -577,10 +583,80 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		ResultSetMetaData resultSetMetaData = resultSet.getMetaData();
 
+		// Map row target: return the row as an insertion-ordered (column-ordered) map of
+		// normalized (lowercase) column labels to dialect-aware extracted values. Checked before the
+		// row-planning fork — no row plan applies to a Map. Note: subclasses invoking the protected
+		// mapWithRowPlanning/mapWithoutRowPlanning methods directly bypass this special case.
+		if (resultSetRowType == Map.class || resultSetRowType == LinkedHashMap.class) {
+			@SuppressWarnings("unchecked")
+			T row = (T) mapResultSetToMap(statementContext, resultSet, resultSetMetaData);
+			return Optional.of(row);
+		}
+
+		if (UNSUPPORTED_MAP_ROW_TYPES.contains(resultSetRowType))
+			throw new DatabaseException(format(
+					"%s is not a supported Map row type. Use Map.class or LinkedHashMap.class to fetch rows as maps.",
+					resultSetRowType.getName()));
+
 		if (getPlanCachingEnabled())
 			return mapWithRowPlanning(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData);
 
 		return mapWithoutRowPlanning(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData);
+	}
+
+	/**
+	 * Well-known JDK map types that are rejected with a clear error instead of falling confusingly into
+	 * the JavaBean mapping path. User classes that happen to implement {@link Map} are deliberately NOT
+	 * rejected — they retain their existing bean-path behavior.
+	 */
+	@NonNull
+	private static final Set<Class<?>> UNSUPPORTED_MAP_ROW_TYPES = Set.of(
+			HashMap.class, TreeMap.class, Hashtable.class, ConcurrentHashMap.class,
+			SortedMap.class, NavigableMap.class, ConcurrentMap.class);
+
+	/**
+	 * Maps the current row of {@code resultSet} to an insertion-ordered map of normalized (lowercase)
+	 * column labels to values.
+	 * <p>
+	 * Keys are normalized via {@link #normalizeColumnLabel(String)} so lookups are portable across
+	 * databases that report unquoted labels in different cases (e.g. Oracle and HSQLDB uppercase,
+	 * PostgreSQL lowercases). Column order is preserved. {@code NULL} columns are present with a
+	 * {@code null} value. Values are extracted with the same dialect-aware logic used for record and
+	 * JavaBean mapping. Duplicate normalized labels (e.g. an unaliased multi-table join) fail fast.
+	 *
+	 * @param statementContext  current SQL context
+	 * @param resultSet         provides raw row data to pull from
+	 * @param resultSetMetaData metadata for {@code resultSet}
+	 * @return the row as an insertion-ordered label-to-value map
+	 * @throws SQLException if an error occurs during mapping
+	 * @since 4.4.1
+	 */
+	@NonNull
+	protected <T> Map<String, Object> mapResultSetToMap(@NonNull StatementContext<T> statementContext,
+																											@NonNull ResultSet resultSet,
+																											@NonNull ResultSetMetaData resultSetMetaData) throws SQLException {
+		requireNonNull(statementContext);
+		requireNonNull(resultSet);
+		requireNonNull(resultSetMetaData);
+
+		int columnCount = resultSetMetaData.getColumnCount();
+		Map<String, Object> row = new LinkedHashMap<>(columnCount);
+		Map<String, String> normalizedLabelsToRawLabels = new HashMap<>(columnCount);
+
+		for (int i = 1; i <= columnCount; i++) {
+			String rawLabel = resultSetMetaData.getColumnLabel(i);
+			String label = normalizeColumnLabel(rawLabel);
+			String previousRawLabel = normalizedLabelsToRawLabels.putIfAbsent(label, rawLabel);
+
+			if (previousRawLabel != null)
+				throw new DatabaseException(format(
+						"Duplicate column label '%s' (normalized from '%s' and '%s'); use column aliases to disambiguate.",
+						label, previousRawLabel, rawLabel));
+
+			row.put(label, extractColumnValue(resultSetMetaData, statementContext, resultSet, i).orElse(null));
+		}
+
+		return row;
 	}
 
 	@NonNull

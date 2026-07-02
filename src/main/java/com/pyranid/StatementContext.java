@@ -65,8 +65,19 @@ public final class StatementContext<T> {
 	@NonNull
 	private final ParameterRedactor parameterRedactor;
 	private final boolean batchParameterGroups;
+	@Nullable
+	private final SpiOverrides spiOverrides;
 	@NonNull
 	private final Queue<@NonNull AutoCloseable> cleanupOperations;
+
+	/**
+	 * Per-query overrides of the {@link Database}-wide mapping/binding SPIs, carried on the context so
+	 * execution internals can resolve them without additional plumbing. Deliberately excluded from
+	 * {@link #equals(Object)}/{@link #hashCode()}/{@link #toString()} — overrides are functional
+	 * identity, not value identity.
+	 */
+	record SpiOverrides(@Nullable ResultSetMapper resultSetMapper,
+											@Nullable PreparedStatementBinder preparedStatementBinder) {}
 
 	protected StatementContext(@NonNull Builder builder) {
 		requireNonNull(builder);
@@ -83,7 +94,18 @@ public final class StatementContext<T> {
 		this.ambiguousTimestampBindingStrategy = builder.ambiguousTimestampBindingStrategy;
 		this.parameterRedactor = builder.parameterRedactor;
 		this.batchParameterGroups = builder.batchParameterGroups;
+		this.spiOverrides = builder.spiOverrides;
 		this.cleanupOperations = new ConcurrentLinkedQueue<>();
+	}
+
+	@Nullable
+	ResultSetMapper getResultSetMapperOverride() {
+		return this.spiOverrides == null ? null : this.spiOverrides.resultSetMapper();
+	}
+
+	@Nullable
+	PreparedStatementBinder getPreparedStatementBinderOverride() {
+		return this.spiOverrides == null ? null : this.spiOverrides.preparedStatementBinder();
 	}
 
 	@Override
@@ -300,6 +322,8 @@ public final class StatementContext<T> {
 		@Nullable
 		private Class<T> resultSetRowType;
 		private boolean batchParameterGroups;
+		@Nullable
+		private SpiOverrides spiOverrides;
 
 		private Builder(@NonNull Statement statement,
 										@NonNull Database database) {
@@ -336,6 +360,12 @@ public final class StatementContext<T> {
 		@NonNull
 		Builder batchParameterGroups(boolean batchParameterGroups) {
 			this.batchParameterGroups = batchParameterGroups;
+			return this;
+		}
+
+		@NonNull
+		Builder spiOverrides(@Nullable SpiOverrides spiOverrides) {
+			this.spiOverrides = spiOverrides;
 			return this;
 		}
 

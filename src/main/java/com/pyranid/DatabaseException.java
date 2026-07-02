@@ -24,6 +24,7 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 
 import static java.lang.String.format;
@@ -120,34 +121,61 @@ public class DatabaseException extends RuntimeException {
 	DatabaseException(@Nullable String message,
 										@Nullable Throwable cause,
 										@NonNull DatabaseDialect databaseDialect) {
+		this(message, cause, databaseDialect, null);
+	}
+
+	/**
+	 * Package-private constructor which applies a best-effort diagnostic redactor to every String metadata field
+	 * extracted from the cause — used by {@link Database} to scrub verbatim occurrences of {@link SecureParameter}
+	 * values that the database driver may have echoed into its error text.
+	 * <p>
+	 * The {@code message} is deliberately NOT re-scrubbed here: the caller is expected to have scrubbed the raw
+	 * driver text before composing the message (scrubbing must run before whitespace-collapsing/truncation), and
+	 * the composed remainder is Pyranid-rendered and already redaction-aware. Re-applying the redactor would
+	 * re-scan mask text from the first pass, violating the documented one-pass "masks are never re-masked"
+	 * semantics. Each metadata field, by contrast, is raw dialect-extracted text seen exactly once.
+	 * <p>
+	 * The {@code cause} chain is deliberately left untouched: sinks that render the stack trace or walk
+	 * {@link #getCause()} can still observe the raw driver text.
+	 */
+	DatabaseException(@Nullable String message,
+										@Nullable Throwable cause,
+										@NonNull DatabaseDialect databaseDialect,
+										@Nullable UnaryOperator<String> diagnosticRedactor) {
 		super(message, cause);
 
 		DatabaseExceptionMetadata metadata = databaseDialect.databaseExceptionMetadata(cause);
 
 		this.errorCode = metadata.errorCode;
-		this.sqlState = metadata.sqlState;
-		this.column = metadata.column;
-		this.constraint = metadata.constraint;
-		this.datatype = metadata.datatype;
-		this.detail = metadata.detail;
-		this.file = metadata.file;
-		this.hint = metadata.hint;
+		this.sqlState = applyDiagnosticRedactor(diagnosticRedactor, metadata.sqlState);
+		this.column = applyDiagnosticRedactor(diagnosticRedactor, metadata.column);
+		this.constraint = applyDiagnosticRedactor(diagnosticRedactor, metadata.constraint);
+		this.datatype = applyDiagnosticRedactor(diagnosticRedactor, metadata.datatype);
+		this.detail = applyDiagnosticRedactor(diagnosticRedactor, metadata.detail);
+		this.file = applyDiagnosticRedactor(diagnosticRedactor, metadata.file);
+		this.hint = applyDiagnosticRedactor(diagnosticRedactor, metadata.hint);
 		this.internalPosition = metadata.internalPosition;
-		this.internalQuery = metadata.internalQuery;
+		this.internalQuery = applyDiagnosticRedactor(diagnosticRedactor, metadata.internalQuery);
 		this.line = metadata.line;
-		this.dbmsMessage = metadata.dbmsMessage;
+		this.dbmsMessage = applyDiagnosticRedactor(diagnosticRedactor, metadata.dbmsMessage);
 		this.position = metadata.position;
-		this.routine = metadata.routine;
-		this.schema = metadata.schema;
-		this.severity = metadata.severity;
-		this.table = metadata.table;
-		this.where = metadata.where;
+		this.routine = applyDiagnosticRedactor(diagnosticRedactor, metadata.routine);
+		this.schema = applyDiagnosticRedactor(diagnosticRedactor, metadata.schema);
+		this.severity = applyDiagnosticRedactor(diagnosticRedactor, metadata.severity);
+		this.table = applyDiagnosticRedactor(diagnosticRedactor, metadata.table);
+		this.where = applyDiagnosticRedactor(diagnosticRedactor, metadata.where);
 		this.uniqueConstraintViolation = databaseDialect.isUniqueConstraintViolation(metadata, cause);
 		this.foreignKeyViolation = databaseDialect.isForeignKeyViolation(metadata, cause);
 		this.deadlock = databaseDialect.isDeadlock(metadata, cause);
 		this.transientException = databaseDialect.isTransient(metadata, cause);
 		this.serializationFailure = databaseDialect.isSerializationFailure(metadata, cause);
 		this.timeout = databaseDialect.isTimeout(metadata, cause);
+	}
+
+	@Nullable
+	private static String applyDiagnosticRedactor(@Nullable UnaryOperator<String> diagnosticRedactor,
+																								@Nullable String value) {
+		return diagnosticRedactor == null || value == null ? value : diagnosticRedactor.apply(value);
 	}
 
 	@Override

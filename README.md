@@ -850,6 +850,31 @@ car = database.query("SELECT some_id AS car_id, some_color AS color FROM car LIM
   .fetchObject(Car.class).orElseThrow();
 ```
 
+### Map Rows
+
+When you don't want to define a type at all — exploratory queries, admin tooling, dynamic-shape `SELECT *`, exports — fetch rows as maps by passing [`Map`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Map.html)`.class` (or [`LinkedHashMap`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/LinkedHashMap.html)`.class`) anywhere a result type token is accepted:
+
+```java
+List<Map> rows = database.query("SELECT * FROM car").fetchList(Map.class);
+Object make = rows.get(0).get("make");
+```
+
+Each row is an insertion-ordered [`LinkedHashMap`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/LinkedHashMap.html) in column order. Keys are *normalized (lowercase)* column labels, so lookups behave identically across databases regardless of whether the driver reports unquoted labels uppercased (Oracle, HSQLDB), lowercased (PostgreSQL), or as written (MySQL, SQL Server). `AS` aliases are respected (and lowercased); `NULL` columns are present with a `null` value; values use the same dialect-aware extraction as record/bean mapping. Duplicate column labels — e.g. an unaliased multi-table join — fail fast with a [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html); use column aliases to disambiguate.
+
+Other JDK map types (`HashMap.class`, `TreeMap.class`, ...) are rejected with a clear error; user-defined classes that happen to implement [`Map`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Map.html) continue to map via the JavaBean path.
+
+Java's type erasure means a raw `Map.class` token can only ever yield the raw [`Map`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Map.html) type — there is no `Map<String, Object>.class` literal. For properly-parameterized results without caller-side casts, use the [`Query::mapRowType()`](https://javadoc.pyranid.com/com/pyranid/Query.html#mapRowType()) type token instead:
+
+```java
+List<Map<String, Object>> rows = database.query("SELECT * FROM car").fetchList(Query.mapRowType());
+
+Optional<Map<String, Object>> row = database.query("SELECT * FROM car WHERE id = :id")
+  .bind("id", 123)
+  .fetchObject(Query.mapRowType());
+```
+
+The special case lives in the default [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) implementation only — a custom database-wide or per-query [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) receiving the token decides for itself how to handle it.
+
 ### Supported Primitives
 
 * [`Byte`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Byte.html)
@@ -1004,6 +1029,29 @@ List<MySpecialType> mySpecialTypes =
   database.query("SELECT my_special_type FROM row")
     .fetchList(MySpecialType.class);
 ```
+
+### Per-Query Mapping and Binding
+
+The [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) and [`PreparedStatementBinder`](https://javadoc.pyranid.com/com/pyranid/PreparedStatementBinder.html) SPIs are normally configured database-wide at build time. As of 4.4.1 they can also be overridden for a single query via [`Query::resultSetMapper(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#resultSetMapper(com.pyranid.ResultSetMapper)) and [`Query::preparedStatementBinder(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#preparedStatementBinder(com.pyranid.PreparedStatementBinder)) — no new concepts, the same contracts applied per query.
+
+This is the idiomatic way to inline-map an ad-hoc projection (a join, computed columns, a tuple) without defining a database-wide mapper — both SPIs are functional interfaces, so a lambda works:
+
+```java
+record NameCount(String name, Long total) {}
+
+List<NameCount> counts = database.query("""
+  SELECT name, COUNT(*) AS total
+  FROM employee
+  GROUP BY name
+  """)
+  .resultSetMapper((ctx, rs, type, ip) ->
+    Optional.of(type.cast(new NameCount(rs.getString(1), rs.getLong(2)))))
+  .fetchList(NameCount.class);
+```
+
+The override applies to every row this query maps — including [`Query::fetchStream(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchStream(java.lang.Class,java.util.function.Function)) rows and DML-returning results — and to every parameter this query binds, including expanded IN-list elements and each batch group. Other queries on the same [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) are unaffected; passing `null` restores the database-wide instance. Metrics, statement logging, and exception diagnostics behave identically with an override present.
+
+Custom binders receive bound-ready raw values: [`SecureParameter`](https://javadoc.pyranid.com/com/pyranid/SecureParameter.html) and [`Optional`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Optional.html) wrappers are unwrapped by Pyranid *before* the binder is invoked, and `null` parameters never reach the binder (Pyranid binds them via [`PreparedStatement::setNull(...)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/PreparedStatement.html#setNull(int,int)) even when an override is present).
 
 ## Parameter Binding
 
@@ -1313,6 +1361,22 @@ Database database = Database.withDataSource(dataSource)
 ```
 
 The default redactor is [`ParameterRedactor::none()`](https://javadoc.pyranid.com/com/pyranid/ParameterRedactor.html#none()), which leaves non-secure, non-batch values unchanged. [`ParameterRedactor::redactAll()`](https://javadoc.pyranid.com/com/pyranid/ParameterRedactor.html#redactAll()) masks every non-secure value. [`SecureParameter`](https://javadoc.pyranid.com/com/pyranid/SecureParameter.html) always wins; its wrapped value is never passed to the redactor.
+
+**Heads up: by default, non-secure parameter values render verbatim in statement logs and exception text.** If diagnostics may leave a trusted boundary, wrap sensitive values with [`Parameters::secure(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) or configure [`ParameterRedactor::redactAll()`](https://javadoc.pyranid.com/com/pyranid/ParameterRedactor.html#redactAll()).
+
+##### What redaction does and does not cover
+
+Because the real value is bound to the [`PreparedStatement`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/PreparedStatement.html), the database *driver* may echo it back in its own error text — for example, PostgreSQL constraint violations include `Key (email)=(...) already exists`. Pyranid's coverage:
+
+| Surface | Covered? |
+| --- | --- |
+| Pyranid's `parameters=[...]` rendering ([`StatementContext`](https://javadoc.pyranid.com/com/pyranid/StatementContext.html)/[`StatementLog`](https://javadoc.pyranid.com/com/pyranid/StatementLog.html) diagnostics) | Yes — masks/redactor always apply |
+| [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) messages, `toString()`, and DBMS metadata fields ([`getDetail()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getDetail()), [`getDbmsMessage()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getDbmsMessage()), ...) | Best-effort — verbatim occurrences of [`Parameters::secure(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) values are scrubbed and replaced with the mask |
+| The raw driver exception ([`getCause()`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Throwable.html#getCause())), stack traces, and anything that renders them (log appenders, Sentry, OpenTelemetry exception events) | **No — deliberately preserved unsanitized. Treat the cause chain as sensitive.** |
+| Driver-transformed echoes (re-formatted numbers/temporals, truncated strings, encoded bytes); `null`/`Boolean`/very short secure values | No — the scrub is verbatim-only and skips values that would corrupt unrelated diagnostics |
+| Pyranid's own mapping-error messages (e.g. `Cannot map value '...'` when a value round-trips into a [`ResultSet`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/ResultSet.html)) | No |
+
+Only values explicitly wrapped with [`Parameters::secure(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) trigger the driver-text scrub; a [`ParameterRedactor`](https://javadoc.pyranid.com/com/pyranid/ParameterRedactor.html) governs Pyranid's parameter-list rendering only.
 
 ### Custom Parameters
 

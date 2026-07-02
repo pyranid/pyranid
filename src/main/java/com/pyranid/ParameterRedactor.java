@@ -28,6 +28,14 @@ import javax.annotation.concurrent.ThreadSafe;
  * {@code ParameterRedactor} for {@link SecureParameter} values; {@link SecureParameter#getMask()} always wins. For batch
  * executions, Pyranid renders a bounded batch summary and does not invoke this redactor for individual batch values.
  * <p>
+ * <strong>Scope.</strong> A {@code ParameterRedactor} governs Pyranid's rendering of its own {@code parameters=[...]}
+ * diagnostic list only. It does <em>not</em> reach text the database driver itself produces: driver error messages can
+ * echo bound values (for example, constraint-violation detail), and only values explicitly wrapped with
+ * {@link Parameters#secure} trigger Pyranid's best-effort scrub of driver-echoed text — see {@link SecureParameter}
+ * for that mechanism and its limits. Note that under the default {@link #none()}, non-secure values render verbatim
+ * in statement logs and exception text; configure {@link #redactAll()} or a custom redactor if diagnostics may leave
+ * a trusted boundary.
+ * <p>
  * Redaction failures are fail-fast. If an implementation throws, Pyranid propagates the failure from the diagnostic
  * rendering call site.
  *

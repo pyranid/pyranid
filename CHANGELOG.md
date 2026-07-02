@@ -2,6 +2,39 @@
 
 All notable changes to Pyranid will be documented in this file.
 
+## 4.4.1 (unreleased)
+
+### Fixed
+
+- `DatabaseException` messages and DBMS metadata fields (e.g. `getDetail()`, `getDbmsMessage()`) now
+  best-effort scrub verbatim occurrences of `SecureParameter` values echoed by the database driver
+  (for example, PostgreSQL constraint-violation detail such as `Key (email)=(...) already exists`).
+  The original driver exception remains fully intact as the `cause`: any sink that renders the stack
+  trace or walks `getCause()` (log appenders, error trackers) can still contain the raw value — treat
+  the cause chain as sensitive. The scrub is verbatim-only and skips `null`, `Boolean`, and very short
+  values to avoid corrupting unrelated diagnostics.
+- `StatementLog` now carries Pyranid's wrapped `DatabaseException` on driver-failure paths (previously
+  the raw driver exception on some paths), so statement logs render scrubbed, redaction-aware
+  diagnostics consistently.
+
+### Added
+
+- `SELECT` rows can now be fetched as insertion-ordered maps by passing `Map.class` (or
+  `LinkedHashMap.class`) anywhere a result type token is accepted. Use the `Query.mapRowType()` type
+  token for properly-parameterized results, e.g.
+  `List<Map<String, Object>> rows = database.query("SELECT * FROM car").fetchList(Query.mapRowType())`.
+  Keys are normalized (lowercase) column labels so lookups are portable across all supported
+  databases; values are extracted with the same dialect-aware logic as record/bean mapping. Duplicate
+  column labels fail fast — use aliases to disambiguate.
+- `Query.resultSetMapper(...)` and `Query.preparedStatementBinder(...)` for per-query overrides of the
+  database-wide mapping/binding SPIs — for example, inline-mapping an ad-hoc join projection with a
+  `ResultSetMapper` lambda without configuring it database-wide.
+
+### Migration Notes
+
+- `StatementLog.getException()` on driver-failure paths now returns the Pyranid `DatabaseException`
+  wrapper; the raw driver exception remains available via its `getCause()`.
+
 ## 4.4.0
 
 ### Added

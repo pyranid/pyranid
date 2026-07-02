@@ -54,6 +54,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.UnaryOperator;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
@@ -828,15 +829,38 @@ public final class Database {
 		requireNonNull(message);
 		requireNonNull(cause);
 
+		SecureParameterSupport.DiagnosticScrub diagnosticScrub = diagnosticScrubForStatementContext(statementContext);
+		UnaryOperator<String> diagnosticRedactor = diagnosticScrub.redactor();
+
+		// Scrub the RAW message before whitespace-collapsing/truncation: bounding first would break needles
+		// containing consecutive whitespace and can cut a secret mid-way, leaving an unmatchable prefix
+		String scrubbedMessage = diagnosticRedactor == null ? message : diagnosticRedactor.apply(message);
+
 		StatementDiagnostic statementDiagnostic = statementDiagnostic(statementContext);
 		DatabaseException databaseException = new DatabaseException(format("%s [%s]",
-				boundedDiagnosticMessage(message), statementDiagnostic.diagnostic()), cause,
-				databaseDialectForException(statementContext, cause));
+				boundedDiagnosticMessage(scrubbedMessage), statementDiagnostic.diagnostic()), cause,
+				databaseDialectForException(statementContext, cause), diagnosticRedactor);
 
 		if (statementDiagnostic.parameterRenderingFailure() != null)
 			databaseException.addSuppressed(statementDiagnostic.parameterRenderingFailure());
 
+		for (String failureDescription : diagnosticScrub.needleRenderingFailureDescriptions())
+			databaseException.addSuppressed(new RuntimeException(format(
+					"Unable to render a secure parameter for diagnostic scrubbing: %s", failureDescription)));
+
 		return databaseException;
+	}
+
+	private static SecureParameterSupport.@NonNull DiagnosticScrub diagnosticScrubForStatementContext(@NonNull StatementContext<?> statementContext) {
+		requireNonNull(statementContext);
+
+		try {
+			return SecureParameterSupport.diagnosticScrubForParameters(statementContext.getParameters());
+		} catch (Throwable ignored) {
+			// Per-needle failures are handled inside diagnosticScrubForParameters; reaching here would be
+			// catastrophic (a plain getter throwing) — fall back to no scrubbing rather than losing the exception
+			return SecureParameterSupport.DiagnosticScrub.NONE;
+		}
 	}
 
 	@NonNull
@@ -1423,6 +1447,10 @@ public final class Database {
 		private Integer batchChunkSize;
 		@Nullable
 		private Object id;
+		@Nullable
+		private ResultSetMapper resultSetMapper;
+		@Nullable
+		private PreparedStatementBinder preparedStatementBinder;
 
 		private DefaultQuery(@NonNull Database database,
 												 @NonNull String sql) {
@@ -1507,6 +1535,26 @@ public final class Database {
 
 		@NonNull
 		@Override
+		public Query resultSetMapper(@Nullable ResultSetMapper resultSetMapper) {
+			this.resultSetMapper = resultSetMapper;
+			return this;
+		}
+
+		@NonNull
+		@Override
+		public Query preparedStatementBinder(@Nullable PreparedStatementBinder preparedStatementBinder) {
+			this.preparedStatementBinder = preparedStatementBinder;
+			return this;
+		}
+
+		private StatementContext.@Nullable SpiOverrides spiOverrides() {
+			return this.resultSetMapper == null && this.preparedStatementBinder == null
+					? null
+					: new StatementContext.SpiOverrides(this.resultSetMapper, this.preparedStatementBinder);
+		}
+
+		@NonNull
+		@Override
 		public Query customize(@NonNull PreparedStatementCustomizer preparedStatementCustomizer) {
 			requireNonNull(preparedStatementCustomizer);
 			this.preparedStatementCustomizer = preparedStatementCustomizer;
@@ -1520,7 +1568,7 @@ public final class Database {
 			validateBatchChunkSizeNotSet();
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
-			return this.database.queryForObject(preparedQuery.statement, resultType, effectivePreparedStatementCustomizer(), preparedQuery.parameters);
+			return this.database.queryForObject(preparedQuery.statement, resultType, effectivePreparedStatementCustomizer(), spiOverrides(), preparedQuery.parameters);
 		}
 
 		@NonNull
@@ -1529,7 +1577,7 @@ public final class Database {
 			validateBatchChunkSizeNotSet();
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
-			return this.database.queryForList(preparedQuery.statement, resultType, effectivePreparedStatementCustomizer(), preparedQuery.parameters);
+			return this.database.queryForList(preparedQuery.statement, resultType, effectivePreparedStatementCustomizer(), spiOverrides(), preparedQuery.parameters);
 		}
 
 		@Nullable
@@ -1541,7 +1589,7 @@ public final class Database {
 			requireNonNull(streamFunction);
 			PreparedQuery preparedQuery = prepare(this.bindings);
 			return this.database.queryForStream(preparedQuery.statement, resultType, effectivePreparedStatementCustomizer(),
-					this.fetchSize != null, streamFunction, preparedQuery.parameters);
+					this.fetchSize != null, streamFunction, spiOverrides(), preparedQuery.parameters);
 		}
 
 
@@ -1550,7 +1598,7 @@ public final class Database {
 		public Long execute() {
 			validateBatchChunkSizeNotSet();
 			PreparedQuery preparedQuery = prepare(this.bindings);
-			return this.database.execute(preparedQuery.statement, effectivePreparedStatementCustomizer(), preparedQuery.parameters);
+			return this.database.execute(preparedQuery.statement, effectivePreparedStatementCustomizer(), spiOverrides(), preparedQuery.parameters);
 		}
 
 		@NonNull
@@ -1560,7 +1608,7 @@ public final class Database {
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
 			return this.database.executeReturningGeneratedKey(preparedQuery.statement, resultType,
-					effectivePreparedStatementCustomizer(), new String[0], preparedQuery.parameters);
+					effectivePreparedStatementCustomizer(), new String[0], spiOverrides(), preparedQuery.parameters);
 		}
 
 		@NonNull
@@ -1571,7 +1619,7 @@ public final class Database {
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
 			return this.database.executeReturningGeneratedKey(preparedQuery.statement, resultType,
-					effectivePreparedStatementCustomizer(), keyColumnNames, preparedQuery.parameters);
+					effectivePreparedStatementCustomizer(), keyColumnNames, spiOverrides(), preparedQuery.parameters);
 		}
 
 		@NonNull
@@ -1581,7 +1629,7 @@ public final class Database {
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
 			return this.database.executeReturningGeneratedKeys(preparedQuery.statement, resultType,
-					effectivePreparedStatementCustomizer(), new String[0], preparedQuery.parameters);
+					effectivePreparedStatementCustomizer(), new String[0], spiOverrides(), preparedQuery.parameters);
 		}
 
 		@NonNull
@@ -1592,7 +1640,7 @@ public final class Database {
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
 			return this.database.executeReturningGeneratedKeys(preparedQuery.statement, resultType,
-					effectivePreparedStatementCustomizer(), keyColumnNames, preparedQuery.parameters);
+					effectivePreparedStatementCustomizer(), keyColumnNames, spiOverrides(), preparedQuery.parameters);
 		}
 
 		@NonNull
@@ -1642,7 +1690,7 @@ public final class Database {
 			if (statement == null)
 				statement = Statement.of(statementId, buildPlaceholderSql());
 
-			return this.database.executeBatch(statement, parametersAsList, effectivePreparedStatementCustomizer(), this.batchChunkSize);
+			return this.database.executeBatch(statement, parametersAsList, effectivePreparedStatementCustomizer(), this.batchChunkSize, spiOverrides());
 		}
 
 		@NonNull
@@ -1651,7 +1699,7 @@ public final class Database {
 			validateBatchChunkSizeNotSet();
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
-			return this.database.executeForObject(preparedQuery.statement, resultType, effectivePreparedStatementCustomizer(), preparedQuery.parameters);
+			return this.database.executeForObject(preparedQuery.statement, resultType, effectivePreparedStatementCustomizer(), spiOverrides(), preparedQuery.parameters);
 		}
 
 		@NonNull
@@ -1660,7 +1708,7 @@ public final class Database {
 			validateBatchChunkSizeNotSet();
 			requireNonNull(resultType);
 			PreparedQuery preparedQuery = prepare(this.bindings);
-			return this.database.executeForList(preparedQuery.statement, resultType, effectivePreparedStatementCustomizer(), preparedQuery.parameters);
+			return this.database.executeForList(preparedQuery.statement, resultType, effectivePreparedStatementCustomizer(), spiOverrides(), preparedQuery.parameters);
 		}
 
 		private void validateBatchChunkSizeNotSet() {
@@ -2414,12 +2462,13 @@ public final class Database {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
-		return queryForObject(statement, resultSetRowType, null, parameters);
+		return queryForObject(statement, resultSetRowType, null, null, parameters);
 	}
 
 	private <T> Optional<T> queryForObject(@NonNull Statement statement,
 																				 @NonNull Class<T> resultSetRowType,
 																				 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
+																				 StatementContext.@Nullable SpiOverrides spiOverrides,
 																				 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
@@ -2428,6 +2477,7 @@ public final class Database {
 		StatementContext<T> statementContext = StatementContext.<T>with(statement, this)
 				.resultSetRowType(resultSetRowType)
 				.parameters(parameters)
+				.spiOverrides(spiOverrides)
 				.build();
 
 		List<Object> parametersAsList = parameters == null ? List.of() : Arrays.asList(parameters);
@@ -2445,7 +2495,7 @@ public final class Database {
 				if (resultSet.next()) {
 					rowsReturned = 1L;
 					try {
-						T value = getResultSetMapper().map(statementContext, resultSet, statementContext.getResultSetRowType().get(), getInstanceProvider()).orElse(null);
+						T value = resultSetMapperFor(statementContext).map(statementContext, resultSet, statementContext.getResultSetRowType().get(), getInstanceProvider()).orElse(null);
 						result = Optional.ofNullable(value);
 					} catch (SQLException e) {
 						throw databaseExceptionWithStatementContext(statementContext,
@@ -2505,12 +2555,13 @@ public final class Database {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
-		return queryForList(statement, resultSetRowType, null, parameters);
+		return queryForList(statement, resultSetRowType, null, null, parameters);
 	}
 
 	private <T> List<@Nullable T> queryForList(@NonNull Statement statement,
 																						 @NonNull Class<T> resultSetRowType,
 																						 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
+																						 StatementContext.@Nullable SpiOverrides spiOverrides,
 																						 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
@@ -2519,6 +2570,7 @@ public final class Database {
 		StatementContext<T> statementContext = StatementContext.<T>with(statement, this)
 				.resultSetRowType(resultSetRowType)
 				.parameters(parameters)
+				.spiOverrides(spiOverrides)
 				.build();
 
 		List<Object> parametersAsList = parameters == null ? List.of() : Arrays.asList(parameters);
@@ -2532,7 +2584,7 @@ public final class Database {
 
 				while (resultSet.next()) {
 					try {
-						T listElement = getResultSetMapper().map(statementContext, resultSet, statementContext.getResultSetRowType().get(), getInstanceProvider()).orElse(null);
+						T listElement = resultSetMapperFor(statementContext).map(statementContext, resultSet, statementContext.getResultSetRowType().get(), getInstanceProvider()).orElse(null);
 						list.add(listElement);
 					} catch (SQLException e) {
 						throw databaseExceptionWithStatementContext(statementContext,
@@ -2557,6 +2609,7 @@ public final class Database {
 																	@Nullable PreparedStatementCustomizer preparedStatementCustomizer,
 																	boolean queryFetchSizeConfigured,
 																	@NonNull Function<Stream<@Nullable T>, R> streamFunction,
+																	StatementContext.@Nullable SpiOverrides spiOverrides,
 																	Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
@@ -2565,6 +2618,7 @@ public final class Database {
 		StatementContext<T> statementContext = StatementContext.<T>with(statement, this)
 				.resultSetRowType(resultSetRowType)
 				.parameters(parameters)
+				.spiOverrides(spiOverrides)
 				.build();
 
 		List<Object> parametersAsList = parameters == null ? List.of() : Arrays.asList(parameters);
@@ -2618,17 +2672,19 @@ public final class Database {
 											 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 
-		return execute(statement, null, parameters);
+		return execute(statement, null, null, parameters);
 	}
 
 	private Long execute(@NonNull Statement statement,
 											 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
+											 StatementContext.@Nullable SpiOverrides spiOverrides,
 											 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 
 		ResultHolder<Long> resultHolder = new ResultHolder<>();
 		StatementContext<Void> statementContext = StatementContext.with(statement, this)
 				.parameters(parameters)
+				.spiOverrides(spiOverrides)
 				.build();
 
 		List<Object> parametersAsList = parameters == null ? List.of() : Arrays.asList(parameters);
@@ -2684,6 +2740,7 @@ public final class Database {
 																											 @NonNull Class<T> resultSetRowType,
 																											 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
 																											 @Nullable String @Nullable [] keyColumnNames,
+																											 StatementContext.@Nullable SpiOverrides spiOverrides,
 																											 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
@@ -2692,6 +2749,7 @@ public final class Database {
 		StatementContext<T> statementContext = StatementContext.<T>with(statement, this)
 				.resultSetRowType(resultSetRowType)
 				.parameters(parameters)
+				.spiOverrides(spiOverrides)
 				.build();
 
 		List<Object> parametersAsList = parameters == null ? List.of() : Arrays.asList(parameters);
@@ -2711,7 +2769,7 @@ public final class Database {
 				if (resultSet.next()) {
 					rowsReturned = 1L;
 					try {
-						T value = getResultSetMapper().map(statementContext, resultSet, statementContext.getResultSetRowType().get(), getInstanceProvider()).orElse(null);
+						T value = resultSetMapperFor(statementContext).map(statementContext, resultSet, statementContext.getResultSetRowType().get(), getInstanceProvider()).orElse(null);
 						result = Optional.ofNullable(value);
 					} catch (SQLException e) {
 						throw databaseExceptionWithStatementContext(statementContext,
@@ -2741,6 +2799,7 @@ public final class Database {
 																														 @NonNull Class<T> resultSetRowType,
 																														 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
 																														 @Nullable String @Nullable [] keyColumnNames,
+																														 StatementContext.@Nullable SpiOverrides spiOverrides,
 																														 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
@@ -2749,6 +2808,7 @@ public final class Database {
 		StatementContext<T> statementContext = StatementContext.<T>with(statement, this)
 				.resultSetRowType(resultSetRowType)
 				.parameters(parameters)
+				.spiOverrides(spiOverrides)
 				.build();
 
 		List<Object> parametersAsList = parameters == null ? List.of() : Arrays.asList(parameters);
@@ -2764,7 +2824,7 @@ public final class Database {
 
 				while (resultSet.next()) {
 					try {
-						T listElement = getResultSetMapper().map(statementContext, resultSet, statementContext.getResultSetRowType().get(), getInstanceProvider()).orElse(null);
+						T listElement = resultSetMapperFor(statementContext).map(statementContext, resultSet, statementContext.getResultSetRowType().get(), getInstanceProvider()).orElse(null);
 						list.add(listElement);
 					} catch (SQLException e) {
 						throw databaseExceptionWithStatementContext(statementContext,
@@ -2844,12 +2904,13 @@ public final class Database {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
-		return executeForObject(statement, resultSetRowType, null, parameters);
+		return executeForObject(statement, resultSetRowType, null, null, parameters);
 	}
 
 	private <T> Optional<T> executeForObject(@NonNull Statement statement,
 																					 @NonNull Class<T> resultSetRowType,
 																					 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
+																					 StatementContext.@Nullable SpiOverrides spiOverrides,
 																					 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
@@ -2858,7 +2919,7 @@ public final class Database {
 		// Having `executeForList` is to allow for users to explicitly express intent
 		// and make static analysis of code easier (e.g. maybe you'd like to hook all of your "execute" statements for
 		// logging, or delegation to a writable master as opposed to a read replica)
-		return queryForObject(statement, resultSetRowType, preparedStatementCustomizer, parameters);
+		return queryForObject(statement, resultSetRowType, preparedStatementCustomizer, spiOverrides, parameters);
 	}
 
 	/**
@@ -2900,12 +2961,13 @@ public final class Database {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
 
-		return executeForList(statement, resultSetRowType, null, parameters);
+		return executeForList(statement, resultSetRowType, null, null, parameters);
 	}
 
 	private <T> List<@Nullable T> executeForList(@NonNull Statement statement,
 																							 @NonNull Class<T> resultSetRowType,
 																							 @Nullable PreparedStatementCustomizer preparedStatementCustomizer,
+																							 StatementContext.@Nullable SpiOverrides spiOverrides,
 																							 Object @Nullable ... parameters) {
 		requireNonNull(statement);
 		requireNonNull(resultSetRowType);
@@ -2914,7 +2976,7 @@ public final class Database {
 		// Having `executeForList` is to allow for users to explicitly express intent
 		// and make static analysis of code easier (e.g. maybe you'd like to hook all of your "execute" statements for
 		// logging, or delegation to a writable master as opposed to a read replica)
-		return queryForList(statement, resultSetRowType, preparedStatementCustomizer, parameters);
+		return queryForList(statement, resultSetRowType, preparedStatementCustomizer, spiOverrides, parameters);
 	}
 
 	/**
@@ -2952,13 +3014,14 @@ public final class Database {
 		requireNonNull(statement);
 		requireNonNull(parameterGroups);
 
-		return executeBatch(statement, parameterGroups, null, null);
+		return executeBatch(statement, parameterGroups, null, null, null);
 	}
 
 	private List<Long> executeBatch(@NonNull Statement statement,
 																	@NonNull List<List<Object>> parameterGroups,
 																	@Nullable PreparedStatementCustomizer preparedStatementCustomizer,
-																	@Nullable Integer batchChunkSize) {
+																	@Nullable Integer batchChunkSize,
+																	StatementContext.@Nullable SpiOverrides spiOverrides) {
 		requireNonNull(statement);
 		requireNonNull(parameterGroups);
 		if (parameterGroups.isEmpty())
@@ -2987,6 +3050,7 @@ public final class Database {
 				.parameters((List) parameterGroups)
 				.resultSetRowType(List.class)
 				.batchParameterGroups(true)
+				.spiOverrides(spiOverrides)
 				.build();
 
 		if (batchChunkSize == null || batchChunkSize >= parameterGroups.size()) {
@@ -3202,7 +3266,7 @@ public final class Database {
 		try {
 			DefaultPreparedStatementBinder.ParameterSqlTypeResolver parameterSqlTypeResolver =
 					new DefaultPreparedStatementBinder.ParameterSqlTypeResolver(preparedStatement);
-			PreparedStatementBinder preparedStatementBinder = getPreparedStatementBinder();
+			PreparedStatementBinder preparedStatementBinder = preparedStatementBinderFor(statementContext);
 
 			for (int i = 0; i < parameters.size(); ++i) {
 				Object parameter = SecureParameterSupport.unwrapSecureAndOptionalParameter(parameters.get(i));
@@ -3617,7 +3681,9 @@ public final class Database {
 			throw e;
 		} catch (Exception e) {
 			DatabaseException wrapped = databaseExceptionWithStatementContext(statementContext, e);
-			exception = e;
+			// Store the wrapped (scrubbed) form in the StatementLog, consistent with the DatabaseException
+			// and Error paths — the raw driver exception remains available via the wrapped cause
+			exception = wrapped;
 			thrown = wrapped;
 			throw wrapped;
 		} finally {
@@ -3713,6 +3779,28 @@ public final class Database {
 	@NonNull
 	protected PreparedStatementBinder getPreparedStatementBinder() {
 		return this.preparedStatementBinder;
+	}
+
+	/**
+	 * Resolves the effective {@link ResultSetMapper} for a statement: the per-query override carried on
+	 * the {@link StatementContext} when present, otherwise the database-wide instance.
+	 */
+	@NonNull
+	private ResultSetMapper resultSetMapperFor(@NonNull StatementContext<?> statementContext) {
+		requireNonNull(statementContext);
+		ResultSetMapper resultSetMapperOverride = statementContext.getResultSetMapperOverride();
+		return resultSetMapperOverride != null ? resultSetMapperOverride : getResultSetMapper();
+	}
+
+	/**
+	 * Resolves the effective {@link PreparedStatementBinder} for a statement: the per-query override
+	 * carried on the {@link StatementContext} when present, otherwise the database-wide instance.
+	 */
+	@NonNull
+	private PreparedStatementBinder preparedStatementBinderFor(@NonNull StatementContext<?> statementContext) {
+		requireNonNull(statementContext);
+		PreparedStatementBinder preparedStatementBinderOverride = statementContext.getPreparedStatementBinderOverride();
+		return preparedStatementBinderOverride != null ? preparedStatementBinderOverride : getPreparedStatementBinder();
 	}
 
 	@NonNull
@@ -3922,7 +4010,7 @@ public final class Database {
 				throw e;
 			} catch (Exception e) {
 				DatabaseException wrapped = databaseExceptionWithStatementContext(this.statementContext, e);
-				this.exception = e;
+				this.exception = wrapped;
 				this.thrown = wrapped;
 				this.openFailed = true;
 				this.database.getMetricsCollectorDispatcher().didFailToOpenStream(this.statementContext, this.database.peekDatabaseType(),
@@ -3964,7 +4052,7 @@ public final class Database {
 					}
 				} catch (SQLException e) {
 					DatabaseException wrapped = databaseExceptionWithStatementContext(this.statementContext, e);
-					this.exception = e;
+					this.exception = wrapped;
 					this.thrown = wrapped;
 					this.iterationThrowable = wrapped;
 					close();
@@ -4001,7 +4089,7 @@ public final class Database {
 				T value;
 
 				try {
-					value = this.database.getResultSetMapper()
+					value = this.database.resultSetMapperFor(this.statementContext)
 							.map(this.statementContext, requireNonNull(this.resultSet), this.statementContext.getResultSetRowType().get(), this.database.getInstanceProvider())
 							.orElse(null);
 				} finally {
@@ -4017,7 +4105,7 @@ public final class Database {
 			} catch (SQLException e) {
 				DatabaseException wrapped = databaseExceptionWithStatementContext(this.statementContext,
 						format("Unable to map JDBC %s row to %s", ResultSet.class.getSimpleName(), this.statementContext.getResultSetRowType().get()), e);
-				this.exception = e;
+				this.exception = wrapped;
 				this.thrown = wrapped;
 				this.iterationThrowable = wrapped;
 				close();

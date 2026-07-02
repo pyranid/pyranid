@@ -55,7 +55,7 @@ import static java.util.Objects.requireNonNull;
 
 @ExtendWith(AbstractPortableJdbcIntegrationTests.PortableCoverageGuard.class)
 abstract class AbstractPortableJdbcIntegrationTests {
-	private static final int MINIMUM_EXECUTED_PORTABLE_CONTRACT_TESTS = 16;
+	private static final int MINIMUM_EXECUTED_PORTABLE_CONTRACT_TESTS = 17;
 	private static final ConcurrentMap<Class<?>, PortableCoverage> PORTABLE_COVERAGE = new ConcurrentHashMap<>();
 
 	public record PersonRow(Long personId, String name, String emailAddress, Locale locale) {}
@@ -563,6 +563,46 @@ abstract class AbstractPortableJdbcIntegrationTests {
 		Assertions.assertTrue(exception.isUniqueConstraintViolation());
 		Assertions.assertFalse(exception.isSerializationFailure());
 		Assertions.assertFalse(exception.isDeadlock());
+	}
+
+	@Test
+	public void testMapRowTargetIsPortable() {
+		Database db = database();
+		DialectProfile dialectProfile = dialectProfile();
+		String table = "pyranid_map_target";
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "item_id " + dialectProfile.bigIntPrimaryKey() + ", "
+				+ "MixedCaseName " + dialectProfile.varchar(50) + " NOT NULL, "
+				+ "note " + dialectProfile.varchar(50)
+				+ ")");
+
+		db.query("INSERT INTO " + table + " (item_id, MixedCaseName, note) VALUES (:id, :name, :note)")
+				.bind("id", 1L)
+				.bind("name", "Ada")
+				.bind("note", null)
+				.execute();
+
+		Map row = db.query("SELECT item_id, MixedCaseName, note FROM " + table + " WHERE item_id = :id")
+				.bind("id", 1L)
+				.fetchObject(Map.class)
+				.orElseThrow();
+
+		// Keys must be normalized lowercase in column order on EVERY database — regardless of whether the
+		// driver reports unquoted labels uppercased (Oracle, HSQLDB), lowercased (PostgreSQL), or as written
+		Assertions.assertEquals(List.of("item_id", "mixedcasename", "note"), List.copyOf(row.keySet()),
+				"Expected identical normalized-lowercase keys in column order on every database");
+		Assertions.assertEquals("Ada", row.get("mixedcasename"));
+		Assertions.assertTrue(row.containsKey("note"), "Expected the NULL column present as a key");
+		Assertions.assertNull(row.get("note"));
+
+		Map aliased = db.query("SELECT MixedCaseName AS the_name FROM " + table + " WHERE item_id = :id")
+				.bind("id", 1L)
+				.fetchObject(Map.class)
+				.orElseThrow();
+
+		Assertions.assertEquals(List.of("the_name"), List.copyOf(aliased.keySet()),
+				"Expected aliases respected and lowercased");
+		Assertions.assertEquals("Ada", aliased.get("the_name"));
 	}
 
 	protected static void awaitLatch(@NonNull CountDownLatch latch) {

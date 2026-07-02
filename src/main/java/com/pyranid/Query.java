@@ -175,6 +175,47 @@ public interface Query {
 	}
 
 	/**
+	 * Overrides the {@link Database}-wide {@link ResultSetMapper} for this query only.
+	 * <p>
+	 * This enables per-query inline mapping — for example, projecting an ad-hoc join or computed columns —
+	 * without configuring a database-wide mapper. {@link ResultSetMapper} is a functional interface, so a
+	 * lambda works: <pre>{@code  database.query("SELECT name, COUNT(*) AS total FROM employee GROUP BY name")
+	 *   .resultSetMapper((ctx, rs, type, ip) -> Optional.of(type.cast(new NameCount(rs.getString(1), rs.getLong(2)))))
+	 *   .fetchList(NameCount.class);}</pre>
+	 * The override applies to every row this query maps (including {@link #fetchStream} rows and DML-returning
+	 * results). Other queries on the same {@link Database} are unaffected. Metrics, statement logging, and
+	 * exception diagnostics behave identically with an override present.
+	 *
+	 * @param resultSetMapper the mapper to use for this query, or {@code null} to inherit the database-wide mapper
+	 * @return this builder, for chaining
+	 * @since 4.4.1
+	 */
+	@NonNull
+	default Query resultSetMapper(@Nullable ResultSetMapper resultSetMapper) {
+		throw new UnsupportedOperationException("resultSetMapper is not supported by this Query implementation");
+	}
+
+	/**
+	 * Overrides the {@link Database}-wide {@link PreparedStatementBinder} for this query only.
+	 * <p>
+	 * The override receives every non-null parameter for this query — including expanded IN-list elements and
+	 * each batch group's parameters. As with the database-wide SPI, {@link SecureParameter} and {@link java.util.Optional}
+	 * wrappers are unwrapped by Pyranid <em>before</em> the binder is invoked, so custom binders receive bound-ready
+	 * raw values and need no unwrap logic. {@code null} parameters never reach the binder; Pyranid binds them via
+	 * {@link java.sql.PreparedStatement#setNull(int, int)} even when an override is present.
+	 * <p>
+	 * Other queries on the same {@link Database} are unaffected.
+	 *
+	 * @param preparedStatementBinder the binder to use for this query, or {@code null} to inherit the database-wide binder
+	 * @return this builder, for chaining
+	 * @since 4.4.1
+	 */
+	@NonNull
+	default Query preparedStatementBinder(@Nullable PreparedStatementBinder preparedStatementBinder) {
+		throw new UnsupportedOperationException("preparedStatementBinder is not supported by this Query implementation");
+	}
+
+	/**
 	 * Customizes the {@link java.sql.PreparedStatement} before execution.
 	 * <p>
 	 * If called multiple times, the most recent customizer wins. The customizer runs after database-wide statement
@@ -193,6 +234,28 @@ public interface Query {
 	 */
 	@NonNull
 	Query customize(@NonNull PreparedStatementCustomizer preparedStatementCustomizer);
+
+	/**
+	 * Acquires a result type token for fetching rows as insertion-ordered {@code Map<String, Object>} instances,
+	 * usable anywhere a result type token is accepted.
+	 * <p>
+	 * Java's type erasure means there is no {@code Map<String, Object>.class} literal — a raw {@code Map.class}
+	 * token can only ever infer the raw {@code Map} type at fetch sites. This method returns the same runtime
+	 * {@code Map.class} token, statically typed as {@code Class<Map<String, Object>>} so results are properly
+	 * parameterized without caller-side casts:
+	 * <pre>{@code  List<Map<String, Object>> rows = database.query("SELECT * FROM car")
+	 *   .fetchList(Query.mapRowType());}</pre>
+	 * This is safe because Pyranid's default mapping produces {@code LinkedHashMap<String, Object>} rows for this
+	 * token. Note that a custom {@link ResultSetMapper} receiving this token observes the raw {@code Map.class}.
+	 *
+	 * @return a {@code Map<String, Object>} result type token
+	 * @since 4.4.1
+	 */
+	@NonNull
+	@SuppressWarnings("unchecked")
+	static Class<Map<String, Object>> mapRowType() {
+		return (Class<Map<String, Object>>) (Class<?>) Map.class;
+	}
 
 	/**
 	 * Executes the query and returns a single result.

@@ -357,6 +357,91 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 	}
 
 	@Test
+	public void testSecureParameterValueScrubbedFromDriverEchoedDiagnostics() {
+		// PostgreSQL echoes bound values in constraint-violation detail ("Key (email)=(...) already exists").
+		// A SecureParameter value must be scrubbed from every Pyranid-rendered diagnostic surface while the
+		// raw driver exception remains intact as the cause.
+		String secret = "leak-test@secret.example";
+		Database db = Database.withDataSource(dataSource()).build();
+
+		db.query("CREATE TABLE IF NOT EXISTS pyranid_secure_leak_test (id BIGSERIAL PRIMARY KEY, email TEXT UNIQUE)")
+				.execute();
+		db.query("TRUNCATE TABLE pyranid_secure_leak_test").execute();
+		db.query("INSERT INTO pyranid_secure_leak_test(email) VALUES (:email)")
+				.bind("email", Parameters.secure(secret))
+				.execute();
+
+		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("INSERT INTO pyranid_secure_leak_test(email) VALUES (:email)")
+						.bind("email", Parameters.secure(secret))
+						.execute());
+
+		Assertions.assertEquals("23505", ex.getSqlState().orElse(null));
+		Assertions.assertFalse(ex.getMessage().contains(secret),
+				"Expected the secure value absent from DatabaseException.getMessage()");
+		Assertions.assertFalse(ex.toString().contains(secret),
+				"Expected the secure value absent from DatabaseException.toString()");
+		Assertions.assertFalse(ex.getDetail().orElse("").contains(secret),
+				"Expected the secure value absent from getDetail()");
+		Assertions.assertFalse(ex.getDbmsMessage().orElse("").contains(secret),
+				"Expected the secure value absent from getDbmsMessage()");
+		Assertions.assertTrue(ex.getMessage().contains("<redacted>"),
+				"Expected the mask present in the scrubbed message");
+
+		// The raw driver exception is deliberately preserved: the cause chain must be treated as sensitive
+		Throwable cause = ex.getCause();
+		Assertions.assertNotNull(cause);
+		Assertions.assertTrue(String.valueOf(cause.getMessage()).contains(secret),
+				"Expected the raw driver exception (the cause) to remain unsanitized");
+	}
+
+	@Test
+	public void testStatementLogScrubbedAgainstRealDriverMessage() {
+		String secret = "statement-log-leak@secret.example";
+		java.util.concurrent.atomic.AtomicReference<StatementLog<?>> loggedStatementLog = new java.util.concurrent.atomic.AtomicReference<>();
+		Database db = Database.withDataSource(dataSource())
+				.statementLogger(loggedStatementLog::set)
+				.build();
+
+		db.query("CREATE TABLE IF NOT EXISTS pyranid_log_leak_test (id BIGSERIAL PRIMARY KEY, email TEXT UNIQUE)")
+				.execute();
+		db.query("TRUNCATE TABLE pyranid_log_leak_test").execute();
+		db.query("INSERT INTO pyranid_log_leak_test(email) VALUES (:email)")
+				.bind("email", Parameters.secure(secret))
+				.execute();
+
+		Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("INSERT INTO pyranid_log_leak_test(email) VALUES (:email)")
+						.bind("email", Parameters.secure(secret))
+						.execute());
+
+		StatementLog<?> statementLog = loggedStatementLog.get();
+		Assertions.assertNotNull(statementLog, "Expected a StatementLog for the failed statement");
+		Assertions.assertTrue(statementLog.getException().orElseThrow() instanceof DatabaseException,
+				"Expected the wrapped exception stored in the StatementLog");
+		Assertions.assertFalse(statementLog.toString().contains(secret),
+				"Expected the secure value absent from StatementLog.toString() against a real driver message");
+	}
+
+	@Test
+	public void testMapRowTargetThroughDmlReturning() {
+		Database db = Database.withDataSource(dataSource()).build();
+
+		db.query("CREATE TABLE IF NOT EXISTS pyranid_map_returning (id BIGSERIAL PRIMARY KEY, MixedCaseName TEXT)")
+				.execute();
+		db.query("TRUNCATE TABLE pyranid_map_returning").execute();
+
+		java.util.Map row = db.query("INSERT INTO pyranid_map_returning (MixedCaseName) VALUES (:name) RETURNING id, MixedCaseName")
+				.bind("name", "Ada")
+				.executeForObject(java.util.Map.class)
+				.orElseThrow();
+
+		Assertions.assertEquals(java.util.List.of("id", "mixedcasename"), java.util.List.copyOf(row.keySet()),
+				"Expected lowercase keys in column order through the DML-returning path");
+		Assertions.assertEquals("Ada", row.get("mixedcasename"));
+	}
+
+	@Test
 	public void testTransactionWithRetryRecoversFromSerializationConflict() throws Exception {
 		Database db = Database.withDataSource(dataSource())
 				.databaseType(DatabaseType.POSTGRESQL)

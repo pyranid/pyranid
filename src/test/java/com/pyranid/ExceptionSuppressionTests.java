@@ -408,7 +408,10 @@ public class ExceptionSuppressionTests {
 	}
 
 	@Test
-	public void testStatementLoggerReceivesRawExecutionException() {
+	public void testStatementLoggerReceivesWrappedExecutionException() {
+		// As of 4.4.1, driver-failure paths store Pyranid's wrapped DatabaseException in the StatementLog
+		// (consistent with the DatabaseException/Error paths) so statement logs render scrubbed, redaction-aware
+		// diagnostics. The raw JDBC exception remains available via the wrapper's cause.
 		List<Exception> exceptions = new ArrayList<>();
 		Database db = Database.withDataSource(createInMemoryDataSource("statement_logger_raw_exception"))
 				.statementLogger(statementLog -> statementLog.getException().ifPresent(exception -> exceptions.add((Exception) exception)))
@@ -420,8 +423,10 @@ public class ExceptionSuppressionTests {
 		Assertions.assertTrue(ex.getMessage().contains("sql=SELECT * FROM missing_table"),
 				"Expected thrown exception to include statement context");
 		Assertions.assertEquals(1, exceptions.size(), "Expected one failed statement log");
-		Assertions.assertTrue(exceptions.get(0) instanceof SQLException,
-				"StatementLog should expose the raw JDBC exception, not Pyranid's wrapper");
+		Assertions.assertTrue(exceptions.get(0) instanceof DatabaseException,
+				"StatementLog should expose Pyranid's wrapped exception so logged diagnostics are scrubbed");
+		Assertions.assertTrue(exceptions.get(0).getCause() instanceof SQLException,
+				"The raw JDBC exception should remain available as the wrapper's cause");
 	}
 
 	@Test
