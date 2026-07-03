@@ -39,7 +39,7 @@ public class SourcePolicyTests {
 	private static final Pattern SYNCHRONIZED_PATTERN = Pattern.compile("\\bsynchronized\\b");
 
 	/**
-	 * Pyranid's main source deliberately contains zero {@code synchronized} — blocking while holding a monitor
+	 * Pyranid's main source deliberately contains zero {@code synchronized} - blocking while holding a monitor
 	 * pins virtual threads to their carriers, and the library's lock-based design ({@code ReentrantLock},
 	 * {@code ConcurrentHashMap}) is what makes it a clean virtual-thread citizen. A reintroduced
 	 * {@code synchronized} in a hot path would pass every functional test and surface only as throughput
@@ -74,7 +74,7 @@ public class SourcePolicyTests {
 		}
 
 		Assertions.assertTrue(violations.isEmpty(), () -> format(
-				"Found 'synchronized' in main source — this pins virtual threads to carrier threads. "
+				"Found 'synchronized' in main source - this pins virtual threads to carrier threads. "
 						+ "Use ReentrantLock instead. Violations: %s", violations));
 	}
 

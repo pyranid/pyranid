@@ -45,7 +45,7 @@ final class SecureParameterSupport {
 	@NonNull
 	static final String DEFAULT_MASK = "<redacted>";
 	/**
-	 * Secure values whose rendered form is shorter than this are not scrubbed from diagnostic text —
+	 * Secure values whose rendered form is shorter than this are not scrubbed from diagnostic text -
 	 * replacing very short needles (e.g. {@code "1"}, {@code "ab"}) would corrupt unrelated diagnostics
 	 * (error codes, SQLStates, positions) for negligible protection.
 	 */
@@ -63,7 +63,7 @@ final class SecureParameterSupport {
 
 	/**
 	 * The result of computing a diagnostic scrub for a parameter list: a redactor to apply to
-	 * Pyranid-rendered diagnostic text (or {@code null} when no secure parameters are present — the
+	 * Pyranid-rendered diagnostic text (or {@code null} when no secure parameters are present - the
 	 * fast path), plus descriptions (class names only, never values) of any failures encountered
 	 * while rendering secure values into needles.
 	 */
@@ -79,8 +79,8 @@ final class SecureParameterSupport {
 	 * <p>
 	 * Only values explicitly marked via {@link SecureParameter} contribute needles. A needle is the
 	 * {@link String#valueOf(Object)} rendering of the innermost bound value; {@code null} and
-	 * {@link Boolean} values are skipped (their renderings — {@code "null"}, {@code "true"},
-	 * {@code "false"} — routinely appear in driver text with unrelated meaning), as are renderings
+	 * {@link Boolean} values are skipped (their renderings - {@code "null"}, {@code "true"},
+	 * {@code "false"} - routinely appear in driver text with unrelated meaning), as are renderings
 	 * shorter than {@link #MIN_SCRUB_NEEDLE_LENGTH}.
 	 */
 	@NonNull
@@ -146,7 +146,7 @@ final class SecureParameterSupport {
 			Object value = unwrapSecureAndOptionalParameter(parameter);
 			addNeedlesForValue(value, mask, needleMasks, needleRenderingFailureDescriptions, 0);
 		} catch (Throwable t) {
-			// Never let a user value's toString()/getMask()/getValue() failure escape — and never attach
+			// Never let a user value's toString()/getMask()/getValue() failure escape - and never attach
 			// the raw throwable, whose message may itself embed the value we have no needle to scrub
 			needleRenderingFailureDescriptions.add(t.getClass().getName());
 		}
@@ -196,7 +196,7 @@ final class SecureParameterSupport {
 
 	/**
 	 * Single left-to-right pass; at each position needles are tried longest-first, and on a match the
-	 * needle's mask is appended and never re-scanned — so results are order-independent and immune to
+	 * needle's mask is appended and never re-scanned - so results are order-independent and immune to
 	 * mask/needle interference (a mask whose text contains another needle is never re-masked).
 	 * Semantics: leftmost-longest wins.
 	 */

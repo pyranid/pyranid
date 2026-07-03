@@ -62,9 +62,10 @@ import static java.util.Objects.requireNonNull;
 @Testcontainers
 public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 	public record JsonbAndArrayRow(String payload, String[] tagsArray, List<String> tagsList, Set<String> tagsSet) {}
+	public record PgvectorRow(Long documentId, float[] embeddingFloats, double[] embeddingDoubles) {}
 
 	private static final String POSTGRES_IMAGE_NAME =
-			System.getProperty("postgres.integration.image", "postgres:17-alpine");
+			System.getProperty("postgres.integration.image", "pgvector/pgvector:pg17");
 	private static final DockerImageName POSTGRES_IMAGE = DockerImageName.parse(POSTGRES_IMAGE_NAME)
 			.asCompatibleSubstituteFor("postgres");
 
@@ -285,6 +286,61 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 					.orElseThrow();
 			Assertions.assertArrayEquals(new String[]{"alpha", "beta", "alpha", "gamma"}, scalarTags);
 		}
+	}
+
+	@Test
+	public void testPgvectorParameterAndReadBackRoundTrip() {
+		Database db = Database.withDataSource(dataSource())
+				.databaseType(DatabaseType.POSTGRESQL)
+				.build();
+
+		db.query("CREATE EXTENSION IF NOT EXISTS vector").execute();
+		db.query("DROP TABLE IF EXISTS pyranid_pgvector_test").execute();
+		db.query("""
+				CREATE TABLE pyranid_pgvector_test (
+					document_id BIGINT PRIMARY KEY,
+					embedding vector(3) NOT NULL
+				)
+				""").execute();
+		db.query("INSERT INTO pyranid_pgvector_test (document_id, embedding) VALUES (:id, :embedding)")
+				.bind("id", 7L)
+				.bind("embedding", Parameters.vectorOfFloats(new float[]{0.1f, 0.2f, 0.3f}))
+				.execute();
+
+		Assertions.assertEquals("vector", db.query("SELECT pg_typeof(embedding)::text FROM pyranid_pgvector_test")
+				.fetchObject(String.class)
+				.orElseThrow());
+
+		float[] embeddingAsFloats = db.query("SELECT embedding FROM pyranid_pgvector_test")
+				.fetchObject(float[].class)
+				.orElseThrow();
+		double[] embeddingAsDoubles = db.query("SELECT embedding FROM pyranid_pgvector_test")
+				.fetchObject(double[].class)
+				.orElseThrow();
+		PgvectorRow row = db.query("""
+				SELECT document_id,
+				       embedding AS embedding_floats,
+				       embedding AS embedding_doubles
+				FROM pyranid_pgvector_test
+				""")
+				.fetchObject(PgvectorRow.class)
+				.orElseThrow();
+		Long nearestDocumentId = db.query("""
+				SELECT document_id
+				FROM pyranid_pgvector_test
+				ORDER BY embedding <-> :query
+				LIMIT 1
+				""")
+				.bind("query", Parameters.vectorOfDoubles(new double[]{0.1d, 0.19d, 0.31d}))
+				.fetchObject(Long.class)
+				.orElseThrow();
+
+		Assertions.assertArrayEquals(new float[]{0.1f, 0.2f, 0.3f}, embeddingAsFloats);
+		Assertions.assertArrayEquals(new double[]{0.1d, 0.2d, 0.3d}, embeddingAsDoubles);
+		Assertions.assertEquals(7L, row.documentId());
+		Assertions.assertArrayEquals(new float[]{0.1f, 0.2f, 0.3f}, row.embeddingFloats());
+		Assertions.assertArrayEquals(new double[]{0.1d, 0.2d, 0.3d}, row.embeddingDoubles());
+		Assertions.assertEquals(7L, nearestDocumentId);
 	}
 
 	@Test

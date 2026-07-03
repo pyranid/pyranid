@@ -58,6 +58,22 @@ public class MySqlIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 			.withPassword("pyranid");
 
 	@Test
+	public void testMySqlYearColumnRoundTrip() {
+		// Connector/J surfaces YEAR columns as DATE by default (yearIsDateType=true); Pyranid must
+		// still map them to java.time.Year
+		Database db = database();
+		String table = "pyranid_mysql_year";
+		recreateTable(db, table, "CREATE TABLE " + table + " (v YEAR)");
+
+		db.query("INSERT INTO " + table + " (v) VALUES (:v)")
+				.bind("v", java.time.Year.of(2024))
+				.execute();
+
+		Assertions.assertEquals(java.time.Year.of(2024),
+				db.query("SELECT v FROM " + table).fetchObject(java.time.Year.class).orElseThrow());
+	}
+
+	@Test
 	public void testSecureParameterValueScrubbedFromDuplicateEntryDiagnostics() {
 		// MySQL echoes the offending value in duplicate-key errors ("Duplicate entry 'x' for key ...").
 		// A SecureParameter value must be scrubbed from Pyranid-rendered diagnostics while the raw driver

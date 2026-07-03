@@ -32,6 +32,8 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.Year;
+import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
@@ -687,6 +689,10 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			return ((ZoneId) parameter).getId();
 		if (parameter instanceof TimeZone)
 			return ((TimeZone) parameter).getID();
+		if (parameter instanceof Year year)
+			return year.getValue();
+		if (parameter instanceof YearMonth yearMonth)
+			return yearMonth.toString();
 
 		if (parameter instanceof UUID uuid)
 			return statementContext.getDatabaseDialect().normalizeUuid(uuid);

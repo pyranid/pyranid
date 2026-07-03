@@ -86,7 +86,7 @@ class DialectProfile {
 	}
 
 	/**
-	 * Fractional-second digits that survive a round trip through {@link #timestampWithFractionalSeconds()} —
+	 * Fractional-second digits that survive a round trip through {@link #timestampWithFractionalSeconds()} -
 	 * microseconds on every supported database (including SQLite, whose dialect binds temporals with full
 	 * precision).
 	 */

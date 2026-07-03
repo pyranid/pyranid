@@ -852,7 +852,7 @@ car = database.query("SELECT some_id AS car_id, some_color AS color FROM car LIM
 
 ### Rows As Maps
 
-When you don't want to define a type at all — exploratory queries, admin tooling, dynamic-shape `SELECT *`, exports — fetch rows as maps with [`Query::mapRowType()`](https://javadoc.pyranid.com/com/pyranid/Query.html#mapRowType()):
+When you don't want to define a type at all - exploratory queries, admin tooling, dynamic-shape `SELECT *`, exports - fetch rows as maps with [`Query::mapRowType()`](https://javadoc.pyranid.com/com/pyranid/Query.html#mapRowType()):
 
 ```java
 List<Map<String, Object>> rows = database.query("SELECT * FROM car").fetchList(Query.mapRowType());
@@ -863,7 +863,7 @@ Optional<Map<String, Object>> row = database.query("SELECT * FROM car WHERE id =
   .fetchObject(Query.mapRowType());
 ```
 
-Each row is an insertion-ordered [`LinkedHashMap`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/LinkedHashMap.html) in column order. Keys are *normalized (lowercase)* column labels, so lookups behave identically across databases regardless of whether the driver reports unquoted labels uppercased (Oracle, HSQLDB), lowercased (PostgreSQL), or as written (MySQL, SQL Server). `AS` aliases are respected (and lowercased); `NULL` columns are present with a `null` value; values use the same dialect-aware extraction as record/bean mapping. Duplicate column labels — e.g. an unaliased multi-table join — fail fast with a [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html); use column aliases to disambiguate.
+Each row is an insertion-ordered [`LinkedHashMap`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/LinkedHashMap.html) in column order. Keys are *normalized (lowercase)* column labels, so lookups behave identically across databases regardless of whether the driver reports unquoted labels uppercased (Oracle, HSQLDB), lowercased (PostgreSQL), or as written (MySQL, SQL Server). `AS` aliases are respected (and lowercased); `NULL` columns are present with a `null` value; values use the same dialect-aware extraction as record/bean mapping. Duplicate column labels - e.g. an unaliased multi-table join - fail fast with a [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html); use column aliases to disambiguate.
 
 The raw [`Map`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Map.html)`.class` and [`LinkedHashMap`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/LinkedHashMap.html)`.class` tokens are also accepted anywhere a result type token is accepted, but Java's type erasure means they produce raw result types:
 
@@ -873,7 +873,7 @@ List<Map> rows = database.query("SELECT * FROM car").fetchList(Map.class);
 
 Other JDK map types (`HashMap.class`, `TreeMap.class`, ...) are rejected with a clear error; user-defined classes that happen to implement [`Map`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Map.html) continue to map via the JavaBean path.
 
-The special case lives in the default [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) implementation only — a custom database-wide or per-query [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) receiving the token decides for itself how to handle it.
+The special case lives in the default [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) implementation only - a custom database-wide or per-query [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) receiving the token decides for itself how to handle it.
 
 ### Supported Primitives
 
@@ -902,6 +902,8 @@ The special case lives in the default [`ResultSetMapper`](https://javadoc.pyrani
 * [`OffsetTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/OffsetTime.html) for `TIME WITH TIMEZONE`
 * [`OffsetDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/OffsetDateTime.html) for `TIMESTAMP WITH TIMEZONE`
 * [`ZonedDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/ZonedDateTime.html) for `TIMESTAMP` and `TIMESTAMP WITH TIMEZONE`
+* [`Year`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/Year.html) from `INTEGER`-like, string, or `DATE`-surfaced year columns (e.g. MySQL `YEAR`)
+* [`YearMonth`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/YearMonth.html) from ISO-8601 string columns (e.g. `2027-12`)
 * [`java.sql.Timestamp`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Timestamp.html)
 * [`java.sql.Date`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Date.html)
 * [`ZoneId`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/ZoneId.html)
@@ -920,6 +922,8 @@ Pyranid preserves the fractional-second precision returned by your JDBC driver; 
 SQL ARRAY columns can be mapped to Java array targets such as `String[]` or `UUID[]`. They can also be mapped to `List<T>` or `Set<T>` when Pyranid can see the generic element type from a Record component or JavaBean setter, for example `record Row(List<String> tags, Set<String> labels) {}` or `void setTags(Set<String> tags)`. Raw scalar `List.class` and `Set.class` targets are supported too, but the element type is whatever the JDBC driver returns because Java's `Class<List>` and `Class<Set>` tokens carry no generic type argument. Set targets use insertion order from the SQL ARRAY and apply normal Set semantics, so duplicates collapse and multiple SQL `NULL` elements become one `null`.
 
 PostgreSQL `JSON`/`JSONB` values returned by pgjdbc as `PGobject` map to `String` by default. Pyranid does not parse JSON into application objects; register a [`CustomColumnMapper`](https://javadoc.pyranid.com/com/pyranid/CustomColumnMapper.html) when you want to inflate JSON into your own type.
+
+Vector columns (e.g. pgvector), which drivers surface as text such as `[0.1,0.2,0.3]`, map to `float[]` and `double[]` targets - Pyranid parses the vector literal. See the Vector section in Parameter Binding for the bind side.
 
 ### Custom Mapping
 
@@ -1032,9 +1036,9 @@ List<MySpecialType> mySpecialTypes =
 
 ### Per-Query Mapping and Binding
 
-The [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) and [`PreparedStatementBinder`](https://javadoc.pyranid.com/com/pyranid/PreparedStatementBinder.html) SPIs are normally configured database-wide at build time. As of 4.5.0 they can also be overridden for a single query via [`Query::resultSetMapper(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#resultSetMapper(com.pyranid.ResultSetMapper)) and [`Query::preparedStatementBinder(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#preparedStatementBinder(com.pyranid.PreparedStatementBinder)) — no new concepts, the same contracts applied per query.
+The [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) and [`PreparedStatementBinder`](https://javadoc.pyranid.com/com/pyranid/PreparedStatementBinder.html) SPIs are normally configured database-wide at build time. As of 4.5.0 they can also be overridden for a single query via [`Query::resultSetMapper(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#resultSetMapper(com.pyranid.ResultSetMapper)) and [`Query::preparedStatementBinder(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#preparedStatementBinder(com.pyranid.PreparedStatementBinder)) - no new concepts, the same contracts applied per query.
 
-This is the idiomatic way to inline-map an ad-hoc projection (a join, computed columns, a tuple) without defining a database-wide mapper — both SPIs are functional interfaces, so a lambda works:
+This is the idiomatic way to inline-map an ad-hoc projection (a join, computed columns, a tuple) without defining a database-wide mapper - both SPIs are functional interfaces, so a lambda works:
 
 ```java
 record NameCount(String name, Long total) {}
@@ -1049,7 +1053,7 @@ List<NameCount> counts = database.query("""
   .fetchList(NameCount.class);
 ```
 
-The override applies to every row this query maps — including [`Query::fetchStream(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchStream(java.lang.Class,java.util.function.Function)) rows and DML-returning results — and to every parameter this query binds, including expanded IN-list elements and each batch group. Other queries on the same [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) are unaffected; passing `null` restores the database-wide instance. Metrics, statement logging, and exception diagnostics behave identically with an override present.
+The override applies to every row this query maps - including [`Query::fetchStream(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchStream(java.lang.Class,java.util.function.Function)) rows and DML-returning results - and to every parameter this query binds, including expanded IN-list elements and each batch group. Other queries on the same [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) are unaffected; passing `null` restores the database-wide instance. Metrics, statement logging, and exception diagnostics behave identically with an override present.
 
 Custom binders receive bound-ready raw values: [`SecureParameter`](https://javadoc.pyranid.com/com/pyranid/SecureParameter.html) and [`Optional`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Optional.html) wrappers are unwrapped by Pyranid *before* the binder is invoked, and `null` parameters never reach the binder (Pyranid binds them via [`PreparedStatement::setNull(...)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/PreparedStatement.html#setNull(int,int)) even when an override is present).
 
@@ -1174,6 +1178,8 @@ Notes:
 * [`OffsetTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/OffsetTime.html)
 * [`OffsetDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/OffsetDateTime.html)
 * [`ZonedDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/ZonedDateTime.html)
+* [`Year`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/Year.html) (bound as `INTEGER`)
+* [`YearMonth`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/YearMonth.html) (bound as its ISO-8601 string form, e.g. `2027-12`)
 * [`java.sql.Timestamp`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Timestamp.html)
 * [`java.sql.Date`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Date.html)
 * [`java.sql.Time`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Time.html)
@@ -1260,6 +1266,21 @@ database.query("INSERT INTO vector_embedding (embedding, content) VALUES (:embed
   .bind("embedding", Parameters.vectorOfDoubles(embedding))
   .bind("content", content)
   .execute();
+```
+
+Vector columns also read back into `float[]` and `double[]` targets - Pyranid parses the vector literal (e.g. `[0.1,0.2,0.3]`) that drivers surface for vector columns:
+
+```java
+record Document(Long documentId, float[] embedding) {}
+
+Optional<Document> document = database.query("""
+  SELECT document_id, embedding
+  FROM vector_embedding
+  ORDER BY embedding <-> :query
+  LIMIT 1
+  """)
+  .bind("query", Parameters.vectorOfFloats(queryEmbedding))
+  .fetchObject(Document.class);
 ```
 
 #### SQL ARRAY
@@ -1366,14 +1387,14 @@ The default redactor is [`ParameterRedactor::none()`](https://javadoc.pyranid.co
 
 ##### What redaction does and does not cover
 
-Because the real value is bound to the [`PreparedStatement`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/PreparedStatement.html), the database *driver* may echo it back in its own error text — for example, PostgreSQL constraint violations include `Key (email)=(...) already exists`. Pyranid's coverage:
+Because the real value is bound to the [`PreparedStatement`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/PreparedStatement.html), the database *driver* may echo it back in its own error text - for example, PostgreSQL constraint violations include `Key (email)=(...) already exists`. Pyranid's coverage:
 
 | Surface | Covered? |
 | --- | --- |
-| Pyranid's `parameters=[...]` rendering ([`StatementContext`](https://javadoc.pyranid.com/com/pyranid/StatementContext.html)/[`StatementLog`](https://javadoc.pyranid.com/com/pyranid/StatementLog.html) diagnostics) | Yes — masks/redactor always apply |
-| [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) messages, `toString()`, and DBMS metadata fields ([`getDetail()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getDetail()), [`getDbmsMessage()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getDbmsMessage()), ...) | Best-effort — verbatim occurrences of [`Parameters::secure(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) values are scrubbed and replaced with the mask |
-| The raw driver exception ([`getCause()`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Throwable.html#getCause())), stack traces, and anything that renders them (log appenders, Sentry, OpenTelemetry exception events) | **No — deliberately preserved unsanitized. Treat the cause chain as sensitive.** |
-| Driver-transformed echoes (re-formatted numbers/temporals, truncated strings, encoded bytes); `null`/`Boolean`/very short secure values | No — the scrub is verbatim-only and skips values that would corrupt unrelated diagnostics |
+| Pyranid's `parameters=[...]` rendering ([`StatementContext`](https://javadoc.pyranid.com/com/pyranid/StatementContext.html)/[`StatementLog`](https://javadoc.pyranid.com/com/pyranid/StatementLog.html) diagnostics) | Yes - masks/redactor always apply |
+| [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) messages, `toString()`, and DBMS metadata fields ([`getDetail()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getDetail()), [`getDbmsMessage()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getDbmsMessage()), ...) | Best-effort - verbatim occurrences of [`Parameters::secure(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) values are scrubbed and replaced with the mask |
+| The raw driver exception ([`getCause()`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Throwable.html#getCause())), stack traces, and anything that renders them (log appenders, Sentry, OpenTelemetry exception events) | **No - deliberately preserved unsanitized. Treat the cause chain as sensitive.** |
+| Driver-transformed echoes (re-formatted numbers/temporals, truncated strings, encoded bytes); `null`/`Boolean`/very short secure values | No - the scrub is verbatim-only and skips values that would corrupt unrelated diagnostics |
 | Pyranid's own mapping-error messages (e.g. `Cannot map value '...'` when a value round-trips into a [`ResultSet`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/ResultSet.html)) | No |
 
 Only values explicitly wrapped with [`Parameters::secure(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) trigger the driver-text scrub; a [`ParameterRedactor`](https://javadoc.pyranid.com/com/pyranid/ParameterRedactor.html) governs Pyranid's parameter-list rendering only.
@@ -1767,9 +1788,9 @@ mvn -q -P integration verify
 mvn -q -P integration,it-mariadb -Dit.test=MariaDbIntegrationIT verify
 ```
 
-The `integration` Maven profile runs JDBC integration tests against PostgreSQL, MySQL, and SQLite. PostgreSQL and MySQL use Testcontainers and require a working local Docker environment; SQLite uses a temporary local database file. Add `it-mariadb`, `it-sqlserver`, or `it-oracle` for the optional MariaDB, SQL Server, and Oracle integration source sets. SQL Server requires the Microsoft container EULA; the test container calls `acceptLicense()`, and CI/local runs should provide `ACCEPT_EULA=Y` when required by the environment. The initial Docker images are pinned to `postgres:17-alpine`, `mysql:8.4`, `mariadb:11.4`, `mcr.microsoft.com/mssql/server:2022-CU25-ubuntu-22.04`, and `gvenzl/oracle-free:23-slim-faststart`, and can be overridden with `-Dpostgres.integration.image=...`, `-Dmysql.integration.image=...`, `-Dmariadb.integration.image=...`, `-Dsqlserver.integration.image=...`, and `-Doracle.integration.image=...`.
+The `integration` Maven profile runs JDBC integration tests against PostgreSQL, MySQL, and SQLite. PostgreSQL and MySQL use Testcontainers and require a working local Docker environment; SQLite uses a temporary local database file. Add `it-mariadb`, `it-sqlserver`, or `it-oracle` for the optional MariaDB, SQL Server, and Oracle integration source sets. SQL Server requires the Microsoft container EULA; the test container calls `acceptLicense()`, and CI/local runs should provide `ACCEPT_EULA=Y` when required by the environment. The initial Docker images are pinned to `pgvector/pgvector:pg17`, `mysql:8.4`, `mariadb:11.4`, `mcr.microsoft.com/mssql/server:2022-CU25-ubuntu-22.04`, and `gvenzl/oracle-free:23-slim-faststart`, and can be overridden with `-Dpostgres.integration.image=...`, `-Dmysql.integration.image=...`, `-Dmariadb.integration.image=...`, `-Dsqlserver.integration.image=...`, and `-Doracle.integration.image=...`. PostgreSQL image overrides must include the `vector` extension.
 
-The portable integration suites cover named binding, repeated parameters, `IN` expansion, null binding/mapping, numeric and temporal conversions, JDBC-generated keys, transaction commit/rollback, transaction options where supported, batch chunking, streaming, guarded raw connection access, statement row limits, health checks, SQL ARRAY guards, and exception wrapping/classification. Vendor suites add coverage for PostgreSQL JSONB, SQL arrays, UUIDs, `RETURNING`, temporal binding/mapping, and exception metadata; MySQL/MariaDB JSON, UUID strings, unsigned numerics, streaming, and MariaDB `INSERT ... RETURNING`; SQLite `RETURNING`, UUID text, and decimal text precision; SQL Server `OUTPUT`, trigger-safe `OUTPUT INTO`, `MERGE ... OUTPUT`, `uniqueidentifier`, and `datetimeoffset`; and Oracle explicit generated-key columns, UUID `RAW(16)`, empty-string-as-null, timestamp-with-time-zone, and `NUMBER` mapping. It does not run pgvector extension tests; verify pgvector manually if the release depends on that feature.
+The portable integration suites cover named binding, repeated parameters, `IN` expansion, null binding/mapping, numeric and temporal conversions, JDBC-generated keys, transaction commit/rollback, transaction options where supported, batch chunking, streaming, guarded raw connection access, statement row limits, health checks, SQL ARRAY guards, and exception wrapping/classification. Vendor suites add coverage for PostgreSQL JSONB, SQL arrays, UUIDs, `RETURNING`, temporal binding/mapping, pgvector binding/read-back, and exception metadata; MySQL/MariaDB JSON, UUID strings, unsigned numerics, streaming, and MariaDB `INSERT ... RETURNING`; SQLite `RETURNING`, UUID text, and decimal text precision; SQL Server `OUTPUT`, trigger-safe `OUTPUT INTO`, `MERGE ... OUTPUT`, `uniqueidentifier`, and `datetimeoffset`; and Oracle explicit generated-key columns, UUID `RAW(16)`, empty-string-as-null, timestamp-with-time-zone, and `NUMBER` mapping.
 
 Cache-sensitive changes should also be checked with the JMH benchmark profile:
 

@@ -858,7 +858,7 @@ public final class Database {
 			return SecureParameterSupport.diagnosticScrubForParameters(statementContext.getParameters());
 		} catch (Throwable ignored) {
 			// Per-needle failures are handled inside diagnosticScrubForParameters; reaching here would be
-			// catastrophic (a plain getter throwing) — fall back to no scrubbing rather than losing the exception
+			// catastrophic (a plain getter throwing) - fall back to no scrubbing rather than losing the exception
 			return SecureParameterSupport.DiagnosticScrub.NONE;
 		}
 	}
@@ -3682,7 +3682,7 @@ public final class Database {
 		} catch (Exception e) {
 			DatabaseException wrapped = databaseExceptionWithStatementContext(statementContext, e);
 			// Store the wrapped (scrubbed) form in the StatementLog, consistent with the DatabaseException
-			// and Error paths — the raw driver exception remains available via the wrapped cause
+			// and Error paths - the raw driver exception remains available via the wrapped cause
 			exception = wrapped;
 			thrown = wrapped;
 			throw wrapped;

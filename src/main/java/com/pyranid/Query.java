@@ -177,7 +177,7 @@ public interface Query {
 	/**
 	 * Overrides the {@link Database}-wide {@link ResultSetMapper} for this query only.
 	 * <p>
-	 * This enables per-query inline mapping — for example, projecting an ad-hoc join or computed columns —
+	 * This enables per-query inline mapping - for example, projecting an ad-hoc join or computed columns -
 	 * without configuring a database-wide mapper. {@link ResultSetMapper} is a functional interface, so a
 	 * lambda works: <pre>{@code  database.query("SELECT name, COUNT(*) AS total FROM employee GROUP BY name")
 	 *   .resultSetMapper((ctx, rs, type, ip) -> Optional.of(type.cast(new NameCount(rs.getString(1), rs.getLong(2)))))
@@ -198,7 +198,7 @@ public interface Query {
 	/**
 	 * Overrides the {@link Database}-wide {@link PreparedStatementBinder} for this query only.
 	 * <p>
-	 * The override receives every non-null parameter for this query — including expanded IN-list elements and
+	 * The override receives every non-null parameter for this query - including expanded IN-list elements and
 	 * each batch group's parameters. As with the database-wide SPI, {@link SecureParameter} and {@link java.util.Optional}
 	 * wrappers are unwrapped by Pyranid <em>before</em> the binder is invoked, so custom binders receive bound-ready
 	 * raw values and need no unwrap logic. {@code null} parameters never reach the binder; Pyranid binds them via
@@ -239,7 +239,7 @@ public interface Query {
 	 * Acquires a result type token for fetching rows as insertion-ordered {@code Map<String, Object>} instances,
 	 * usable anywhere a result type token is accepted.
 	 * <p>
-	 * Java's type erasure means there is no {@code Map<String, Object>.class} literal — a raw {@code Map.class}
+	 * Java's type erasure means there is no {@code Map<String, Object>.class} literal - a raw {@code Map.class}
 	 * token can only ever infer the raw {@code Map} type at fetch sites. This method returns the same runtime
 	 * {@code Map.class} token, statically typed as {@code Class<Map<String, Object>>} so results are properly
 	 * parameterized without caller-side casts:

@@ -193,7 +193,7 @@ public class SecureParameterDiagnosticScrubTests {
 		};
 
 		// The message is NOT re-scrubbed by the constructor (the Database factory scrubs the raw driver
-		// text before composing); metadata fields — raw dialect-extracted text — are each scrubbed once
+		// text before composing); metadata fields - raw dialect-extracted text - are each scrubbed once
 		DatabaseException databaseException = new DatabaseException("already-scrubbed message", cause, stubDialect, redactor);
 
 		Assertions.assertEquals("state-<redacted>", databaseException.getSqlState().orElseThrow());
@@ -346,7 +346,7 @@ public class SecureParameterDiagnosticScrubTests {
 
 	@Test
 	public void testSecureValueAbsentFromRealFailureDiagnostics() {
-		// A1 third-sink regression: real (HSQLDB) failure with a secure param + redactAll — the secret
+		// A1 third-sink regression: real (HSQLDB) failure with a secure param + redactAll - the secret
 		// must not appear anywhere in getMessage()/toString()
 		String secret = "regression-secret";
 		Database db = Database.withDataSource(createInMemoryDataSource("scrub_a1_third_sink"))

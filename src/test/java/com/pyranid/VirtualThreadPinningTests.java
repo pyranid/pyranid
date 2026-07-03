@@ -45,8 +45,8 @@ import static java.lang.String.format;
  * Defends Pyranid's zero-carrier-thread-pinning property under virtual threads.
  * <p>
  * The main source contains no {@code synchronized} (see {@link SourcePolicyTests}); this test verifies the
- * runtime consequence: a concurrent virtual-thread workload through {@link Database} — queries, transactions,
- * batches, streams — produces no {@code jdk.VirtualThreadPinned} JFR events attributable to Pyranid code.
+ * runtime consequence: a concurrent virtual-thread workload through {@link Database} - queries, transactions,
+ * batches, streams - produces no {@code jdk.VirtualThreadPinned} JFR events attributable to Pyranid code.
  * <p>
  * Compiled against the Java 17 baseline, so the virtual-thread executor is obtained reflectively; the test is
  * assumption-skipped on JDKs without virtual threads.
@@ -67,7 +67,7 @@ public class VirtualThreadPinningTests {
 			runWorkload(executorService, "vt_pinning_warmup");
 
 			// Explicit zero threshold: the default JFR configuration thresholds this event at 20ms, and the
-			// programmatic-enable default varies by JDK — "zero pinning events" must mean zero, however brief
+			// programmatic-enable default varies by JDK - "zero pinning events" must mean zero, however brief
 			recording.enable("jdk.VirtualThreadPinned").withThreshold(Duration.ZERO).withStackTrace();
 			recording.start();
 
@@ -97,14 +97,14 @@ public class VirtualThreadPinningTests {
 		}
 
 		Assertions.assertTrue(pyranidPinningEvents.isEmpty(), () -> format(
-				"Virtual threads were pinned to carrier threads with Pyranid frames on the stack — "
+				"Virtual threads were pinned to carrier threads with Pyranid frames on the stack - "
 						+ "a synchronized block (or Object.wait) was likely introduced in a blocking path. Events: %s",
 				pyranidPinningEvents));
 	}
 
 	/**
 	 * A pinning event is Pyranid's fault only when a Pyranid frame is on the stack AND no frame ABOVE it
-	 * (nearer the park site) belongs to a subsystem that owns monitors of its own — JVM class loading /
+	 * (nearer the park site) belongs to a subsystem that owns monitors of its own - JVM class loading /
 	 * class initialization, or the in-process HSQLDB engine (whose internals are legitimately synchronized).
 	 * In those cases Pyranid is merely the caller that triggered someone else's monitor.
 	 * <p>

@@ -126,7 +126,7 @@ public class DatabaseException extends RuntimeException {
 
 	/**
 	 * Package-private constructor which applies a best-effort diagnostic redactor to every String metadata field
-	 * extracted from the cause — used by {@link Database} to scrub verbatim occurrences of {@link SecureParameter}
+	 * extracted from the cause - used by {@link Database} to scrub verbatim occurrences of {@link SecureParameter}
 	 * values that the database driver may have echoed into its error text.
 	 * <p>
 	 * The {@code message} is deliberately NOT re-scrubbed here: the caller is expected to have scrubbed the raw

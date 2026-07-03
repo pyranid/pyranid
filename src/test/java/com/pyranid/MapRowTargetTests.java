@@ -182,7 +182,7 @@ public class MapRowTargetTests {
 				.executeForObject(Query.mapRowType());
 		Assertions.assertEquals(7, returned.orElseThrow().get("seven"));
 
-		// The token is the raw Map.class at runtime — identical mapping behavior to passing Map.class
+		// The token is the raw Map.class at runtime - identical mapping behavior to passing Map.class
 		Assertions.assertSame(Map.class, Query.mapRowType());
 	}
 
@@ -198,7 +198,7 @@ public class MapRowTargetTests {
 	}
 
 	/**
-	 * A user class that happens to implement {@link Map} (by extension) — must keep bean-path mapping.
+	 * A user class that happens to implement {@link Map} (by extension) - must keep bean-path mapping.
 	 */
 	public static class MapExtendingBean extends HashMap<String, Object> {
 		private String label;

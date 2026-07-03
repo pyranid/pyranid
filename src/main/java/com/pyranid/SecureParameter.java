@@ -34,7 +34,7 @@ import java.util.Optional;
  * {@link StatementLog} diagnostics. The scrub is verbatim-only: values the driver transforms before echoing
  * (re-formatted numbers or temporals, truncated strings, encoded bytes) are not caught, and very short values are
  * skipped to avoid corrupting unrelated diagnostics. <strong>The raw driver exception is deliberately preserved as
- * the {@link Throwable#getCause() cause} and is never sanitized</strong> — any sink that renders the stack trace or
+ * the {@link Throwable#getCause() cause} and is never sanitized</strong> - any sink that renders the stack trace or
  * walks the cause chain (log appenders, error trackers such as Sentry, OpenTelemetry exception events) can still
  * observe the raw value. Treat the cause chain as sensitive.
  * <p>

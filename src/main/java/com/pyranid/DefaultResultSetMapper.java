@@ -47,6 +47,8 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.OffsetTime;
+import java.time.Year;
+import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
@@ -585,7 +587,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		// Map row target: return the row as an insertion-ordered (column-ordered) map of
 		// normalized (lowercase) column labels to dialect-aware extracted values. Checked before the
-		// row-planning fork — no row plan applies to a Map. Note: subclasses invoking the protected
+		// row-planning fork - no row plan applies to a Map. Note: subclasses invoking the protected
 		// mapWithRowPlanning/mapWithoutRowPlanning methods directly bypass this special case.
 		if (resultSetRowType == Map.class || resultSetRowType == LinkedHashMap.class) {
 			@SuppressWarnings("unchecked")
@@ -607,7 +609,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	/**
 	 * Well-known JDK map types that are rejected with a clear error instead of falling confusingly into
 	 * the JavaBean mapping path. User classes that happen to implement {@link Map} are deliberately NOT
-	 * rejected — they retain their existing bean-path behavior.
+	 * rejected - they retain their existing bean-path behavior.
 	 */
 	@NonNull
 	private static final Set<Class<?>> UNSUPPORTED_MAP_ROW_TYPES = Set.of(
@@ -1139,6 +1141,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					throw new DatabaseException(format("Unable to convert value '%s' to Currency", currency), e);
 				}
 			}
+		} else if (resultClass == Year.class) {
+			value = yearFromValue(resultSet.getObject(1));
+		} else if (resultClass == YearMonth.class) {
+			String yearMonth = resultSet.getString(1);
+			if (yearMonth != null) value = yearMonthFromString(yearMonth);
 		} else if (resultClass == Object.class) {
 			value = resultSet.getObject(1);
 		} else {
@@ -1609,6 +1616,15 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		if (resultSetValue.getClass().isArray() && (targetType.isArray() || targetType.isList() || targetType.isSet()))
 			return Optional.of(convertArrayResultSetValue(statementContext, resultSetValue, targetType));
 
+		// Vector read-back: drivers surface vector columns (e.g. pgvector) as text like "[1.5,2.5]" -
+		// unwrapResultSetValue above already converted PGobject to its String form. Parse into
+		// float[]/double[] targets; non-vector-shaped strings fall through to normal handling.
+		if (resultSetValue instanceof String string && (propertyType == float[].class || propertyType == double[].class)) {
+			Object vector = vectorFromLiteral(string, propertyType == float[].class);
+			if (vector != null)
+				return Optional.of(vector);
+		}
+
 		// Normalize primitives to wrappers
 		Class<?> targetClass = boxedClass(propertyType);
 
@@ -1859,6 +1875,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			} catch (IllegalArgumentException e) {
 				throw new DatabaseException(format("Unable to convert value '%s' to Currency", resultSetValue), e);
 			}
+		} else if (Year.class.isAssignableFrom(targetClass)) {
+			return Optional.ofNullable(yearFromValue(resultSetValue));
+		} else if (YearMonth.class.isAssignableFrom(targetClass)) {
+			return Optional.ofNullable(yearMonthFromString(resultSetValue.toString()));
 		} else if (targetClass.isEnum()) {
 			return Optional.ofNullable(extractEnumValue(targetClass, resultSetValue));
 		}
@@ -2240,6 +2260,92 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		return localDateTimeFromString(trimmed).atZone(statementContext.getTimeZone());
+	}
+
+	/**
+	 * Parses a vector literal such as {@code [1.5,2.5,3.5]} into a {@code float[]} or {@code double[]}.
+	 * Returns {@code null} when the value is not bracket-delimited (so callers can fall through to normal
+	 * conversion); throws when the value looks like a vector but an element fails to parse.
+	 */
+	@Nullable
+	private static Object vectorFromLiteral(@NonNull String value,
+																					boolean asFloats) {
+		requireNonNull(value);
+
+		String trimmed = value.trim();
+
+		if (trimmed.length() < 2 || trimmed.charAt(0) != '[' || trimmed.charAt(trimmed.length() - 1) != ']')
+			return null;
+
+		String body = trimmed.substring(1, trimmed.length() - 1).trim();
+
+		if (body.isEmpty())
+			return asFloats ? new float[0] : new double[0];
+
+		String[] elements = body.split(",", -1);
+
+		try {
+			if (asFloats) {
+				float[] floats = new float[elements.length];
+				for (int i = 0; i < elements.length; ++i) {
+					floats[i] = Float.parseFloat(elements[i].trim());
+					if (!Float.isFinite(floats[i]))
+						throw new NumberFormatException(format("Non-finite vector element '%s'", elements[i].trim()));
+				}
+				return floats;
+			}
+
+			double[] doubles = new double[elements.length];
+			for (int i = 0; i < elements.length; ++i) {
+				doubles[i] = Double.parseDouble(elements[i].trim());
+				if (!Double.isFinite(doubles[i]))
+					throw new NumberFormatException(format("Non-finite vector element '%s'", elements[i].trim()));
+			}
+			return doubles;
+		} catch (NumberFormatException e) {
+			String bounded = trimmed.length() > 128 ? trimmed.substring(0, 128) + "..." : trimmed;
+			throw new DatabaseException(format("Unable to parse vector literal '%s'", bounded), e);
+		}
+	}
+
+	@Nullable
+	private static Year yearFromValue(@Nullable Object value) {
+		if (value == null)
+			return null;
+		if (value instanceof Year year)
+			return year;
+
+		// Some drivers surface year columns as dates - e.g. MySQL Connector/J maps YEAR to DATE by default
+		if (value instanceof LocalDate localDate)
+			return Year.of(localDate.getYear());
+		if (value instanceof java.sql.Date date)
+			return Year.of(date.toLocalDate().getYear());
+
+		if (value instanceof Number number) {
+			try {
+				return Year.of(decimalForNumericConversion(number).intValueExact());
+			} catch (ArithmeticException | DateTimeException e) {
+				throw new DatabaseException(format("Unable to convert value '%s' to Year", value), e);
+			}
+		}
+
+		try {
+			return Year.of(Integer.parseInt(value.toString().trim()));
+		} catch (NumberFormatException | DateTimeException e) {
+			throw new DatabaseException(format("Unable to convert value '%s' to Year", value), e);
+		}
+	}
+
+	@Nullable
+	private static YearMonth yearMonthFromString(@Nullable String value) {
+		if (value == null)
+			return null;
+
+		try {
+			return YearMonth.parse(value.trim());
+		} catch (DateTimeParseException e) {
+			throw new DatabaseException(format("Unable to convert value '%s' to YearMonth", value), e);
+		}
 	}
 
 	@Nullable
@@ -2938,7 +3044,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			List<String> matchedProps = propertiesByLabel.get(labelNorm);
 
 			if (matchedProps == null || matchedProps.isEmpty()) {
-				// No property claims this column — add a SKIP binding to keep behavior explicit
+				// No property claims this column - add a SKIP binding to keep behavior explicit
 				bindings.add(
 						new ColumnBinding(
 								i,                            // columnIndex

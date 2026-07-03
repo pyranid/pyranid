@@ -73,7 +73,7 @@ public final class StatementContext<T> {
 	/**
 	 * Per-query overrides of the {@link Database}-wide mapping/binding SPIs, carried on the context so
 	 * execution internals can resolve them without additional plumbing. Deliberately excluded from
-	 * {@link #equals(Object)}/{@link #hashCode()}/{@link #toString()} — overrides are functional
+	 * {@link #equals(Object)}/{@link #hashCode()}/{@link #toString()} - overrides are functional
 	 * identity, not value identity.
 	 */
 	record SpiOverrides(@Nullable ResultSetMapper resultSetMapper,

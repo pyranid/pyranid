@@ -284,7 +284,7 @@ abstract class AbstractPortableJdbcIntegrationTests {
 		DialectProfile dialectProfile = dialectProfile();
 		String table = "pyranid_temporal_precision";
 
-		// Exactly representable at 6 fractional digits, so no database rounds it — differences can only
+		// Exactly representable at 6 fractional digits, so no database rounds it - differences can only
 		// come from precision LOSS, which is exactly what this test exists to catch
 		LocalDateTime boundTimestamp = LocalDateTime.of(2020, 1, 2, 3, 4, 5, 123_456_000);
 		int fractionalDigits = dialectProfile.timestampFractionalSecondDigits();
@@ -623,7 +623,7 @@ abstract class AbstractPortableJdbcIntegrationTests {
 				.fetchObject(Map.class)
 				.orElseThrow();
 
-		// Keys must be normalized lowercase in column order on EVERY database — regardless of whether the
+		// Keys must be normalized lowercase in column order on EVERY database - regardless of whether the
 		// driver reports unquoted labels uppercased (Oracle, HSQLDB), lowercased (PostgreSQL), or as written
 		Assertions.assertEquals(List.of("item_id", "mixedcasename", "note"), List.copyOf(row.keySet()),
 				"Expected identical normalized-lowercase keys in column order on every database");

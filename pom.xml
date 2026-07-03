@@ -69,7 +69,7 @@
 		<mssql.jdbc.version>13.4.0.jre11</mssql.jdbc.version>
 		<ojdbc11.version>23.26.2.0.0</ojdbc11.version>
 		<slf4j.version>1.7.36</slf4j.version>
-		<postgres.integration.image>postgres:17-alpine</postgres.integration.image>
+		<postgres.integration.image>pgvector/pgvector:pg17</postgres.integration.image>
 		<mysql.integration.image>mysql:8.4</mysql.integration.image>
 		<mariadb.integration.image>mariadb:11.4</mariadb.integration.image>
 		<sqlserver.integration.image>mcr.microsoft.com/mssql/server:2022-CU25-ubuntu-22.04</sqlserver.integration.image>
