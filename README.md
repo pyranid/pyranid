@@ -850,28 +850,28 @@ car = database.query("SELECT some_id AS car_id, some_color AS color FROM car LIM
   .fetchObject(Car.class).orElseThrow();
 ```
 
-### Map Rows
+### Rows As Maps
 
-When you don't want to define a type at all — exploratory queries, admin tooling, dynamic-shape `SELECT *`, exports — fetch rows as maps by passing [`Map`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Map.html)`.class` (or [`LinkedHashMap`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/LinkedHashMap.html)`.class`) anywhere a result type token is accepted:
-
-```java
-List<Map> rows = database.query("SELECT * FROM car").fetchList(Map.class);
-Object make = rows.get(0).get("make");
-```
-
-Each row is an insertion-ordered [`LinkedHashMap`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/LinkedHashMap.html) in column order. Keys are *normalized (lowercase)* column labels, so lookups behave identically across databases regardless of whether the driver reports unquoted labels uppercased (Oracle, HSQLDB), lowercased (PostgreSQL), or as written (MySQL, SQL Server). `AS` aliases are respected (and lowercased); `NULL` columns are present with a `null` value; values use the same dialect-aware extraction as record/bean mapping. Duplicate column labels — e.g. an unaliased multi-table join — fail fast with a [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html); use column aliases to disambiguate.
-
-Other JDK map types (`HashMap.class`, `TreeMap.class`, ...) are rejected with a clear error; user-defined classes that happen to implement [`Map`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Map.html) continue to map via the JavaBean path.
-
-Java's type erasure means a raw `Map.class` token can only ever yield the raw [`Map`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Map.html) type — there is no `Map<String, Object>.class` literal. For properly-parameterized results without caller-side casts, use the [`Query::mapRowType()`](https://javadoc.pyranid.com/com/pyranid/Query.html#mapRowType()) type token instead:
+When you don't want to define a type at all — exploratory queries, admin tooling, dynamic-shape `SELECT *`, exports — fetch rows as maps with [`Query::mapRowType()`](https://javadoc.pyranid.com/com/pyranid/Query.html#mapRowType()):
 
 ```java
 List<Map<String, Object>> rows = database.query("SELECT * FROM car").fetchList(Query.mapRowType());
+Object make = rows.get(0).get("make");
 
 Optional<Map<String, Object>> row = database.query("SELECT * FROM car WHERE id = :id")
   .bind("id", 123)
   .fetchObject(Query.mapRowType());
 ```
+
+Each row is an insertion-ordered [`LinkedHashMap`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/LinkedHashMap.html) in column order. Keys are *normalized (lowercase)* column labels, so lookups behave identically across databases regardless of whether the driver reports unquoted labels uppercased (Oracle, HSQLDB), lowercased (PostgreSQL), or as written (MySQL, SQL Server). `AS` aliases are respected (and lowercased); `NULL` columns are present with a `null` value; values use the same dialect-aware extraction as record/bean mapping. Duplicate column labels — e.g. an unaliased multi-table join — fail fast with a [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html); use column aliases to disambiguate.
+
+The raw [`Map`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Map.html)`.class` and [`LinkedHashMap`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/LinkedHashMap.html)`.class` tokens are also accepted anywhere a result type token is accepted, but Java's type erasure means they produce raw result types:
+
+```java
+List<Map> rows = database.query("SELECT * FROM car").fetchList(Map.class);
+```
+
+Other JDK map types (`HashMap.class`, `TreeMap.class`, ...) are rejected with a clear error; user-defined classes that happen to implement [`Map`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Map.html) continue to map via the JavaBean path.
 
 The special case lives in the default [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) implementation only — a custom database-wide or per-query [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) receiving the token decides for itself how to handle it.
 
