@@ -38,7 +38,7 @@ import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
 /**
- * Verifies the 4.4.1 best-effort scrub of {@link SecureParameter} values from driver-echoed text in
+ * Verifies the 4.5.0 best-effort scrub of {@link SecureParameter} values from driver-echoed text in
  * {@link DatabaseException} messages/metadata and {@link StatementLog} diagnostics.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>

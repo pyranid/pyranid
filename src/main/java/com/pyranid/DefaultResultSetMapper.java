@@ -629,7 +629,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	 * @param resultSetMetaData metadata for {@code resultSet}
 	 * @return the row as an insertion-ordered label-to-value map
 	 * @throws SQLException if an error occurs during mapping
-	 * @since 4.4.1
+	 * @since 4.5.0
 	 */
 	@NonNull
 	protected <T> Map<String, Object> mapResultSetToMap(@NonNull StatementContext<T> statementContext,

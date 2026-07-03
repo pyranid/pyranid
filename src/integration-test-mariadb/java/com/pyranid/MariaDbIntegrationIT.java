@@ -172,6 +172,12 @@ public class MariaDbIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 			String autoIncrementPrimaryKey(@NonNull String columnName) {
 				return columnName + " BIGINT AUTO_INCREMENT PRIMARY KEY";
 			}
+
+			@NonNull
+			@Override
+			String timestampWithFractionalSeconds() {
+				return "DATETIME(6)";
+			}
 		};
 	}
 

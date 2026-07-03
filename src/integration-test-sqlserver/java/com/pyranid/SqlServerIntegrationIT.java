@@ -233,6 +233,12 @@ public class SqlServerIntegrationIT extends AbstractPortableJdbcIntegrationTests
 
 			@NonNull
 			@Override
+			String timestampWithFractionalSeconds() {
+				return "DATETIME2(6)";
+			}
+
+			@NonNull
+			@Override
 			String autoIncrementPrimaryKey(@NonNull String columnName) {
 				return columnName + " BIGINT IDENTITY(1,1) PRIMARY KEY";
 			}

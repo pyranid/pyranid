@@ -55,7 +55,7 @@ import static java.util.Objects.requireNonNull;
 
 @ExtendWith(AbstractPortableJdbcIntegrationTests.PortableCoverageGuard.class)
 abstract class AbstractPortableJdbcIntegrationTests {
-	private static final int MINIMUM_EXECUTED_PORTABLE_CONTRACT_TESTS = 17;
+	private static final int MINIMUM_EXECUTED_PORTABLE_CONTRACT_TESTS = 18;
 	private static final ConcurrentMap<Class<?>, PortableCoverage> PORTABLE_COVERAGE = new ConcurrentHashMap<>();
 
 	public record PersonRow(Long personId, String name, String emailAddress, Locale locale) {}
@@ -274,6 +274,42 @@ abstract class AbstractPortableJdbcIntegrationTests {
 		Assertions.assertEquals(eventDate, row.eventDate());
 		Assertions.assertEquals(eventTime, row.eventTime());
 		Assertions.assertEquals(eventTimestamp, row.eventTimestamp());
+	}
+
+	@Test
+	public void testTemporalSubSecondPrecisionRoundTrip() {
+		Assumptions.assumeTrue(capabilityFlags().supportsTemporalRoundTrip());
+
+		Database db = database();
+		DialectProfile dialectProfile = dialectProfile();
+		String table = "pyranid_temporal_precision";
+
+		// Exactly representable at 6 fractional digits, so no database rounds it — differences can only
+		// come from precision LOSS, which is exactly what this test exists to catch
+		LocalDateTime boundTimestamp = LocalDateTime.of(2020, 1, 2, 3, 4, 5, 123_456_000);
+		int fractionalDigits = dialectProfile.timestampFractionalSecondDigits();
+		long nanosPerDigitUnit = (long) Math.pow(10, 9 - fractionalDigits);
+		LocalDateTime expectedTimestamp = boundTimestamp.withNano(
+				(int) (boundTimestamp.getNano() / nanosPerDigitUnit * nanosPerDigitUnit));
+
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "item_id " + dialectProfile.bigIntPrimaryKey() + ", "
+				+ "event_timestamp " + dialectProfile.timestampWithFractionalSeconds() + " NOT NULL"
+				+ ")");
+
+		db.query("INSERT INTO " + table + " (item_id, event_timestamp) VALUES (:itemId, :eventTimestamp)")
+				.bind("itemId", 1L)
+				.bind("eventTimestamp", boundTimestamp)
+				.execute();
+
+		LocalDateTime roundTripped = db.query("SELECT event_timestamp FROM " + table + " WHERE item_id = :itemId")
+				.bind("itemId", 1L)
+				.fetchObject(LocalDateTime.class)
+				.orElseThrow();
+
+		Assertions.assertEquals(expectedTimestamp, roundTripped, () -> String.format(
+				"Sub-second timestamp precision lost: bound %s, expected %s fractional digits to survive",
+				boundTimestamp, fractionalDigits));
 	}
 
 	@Test

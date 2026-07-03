@@ -409,7 +409,7 @@ public class ExceptionSuppressionTests {
 
 	@Test
 	public void testStatementLoggerReceivesWrappedExecutionException() {
-		// As of 4.4.1, driver-failure paths store Pyranid's wrapped DatabaseException in the StatementLog
+		// As of 4.5.0, driver-failure paths store Pyranid's wrapped DatabaseException in the StatementLog
 		// (consistent with the DatabaseException/Error paths) so statement logs render scrubbed, redaction-aware
 		// diagnostics. The raw JDBC exception remains available via the wrapper's cause.
 		List<Exception> exceptions = new ArrayList<>();

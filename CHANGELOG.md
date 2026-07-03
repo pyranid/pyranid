@@ -2,7 +2,7 @@
 
 All notable changes to Pyranid will be documented in this file.
 
-## 4.4.1 (unreleased)
+## 4.5.0 (unreleased)
 
 ### Fixed
 
@@ -29,6 +29,11 @@ All notable changes to Pyranid will be documented in this file.
 - `Query.resultSetMapper(...)` and `Query.preparedStatementBinder(...)` for per-query overrides of the
   database-wide mapping/binding SPIs — for example, inline-mapping an ad-hoc join projection with a
   `ResultSetMapper` lambda without configuring it database-wide.
+- Added regression guards for Pyranid's virtual-thread story: a source-policy test banning `synchronized`
+  from main source, and a JFR-based test asserting a concurrent virtual-thread workload produces no
+  `jdk.VirtualThreadPinned` events attributable to Pyranid code.
+- Added a portable integration test asserting microsecond timestamp precision survives round trips on
+  every supported database (fractional-second columns such as `DATETIME(6)`/`DATETIME2(6)`).
 
 ### Migration Notes
 

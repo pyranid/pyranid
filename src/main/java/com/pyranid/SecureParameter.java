@@ -29,7 +29,7 @@ import java.util.Optional;
  * <p>
  * <strong>Scope and limits.</strong> Because the real value is bound to the {@link java.sql.PreparedStatement},
  * the database driver may echo it back in its own error text (for example, PostgreSQL constraint violations include
- * {@code Key (email)=(...) already exists}). As of 4.4.1, Pyranid additionally performs a best-effort scrub of
+ * {@code Key (email)=(...) already exists}). As of 4.5.0, Pyranid additionally performs a best-effort scrub of
  * verbatim occurrences of secure values from the {@link DatabaseException} message, its DBMS metadata fields, and
  * {@link StatementLog} diagnostics. The scrub is verbatim-only: values the driver transforms before echoing
  * (re-formatted numbers or temporals, truncated strings, encoded bytes) are not caught, and very short values are

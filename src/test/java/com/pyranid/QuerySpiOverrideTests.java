@@ -36,7 +36,7 @@ import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
 /**
- * Verifies the 4.4.1 per-query {@link ResultSetMapper} / {@link PreparedStatementBinder} overrides.
+ * Verifies the 4.5.0 per-query {@link ResultSetMapper} / {@link PreparedStatementBinder} overrides.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  */

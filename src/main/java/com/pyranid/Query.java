@@ -188,7 +188,7 @@ public interface Query {
 	 *
 	 * @param resultSetMapper the mapper to use for this query, or {@code null} to inherit the database-wide mapper
 	 * @return this builder, for chaining
-	 * @since 4.4.1
+	 * @since 4.5.0
 	 */
 	@NonNull
 	default Query resultSetMapper(@Nullable ResultSetMapper resultSetMapper) {
@@ -208,7 +208,7 @@ public interface Query {
 	 *
 	 * @param preparedStatementBinder the binder to use for this query, or {@code null} to inherit the database-wide binder
 	 * @return this builder, for chaining
-	 * @since 4.4.1
+	 * @since 4.5.0
 	 */
 	@NonNull
 	default Query preparedStatementBinder(@Nullable PreparedStatementBinder preparedStatementBinder) {
@@ -249,7 +249,7 @@ public interface Query {
 	 * token. Note that a custom {@link ResultSetMapper} receiving this token observes the raw {@code Map.class}.
 	 *
 	 * @return a {@code Map<String, Object>} result type token
-	 * @since 4.4.1
+	 * @since 4.5.0
 	 */
 	@NonNull
 	@SuppressWarnings("unchecked")

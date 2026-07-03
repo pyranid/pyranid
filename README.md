@@ -1032,7 +1032,7 @@ List<MySpecialType> mySpecialTypes =
 
 ### Per-Query Mapping and Binding
 
-The [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) and [`PreparedStatementBinder`](https://javadoc.pyranid.com/com/pyranid/PreparedStatementBinder.html) SPIs are normally configured database-wide at build time. As of 4.4.1 they can also be overridden for a single query via [`Query::resultSetMapper(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#resultSetMapper(com.pyranid.ResultSetMapper)) and [`Query::preparedStatementBinder(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#preparedStatementBinder(com.pyranid.PreparedStatementBinder)) — no new concepts, the same contracts applied per query.
+The [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) and [`PreparedStatementBinder`](https://javadoc.pyranid.com/com/pyranid/PreparedStatementBinder.html) SPIs are normally configured database-wide at build time. As of 4.5.0 they can also be overridden for a single query via [`Query::resultSetMapper(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#resultSetMapper(com.pyranid.ResultSetMapper)) and [`Query::preparedStatementBinder(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#preparedStatementBinder(com.pyranid.PreparedStatementBinder)) — no new concepts, the same contracts applied per query.
 
 This is the idiomatic way to inline-map an ad-hoc projection (a join, computed columns, a tuple) without defining a database-wide mapper — both SPIs are functional interfaces, so a lambda works:
 

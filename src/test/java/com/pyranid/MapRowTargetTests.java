@@ -34,7 +34,7 @@ import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
 /**
- * Verifies the 4.4.1 {@code Map}/{@code LinkedHashMap} row target.
+ * Verifies the 4.5.0 {@code Map}/{@code LinkedHashMap} row target.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  */

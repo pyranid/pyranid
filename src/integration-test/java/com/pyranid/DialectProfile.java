@@ -77,6 +77,23 @@ class DialectProfile {
 		return "TIMESTAMP";
 	}
 
+	/**
+	 * Column type for timestamps carrying fractional seconds (microsecond precision requested).
+	 */
+	@NonNull
+	String timestampWithFractionalSeconds() {
+		return "TIMESTAMP(6)";
+	}
+
+	/**
+	 * Fractional-second digits that survive a round trip through {@link #timestampWithFractionalSeconds()} —
+	 * microseconds on every supported database (including SQLite, whose dialect binds temporals with full
+	 * precision).
+	 */
+	int timestampFractionalSecondDigits() {
+		return 6;
+	}
+
 	@NonNull
 	String autoIncrementPrimaryKey(@NonNull String columnName) {
 		requireNonNull(columnName);
