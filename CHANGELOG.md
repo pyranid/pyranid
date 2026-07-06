@@ -11,8 +11,9 @@ All notable changes to Pyranid will be documented in this file.
   (for example, PostgreSQL constraint-violation detail such as `Key (email)=(...) already exists`).
   The original driver exception remains fully intact as the `cause`: any sink that renders the stack
   trace or walks `getCause()` (log appenders, error trackers) can still contain the raw value - treat
-  the cause chain as sensitive. The scrub is verbatim-only and skips `null`, `Boolean`, and very short
-  values to avoid corrupting unrelated diagnostics.
+  the cause chain as sensitive. The scrub is verbatim-only and skips `null`, `Boolean`, very short
+  values (to avoid corrupting unrelated diagnostics), and vector parameters (drivers render vectors as
+  literals that never match a Java rendering).
 - `StatementLog` now carries Pyranid's wrapped `DatabaseException` on driver-failure paths (previously
   the raw driver exception on some paths), so statement logs render scrubbed, redaction-aware
   diagnostics consistently.
@@ -34,8 +35,9 @@ All notable changes to Pyranid will be documented in this file.
 - Added a portable integration test asserting microsecond timestamp precision survives round trips on
   every supported database (fractional-second columns such as `DATETIME(6)`/`DATETIME2(6)`).
 - Added `java.time.Year` and `java.time.YearMonth` scalar support: `Year` binds as `INTEGER` and maps
-  back from integer-like or string columns; `YearMonth` binds as its ISO-8601 string form (e.g.
-  `2027-12`) and maps back from strings. Both work as single-column targets and record/bean properties.
+  back from integer-like, string, or `DATE`-surfaced year columns (e.g. MySQL `YEAR`); `YearMonth` binds
+  as its ISO-8601 string form (e.g. `2027-12`) and maps back from strings. Both work as single-column
+  targets and record/bean properties.
 - Vector columns (e.g. pgvector) now read back into `float[]` and `double[]` targets - Pyranid parses
   the vector literal (such as `[0.1,0.2,0.3]`) that drivers surface for vector columns. Vector support
   is now symmetric with the existing `Parameters.vectorOfFloats(...)`/`vectorOfDoubles(...)` bind side.
@@ -44,6 +46,17 @@ All notable changes to Pyranid will be documented in this file.
 
 - `StatementLog.getException()` on driver-failure paths now returns the Pyranid `DatabaseException`
   wrapper; the raw driver exception remains available via its `getCause()`.
+- `Map.class` and `LinkedHashMap.class` result type tokens are now intercepted by the built-in map-row
+  handling before custom row-level mapping runs: a `CustomColumnMapper` registered for raw `Map` targets
+  is no longer consulted for these tokens, `LinkedHashMap.class` now returns populated rows (previously
+  an empty bean-mapped instance), and the well-known JDK map tokens `HashMap.class`, `TreeMap.class`,
+  `Hashtable.class`, `ConcurrentHashMap.class`, `SortedMap.class`, `NavigableMap.class`, and
+  `ConcurrentMap.class` now fail fast with a clear `DatabaseException` (previously they bean-mapped to
+  empty instances). Other `Map`-implementing classes keep their JavaBean-path behavior.
+- The secure-parameter scrub applies to exceptions raised during statement execution. Exceptions raised
+  outside a statement context - commit/rollback time (e.g. deferred constraint violations), connection
+  acquisition, and raw-connection operations - are not scrubbed and may carry driver-echoed values in
+  their message and DBMS metadata fields.
 
 ## 4.4.0
 

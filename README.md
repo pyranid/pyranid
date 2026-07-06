@@ -871,7 +871,7 @@ The raw [`Map`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/jav
 List<Map> rows = database.query("SELECT * FROM car").fetchList(Map.class);
 ```
 
-Other JDK map types (`HashMap.class`, `TreeMap.class`, ...) are rejected with a clear error; user-defined classes that happen to implement [`Map`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Map.html) continue to map via the JavaBean path.
+The well-known JDK map tokens (`HashMap.class`, `TreeMap.class`, `Hashtable.class`, `ConcurrentHashMap.class`, and the `SortedMap`/`NavigableMap`/`ConcurrentMap` interfaces) are rejected with a clear error; other classes that happen to implement [`Map`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Map.html) continue to map via the JavaBean path.
 
 The special case lives in the default [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) implementation only - a custom database-wide or per-query [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) receiving the token decides for itself how to handle it.
 
@@ -1396,6 +1396,7 @@ Because the real value is bound to the [`PreparedStatement`](https://docs.oracle
 | The raw driver exception ([`getCause()`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Throwable.html#getCause())), stack traces, and anything that renders them (log appenders, Sentry, OpenTelemetry exception events) | **No - deliberately preserved unsanitized. Treat the cause chain as sensitive.** |
 | Driver-transformed echoes (re-formatted numbers/temporals, truncated strings, encoded bytes); `null`/`Boolean`/very short secure values | No - the scrub is verbatim-only and skips values that would corrupt unrelated diagnostics |
 | Pyranid's own mapping-error messages (e.g. `Cannot map value '...'` when a value round-trips into a [`ResultSet`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/ResultSet.html)) | No |
+| Exceptions raised outside statement execution - commit/rollback time (e.g. deferred constraint violations), connection acquisition, raw-connection operations | No - no statement context exists at those points |
 
 Only values explicitly wrapped with [`Parameters::secure(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) trigger the driver-text scrub; a [`ParameterRedactor`](https://javadoc.pyranid.com/com/pyranid/ParameterRedactor.html) governs Pyranid's parameter-list rendering only.
 

@@ -480,6 +480,22 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 	}
 
 	@Test
+	public void testMapRowValuesUnwrapDriverObjects() {
+		// PGobject-wrapped columns (JSONB, vector) must surface in map rows as their String form,
+		// matching record/bean mapping - never as raw org.postgresql.util.PGobject
+		Database db = Database.withDataSource(dataSource()).build();
+
+		java.util.Map row = db.query("SELECT '{\"a\":1}'::jsonb AS payload, 42 AS n FROM (VALUES (0)) AS t(x)")
+				.fetchObject(Query.mapRowType())
+				.orElseThrow();
+
+		Assertions.assertTrue(row.get("payload") instanceof String,
+				"Expected JSONB to unwrap to String in map rows, got: " + row.get("payload").getClass().getName());
+		Assertions.assertTrue(((String) row.get("payload")).contains("\"a\""));
+		Assertions.assertEquals(42, row.get("n"));
+	}
+
+	@Test
 	public void testMapRowTargetThroughDmlReturning() {
 		Database db = Database.withDataSource(dataSource()).build();
 

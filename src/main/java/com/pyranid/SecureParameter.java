@@ -33,7 +33,10 @@ import java.util.Optional;
  * verbatim occurrences of secure values from the {@link DatabaseException} message, its DBMS metadata fields, and
  * {@link StatementLog} diagnostics. The scrub is verbatim-only: values the driver transforms before echoing
  * (re-formatted numbers or temporals, truncated strings, encoded bytes) are not caught, and very short values are
- * skipped to avoid corrupting unrelated diagnostics. <strong>The raw driver exception is deliberately preserved as
+ * skipped to avoid corrupting unrelated diagnostics. The scrub applies to exceptions raised during statement
+ * execution; exceptions raised outside a statement context - commit/rollback time (e.g. deferred constraint
+ * violations), connection acquisition, raw-connection operations - are not scrubbed. <strong>The raw driver
+ * exception is deliberately preserved as
  * the {@link Throwable#getCause() cause} and is never sanitized</strong> - any sink that renders the stack trace or
  * walks the cause chain (log appenders, error trackers such as Sentry, OpenTelemetry exception events) can still
  * observe the raw value. Treat the cause chain as sensitive.

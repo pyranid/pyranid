@@ -655,7 +655,14 @@ class DefaultResultSetMapper implements ResultSetMapper {
 						"Duplicate column label '%s' (normalized from '%s' and '%s'); use column aliases to disambiguate.",
 						label, previousRawLabel, rawLabel));
 
-			row.put(label, extractColumnValue(resultSetMetaData, statementContext, resultSet, i).orElse(null));
+			Object columnValue = extractColumnValue(resultSetMetaData, statementContext, resultSet, i).orElse(null);
+
+			// Match record/bean mapping: unwrap driver-specific wrappers (e.g. PostgreSQL PGobject for
+			// JSONB/vector columns becomes its String form) so map rows never carry raw driver objects
+			if (columnValue != null)
+				columnValue = statementContext.getDatabaseDialect().unwrapResultSetValue(columnValue);
+
+			row.put(label, columnValue);
 		}
 
 		return row;
