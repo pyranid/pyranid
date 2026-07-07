@@ -79,7 +79,7 @@ public final class StatementContext<T> {
 	record SpiOverrides(@Nullable ResultSetMapper resultSetMapper,
 											@Nullable PreparedStatementBinder preparedStatementBinder) {}
 
-	protected StatementContext(@NonNull Builder builder) {
+	StatementContext(@NonNull Builder builder) {
 		requireNonNull(builder);
 
 		this.statement = builder.statement;

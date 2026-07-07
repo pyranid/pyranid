@@ -634,22 +634,22 @@ public final class Transaction {
 	}
 
 	@NonNull
-	protected Optional<Integer> getInitialTransactionIsolationJdbcLevel() {
+	private Optional<Integer> getInitialTransactionIsolationJdbcLevel() {
 		return Optional.ofNullable(this.initialTransactionIsolationJdbcLevel);
 	}
 
 	@NonNull
-	protected Boolean getTransactionIsolationWasChanged() {
+	private Boolean getTransactionIsolationWasChanged() {
 		return this.transactionIsolationWasChanged.get();
 	}
 
 	@NonNull
-	protected Boolean getReadOnlyWasChanged() {
+	private Boolean getReadOnlyWasChanged() {
 		return this.readOnlyWasChanged.get();
 	}
 
 	@NonNull
-	protected ReentrantLock getConnectionLock() {
+	ReentrantLock getConnectionLock() {
 		return this.connectionLock;
 	}
 

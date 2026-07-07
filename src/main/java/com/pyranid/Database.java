@@ -132,7 +132,7 @@ public final class Database {
 	@NonNull
 	private volatile DatabaseOperationSupportStatus executeLargeUpdateSupported;
 
-	protected Database(@NonNull Builder builder) {
+	private Database(@NonNull Builder builder) {
 		requireNonNull(builder);
 
 		this.dataSource = requireNonNull(builder.dataSource);
@@ -797,7 +797,7 @@ public final class Database {
 		return existing;
 	}
 
-	protected void closeConnection(@NonNull Connection connection) {
+	private void closeConnection(@NonNull Connection connection) {
 		requireNonNull(connection);
 
 		try {
@@ -3221,7 +3221,7 @@ public final class Database {
 		}, true);
 	}
 
-	protected <T> void performDatabaseOperation(@NonNull StatementContext<T> statementContext,
+	private <T> void performDatabaseOperation(@NonNull StatementContext<T> statementContext,
 																							@NonNull List<Object> parameters,
 																							@NonNull DatabaseOperation databaseOperation) {
 		requireNonNull(statementContext);
@@ -3231,7 +3231,7 @@ public final class Database {
 		performDatabaseOperation(statementContext, parameters, null, databaseOperation);
 	}
 
-	protected <T> void performDatabaseOperation(@NonNull StatementContext<T> statementContext,
+	private <T> void performDatabaseOperation(@NonNull StatementContext<T> statementContext,
 																							@NonNull List<Object> parameters,
 																							@Nullable PreparedStatementCustomizer preparedStatementCustomizer,
 																							@NonNull DatabaseOperation databaseOperation) {
@@ -3239,7 +3239,7 @@ public final class Database {
 				(connection, context) -> connection.prepareStatement(context.getStatement().getSql()));
 	}
 
-	protected <T> void performDatabaseOperation(@NonNull StatementContext<T> statementContext,
+	private <T> void performDatabaseOperation(@NonNull StatementContext<T> statementContext,
 																							@NonNull List<Object> parameters,
 																							@Nullable PreparedStatementCustomizer preparedStatementCustomizer,
 																							@NonNull DatabaseOperation databaseOperation,
@@ -3256,7 +3256,7 @@ public final class Database {
 		}, databaseOperation, null, preparedStatementFactory);
 	}
 
-	protected <T> void performPreparedStatementBinding(@NonNull StatementContext<T> statementContext,
+	private <T> void performPreparedStatementBinding(@NonNull StatementContext<T> statementContext,
 																										 @NonNull PreparedStatement preparedStatement,
 																										 @NonNull List<Object> parameters) {
 		requireNonNull(statementContext);
@@ -3298,7 +3298,7 @@ public final class Database {
 		}
 	}
 
-	protected void applyPreparedStatementCustomizer(@NonNull StatementContext<?> statementContext,
+	private void applyPreparedStatementCustomizer(@NonNull StatementContext<?> statementContext,
 																									@NonNull PreparedStatement preparedStatement,
 																									@Nullable PreparedStatementCustomizer preparedStatementCustomizer) throws SQLException {
 		requireNonNull(statementContext);
@@ -3336,7 +3336,7 @@ public final class Database {
 	}
 
 	@FunctionalInterface
-	protected interface InternalRawConnectionOperation<R> {
+	interface InternalRawConnectionOperation<R> {
 		@NonNull
 		Optional<R> perform(@NonNull Connection connection) throws Exception;
 	}
@@ -3478,7 +3478,7 @@ public final class Database {
 	 * Example: {@link #readDatabaseMetaData(DatabaseMetaDataReader)}.
 	 */
 	@NonNull
-	protected <R> Optional<R> performRawConnectionOperation(@NonNull InternalRawConnectionOperation<R> rawConnectionOperation,
+	<R> Optional<R> performRawConnectionOperation(@NonNull InternalRawConnectionOperation<R> rawConnectionOperation,
 																													@NonNull Boolean shouldParticipateInExistingTransactionIfPossible) {
 		requireNonNull(rawConnectionOperation);
 		requireNonNull(shouldParticipateInExistingTransactionIfPossible);
@@ -3497,7 +3497,16 @@ public final class Database {
 					connectionLockAcquired = true;
 				}
 
-				connection = transaction.isPresent() ? transaction.get().getConnection() : acquireConnection();
+				if (transaction.isPresent()) {
+					connection = transaction.get().getConnection();
+				} else {
+					try {
+						connection = getDataSource().getConnection();
+					} catch (SQLException e) {
+						throw new DatabaseException("Unable to acquire database connection", e);
+					}
+				}
+
 				return rawConnectionOperation.perform(connection);
 			} catch (DatabaseException e) {
 				thrown = e;
@@ -3574,13 +3583,13 @@ public final class Database {
 		}
 	}
 
-	protected <T> void performDatabaseOperation(@NonNull StatementContext<T> statementContext,
+	private <T> void performDatabaseOperation(@NonNull StatementContext<T> statementContext,
 																							@NonNull PreparedStatementBindingOperation preparedStatementBindingOperation,
 																							@NonNull DatabaseOperation databaseOperation) {
 		performDatabaseOperation(statementContext, preparedStatementBindingOperation, databaseOperation, null);
 	}
 
-	protected <T> void performDatabaseOperation(@NonNull StatementContext<T> statementContext,
+	private <T> void performDatabaseOperation(@NonNull StatementContext<T> statementContext,
 																							@NonNull PreparedStatementBindingOperation preparedStatementBindingOperation,
 																							@NonNull DatabaseOperation databaseOperation,
 																							@Nullable Integer batchSize) {
@@ -3588,7 +3597,7 @@ public final class Database {
 				(connection, context) -> connection.prepareStatement(context.getStatement().getSql()));
 	}
 
-	protected <T> void performDatabaseOperation(@NonNull StatementContext<T> statementContext,
+	private <T> void performDatabaseOperation(@NonNull StatementContext<T> statementContext,
 																							@NonNull PreparedStatementBindingOperation preparedStatementBindingOperation,
 																							@NonNull DatabaseOperation databaseOperation,
 																							@Nullable Integer batchSize,
@@ -3753,31 +3762,17 @@ public final class Database {
 	}
 
 	@NonNull
-	protected Connection acquireConnection() {
-		Optional<Transaction> transaction = currentTransactionForDatabaseOperation();
-
-		if (transaction.isPresent())
-			return transaction.get().getConnection();
-
-		try {
-			return getDataSource().getConnection();
-		} catch (SQLException e) {
-			throw new DatabaseException("Unable to acquire database connection", e);
-		}
-	}
-
-	@NonNull
-	protected DataSource getDataSource() {
+	DataSource getDataSource() {
 		return this.dataSource;
 	}
 
 	@NonNull
-	protected InstanceProvider getInstanceProvider() {
+	InstanceProvider getInstanceProvider() {
 		return this.instanceProvider;
 	}
 
 	@NonNull
-	protected PreparedStatementBinder getPreparedStatementBinder() {
+	private PreparedStatementBinder getPreparedStatementBinder() {
 		return this.preparedStatementBinder;
 	}
 
@@ -3804,12 +3799,12 @@ public final class Database {
 	}
 
 	@NonNull
-	protected ResultSetMapper getResultSetMapper() {
+	ResultSetMapper getResultSetMapper() {
 		return this.resultSetMapper;
 	}
 
 	@NonNull
-	protected StatementLogger getStatementLogger() {
+	private StatementLogger getStatementLogger() {
 		return this.statementLogger;
 	}
 
@@ -3824,46 +3819,46 @@ public final class Database {
 	}
 
 	@NonNull
-	protected DatabaseOperationSupportStatus getExecuteLargeBatchSupported() {
+	private DatabaseOperationSupportStatus getExecuteLargeBatchSupported() {
 		return this.executeLargeBatchSupported;
 	}
 
-	protected void setExecuteLargeBatchSupported(@NonNull DatabaseOperationSupportStatus executeLargeBatchSupported) {
+	private void setExecuteLargeBatchSupported(@NonNull DatabaseOperationSupportStatus executeLargeBatchSupported) {
 		requireNonNull(executeLargeBatchSupported);
 		this.executeLargeBatchSupported = executeLargeBatchSupported;
 	}
 
 	@NonNull
-	protected DatabaseOperationSupportStatus getExecuteLargeUpdateSupported() {
+	private DatabaseOperationSupportStatus getExecuteLargeUpdateSupported() {
 		return this.executeLargeUpdateSupported;
 	}
 
-	protected void setExecuteLargeUpdateSupported(@NonNull DatabaseOperationSupportStatus executeLargeUpdateSupported) {
+	private void setExecuteLargeUpdateSupported(@NonNull DatabaseOperationSupportStatus executeLargeUpdateSupported) {
 		requireNonNull(executeLargeUpdateSupported);
 		this.executeLargeUpdateSupported = executeLargeUpdateSupported;
 	}
 
 	@NonNull
-	protected Object generateId() {
+	Object generateId() {
 		// "Unique" keys
 		return this.defaultIdGenerator.incrementAndGet();
 	}
 
 	@FunctionalInterface
-	protected interface DatabaseOperation {
+	private interface DatabaseOperation {
 		@NonNull
 		DatabaseOperationResult perform(@NonNull PreparedStatement preparedStatement) throws Exception;
 	}
 
 	@FunctionalInterface
-	protected interface PreparedStatementFactory {
+	private interface PreparedStatementFactory {
 		@NonNull
 		PreparedStatement prepare(@NonNull Connection connection,
 															@NonNull StatementContext<?> statementContext) throws SQLException;
 	}
 
 	@FunctionalInterface
-	protected interface PreparedStatementBindingOperation {
+	private interface PreparedStatementBindingOperation {
 		void perform(@NonNull PreparedStatement preparedStatement) throws Exception;
 	}
 
