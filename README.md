@@ -816,7 +816,7 @@ In the case of user-defined types and Records, the standard [`ResultSetMapper`](
 
 JavaBean and Record mapping require at least one selected column to match a writable property or record component. If no selected columns match, Pyranid raises a [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) instead of returning an object with all default values. Use column aliases or a custom [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) when the default property matching is not appropriate.
 
-The default [`InstanceProvider`](https://javadoc.pyranid.com/com/pyranid/InstanceProvider.html) uses public constructors and the standard mapper uses public JavaBean accessors. Define mapped beans, records, constructors, getters, and setters as public. To map intentionally non-public types, provide an application-owned `InstanceProvider` that can instantiate them.
+The default [`InstanceProvider`](https://javadoc.pyranid.com/com/pyranid/InstanceProvider.html) uses public constructors and the standard mapper uses public JavaBean accessors. Define mapped beans, records, constructors, getters, and setters as public. An application-owned `InstanceProvider` can instantiate an intentionally non-public record. Mapping a non-public JavaBean generally requires a custom [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html), because the standard mapper invokes the bean's setters itself.
 
 By default, column names are assumed to be separated by `_` characters and are mapped to their camel-case equivalent.  For example:
 
