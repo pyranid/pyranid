@@ -54,9 +54,12 @@ import static java.util.Objects.requireNonNull;
 public final class Transaction {
 	@NonNull
 	private static final AtomicLong ID_GENERATOR;
+	@NonNull
+	private static final Logger LOGGER;
 
 	static {
 		ID_GENERATOR = new AtomicLong(0);
+		LOGGER = Logger.getLogger(Transaction.class.getName());
 	}
 
 	@NonNull
@@ -77,9 +80,6 @@ public final class Transaction {
 	private final List<@NonNull Consumer<TransactionResult>> postTransactionOperations;
 	@NonNull
 	private final ReentrantLock connectionLock;
-	@NonNull
-	private final Logger logger;
-
 	@NonNull
 	private final AtomicBoolean rollbackOnly;
 	@NonNull
@@ -134,7 +134,6 @@ public final class Transaction {
 		this.readOnlyWasChanged = new AtomicBoolean(false);
 		this.postTransactionOperations = new CopyOnWriteArrayList();
 		this.connectionLock = new ReentrantLock();
-		this.logger = Logger.getLogger(Transaction.class.getName());
 	}
 
 	@Override
@@ -398,18 +397,18 @@ public final class Transaction {
 
 		try {
 			if (!hasConnection()) {
-				logger.finer("Transaction has no connection, so nothing to commit");
+				LOGGER.finer("Transaction has no connection, so nothing to commit");
 				return;
 			}
 
-			logger.finer("Committing transaction...");
+			LOGGER.finer("Committing transaction...");
 
 			long startTime = nanoTime();
 
 			try {
 				getConnection().commit();
 				getMetricsCollectorDispatcher().didCommitPhysicalTransaction(this, getDatabaseType(), Duration.ofNanos(nanoTime() - startTime));
-				logger.finer("Transaction committed.");
+				LOGGER.finer("Transaction committed.");
 			} catch (SQLException e) {
 				DatabaseException wrapped = databaseException("Unable to commit transaction", e);
 				getMetricsCollectorDispatcher().didFailToCommitPhysicalTransaction(this, getDatabaseType(), Duration.ofNanos(nanoTime() - startTime), wrapped);
@@ -425,18 +424,18 @@ public final class Transaction {
 
 		try {
 			if (!hasConnection()) {
-				logger.finer("Transaction has no connection, so nothing to roll back");
+				LOGGER.finer("Transaction has no connection, so nothing to roll back");
 				return;
 			}
 
-			logger.finer("Rolling back transaction...");
+			LOGGER.finer("Rolling back transaction...");
 
 			long startTime = nanoTime();
 
 			try {
 				getConnection().rollback();
 				getMetricsCollectorDispatcher().didRollbackPhysicalTransaction(this, getDatabaseType(), Duration.ofNanos(nanoTime() - startTime));
-				logger.finer("Transaction rolled back.");
+				LOGGER.finer("Transaction rolled back.");
 			} catch (SQLException e) {
 				DatabaseException wrapped = databaseException("Unable to roll back transaction", e);
 				getMetricsCollectorDispatcher().didFailToRollbackPhysicalTransaction(this, getDatabaseType(), Duration.ofNanos(nanoTime() - startTime), wrapped);
@@ -798,7 +797,7 @@ public final class Transaction {
 		try {
 			this.databaseType = requireNonNull(this.databaseTypeResolver.apply(connection));
 		} catch (Throwable t) {
-			this.logger.log(Level.FINE, "Unable to determine database type from transaction connection", t);
+			LOGGER.log(Level.FINE, "Unable to determine database type from transaction connection", t);
 		}
 	}
 
