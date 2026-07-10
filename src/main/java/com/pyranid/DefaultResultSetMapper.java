@@ -37,7 +37,6 @@ import java.sql.Array;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
-import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.DateTimeException;
@@ -112,7 +111,6 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	@NonNull
 	private final Boolean planCachingEnabled;
 	private final int planCacheCapacity;
-	private final int preferredColumnMapperCacheCapacity;
 	// Enables faster lookup of CustomColumnMapper instances by remembering which TargetType they've been used with before.
 	@NonNull
 	private final ClassValue<List<CustomColumnMapper>> customColumnMappersByRawClassCache =
@@ -120,14 +118,6 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				@Override
 				protected List<CustomColumnMapper> computeValue(Class<?> type) {
 					return computeCustomColumnMappersFor(TargetType.of(type));
-				}
-			};
-	@NonNull
-	private final ClassValue<Map<PreferredColumnMapperKey, CustomColumnMapper>> preferredColumnMapperBySourceClass =
-			new ClassValue<>() {
-				@Override
-				protected Map<PreferredColumnMapperKey, CustomColumnMapper> computeValue(Class<?> type) {
-					return createCache(DefaultResultSetMapper.this.preferredColumnMapperCacheCapacity);
 				}
 			};
 	@NonNull
@@ -333,11 +323,6 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		if (mappers.isEmpty())
 			return CustomMappingOutcome.notApplied();
 
-		Class<?> sourceClass = resultSetValue.getClass();
-		PreferredColumnMapperKey preferredKey = preferredColumnMapperKeyFor(targetType);
-		Map<PreferredColumnMapperKey, CustomColumnMapper> preferredByTargetType =
-				preferredKey == null ? null : getPreferredColumnMapperCacheForSourceClass(sourceClass);
-
 		for (CustomColumnMapper mapper : mappers) {
 			CustomColumnMapper.MappingResult mappingResult;
 
@@ -348,8 +333,6 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			}
 
 			if (mappingApplied(mappingResult)) {
-				if (preferredByTargetType != null && preferredKey != null)
-					preferredByTargetType.put(preferredKey, mapper);
 				return CustomMappingOutcome.applied(mappedValue(mappingResult).orElse(null));
 			}
 		}
@@ -510,9 +493,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		for (WritableProperty writableProperty : determineWritableProperties(resultClass)) {
 			String propertyName = writableProperty.getName();
-			Set<String> baseNames = columnLabelAliasesByPropertyName.get(propertyName);
-			if (baseNames == null || baseNames.isEmpty())
-				baseNames = Set.of(propertyName);
+			Set<String> baseNames = new HashSet<>();
+			baseNames.add(propertyName);
+			baseNames.addAll(columnLabelAliasesByPropertyName.getOrDefault(propertyName, Set.of()));
 
 			Set<String> normalized = new HashSet<>();
 			for (String baseName : baseNames)
@@ -540,9 +523,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		for (RecordComponent recordComponent : determineRecordComponents(resultClass)) {
 			String propertyName = recordComponent.getName();
-			Set<String> labels = columnLabelAliasesByPropertyName.get(propertyName);
-			if (labels == null || labels.isEmpty())
-				labels = databaseColumnNamesForPropertyName(propertyName);
+			Set<String> labels = new HashSet<>(databaseColumnNamesForPropertyName(propertyName));
+
+			for (String alias : columnLabelAliasesByPropertyName.getOrDefault(propertyName, Set.of()))
+				labels.addAll(databaseColumnNamesForPropertyName(alias));
 
 			labelsByComponentName.put(propertyName, Collections.unmodifiableSet(labels));
 		}
@@ -554,10 +538,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(builder);
 
 		this.normalizationLocale = requireNonNull(builder.normalizationLocale);
-		this.customColumnMappers = Collections.unmodifiableList(requireNonNull(builder.customColumnMappers));
+		this.customColumnMappers = List.copyOf(requireNonNull(builder.customColumnMappers));
 		this.planCachingEnabled = requireNonNull(builder.planCachingEnabled);
 
-		this.preferredColumnMapperCacheCapacity = builder.preferredColumnMapperCacheCapacity;
 		this.planCacheCapacity = builder.planCacheCapacity;
 		this.schemaSignatureByResultSetMetaData = new WeakHashMap<>();
 		this.schemaSignatureByResultSetMetaDataLock = new ReentrantLock();
@@ -2600,7 +2583,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		public static <T> T tryGet(ResultSet rs, int col, Class<T> cls) throws SQLException {
 			try {
 				return rs.getObject(col, cls);
-			} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
+			} catch (SQLException | AbstractMethodError e) {
 				return null;
 			}
 		}
@@ -2694,8 +2677,13 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		public static LocalDateTime asLocalDateTime(ResultSet rs, int col, StatementContext<?> ctx, boolean withTz) throws SQLException {
-			LocalDateTime ldt = tryGet(rs, col, LocalDateTime.class);
-			if (ldt != null) return ldt;
+			if (withTz) {
+				OffsetDateTime odt = tryGet(rs, col, OffsetDateTime.class);
+				if (odt != null) return odt.atZoneSameInstant(ctx.getTimeZone()).toLocalDateTime();
+			} else {
+				LocalDateTime ldt = tryGet(rs, col, LocalDateTime.class);
+				if (ldt != null) return ldt;
+			}
 
 			Object raw = rs.getObject(col);
 			if (raw == null) return null;
@@ -2967,8 +2955,6 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		// Precompute property metadata for this class
 		Map<String, TargetType> propertyTargetTypes = determinePropertyTargetTypes(resultClass);
-		Map<String, Set<String>> aliasByProp = determineColumnLabelAliasesByPropertyName(resultClass);
-
 		final boolean isRecord = resultClass.isRecord();
 		final MethodHandles.Lookup lookup = MethodHandles.lookup();
 
@@ -2995,11 +2981,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		// Precompute label -> properties to avoid scanning all properties per column
 		Map<String, List<String>> propertiesByLabel = new HashMap<>(allProps.size() * 2);
+		Map<String, Set<String>> labelsByProperty = isRecord
+				? determineColumnLabelsByRecordComponentName(resultClass)
+				: determineNormalizedColumnLabelsByPropertyName(resultClass);
 		for (String prop : allProps) {
-			Set<String> labels = new HashSet<>();
-			Set<String> anno = aliasByProp.get(prop);
-			if (anno != null) labels.addAll(anno);
-			labels.addAll(databaseColumnNamesForPropertyName(prop));
+			Set<String> labels = labelsByProperty.getOrDefault(prop, databaseColumnNamesForPropertyName(prop));
 
 			for (String label : labels)
 				propertiesByLabel.computeIfAbsent(label, labelKey -> new ArrayList<>(1)).add(prop);
@@ -3112,9 +3098,6 @@ class DefaultResultSetMapper implements ResultSetMapper {
 							return outcome.getValue();
 					}
 
-					if (rawTargetClassBoxed.isInstance(raw))
-						return raw;
-
 					return convertResultSetValueToTargetType(cctx, raw, targetTypeFinal)
 							.orElse(raw);
 				};
@@ -3137,56 +3120,6 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	@NonNull
 	protected Boolean getPlanCachingEnabled() {
 		return this.planCachingEnabled;
-	}
-
-	@NonNull
-	protected Map<@NonNull PreferredColumnMapperKey, @NonNull CustomColumnMapper> getPreferredColumnMapperCacheForSourceClass(@NonNull Class<?> sourceClass) {
-		requireNonNull(sourceClass);
-		return this.preferredColumnMapperBySourceClass.get(sourceClass);
-	}
-
-	@Nullable
-	private PreferredColumnMapperKey preferredColumnMapperKeyFor(@NonNull TargetType targetType) {
-		requireNonNull(targetType);
-
-		if (!targetType.getTypeArguments().isEmpty())
-			return null;
-
-		return PreferredColumnMapperKey.of(targetType);
-	}
-
-	@ThreadSafe
-	protected static final class PreferredColumnMapperKey {
-		@NonNull
-		private final WeakReference<Class<?>> rawClassRef;
-		private final int rawClassHash;
-
-		private PreferredColumnMapperKey(@NonNull Class<?> rawClass) {
-			requireNonNull(rawClass);
-			this.rawClassRef = new WeakReference<>(rawClass);
-			this.rawClassHash = System.identityHashCode(rawClass);
-		}
-
-		@NonNull
-		static PreferredColumnMapperKey of(@NonNull TargetType targetType) {
-			requireNonNull(targetType);
-			return new PreferredColumnMapperKey(targetType.getRawClass());
-		}
-
-		@Override
-		public boolean equals(Object o) {
-			if (this == o) return true;
-			if (o == null || getClass() != o.getClass()) return false;
-			PreferredColumnMapperKey that = (PreferredColumnMapperKey) o;
-			Class<?> lhs = rawClassRef.get();
-			Class<?> rhs = that.rawClassRef.get();
-			return lhs != null && lhs == rhs;
-		}
-
-		@Override
-		public int hashCode() {
-			return rawClassHash;
-		}
 	}
 
 	@NonNull

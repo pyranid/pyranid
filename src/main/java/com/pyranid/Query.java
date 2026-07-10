@@ -220,7 +220,7 @@ public interface Query {
 	 * <p>
 	 * If called multiple times, the most recent customizer wins. The customizer runs after database-wide statement
 	 * settings and this query's {@link #queryTimeout(Duration)}, {@link #fetchSize(Integer)}, and
-	 * {@link #maxRows(Integer)} settings, so it can override them when needed.
+	 * {@link #maxRows(Integer)} settings, so it can override them when needed. It runs before Pyranid binds parameters.
 	 * <p>
 	 * For dialect-managed streams, Pyranid may apply driver-specific stream settings after this callback
 	 * unless this query explicitly configured {@link #fetchSize(Integer)}.
@@ -426,8 +426,8 @@ public interface Query {
 	List<Long> executeBatch(@NonNull List<@NonNull Map<@NonNull String, @Nullable Object>> parameterGroups);
 
 	/**
-	 * Executes a DML statement that returns a single row (for example, with PostgreSQL/SQLite/MariaDB
-	 * {@code RETURNING} or SQL Server {@code OUTPUT}).
+	 * Executes a DML statement that returns a single row (for example, with PostgreSQL/SQLite {@code RETURNING},
+	 * MariaDB {@code INSERT ... RETURNING}, or SQL Server {@code OUTPUT}).
 	 *
 	 * @param resultType the type to marshal the row to
 	 * @param <T>        the result type
@@ -438,8 +438,8 @@ public interface Query {
 	<T> Optional<T> executeForObject(@NonNull Class<T> resultType);
 
 	/**
-	 * Executes a DML statement that returns multiple rows (for example, with PostgreSQL/SQLite/MariaDB
-	 * {@code RETURNING} or SQL Server {@code OUTPUT}).
+	 * Executes a DML statement that returns multiple rows (for example, with PostgreSQL/SQLite {@code RETURNING},
+	 * MariaDB {@code INSERT ... RETURNING}, or SQL Server {@code OUTPUT}).
 	 *
 	 * @param resultType the type to marshal each row to
 	 * @param <T>        the result type

@@ -42,9 +42,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.OptionalDouble;
-import java.util.OptionalInt;
-import java.util.OptionalLong;
 import java.util.Queue;
 import java.util.Set;
 import java.util.Spliterator;
@@ -121,7 +118,7 @@ public final class Database {
 	@Nullable
 	private final Integer maxRows;
 	@Nullable
-	private final Map<String, ParsedSql> parsedSqlCache;
+	private final Map<ParsedSqlCacheKey, ParsedSql> parsedSqlCache;
 	@NonNull
 	private final AtomicLong defaultIdGenerator;
 	@NonNull
@@ -322,7 +319,8 @@ public final class Database {
 		requireNonNull(transactionOptions);
 		requireNonNull(transactionalOperation);
 
-		Transaction transaction = new Transaction(dataSource, transactionOptions, getMetricsCollectorDispatcher(), peekDatabaseType());
+		Transaction transaction = new Transaction(dataSource, transactionOptions, getMetricsCollectorDispatcher(),
+				peekDatabaseType(), this::getDatabaseType);
 		Deque<Transaction> transactionStack = transactionStackForPush();
 		transactionStack.push(transaction);
 		boolean committed = false;
@@ -452,6 +450,8 @@ public final class Database {
 				if (thrown != null) {
 					thrown.addSuppressed(cleanupFailure);
 				} else if (cleanupFailure instanceof RuntimeException) {
+					if (committed && cleanupFailure instanceof DatabaseException)
+						((DatabaseException) cleanupFailure).markTransactionOutcomeCommitted();
 					throw (RuntimeException) cleanupFailure;
 				} else if (cleanupFailure instanceof Error) {
 					throw (Error) cleanupFailure;
@@ -588,6 +588,11 @@ public final class Database {
 			try {
 				return TransactionRetryResult.of(transaction(transactionOptions, transactionalOperation), priorFailures);
 			} catch (DatabaseException e) {
+				if (e.isTransactionOutcomeCommitted()) {
+					suppressPriorFailures(e, priorFailures);
+					throw e;
+				}
+
 				boolean finalAttempt = attempt == retryPolicy.getMaxAttempts();
 
 				if (finalAttempt) {
@@ -809,14 +814,26 @@ public final class Database {
 
 	@NonNull
 	private static DatabaseException databaseExceptionWithStatementContext(@NonNull StatementContext<?> statementContext,
-																																				@NonNull Throwable cause) {
+																															@NonNull Throwable cause) {
 		requireNonNull(statementContext);
 		requireNonNull(cause);
+
+		if (cause instanceof DatabaseException databaseException && databaseException.areStatementDiagnosticsApplied())
+			return databaseException;
 
 		String message = cause.getMessage();
 
 		if (message == null || message.trim().length() == 0)
 			message = "Database operation failed";
+
+		if (cause instanceof DatabaseException databaseException) {
+			SecureParameterSupport.DiagnosticScrub diagnosticScrub = diagnosticScrubForStatementContext(statementContext);
+
+			if (diagnosticScrub.redactor() == null && diagnosticScrub.needleRenderingFailureDescriptions().isEmpty())
+				return databaseException;
+
+			return databaseExceptionWithStatementContext(statementContext, message, cause, diagnosticScrub);
+		}
 
 		return databaseExceptionWithStatementContext(statementContext, message, cause);
 	}
@@ -830,6 +847,19 @@ public final class Database {
 		requireNonNull(cause);
 
 		SecureParameterSupport.DiagnosticScrub diagnosticScrub = diagnosticScrubForStatementContext(statementContext);
+		return databaseExceptionWithStatementContext(statementContext, message, cause, diagnosticScrub);
+	}
+
+	@NonNull
+	private static DatabaseException databaseExceptionWithStatementContext(@NonNull StatementContext<?> statementContext,
+																															@NonNull String message,
+																															@NonNull Throwable cause,
+																															SecureParameterSupport.@NonNull DiagnosticScrub diagnosticScrub) {
+		requireNonNull(statementContext);
+		requireNonNull(message);
+		requireNonNull(cause);
+		requireNonNull(diagnosticScrub);
+
 		UnaryOperator<String> diagnosticRedactor = diagnosticScrub.redactor();
 
 		// Scrub the RAW message before whitespace-collapsing/truncation: bounding first would break needles
@@ -837,9 +867,13 @@ public final class Database {
 		String scrubbedMessage = diagnosticRedactor == null ? message : diagnosticRedactor.apply(message);
 
 		StatementDiagnostic statementDiagnostic = statementDiagnostic(statementContext);
-		DatabaseException databaseException = new DatabaseException(format("%s [%s]",
-				boundedDiagnosticMessage(scrubbedMessage), statementDiagnostic.diagnostic()), cause,
-				databaseDialectForException(statementContext, cause), diagnosticRedactor);
+		String diagnosticMessage = format("%s [%s]",
+				boundedDiagnosticMessage(scrubbedMessage), statementDiagnostic.diagnostic());
+		DatabaseException databaseException = cause instanceof DatabaseException original
+				? new DatabaseException(diagnosticMessage, original, diagnosticRedactor)
+				: new DatabaseException(diagnosticMessage, cause,
+						databaseDialectForException(statementContext, cause), diagnosticRedactor);
+		databaseException.markStatementDiagnosticsApplied();
 
 		if (statementDiagnostic.parameterRenderingFailure() != null)
 			databaseException.addSuppressed(statementDiagnostic.parameterRenderingFailure());
@@ -1267,23 +1301,6 @@ public final class Database {
 	}
 
 	@Nullable
-	private static Object unwrapOptionalValue(@Nullable Object value) {
-		if (value == null)
-			return null;
-
-		if (value instanceof Optional<?> optional)
-			return optional.orElse(null);
-		if (value instanceof OptionalInt optionalInt)
-			return optionalInt.isPresent() ? optionalInt.getAsInt() : null;
-		if (value instanceof OptionalLong optionalLong)
-			return optionalLong.isPresent() ? optionalLong.getAsLong() : null;
-		if (value instanceof OptionalDouble optionalDouble)
-			return optionalDouble.isPresent() ? optionalDouble.getAsDouble() : null;
-
-		return value;
-	}
-
-	@Nullable
 	private static Throwable closeStatementContextResources(@NonNull StatementContext<?> statementContext,
 																													@Nullable Throwable cleanupFailure) {
 		requireNonNull(statementContext);
@@ -1405,14 +1422,21 @@ public final class Database {
 	}
 
 	@NonNull
-	private ParsedSql getParsedSql(@NonNull String sql) {
+	private ParsedSql getParsedSql(@NonNull String sql,
+															 @NonNull SqlLexicalMode lexicalMode) {
 		requireNonNull(sql);
+		requireNonNull(lexicalMode);
 
 		if (this.parsedSqlCache == null)
-			return parseNamedParameterSql(sql);
+			return parseNamedParameterSql(sql, lexicalMode);
 
-		return this.parsedSqlCache.computeIfAbsent(sql, Database::parseNamedParameterSql);
+		ParsedSqlCacheKey cacheKey = new ParsedSqlCacheKey(sql, lexicalMode);
+		return this.parsedSqlCache.computeIfAbsent(cacheKey,
+				key -> parseNamedParameterSql(key.sql(), key.lexicalMode()));
 	}
+
+	private record ParsedSqlCacheKey(@NonNull String sql,
+																 @NonNull SqlLexicalMode lexicalMode) {}
 
 	/**
 	 * Default internal implementation of {@link Query}.
@@ -1426,11 +1450,13 @@ public final class Database {
 		@NonNull
 		private final String originalSql;
 		@NonNull
-		private final ParsedSql parsedSql;
+		private final ParsedSql standardParsedSql;
 		@NonNull
-		private final List<String> sqlFragments;
-		@NonNull
-		private final List<String> parameterNames;
+		private final ParsedSql mysqlParsedSql;
+		@Nullable
+		private final IllegalArgumentException standardParseFailure;
+		@Nullable
+		private final IllegalArgumentException mysqlParseFailure;
 		@NonNull
 		private final Set<String> distinctParameterNames;
 		@NonNull
@@ -1460,11 +1486,38 @@ public final class Database {
 			this.database = database;
 			this.originalSql = sql;
 
-			ParsedSql parsedSql = database.getParsedSql(sql);
-			this.parsedSql = parsedSql;
-			this.sqlFragments = parsedSql.sqlFragments;
-			this.parameterNames = parsedSql.parameterNames;
-			this.distinctParameterNames = parsedSql.distinctParameterNames;
+			ParsedSql standardParsedSql = null;
+			ParsedSql mysqlParsedSql = null;
+			IllegalArgumentException standardParseFailure = null;
+			IllegalArgumentException mysqlParseFailure = null;
+
+			try {
+				standardParsedSql = database.getParsedSql(sql, SqlLexicalMode.STANDARD);
+			} catch (IllegalArgumentException e) {
+				standardParseFailure = e;
+			}
+
+			if (requiresMySqlLexicalVariant(sql)) {
+				try {
+					mysqlParsedSql = database.getParsedSql(sql, SqlLexicalMode.MYSQL);
+				} catch (IllegalArgumentException e) {
+					mysqlParseFailure = e;
+				}
+			} else {
+				mysqlParsedSql = standardParsedSql;
+				mysqlParseFailure = standardParseFailure;
+			}
+
+			if (standardParsedSql == null && mysqlParsedSql == null)
+				throw requireNonNull(standardParseFailure);
+
+			this.standardParsedSql = standardParsedSql == null ? requireNonNull(mysqlParsedSql) : standardParsedSql;
+			this.mysqlParsedSql = mysqlParsedSql == null ? this.standardParsedSql : mysqlParsedSql;
+			this.standardParseFailure = standardParseFailure;
+			this.mysqlParseFailure = mysqlParseFailure;
+			Set<String> distinctParameterNames = new HashSet<>(this.standardParsedSql.distinctParameterNames);
+			distinctParameterNames.addAll(this.mysqlParsedSql.distinctParameterNames);
+			this.distinctParameterNames = Set.copyOf(distinctParameterNames);
 
 			this.bindings = new LinkedHashMap<>(Math.max(8, this.distinctParameterNames.size()));
 			this.preparedStatementCustomizer = null;
@@ -1748,17 +1801,20 @@ public final class Database {
 			requireNonNull(bindings);
 			requireNonNull(statementId);
 
-			List<String> sqlFragments = sqlFragmentsForDatabaseType();
+			ParsedSql parsedSql = parsedSqlForDatabaseType();
+			List<String> parameterNames = parsedSql.parameterNames;
+			List<String> sqlFragments = sqlFragmentsForDatabaseType(parsedSql);
+			validateBindingsForParsedSql(bindings, parsedSql);
 
-			if (this.parameterNames.isEmpty())
+			if (parameterNames.isEmpty())
 				return new PreparedQuery(Statement.of(statementId, sqlFragments.get(0)), new Object[0]);
 
-			StringBuilder sql = new StringBuilder(this.originalSql.length() + this.parameterNames.size() * 2);
+			StringBuilder sql = new StringBuilder(this.originalSql.length() + parameterNames.size() * 2);
 			List<String> missingParameterNames = null;
-			List<Object> parameters = new ArrayList<>(this.parameterNames.size());
+			List<Object> parameters = new ArrayList<>(parameterNames.size());
 
-			for (int i = 0; i < this.parameterNames.size(); ++i) {
-				String parameterName = this.parameterNames.get(i);
+			for (int i = 0; i < parameterNames.size(); ++i) {
+				String parameterName = parameterNames.get(i);
 				sql.append(sqlFragments.get(i));
 
 				if (!bindings.containsKey(parameterName)) {
@@ -1784,7 +1840,9 @@ public final class Database {
 					appendPlaceholders(sql, elements.length);
 
 					for (int j = 0; j < elements.length; ++j) {
-						Object element = unwrapOptionalValue(elements[j]);
+						SecureParameterSupport.SecureParameterUnwrapResult elementUnwrapResult =
+								SecureParameterSupport.unwrapSecureAndOptionalParameterWithMetadata(elements[j]);
+						Object element = elementUnwrapResult.value();
 
 						if (element == null)
 							throw new IllegalArgumentException(format(
@@ -1792,7 +1850,12 @@ public final class Database {
 											+ "SQL IN does not match NULL values; use an explicit IS NULL predicate instead.",
 									parameterName, this.originalSql, j));
 
-						parameters.add(secureParameter == null ? element : Parameters.secure(element, SecureParameterSupport.maskOf(secureParameter)));
+						SecureParameter effectiveSecureParameter = secureParameter == null
+								? elementUnwrapResult.secureParameter()
+								: secureParameter;
+						parameters.add(effectiveSecureParameter == null
+								? element
+								: Parameters.secure(element, SecureParameterSupport.maskOf(effectiveSecureParameter)));
 					}
 				} else if (value instanceof Collection<?>) {
 					throw new IllegalArgumentException(format(
@@ -1821,14 +1884,16 @@ public final class Database {
 
 		@NonNull
 		private String buildPlaceholderSql() {
-			List<String> sqlFragments = sqlFragmentsForDatabaseType();
+			ParsedSql parsedSql = parsedSqlForDatabaseType();
+			List<String> parameterNames = parsedSql.parameterNames;
+			List<String> sqlFragments = sqlFragmentsForDatabaseType(parsedSql);
 
-			if (this.parameterNames.isEmpty())
+			if (parameterNames.isEmpty())
 				return sqlFragments.get(0);
 
-			StringBuilder sql = new StringBuilder(this.originalSql.length() + this.parameterNames.size() * 2);
+			StringBuilder sql = new StringBuilder(this.originalSql.length() + parameterNames.size() * 2);
 
-			for (int i = 0; i < this.parameterNames.size(); ++i)
+			for (int i = 0; i < parameterNames.size(); ++i)
 				sql.append(sqlFragments.get(i)).append('?');
 
 			sql.append(sqlFragments.get(sqlFragments.size() - 1));
@@ -1836,14 +1901,60 @@ public final class Database {
 		}
 
 		@NonNull
-		private List<String> sqlFragmentsForDatabaseType() {
-			if (!this.parsedSql.hasQuestionMarkOperators)
-				return this.sqlFragments;
+		private List<String> sqlFragmentsForDatabaseType(@NonNull ParsedSql parsedSql) {
+			requireNonNull(parsedSql);
+
+			if (!parsedSql.hasQuestionMarkOperators)
+				return parsedSql.sqlFragments;
 
 			return this.database.getDatabaseDialect().sqlFragmentsForOperators(
-					this.parsedSql.hasQuestionMarkOperators,
-					this.sqlFragments,
-					this.parsedSql.questionMarkOperatorFragmentIndexes);
+					parsedSql.hasQuestionMarkOperators,
+					parsedSql.sqlFragments,
+					parsedSql.questionMarkOperatorFragmentIndexes);
+		}
+
+		@NonNull
+		private ParsedSql parsedSqlForDatabaseType() {
+			if (this.standardParseFailure == null && this.mysqlParseFailure == null
+					&& this.standardParsedSql.equivalentTo(this.mysqlParsedSql))
+				return this.standardParsedSql;
+
+			DatabaseType databaseType;
+			Optional<Transaction> transaction = this.database.currentTransactionForDatabaseOperation();
+
+			if (transaction.isPresent())
+				databaseType = this.database.getDatabaseType(transaction.get().getConnection());
+			else
+				databaseType = this.database.getDatabaseType();
+
+			if (databaseType == DatabaseType.MYSQL || databaseType == DatabaseType.MARIA_DB) {
+				if (this.mysqlParseFailure != null)
+					throw this.mysqlParseFailure;
+
+				return this.mysqlParsedSql;
+			}
+
+			if (this.standardParseFailure != null)
+				throw this.standardParseFailure;
+
+			return this.standardParsedSql;
+		}
+
+		private void validateBindingsForParsedSql(@NonNull Map<String, Object> bindings,
+																					 @NonNull ParsedSql parsedSql) {
+			requireNonNull(bindings);
+			requireNonNull(parsedSql);
+
+			for (String bindingName : bindings.keySet())
+				if (!parsedSql.distinctParameterNames.contains(bindingName))
+					throw new IllegalArgumentException(format(
+							"Named parameter '%s' is not valid for the detected database SQL syntax. SQL: %s",
+							bindingName, this.originalSql));
+		}
+
+		private static boolean requiresMySqlLexicalVariant(@NonNull String sql) {
+			requireNonNull(sql);
+			return sql.indexOf('#') >= 0 || sql.indexOf("\\'") >= 0;
 		}
 
 		private void appendPlaceholders(@NonNull StringBuilder sql,
@@ -1900,11 +2011,30 @@ public final class Database {
 			this.parameterNames = parameterNames;
 			this.distinctParameterNames = distinctParameterNames;
 		}
+
+		private boolean equivalentTo(@NonNull ParsedSql other) {
+			requireNonNull(other);
+			return this.sqlFragments.equals(other.sqlFragments)
+					&& this.questionMarkOperatorFragmentIndexes.equals(other.questionMarkOperatorFragmentIndexes)
+					&& this.parameterNames.equals(other.parameterNames);
+		}
+	}
+
+	enum SqlLexicalMode {
+		STANDARD,
+		MYSQL
 	}
 
 	@NonNull
 	static ParsedSql parseNamedParameterSql(@NonNull String sql) {
+		return parseNamedParameterSql(sql, SqlLexicalMode.STANDARD);
+	}
+
+	@NonNull
+	static ParsedSql parseNamedParameterSql(@NonNull String sql,
+																					@NonNull SqlLexicalMode lexicalMode) {
 		requireNonNull(sql);
+		requireNonNull(lexicalMode);
 
 		List<String> sqlFragments = new ArrayList<>();
 		StringBuilder sqlFragment = new StringBuilder(sql.length());
@@ -1927,9 +2057,28 @@ public final class Database {
 		int blockCommentStartIndex = -1;
 		String dollarQuoteDelimiter = null;
 		int dollarQuoteStartIndex = -1;
+		Character oracleQuoteClosingDelimiter = null;
+		int oracleQuoteStartIndex = -1;
 		int previousMeaningfulIndex = -1;
 
 		for (int i = 0; i < sql.length(); ) {
+			if (oracleQuoteClosingDelimiter != null) {
+				char c = sql.charAt(i);
+				sqlFragment.append(c);
+
+				if (c == oracleQuoteClosingDelimiter && i + 1 < sql.length() && sql.charAt(i + 1) == '\'') {
+					sqlFragment.append('\'');
+					i += 2;
+					oracleQuoteClosingDelimiter = null;
+					oracleQuoteStartIndex = -1;
+					previousMeaningfulIndex = i - 1;
+				} else {
+					++i;
+				}
+
+				continue;
+			}
+
 			if (dollarQuoteDelimiter != null) {
 				if (sql.startsWith(dollarQuoteDelimiter, i)) {
 					sqlFragment.append(dollarQuoteDelimiter);
@@ -2056,6 +2205,13 @@ public final class Database {
 			}
 
 			// Not inside string/comment
+			if (lexicalMode == SqlLexicalMode.MYSQL && c == '#') {
+				sqlFragment.append(c);
+				++i;
+				inLineComment = true;
+				continue;
+			}
+
 			if (c == '-' && i + 1 < sql.length() && sql.charAt(i + 1) == '-') {
 				sqlFragment.append("--");
 				i += 2;
@@ -2091,9 +2247,20 @@ public final class Database {
 				continue;
 			}
 
+			if ((c == 'Q' || c == 'q') && !isIdentifierContinuation(sql, i)
+					&& i + 2 < sql.length() && sql.charAt(i + 1) == '\''
+					&& !Character.isWhitespace(sql.charAt(i + 2)) && sql.charAt(i + 2) != '\'') {
+				char openingDelimiter = sql.charAt(i + 2);
+				oracleQuoteClosingDelimiter = oracleQuoteClosingDelimiter(openingDelimiter);
+				oracleQuoteStartIndex = i;
+				sqlFragment.append(c).append('\'').append(openingDelimiter);
+				i += 3;
+				continue;
+			}
+
 			if (c == '\'') {
 				inSingleQuote = true;
-				inSingleQuoteEscapesBackslash = false;
+				inSingleQuoteEscapesBackslash = lexicalMode == SqlLexicalMode.MYSQL;
 				singleQuoteStartIndex = i;
 				sqlFragment.append(c);
 				++i;
@@ -2182,13 +2349,24 @@ public final class Database {
 
 		validateParserTerminalState(sql, inSingleQuote, singleQuoteStartIndex, inDoubleQuote, doubleQuoteStartIndex,
 				inBacktickQuote, backtickQuoteStartIndex, inBracketQuote, bracketQuoteStartIndex,
-				blockCommentDepth, blockCommentStartIndex, dollarQuoteDelimiter, dollarQuoteStartIndex);
+				blockCommentDepth, blockCommentStartIndex, dollarQuoteDelimiter, dollarQuoteStartIndex,
+				oracleQuoteClosingDelimiter, oracleQuoteStartIndex);
 
 		sqlFragments.add(sqlFragment.toString());
 		questionMarkOperatorFragmentIndexes.add(List.copyOf(currentQuestionMarkOperatorIndexes));
 
 		return new ParsedSql(List.copyOf(sqlFragments), List.copyOf(questionMarkOperatorFragmentIndexes),
 				List.copyOf(parameterNames), Set.copyOf(distinctParameterNames));
+	}
+
+	private static char oracleQuoteClosingDelimiter(char openingDelimiter) {
+		return switch (openingDelimiter) {
+			case '[' -> ']';
+			case '{' -> '}';
+			case '(' -> ')';
+			case '<' -> '>';
+			default -> openingDelimiter;
+		};
 	}
 
 	@Nullable
@@ -2257,9 +2435,27 @@ public final class Database {
 		if (startIndex <= 0)
 			return false;
 
-		char previousChar = sql.charAt(startIndex - 1);
-		return Character.isJavaIdentifierPart(previousChar)
-				|| previousChar == ')'
+		int previousIndex = startIndex - 1;
+
+		while (previousIndex >= 0 && Character.isWhitespace(sql.charAt(previousIndex)))
+			--previousIndex;
+
+		if (previousIndex < 0)
+			return false;
+
+		char previousChar = sql.charAt(previousIndex);
+		if (Character.isJavaIdentifierPart(previousChar)) {
+			int tokenStartIndex = previousIndex;
+
+			while (tokenStartIndex > 0 && Character.isJavaIdentifierPart(sql.charAt(tokenStartIndex - 1)))
+				--tokenStartIndex;
+
+			String previousToken = sql.substring(tokenStartIndex, previousIndex + 1).toUpperCase(Locale.ROOT);
+			return !Set.of("SELECT", "FROM", "JOIN", "AS", "INTO", "UPDATE", "TABLE", "BY", "ORDER", "GROUP")
+					.contains(previousToken);
+		}
+
+		return previousChar == ')'
 				|| previousChar == ']'
 				|| previousChar == '"';
 	}
@@ -2275,8 +2471,10 @@ public final class Database {
 																									int bracketQuoteStartIndex,
 																									int blockCommentDepth,
 																									int blockCommentStartIndex,
-																									@Nullable String dollarQuoteDelimiter,
-																									int dollarQuoteStartIndex) {
+																														@Nullable String dollarQuoteDelimiter,
+																														int dollarQuoteStartIndex,
+																														@Nullable Character oracleQuoteClosingDelimiter,
+																														int oracleQuoteStartIndex) {
 		requireNonNull(sql);
 
 		if (inSingleQuote)
@@ -2291,6 +2489,8 @@ public final class Database {
 			throw unterminatedSqlConstructException("block comment", blockCommentStartIndex, sql);
 		if (dollarQuoteDelimiter != null)
 			throw unterminatedSqlConstructException(format("dollar-quoted string %s", dollarQuoteDelimiter), dollarQuoteStartIndex, sql);
+		if (oracleQuoteClosingDelimiter != null)
+			throw unterminatedSqlConstructException("Oracle alternative-quoted string", oracleQuoteStartIndex, sql);
 	}
 
 	@NonNull
@@ -2866,7 +3066,8 @@ public final class Database {
 
 	/**
 	 * Executes a SQL Data Manipulation Language (DML) statement, such as {@code INSERT}, {@code UPDATE}, or {@code DELETE},
-	 * which returns 0 or 1 rows with database-native syntax such as PostgreSQL/SQLite/MariaDB {@code RETURNING}
+	 * which returns 0 or 1 rows with database-native syntax such as PostgreSQL/SQLite {@code RETURNING},
+	 * MariaDB {@code INSERT ... RETURNING},
 	 * or SQL Server {@code OUTPUT}.
 	 *
 	 * @param sql              the SQL query to execute
@@ -2888,7 +3089,8 @@ public final class Database {
 
 	/**
 	 * Executes a SQL Data Manipulation Language (DML) statement, such as {@code INSERT}, {@code UPDATE}, or {@code DELETE},
-	 * which returns 0 or 1 rows with database-native syntax such as PostgreSQL/SQLite/MariaDB {@code RETURNING}
+	 * which returns 0 or 1 rows with database-native syntax such as PostgreSQL/SQLite {@code RETURNING},
+	 * MariaDB {@code INSERT ... RETURNING},
 	 * or SQL Server {@code OUTPUT}.
 	 *
 	 * @param statement        the SQL statement to execute
@@ -2924,7 +3126,8 @@ public final class Database {
 
 	/**
 	 * Executes a SQL Data Manipulation Language (DML) statement, such as {@code INSERT}, {@code UPDATE}, or {@code DELETE},
-	 * which returns any number of rows with database-native syntax such as PostgreSQL/SQLite/MariaDB {@code RETURNING}
+	 * which returns any number of rows with database-native syntax such as PostgreSQL/SQLite {@code RETURNING},
+	 * MariaDB {@code INSERT ... RETURNING},
 	 * or SQL Server {@code OUTPUT}.
 	 *
 	 * @param sql              the SQL to execute
@@ -2945,7 +3148,8 @@ public final class Database {
 
 	/**
 	 * Executes a SQL Data Manipulation Language (DML) statement, such as {@code INSERT}, {@code UPDATE}, or {@code DELETE},
-	 * which returns any number of rows with database-native syntax such as PostgreSQL/SQLite/MariaDB {@code RETURNING}
+	 * which returns any number of rows with database-native syntax such as PostgreSQL/SQLite {@code RETURNING},
+	 * MariaDB {@code INSERT ... RETURNING},
 	 * or SQL Server {@code OUTPUT}.
 	 *
 	 * @param statement        the SQL statement to execute
@@ -3191,6 +3395,8 @@ public final class Database {
 	 * {@link Connection#setAutoCommit(boolean)}, {@link Connection#setCatalog(String)}, {@link Connection#setSchema(String)}, and
 	 * {@link Connection#setNetworkTimeout(java.util.concurrent.Executor, int)} throw {@link IllegalStateException}. Use
 	 * Pyranid transaction APIs instead.
+	 * {@link Connection#unwrap(Class)} may return a guarded, callback-scoped proxy for a vendor interface, but never a
+	 * castable physical {@link Connection}; the proxy blocks lifecycle methods and expires with the callback.
 	 * JDBC objects created from this handle are also guarded: {@link java.sql.Statement#getConnection()} and
 	 * {@link java.sql.DatabaseMetaData#getConnection()} return the Pyranid-managed handle, and
 	 * {@link ResultSet#getStatement()} returns a guarded statement. Guarded statements, resultsets, and metadata refuse
@@ -3511,6 +3717,9 @@ public final class Database {
 			} catch (DatabaseException e) {
 				thrown = e;
 				throw e;
+			} catch (Error e) {
+				thrown = e;
+				throw e;
 			} catch (Exception e) {
 				DatabaseException wrapped = databaseExceptionWithRawConnectionContext(connection, e);
 				thrown = wrapped;
@@ -3555,6 +3764,9 @@ public final class Database {
 				acquiredConnection = true;
 				return rawConnectionOperation.perform(connection);
 			} catch (DatabaseException e) {
+				thrown = e;
+				throw e;
+			} catch (Error e) {
 				thrown = e;
 				throw e;
 			} catch (Exception e) {
@@ -3620,6 +3832,8 @@ public final class Database {
 		Optional<Transaction> transaction = currentTransactionForDatabaseOperation();
 		ReentrantLock connectionLock = transaction.isPresent() ? transaction.get().getConnectionLock() : null;
 		boolean connectionLockAcquired = false;
+		Connection previousDatabaseTypeDetectionConnection = null;
+		boolean databaseTypeDetectionConnectionInstalled = false;
 
 		try {
 			if (connectionLock != null) {
@@ -3649,6 +3863,10 @@ public final class Database {
 			}
 
 			connectionAcquisitionDuration = alreadyHasConnection ? null : Duration.ofNanos(nanoTime() - startTime);
+			previousDatabaseTypeDetectionConnection = this.databaseTypeDetectionConnectionHolder.get();
+			this.databaseTypeDetectionConnectionHolder.set(connection);
+			databaseTypeDetectionConnectionInstalled = true;
+
 			if (!transaction.isPresent()) {
 				connectionHeldStartTime = nanoTime();
 				Duration acquiredDuration = connectionAcquisitionDuration;
@@ -3660,30 +3878,21 @@ public final class Database {
 			startTime = nanoTime();
 
 			try (PreparedStatement preparedStatement = preparedStatementFactory.prepare(connection, statementContext)) {
-				Connection previousDatabaseTypeDetectionConnection = this.databaseTypeDetectionConnectionHolder.get();
-				this.databaseTypeDetectionConnectionHolder.set(connection);
+				preparedStatementBindingOperation.perform(preparedStatement);
+				preparationDuration = Duration.ofNanos(nanoTime() - startTime);
 
-				try {
-					preparedStatementBindingOperation.perform(preparedStatement);
-					preparationDuration = Duration.ofNanos(nanoTime() - startTime);
-
-					getMetricsCollectorDispatcher().willExecuteStatement(statementContext);
-					DatabaseOperationResult databaseOperationResult = databaseOperation.perform(preparedStatement);
-					executionDuration = databaseOperationResult.getExecutionDuration().orElse(null);
-					resultSetMappingDuration = databaseOperationResult.getResultSetMappingDuration().orElse(null);
-					statementResult = databaseOperationResult.getStatementResult();
-					warmDatabaseTypeCacheForMetricsIfNeeded(statementContext);
-				} finally {
-					if (previousDatabaseTypeDetectionConnection == null)
-						this.databaseTypeDetectionConnectionHolder.remove();
-					else
-						this.databaseTypeDetectionConnectionHolder.set(previousDatabaseTypeDetectionConnection);
-				}
+				getMetricsCollectorDispatcher().willExecuteStatement(statementContext);
+				DatabaseOperationResult databaseOperationResult = databaseOperation.perform(preparedStatement);
+				executionDuration = databaseOperationResult.getExecutionDuration().orElse(null);
+				resultSetMappingDuration = databaseOperationResult.getResultSetMappingDuration().orElse(null);
+				statementResult = databaseOperationResult.getStatementResult();
+				warmDatabaseTypeCacheForMetricsIfNeeded(statementContext);
 			}
 		} catch (DatabaseException e) {
-			exception = e;
-			thrown = e;
-			throw e;
+			DatabaseException wrapped = databaseExceptionWithStatementContext(statementContext, e);
+			exception = wrapped;
+			thrown = wrapped;
+			throw wrapped;
 		} catch (Error e) {
 			exception = databaseExceptionWithStatementContext(statementContext, e);
 			thrown = e;
@@ -3697,6 +3906,13 @@ public final class Database {
 			throw wrapped;
 		} finally {
 			Throwable cleanupFailure = null;
+
+			if (databaseTypeDetectionConnectionInstalled) {
+				if (previousDatabaseTypeDetectionConnection == null)
+					this.databaseTypeDetectionConnectionHolder.remove();
+				else
+					this.databaseTypeDetectionConnectionHolder.set(previousDatabaseTypeDetectionConnection);
+			}
 
 			try {
 				cleanupFailure = closeStatementContextResources(statementContext, cleanupFailure);
@@ -3932,6 +4148,8 @@ public final class Database {
 			long startTime = nanoTime();
 			this.openStartTime = startTime;
 			this.database.getMetricsCollectorDispatcher().willOpenStream(this.statementContext);
+			Connection previousDatabaseTypeDetectionConnection = null;
+			boolean databaseTypeDetectionConnectionInstalled = false;
 
 			try {
 				if (this.connectionLock != null) {
@@ -3960,6 +4178,10 @@ public final class Database {
 					}
 				}
 				this.connectionAcquisitionDuration = alreadyHasConnection ? null : Duration.ofNanos(nanoTime() - startTime);
+				previousDatabaseTypeDetectionConnection = this.database.databaseTypeDetectionConnectionHolder.get();
+				this.database.databaseTypeDetectionConnectionHolder.set(this.connection);
+				databaseTypeDetectionConnectionInstalled = true;
+
 				if (this.transaction.isEmpty()) {
 					this.connectionHeldStartTime = nanoTime();
 					MetricsCollectorDispatcher metricsCollectorDispatcher = this.database.getMetricsCollectorDispatcher();
@@ -3973,36 +4195,27 @@ public final class Database {
 				this.databaseStreamState = this.databaseStreamDialect.configureStreamingConnection(requireNonNull(this.connection), this.transaction.isPresent());
 
 				this.preparedStatement = this.databaseStreamDialect.prepareStreamingStatement(requireNonNull(this.connection), this.statementContext);
-				Connection previousDatabaseTypeDetectionConnection = this.database.databaseTypeDetectionConnectionHolder.get();
-				this.database.databaseTypeDetectionConnectionHolder.set(this.connection);
+				this.database.applyPreparedStatementCustomizer(this.statementContext, this.preparedStatement, this.preparedStatementCustomizer);
+				this.databaseStreamDialect.configureStreamingPreparedStatement(this.preparedStatement, this.databaseStreamState,
+						this.transaction.isPresent(), this.queryFetchSizeConfigured);
+				if (this.parameters.size() > 0)
+					this.database.performPreparedStatementBinding(this.statementContext, this.preparedStatement, this.parameters);
+				this.preparationDuration = Duration.ofNanos(nanoTime() - startTime);
 
-				try {
-					this.database.applyPreparedStatementCustomizer(this.statementContext, this.preparedStatement, this.preparedStatementCustomizer);
-					this.databaseStreamDialect.configureStreamingPreparedStatement(this.preparedStatement, this.databaseStreamState,
-							this.transaction.isPresent(), this.queryFetchSizeConfigured);
-					if (this.parameters.size() > 0)
-						this.database.performPreparedStatementBinding(this.statementContext, this.preparedStatement, this.parameters);
-					this.preparationDuration = Duration.ofNanos(nanoTime() - startTime);
-
-					startTime = nanoTime();
-					this.resultSet = this.preparedStatement.executeQuery();
-					this.executionDuration = Duration.ofNanos(nanoTime() - startTime);
-					this.database.warmDatabaseTypeCacheForMetricsIfNeeded(this.statementContext);
-					this.database.getMetricsCollectorDispatcher().didOpenStream(this.statementContext, Duration.ofNanos(nanoTime() - this.openStartTime));
-				} finally {
-					if (previousDatabaseTypeDetectionConnection == null)
-						this.database.databaseTypeDetectionConnectionHolder.remove();
-					else
-						this.database.databaseTypeDetectionConnectionHolder.set(previousDatabaseTypeDetectionConnection);
-				}
+				startTime = nanoTime();
+				this.resultSet = this.preparedStatement.executeQuery();
+				this.executionDuration = Duration.ofNanos(nanoTime() - startTime);
+				this.database.warmDatabaseTypeCacheForMetricsIfNeeded(this.statementContext);
+				this.database.getMetricsCollectorDispatcher().didOpenStream(this.statementContext, Duration.ofNanos(nanoTime() - this.openStartTime));
 			} catch (DatabaseException e) {
-				this.exception = e;
-				this.thrown = e;
+				DatabaseException wrapped = databaseExceptionWithStatementContext(this.statementContext, e);
+				this.exception = wrapped;
+				this.thrown = wrapped;
 				this.openFailed = true;
 				this.database.getMetricsCollectorDispatcher().didFailToOpenStream(this.statementContext, this.database.peekDatabaseType(),
-						Duration.ofNanos(nanoTime() - this.openStartTime), e);
+						Duration.ofNanos(nanoTime() - this.openStartTime), wrapped);
 				close();
-				throw e;
+				throw wrapped;
 			} catch (Exception e) {
 				DatabaseException wrapped = databaseExceptionWithStatementContext(this.statementContext, e);
 				this.exception = wrapped;
@@ -4020,6 +4233,13 @@ public final class Database {
 						Duration.ofNanos(nanoTime() - this.openStartTime), e);
 				close();
 				throw e;
+			} finally {
+				if (databaseTypeDetectionConnectionInstalled) {
+					if (previousDatabaseTypeDetectionConnection == null)
+						this.database.databaseTypeDetectionConnectionHolder.remove();
+					else
+						this.database.databaseTypeDetectionConnectionHolder.set(previousDatabaseTypeDetectionConnection);
+				}
 			}
 		}
 
@@ -4077,22 +4297,13 @@ public final class Database {
 
 			this.hasNextEvaluated = false;
 			long startTime = nanoTime();
+			Connection previousDatabaseTypeDetectionConnection = this.database.databaseTypeDetectionConnectionHolder.get();
+			this.database.databaseTypeDetectionConnectionHolder.set(requireNonNull(this.connection));
 
 			try {
-				Connection previousDatabaseTypeDetectionConnection = this.database.databaseTypeDetectionConnectionHolder.get();
-				this.database.databaseTypeDetectionConnectionHolder.set(requireNonNull(this.connection));
-				T value;
-
-				try {
-					value = this.database.resultSetMapperFor(this.statementContext)
-							.map(this.statementContext, requireNonNull(this.resultSet), this.statementContext.getResultSetRowType().get(), this.database.getInstanceProvider())
-							.orElse(null);
-				} finally {
-					if (previousDatabaseTypeDetectionConnection == null)
-						this.database.databaseTypeDetectionConnectionHolder.remove();
-					else
-						this.database.databaseTypeDetectionConnectionHolder.set(previousDatabaseTypeDetectionConnection);
-				}
+				T value = this.database.resultSetMapperFor(this.statementContext)
+						.map(this.statementContext, requireNonNull(this.resultSet), this.statementContext.getResultSetRowType().get(), this.database.getInstanceProvider())
+						.orElse(null);
 
 				this.resultSetMappingNanos += nanoTime() - startTime;
 				this.rowsConsumed++;
@@ -4106,11 +4317,12 @@ public final class Database {
 				close();
 				throw wrapped;
 			} catch (DatabaseException e) {
-				this.exception = e;
-				this.thrown = e;
-				this.iterationThrowable = e;
+				DatabaseException wrapped = databaseExceptionWithStatementContext(this.statementContext, e);
+				this.exception = wrapped;
+				this.thrown = wrapped;
+				this.iterationThrowable = wrapped;
 				close();
-				throw e;
+				throw wrapped;
 			} catch (RuntimeException e) {
 				this.exception = e;
 				this.thrown = e;
@@ -4124,6 +4336,11 @@ public final class Database {
 				this.iterationThrowable = e;
 				close();
 				throw e;
+			} finally {
+				if (previousDatabaseTypeDetectionConnection == null)
+					this.database.databaseTypeDetectionConnectionHolder.remove();
+				else
+					this.database.databaseTypeDetectionConnectionHolder.set(previousDatabaseTypeDetectionConnection);
 			}
 		}
 
@@ -4455,7 +4672,7 @@ public final class Database {
 		 * This maps to {@link java.sql.Statement#setQueryTimeout(int)}. {@code null} leaves the timeout unset.
 		 * {@link Duration#ZERO} disables the JDBC timeout. Positive sub-second durations are rounded up to one second
 		 * because JDBC accepts whole seconds. Per-query {@link Query#queryTimeout(Duration)} settings override this value,
-		 * and {@link Query#customize(PreparedStatementCustomizer)} runs last.
+		 * and {@link Query#customize(PreparedStatementCustomizer)} can override both settings before parameter binding.
 		 *
 		 * @param queryTimeout timeout to apply by default, or {@code null} to leave unset
 		 * @return this {@code Builder}, for chaining
@@ -4472,7 +4689,8 @@ public final class Database {
 		 * <p>
 		 * This maps to {@link java.sql.Statement#setFetchSize(int)}. {@code null} leaves the fetch size unset. A value
 		 * of {@code 0} uses the driver's default fetch-size behavior. Per-query {@link Query#fetchSize(Integer)}
-		 * settings override this value, and {@link Query#customize(PreparedStatementCustomizer)} runs last.
+		 * settings override this value, and {@link Query#customize(PreparedStatementCustomizer)} can override both
+		 * settings before parameter binding.
 		 *
 		 * @param fetchSize fetch size to apply by default, or {@code null} to leave unset
 		 * @return this {@code Builder}, for chaining
@@ -4489,7 +4707,8 @@ public final class Database {
 		 * <p>
 		 * This maps to {@link java.sql.Statement#setMaxRows(int)}. {@code null} leaves the maximum row count unset. A
 		 * value of {@code 0} disables the JDBC row limit. Per-query {@link Query#maxRows(Integer)} settings override
-		 * this value, and {@link Query#customize(PreparedStatementCustomizer)} runs last.
+		 * this value, and {@link Query#customize(PreparedStatementCustomizer)} can override both settings before parameter
+		 * binding.
 		 *
 		 * @param maxRows maximum rows to apply by default, or {@code null} to leave unset
 		 * @return this {@code Builder}, for chaining

@@ -366,6 +366,63 @@ public class TransactionLifecycleTests {
 	}
 
 	@Test
+	public void testWithSavepointRollbackFailureMarksOuterTransactionRollbackOnly() {
+		Database db = Database.withDataSource(new RollbackSavepointThrowingDataSource(
+				createInMemoryDataSource("savepoint_rollback_failure_marks_outer"), new SQLException("rollback failed")))
+				.build();
+		db.query("CREATE TABLE events (id INT)").execute();
+
+		db.transaction(() -> {
+			Transaction transaction = db.currentTransaction().orElseThrow();
+
+			Assertions.assertThrows(RuntimeException.class, () -> transaction.withSavepoint(() -> {
+				db.query("INSERT INTO events(id) VALUES (1)").execute();
+				throw new RuntimeException("savepoint operation failed");
+			}));
+
+			Assertions.assertTrue(transaction.isRollbackOnly());
+			db.query("INSERT INTO events(id) VALUES (2)").execute();
+		});
+
+		Assertions.assertEquals(0L, db.query("SELECT COUNT(*) FROM events").fetchObject(Long.class).orElseThrow());
+	}
+
+	@Test
+	public void testCreateSavepointWaitCanBeInterrupted() throws Exception {
+		DataSource dataSource = createInMemoryDataSource("savepoint_lock_interrupt");
+		Database db = Database.withDataSource(dataSource).build();
+		Transaction transaction = new Transaction(dataSource, TransactionOptions.DEFAULT,
+				db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
+		AtomicReference<Throwable> failure = new AtomicReference<>();
+		AtomicBoolean interrupted = new AtomicBoolean(false);
+
+		transaction.getConnectionLock().lock();
+		Thread participant = new Thread(() -> {
+			try {
+				transaction.createSavepoint();
+			} catch (Throwable t) {
+				failure.set(t);
+				interrupted.set(Thread.currentThread().isInterrupted());
+			}
+		});
+
+		try {
+			participant.start();
+			awaitQueuedTransactionThread(transaction);
+			participant.interrupt();
+			participant.join(1_000L);
+		} finally {
+			transaction.getConnectionLock().unlock();
+		}
+
+		Assertions.assertFalse(participant.isAlive());
+		Assertions.assertInstanceOf(DatabaseException.class, failure.get());
+		Assertions.assertInstanceOf(InterruptedException.class, failure.get().getCause());
+		Assertions.assertTrue(interrupted.get());
+		Assertions.assertFalse(transaction.hasConnection());
+	}
+
+	@Test
 	public void testWithSavepointSuppressesReleaseFailureAfterRollback() {
 		Database db = Database.withDataSource(new ReleaseSavepointThrowingDataSource(
 				createInMemoryDataSource("savepoint_release_failure_after_rollback"), new SQLException("release failed")))

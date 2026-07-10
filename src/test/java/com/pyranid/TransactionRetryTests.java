@@ -22,6 +22,9 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import javax.sql.DataSource;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
+import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -269,6 +272,26 @@ public class TransactionRetryTests {
 	}
 
 	@Test
+	public void testTransactionWithRetryDoesNotReplayCommittedWorkWhenConnectionCloseFails() {
+		DataSource delegate = createInMemoryDataSource("retry_committed_close_failure");
+		Database setupDatabase = Database.withDataSource(delegate).build();
+		setupDatabase.query("CREATE TABLE events (id INT)").execute();
+
+		Database database = Database.withDataSource(closeFailingDataSource(delegate)).build();
+		AtomicInteger attempts = new AtomicInteger();
+
+		DatabaseException thrown = Assertions.assertThrows(DatabaseException.class, () ->
+				database.transactionWithRetry(retryPolicy(3), () -> {
+					attempts.incrementAndGet();
+					database.query("INSERT INTO events(id) VALUES (1)").execute();
+				}));
+
+		Assertions.assertEquals(1, attempts.get(), "Committed work must never be replayed after cleanup failure");
+		Assertions.assertTrue(thrown.getMessage().contains("Unable to close database connection"));
+		Assertions.assertEquals(1L, setupDatabase.query("SELECT COUNT(*) FROM events").fetchObject(Long.class).orElseThrow());
+	}
+
+	@Test
 	public void testTransactionWithRetryAppliesOptionsEachAttempt() {
 		Database database = database("retry_options");
 		RetryPolicy retryPolicy = retryPolicy(3);
@@ -323,6 +346,38 @@ public class TransactionRetryTests {
 
 	private Database database(String databaseName) {
 		return Database.withDataSource(createInMemoryDataSource(databaseName)).build();
+	}
+
+	private DataSource closeFailingDataSource(@NonNull DataSource delegate) {
+		requireNonNull(delegate);
+
+		return (DataSource) Proxy.newProxyInstance(getClass().getClassLoader(), new Class<?>[]{DataSource.class},
+				(proxy, method, args) -> {
+					Object result;
+
+					try {
+						result = method.invoke(delegate, args);
+					} catch (InvocationTargetException e) {
+						throw e.getCause();
+					}
+
+					if (!(result instanceof Connection connection))
+						return result;
+
+					return Proxy.newProxyInstance(getClass().getClassLoader(), new Class<?>[]{Connection.class},
+							(connectionProxy, connectionMethod, connectionArgs) -> {
+								try {
+									Object connectionResult = connectionMethod.invoke(connection, connectionArgs);
+
+									if ("close".equals(connectionMethod.getName()))
+										throw new SQLException("close failed", "40001");
+
+									return connectionResult;
+								} catch (InvocationTargetException e) {
+									throw e.getCause();
+								}
+							});
+				});
 	}
 
 	private DataSource createInMemoryDataSource(@NonNull String databaseName) {

@@ -607,6 +607,19 @@ public class MetricsCollectorTests {
 		Assertions.assertThrows(NoSuchMethodException.class, () -> Transaction.class.getMethod("getDatabaseType"));
 	}
 
+	@Test
+	public void automaticDatabaseTypeDetectionUpdatesPhysicalTransactionMetrics() {
+		RecordingMetricsCollector metricsCollector = new RecordingMetricsCollector();
+		Database database = Database.withDataSource(databaseTypeOverridingDataSource(
+				"metrics_auto_transaction_type", "PostgreSQL"))
+				.metricsCollector(metricsCollector)
+				.build();
+
+		database.transaction(() -> database.query("SELECT 1 FROM (VALUES (0)) AS t(x)").fetchObject(Integer.class));
+
+		Assertions.assertEquals(DatabaseType.POSTGRESQL, metricsCollector.transactionDatabaseType.get());
+	}
+
 	private static MetricsCollector.Snapshot snapshot(@NonNull MetricsCollector metricsCollector) {
 		return metricsCollector.snapshot().orElseThrow();
 	}
@@ -674,6 +687,25 @@ public class MetricsCollectorTests {
 				throw new SQLException("metadata unavailable");
 
 			return invoke(delegate, method, args);
+		}));
+	}
+
+	@NonNull
+	private static DataSource databaseTypeOverridingDataSource(@NonNull String databaseName,
+																									 @NonNull String databaseProductName) {
+		return wrappingDataSource(databaseName, connection -> proxyConnection(connection, (delegate, method, args) -> {
+			Object result = invoke(delegate, method, args);
+
+			if ("getMetaData".equals(method.getName()) && result instanceof java.sql.DatabaseMetaData databaseMetaData)
+				return Proxy.newProxyInstance(java.sql.DatabaseMetaData.class.getClassLoader(),
+						new Class<?>[]{java.sql.DatabaseMetaData.class}, (proxy, metadataMethod, metadataArgs) -> {
+							if ("getDatabaseProductName".equals(metadataMethod.getName()))
+								return databaseProductName;
+
+							return invoke(databaseMetaData, metadataMethod, metadataArgs);
+						});
+
+			return result;
 		}));
 	}
 

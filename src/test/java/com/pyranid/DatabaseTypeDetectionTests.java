@@ -181,6 +181,63 @@ public class DatabaseTypeDetectionTests {
 	}
 
 	@Test
+	public void testFirstStatementPreparationFailureUsesBorrowedConnectionForTypeDetection() {
+		AtomicInteger connectionAcquisitionCount = new AtomicInteger();
+		DatabaseMetaData databaseMetaData = metadata("PostgreSQL", "17", "jdbc:postgresql://localhost/test",
+				"PostgreSQL JDBC Driver");
+		Connection connection = (Connection) Proxy.newProxyInstance(Connection.class.getClassLoader(),
+				new Class<?>[]{Connection.class}, (proxy, method, args) -> switch (method.getName()) {
+					case "prepareStatement" -> throw new SQLException("prepare failed", "42601");
+					case "getMetaData" -> databaseMetaData;
+					case "close" -> null;
+					case "toString" -> "single-borrow-connection";
+					default -> throw new UnsupportedOperationException(method.getName());
+				});
+		DataSource dataSource = new DataSource() {
+			@Override
+			public Connection getConnection() throws SQLException {
+				if (connectionAcquisitionCount.incrementAndGet() > 1)
+					throw new SQLException("second connection acquisition would block");
+				return connection;
+			}
+
+			@Override
+			public Connection getConnection(String username, String password) throws SQLException {
+				return getConnection();
+			}
+
+			@Override
+			public PrintWriter getLogWriter() { return null; }
+
+			@Override
+			public void setLogWriter(PrintWriter out) {}
+
+			@Override
+			public void setLoginTimeout(int seconds) {}
+
+			@Override
+			public int getLoginTimeout() { return 0; }
+
+			@Override
+			public Logger getParentLogger() { return Logger.getLogger(DataSource.class.getName()); }
+
+			@Override
+			public <T> T unwrap(Class<T> iface) throws SQLException { throw new SQLException("Not a wrapper"); }
+
+			@Override
+			public boolean isWrapperFor(Class<?> iface) { return false; }
+		};
+		Database db = Database.withDataSource(dataSource).build();
+
+		DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("SELECT :value").bind("value", 1).execute());
+
+		Assertions.assertEquals(1, connectionAcquisitionCount.get());
+		Assertions.assertEquals(DatabaseType.POSTGRESQL, db.getDatabaseType());
+		Assertions.assertEquals("42601", exception.getSqlState().orElseThrow());
+	}
+
+	@Test
 	public void testConcurrentFirstUseProducesConsistentDatabaseType() throws Exception {
 		AtomicInteger metadataAccessCount = new AtomicInteger();
 		Database db = Database.withDataSource(new MetadataCountingDataSource(

@@ -88,8 +88,11 @@ public interface ResultSetMapper {
 	int DEFAULT_PLAN_CACHE_CAPACITY = 1024;
 
 	/**
-	 * Default maximum number of cached preferred custom column mappers per source class.
+	 * Retained for source and binary compatibility. Preferred custom column mappers are not cached.
+	 *
+	 * @deprecated this value has no effect and will be removed in 5.0.0
 	 */
+	@Deprecated(since = "4.5.0", forRemoval = true)
 	int DEFAULT_PREFERRED_COLUMN_MAPPER_CACHE_CAPACITY = 256;
 
 	/**
@@ -101,19 +104,6 @@ public interface ResultSetMapper {
 	@NonNull
 	static Builder withNormalizationLocale(@NonNull Locale normalizationLocale) {
 		requireNonNull(normalizationLocale);
-
-		new ResultSetMapper() {
-			@NonNull
-			@Override
-			public <T> Optional<T> map(
-					@NonNull StatementContext<T> statementContext,
-					@NonNull ResultSet resultSet,
-					@NonNull Class<T> resultSetRowType,
-					@NonNull InstanceProvider instanceProvider) {
-				return Optional.empty();
-			}
-		};
-
 		return new Builder().normalizationLocale(normalizationLocale);
 	}
 
@@ -174,14 +164,12 @@ public interface ResultSetMapper {
 		@NonNull
 		Integer planCacheCapacity;
 		@NonNull
-		Integer preferredColumnMapperCacheCapacity;
 
 		private Builder() {
 			this.normalizationLocale = Locale.ROOT;
 			this.customColumnMappers = List.of();
 			this.planCachingEnabled = true;
 			this.planCacheCapacity = DEFAULT_PLAN_CACHE_CAPACITY;
-			this.preferredColumnMapperCacheCapacity = DEFAULT_PREFERRED_COLUMN_MAPPER_CACHE_CAPACITY;
 		}
 
 		/**
@@ -244,23 +232,20 @@ public interface ResultSetMapper {
 		}
 
 		/**
-		 * Specifies the maximum number of cached preferred custom column mappers per source class.
+		 * Retained for source and binary compatibility. This setting has no effect.
 		 * <p>
-		 * This cache does not change the priority order in which custom column mappers are tried.
-		 * <p>
-		 * Use {@code 0} for an unbounded cache.
+		 * Pyranid always evaluates applicable custom column mappers in their configured priority order. This method is
+		 * deprecated and will be removed in 5.0.0.
 		 *
-		 * @param preferredColumnMapperCacheCapacity maximum number of cached preferred custom column mappers per source class,
-		 *                                           or {@code 0} for unbounded.
-		 *                                           Defaults to {@link #DEFAULT_PREFERRED_COLUMN_MAPPER_CACHE_CAPACITY}.
+		 * @param preferredColumnMapperCacheCapacity ignored compatibility value; must be greater than or equal to {@code 0}
 		 * @return this {@code Builder}, for chaining
 		 */
+		@Deprecated(since = "4.5.0", forRemoval = true)
 		@NonNull
 		public Builder preferredColumnMapperCacheCapacity(@NonNull Integer preferredColumnMapperCacheCapacity) {
 			requireNonNull(preferredColumnMapperCacheCapacity);
 			if (preferredColumnMapperCacheCapacity < 0)
 				throw new IllegalArgumentException("Preferred column mapper cache capacity must be >= 0");
-			this.preferredColumnMapperCacheCapacity = preferredColumnMapperCacheCapacity;
 			return this;
 		}
 

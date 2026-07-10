@@ -425,10 +425,18 @@ final class PyranidRawConnection implements Connection {
 					"Cannot unwrap Pyranid-managed Connection to %s because that would bypass Pyranid connection lifecycle management",
 					iface.getName()));
 
-		if (iface.isInstance(this.connection))
-			return iface.cast(this.connection);
+		Object unwrapped = iface.isInstance(this.connection)
+				? this.connection
+				: this.connection.unwrap(iface);
 
-		return this.connection.unwrap(iface);
+		if (!(unwrapped instanceof Connection))
+			return iface.cast(unwrapped);
+
+		if (!iface.isInterface())
+			throw new SQLException(format(
+					"Cannot safely unwrap Pyranid-managed Connection to concrete type %s", iface.getName()));
+
+		return guardedVendorConnectionInterface(unwrapped, iface);
 	}
 
 	@Override
@@ -457,6 +465,83 @@ final class PyranidRawConnection implements Connection {
 				statementInterface.getClassLoader(),
 				new Class<?>[]{statementInterface},
 				(proxy, method, args) -> invokeGuardedJdbcObject(proxy, statement, method, args)));
+	}
+
+	@NonNull
+	private <T> T guardedVendorConnectionInterface(@NonNull Object target,
+																						 @NonNull Class<T> vendorInterface) {
+		requireNonNull(target);
+		requireNonNull(vendorInterface);
+
+		Object proxy = Proxy.newProxyInstance(
+				vendorInterface.getClassLoader(),
+				new Class<?>[]{vendorInterface},
+				(proxyInstance, method, args) -> invokeGuardedVendorConnection(
+						proxyInstance, target, method, args));
+		return vendorInterface.cast(proxy);
+	}
+
+	private Object invokeGuardedVendorConnection(@NonNull Object proxy,
+																				@NonNull Object target,
+																				@NonNull Method method,
+																				Object[] args) throws Throwable {
+		requireNonNull(proxy);
+		requireNonNull(target);
+		requireNonNull(method);
+
+		if (method.getDeclaringClass() == Object.class) {
+			return switch (method.getName()) {
+				case "equals" -> proxy == (args == null ? null : args[0]);
+				case "hashCode" -> System.identityHashCode(proxy);
+				case "toString" -> format("Pyranid-managed %s", target);
+				default -> invoke(method, target, args);
+			};
+		}
+
+		assertUsable();
+
+		if ("unwrap".equals(method.getName()) && args != null && args.length == 1 && args[0] instanceof Class<?> iface) {
+			if (iface.isInstance(proxy))
+				return iface.cast(proxy);
+
+			throw new SQLException(format(
+					"Cannot unwrap Pyranid-managed vendor connection to %s because that could bypass Pyranid connection lifecycle management",
+					iface.getName()));
+		}
+
+		if ("isWrapperFor".equals(method.getName()) && args != null && args.length == 1 && args[0] instanceof Class<?> iface)
+			return iface.isInstance(proxy);
+
+		if (isGuardedConnectionOperation(method.getName()))
+			throw guardedOperation(method.getName());
+
+		Object result = invoke(method, target, args);
+
+		if (result == target && method.getReturnType().isInstance(proxy))
+			return proxy;
+
+		if (result instanceof Connection) {
+			if (method.getReturnType().isInstance(this))
+				return this;
+
+			throw new SQLException(format(
+					"Vendor connection method %s returned a Connection type that cannot be exposed safely",
+					method.getName()));
+		}
+
+		return result;
+	}
+
+	private boolean isGuardedConnectionOperation(@NonNull String methodName) {
+		requireNonNull(methodName);
+
+		return switch (methodName) {
+			case "setAutoCommit", "commit", "rollback", "close", "setReadOnly", "setCatalog",
+					"setTransactionIsolation", "setTypeMap", "setHoldability", "setSavepoint",
+					"releaseSavepoint", "setClientInfo", "setSchema", "abort", "setNetworkTimeout",
+					"beginRequest", "endRequest", "setShardingKeyIfValid", "setShardingKey" -> true;
+			default -> false;
+		};
 	}
 
 	@NonNull

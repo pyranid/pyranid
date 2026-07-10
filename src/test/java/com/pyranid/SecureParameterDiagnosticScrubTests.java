@@ -26,6 +26,7 @@ import java.io.PrintWriter;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
 import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
@@ -120,6 +121,17 @@ public class SecureParameterDiagnosticScrubTests {
 		Assertions.assertNotNull(jsonScrub.redactor(), "Expected a needle for a secure-wrapped JSON parameter");
 		Assertions.assertEquals("json was <redacted> here",
 				jsonScrub.redactor().apply("json was {\"ssn\":\"123-45-6789\"} here"));
+	}
+
+	@Test
+	public void testSqlArrayElementsContributeSecureNeedles() {
+		SecureParameterSupport.DiagnosticScrub scrub = SecureParameterSupport.diagnosticScrubForParameters(
+				List.of(Parameters.secure(Parameters.sqlArrayOf("text",
+						new String[]{"array-secret-one", "array-secret-two"}), "<array>")));
+
+		Assertions.assertNotNull(scrub.redactor());
+		Assertions.assertEquals("values <array> and <array>",
+				scrub.redactor().apply("values array-secret-one and array-secret-two"));
 	}
 
 	@Test
@@ -375,6 +387,35 @@ public class SecureParameterDiagnosticScrubTests {
 
 		Assertions.assertFalse(ex.getMessage().contains(secret1), "Expected first IN-list secret scrubbed");
 		Assertions.assertFalse(ex.getMessage().contains(secret2), "Expected second IN-list secret scrubbed");
+	}
+
+	@Test
+	public void testMappingDatabaseExceptionIsScrubbedAndRetainsMetadata() {
+		String secret = "mapping-secret-value";
+		Database db = Database.withDataSource(createInMemoryDataSource("mapping_exception_scrub")).build();
+		ResultSetMapper throwingMapper = new ResultSetMapper() {
+			@Override
+			public <T> Optional<T> map(@NonNull StatementContext<T> statementContext,
+														 @NonNull ResultSet resultSet,
+														 @NonNull Class<T> resultSetRowType,
+														 @NonNull InstanceProvider instanceProvider) {
+				throw new DatabaseException("mapper rejected " + secret,
+						new SQLException("mapping metadata contained " + secret, "23505"), DatabaseType.GENERIC.dialect());
+			}
+		};
+
+		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("SELECT :value FROM (VALUES (0)) AS t(x)")
+						.bind("value", Parameters.secure(secret, "<mapping>"))
+						.resultSetMapper(throwingMapper)
+						.fetchObject(String.class));
+
+		Assertions.assertFalse(ex.getMessage().contains(secret));
+		Assertions.assertFalse(ex.toString().contains(secret));
+		Assertions.assertTrue(ex.getMessage().contains("<mapping>"));
+		Assertions.assertTrue(ex.isUniqueConstraintViolation());
+		Assertions.assertInstanceOf(DatabaseException.class, ex.getCause());
+		Assertions.assertTrue(ex.getCause().getMessage().contains(secret), "Raw mapper failure remains available as the cause");
 	}
 
 	// --- Test infrastructure ---

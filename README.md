@@ -17,6 +17,8 @@ No new query languages to learn. No leaky object-relational abstractions. No kit
 
 Full documentation is available at [https://www.pyranid.com](https://www.pyranid.com).
 
+> **Development snapshot:** this branch documents unreleased 4.5.0 behavior. Installation examples continue to use the latest released version, 4.4.0, until 4.5.0 is published.
+
 ### Design Goals
 
 * Small codebase
@@ -67,6 +69,8 @@ Java 8+ (legacy; only critical fixes will be applied)
 For released builds, you can download the Pyranid jar directly from [Maven Central](https://repo1.maven.org/maven2/com/pyranid/pyranid/4.4.0/pyranid-4.4.0.jar).  No other dependencies are required.
 
 ## Configuration
+
+[`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) instances are immutable, thread-safe, and intended to be shared. Mutable [`Query`](https://javadoc.pyranid.com/com/pyranid/Query.html) builders are single-use, single-thread objects. Application-supplied database-wide hooks can be invoked concurrently and must be thread-safe.
 
 ### Minimal setup
 
@@ -238,18 +242,18 @@ PostgreSQL JSONB/hstore `?`, `?|`, and `?&` operators are supported. When the `D
 Suppose we have a custom `Car` like this:
 
 ```java
-enum Color { BLUE, RED }
+public enum Color { BLUE, RED }
 
 // Follows JavaBean conventions for getters/setters
-class Car {
-  Long id;
-  Color color;
+public class Car {
+  private Long id;
+  private Color color;
 
-  Long getId() { return this.id; }
-  void setId(Long id) { this.id = id; }
+  public Long getId() { return this.id; }
+  public void setId(Long id) { this.id = id; }
 
-  Color getColor() { return this.color; }
-  void setColor(Color color) { this.color = color; }
+  public Color getColor() { return this.color; }
+  public void setColor(Color color) { this.color = color; }
 }
 ```
 
@@ -279,7 +283,7 @@ List<BigDecimal> balances = database.query("SELECT balance FROM account").fetchL
 [`Record`](https://openjdk.org/jeps/395) types are also supported:
 
 ```java
-record Employee(String name, @DatabaseColumn("email") String emailAddress) {}
+public record Employee(String name, @DatabaseColumn("email") String emailAddress) {}
 
 Optional<Employee> employee = database.query("""
   SELECT *
@@ -353,7 +357,7 @@ database.transaction(() -> {
 });
 ```
 
-The `Connection` passed to your callback is a Pyranid-managed guarded handle. Do not close it, retain it, perform transaction lifecycle operations on it, or mutate connection-wide state on it. Methods such as `close()`, `commit()`, `rollback()`, `setAutoCommit(...)`, `setTransactionIsolation(...)`, `setCatalog(...)`, `setSchema(...)`, `setClientInfo(...)`, `setNetworkTimeout(...)`, and JDBC savepoint controls throw immediately. `Statement::getConnection()` and `DatabaseMetaData::getConnection()` return the guarded Pyranid handle, and `ResultSet::getStatement()` returns a guarded statement. Guarded statements, resultsets, and metadata refuse driver-specific `unwrap(...)` calls that could expose the driver's underlying connection. Use `Database::transaction(...)`, `Database::participate(...)`, and `Transaction` savepoint APIs for transaction management. Close any `Statement` or `ResultSet` instances you create inside the callback.
+The `Connection` passed to your callback is a Pyranid-managed guarded handle. Do not close it, retain it, perform transaction lifecycle operations on it, or mutate connection-wide state on it. Methods such as `close()`, `commit()`, `rollback()`, `setAutoCommit(...)`, `setTransactionIsolation(...)`, `setCatalog(...)`, `setSchema(...)`, `setClientInfo(...)`, `setNetworkTimeout(...)`, and JDBC savepoint controls throw immediately. `Statement::getConnection()` and `DatabaseMetaData::getConnection()` return the guarded Pyranid handle, and `ResultSet::getStatement()` returns a guarded statement. `Connection::unwrap(...)` may return a guarded, callback-scoped proxy for a vendor interface, but it never exposes a castable physical `Connection`; the proxy blocks lifecycle methods and expires when the callback returns. Guarded statements, resultsets, and metadata refuse driver-specific `unwrap(...)` calls that could expose the driver's underlying connection. Use `Database::transaction(...)`, `Database::participate(...)`, and `Transaction` savepoint APIs for transaction management. Close any `Statement` or `ResultSet` instances you create inside the callback.
 
 ## Statements
 
@@ -364,7 +368,8 @@ long updateCount = database.query("UPDATE car SET color=:color")
   .execute();
 
 // Return single or multiple objects via database-native DML-returning syntax.
-// PostgreSQL, SQLite, and MariaDB use RETURNING. SQL Server uses OUTPUT.
+// PostgreSQL and SQLite use RETURNING for DML. MariaDB supports INSERT ... RETURNING.
+// SQL Server uses OUTPUT.
 // Oracle users should prefer JDBC-generated keys with explicit key column names.
 Optional<BigInteger> insertedCarId = database.query("""
   INSERT INTO car (id, color)
@@ -438,6 +443,8 @@ and uses them if available.
 * Must be able to share a transaction across multiple threads
 
 ### Basics
+
+Outside a Pyranid transaction, each operation borrows a connection and leaves transaction control to the configured [`DataSource`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/javax/sql/DataSource.html) and JDBC driver. Pyranid does not force `autocommit=true` or call `commit()` for standalone operations. Production pools normally return connections with autocommit enabled; configure that explicitly if your `DataSource` does not.
 
 ```java
 // Any code that runs inside of the closure operates within the context of a transaction.
@@ -727,6 +734,8 @@ TransactionRetryResult<Void> retryResult = database.transactionWithRetry(retryPo
 
 [`RetryPolicy::ofMaxAttempts(Integer, RetryPolicy.Backoff, RetryPolicy.Condition)`](https://javadoc.pyranid.com/com/pyranid/RetryPolicy.html#ofMaxAttempts(java.lang.Integer,com.pyranid.RetryPolicy.Backoff,com.pyranid.RetryPolicy.Condition)) means three total attempts in this example: the initial transaction plus up to two retries. Pyranid starts a fresh physical transaction for each attempt. The whole closure may run more than once, so keep non-idempotent external side effects outside the retried closure.
 
+`transactionWithRetry(...)` must own the complete transaction boundary and fails fast when called inside an active transaction for the same `Database`. Failures that occur after a successful commit, including connection cleanup and post-transaction callback failures, are returned to the caller and are never replayed.
+
 Unlike [`Database::transaction(ReturningTransactionalOperation<T>)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transaction(com.pyranid.ReturningTransactionalOperation)), [`Database::transactionWithRetry(RetryPolicy, TransactionalOperation)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transactionWithRetry(com.pyranid.RetryPolicy,com.pyranid.TransactionalOperation)) returns a [`TransactionRetryResult`](https://javadoc.pyranid.com/com/pyranid/TransactionRetryResult.html) so callers can inspect failures recovered before success. [`TransactionRetryResult::getValue()`](https://javadoc.pyranid.com/com/pyranid/TransactionRetryResult.html#getValue()) contains the successful transaction value, and [`TransactionRetryResult::getFailures()`](https://javadoc.pyranid.com/com/pyranid/TransactionRetryResult.html#getFailures()) contains failed attempts that Pyranid retried before the transaction eventually succeeded.
 
 ```java
@@ -807,31 +816,33 @@ In the case of user-defined types and Records, the standard [`ResultSetMapper`](
 
 JavaBean and Record mapping require at least one selected column to match a writable property or record component. If no selected columns match, Pyranid raises a [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) instead of returning an object with all default values. Use column aliases or a custom [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) when the default property matching is not appropriate.
 
+The default [`InstanceProvider`](https://javadoc.pyranid.com/com/pyranid/InstanceProvider.html) uses public constructors and the standard mapper uses public JavaBean accessors. Define mapped beans, records, constructors, getters, and setters as public. To map intentionally non-public types, provide an application-owned `InstanceProvider` that can instantiate them.
+
 By default, column names are assumed to be separated by `_` characters and are mapped to their camel-case equivalent.  For example:
 
 ```java
-class Car {
-  Long carId;
-  Color color;
+public class Car {
+  private Long carId;
+  private Color color;
   
   // For schema flexibility, Pyranid will match both "deposit_amount1" and "deposit_amount_1" column names
-  BigDecimal depositAmount1;
+  private BigDecimal depositAmount1;
   
   // Use this annotation to specify variants if the field name doesn't match the column name
   @DatabaseColumn({"systok", "sys_tok"})
-  UUID systemToken;
+  private UUID systemToken;
 
-  Long getCarId() { return this.carId; }
-  void setCarId(Long carId) { this.carId = carId; }
+  public Long getCarId() { return this.carId; }
+  public void setCarId(Long carId) { this.carId = carId; }
 
-  Color getColor() { return this.color; }
-  void setColor(Color color) { this.color = color; }
+  public Color getColor() { return this.color; }
+  public void setColor(Color color) { this.color = color; }
   
-  BigDecimal getDepositAmount1() { return this.depositAmount1; }
-  void setDepositAmount1(BigDecimal depositAmount1) { this.depositAmount1 = depositAmount1; }  
+  public BigDecimal getDepositAmount1() { return this.depositAmount1; }
+  public void setDepositAmount1(BigDecimal depositAmount1) { this.depositAmount1 = depositAmount1; }
 
-  UUID getSystemToken() { return this.systemToken; }
-  void setSystemToken(UUID systemToken) { this.systemToken = systemToken; }
+  public UUID getSystemToken() { return this.systemToken; }
+  public void setSystemToken(UUID systemToken) { this.systemToken = systemToken; }
 }
 
 Car car = database.query("SELECT car_id, color, systok FROM car LIMIT 1")
@@ -1004,14 +1015,14 @@ INSERT INTO row (row_id, my_special_type) VALUES (
 
 ```java
 // A ResultSet row with our special type as a column 
-record MyRow(UUID rowId, MySpecialType mySpecialType) {}
+public record MyRow(UUID rowId, MySpecialType mySpecialType) {}
 
 // Query for data
 List<MyRow> rows = database.query("SELECT * FROM row")
   .fetchList(MyRow.class);
 
 // Examine the first row of the ResultSet
-MyRow myRow = rows.getFirst();
+MyRow myRow = rows.get(0);
 // Our custom mapper has instantiated this for us
 MySpecialType mySpecialType = myRow.mySpecialType();
 // Prints contents of List<UUID>, as expected
@@ -1041,7 +1052,7 @@ The [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.
 This is the idiomatic way to inline-map an ad-hoc projection (a join, computed columns, a tuple) without defining a database-wide mapper - both SPIs are functional interfaces, so a lambda works:
 
 ```java
-record NameCount(String name, Long total) {}
+public record NameCount(String name, Long total) {}
 
 List<NameCount> counts = database.query("""
   SELECT name, COUNT(*) AS total
@@ -1103,7 +1114,7 @@ List<Employee> employees = database.query("""
   .fetchList(Employee.class);
 ```
 
-Use [`Database.Builder::queryTimeout(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#queryTimeout(java.time.Duration)), [`Database.Builder::fetchSize(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#fetchSize(java.lang.Integer)), and [`Database.Builder::maxRows(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#maxRows(java.lang.Integer)) to configure database-wide defaults. Per-query settings override database defaults, and `Query::customize(...)` runs last.
+Use [`Database.Builder::queryTimeout(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#queryTimeout(java.time.Duration)), [`Database.Builder::fetchSize(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#fetchSize(java.lang.Integer)), and [`Database.Builder::maxRows(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#maxRows(java.lang.Integer)) to configure database-wide defaults. Per-query settings override database defaults. `Query::customize(...)` runs after those settings, so it can override them, and before Pyranid binds parameters.
 
 `queryTimeout(...)` maps to JDBC `Statement::setQueryTimeout(...)`. For driver-specific cancellation beyond timeouts, capture the `PreparedStatement` in `Query::customize(...)` and call `Statement::cancel()` from your application's cancellation path.
 
@@ -1271,7 +1282,7 @@ database.query("INSERT INTO vector_embedding (embedding, content) VALUES (:embed
 Vector columns also read back into `float[]` and `double[]` targets - Pyranid parses the vector literal (e.g. `[0.1,0.2,0.3]`) that drivers surface for vector columns:
 
 ```java
-record Document(Long documentId, float[] embedding) {}
+public record Document(Long documentId, float[] embedding) {}
 
 Optional<Document> document = database.query("""
   SELECT document_id, embedding
@@ -1371,7 +1382,7 @@ parameters=[acct_123, <redacted>]
 
 [`Parameters::secure(Object)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) renders as `<redacted>`. Use [`Parameters::secure(Object, String)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object,java.lang.String)) for a custom display token.
 This is display-only: the underlying value is still passed to the JDBC [`PreparedStatement`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/PreparedStatement.html) as if it had not been wrapped.
-[`Parameters::secure(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) composes with [`Parameters::inList(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#inList(java.util.Collection)), [`Parameters::json(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#json(java.lang.String)), [`Parameters::sqlArrayOf(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#sqlArrayOf(java.lang.String,java.util.List)), typed parameters, [`Optional`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Optional.html) values, and `null` values.
+[`Parameters::secure(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) composes with [`Parameters::inList(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#inList(java.util.Collection)), [`Parameters::json(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#json(java.lang.String)), vector parameters, [`Parameters::sqlArrayOf(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#sqlArrayOf(java.lang.String,java.util.List)), typed parameters, [`Optional`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Optional.html) values, and `null` values.
 
 For broader policies, configure a database-wide [`ParameterRedactor`](https://javadoc.pyranid.com/com/pyranid/ParameterRedactor.html):
 
@@ -1394,7 +1405,7 @@ Because the real value is bound to the [`PreparedStatement`](https://docs.oracle
 | Pyranid's `parameters=[...]` rendering ([`StatementContext`](https://javadoc.pyranid.com/com/pyranid/StatementContext.html)/[`StatementLog`](https://javadoc.pyranid.com/com/pyranid/StatementLog.html) diagnostics) | Yes - masks/redactor always apply |
 | [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) messages, `toString()`, and DBMS metadata fields ([`getDetail()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getDetail()), [`getDbmsMessage()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getDbmsMessage()), ...) | Best-effort - verbatim occurrences of [`Parameters::secure(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) values are scrubbed and replaced with the mask |
 | The raw driver exception ([`getCause()`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Throwable.html#getCause())), stack traces, and anything that renders them (log appenders, Sentry, OpenTelemetry exception events) | **No - deliberately preserved unsanitized. Treat the cause chain as sensitive.** |
-| Driver-transformed echoes (re-formatted numbers/temporals, truncated strings, encoded bytes); `null`/`Boolean`/very short secure values | No - the scrub is verbatim-only and skips values that would corrupt unrelated diagnostics |
+| Driver-transformed echoes (re-formatted numbers/temporals, truncated strings, encoded bytes), vector parameters; `null`/`Boolean`/very short secure values | No - the scrub is verbatim-only and skips values that would corrupt unrelated diagnostics |
 | Pyranid's own mapping-error messages (e.g. `Cannot map value '...'` when a value round-trips into a [`ResultSet`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/ResultSet.html)) | No |
 | Exceptions raised outside statement execution - commit/rollback time (e.g. deferred constraint violations), connection acquisition, raw-connection operations | No - no statement context exists at those points |
 
@@ -1784,12 +1795,13 @@ Before cutting a release, run the local verification gates from the `pyranid/` p
 
 ```bash
 mvn -q verify
+mvn -q -Pcoverage verify
 mvn -q javadoc:javadoc
 mvn -q -P integration verify
 mvn -q -P integration,it-mariadb -Dit.test=MariaDbIntegrationIT verify
 ```
 
-The `integration` Maven profile runs JDBC integration tests against PostgreSQL, MySQL, and SQLite. PostgreSQL and MySQL use Testcontainers and require a working local Docker environment; SQLite uses a temporary local database file. Add `it-mariadb`, `it-sqlserver`, or `it-oracle` for the optional MariaDB, SQL Server, and Oracle integration source sets. SQL Server requires the Microsoft container EULA; the test container calls `acceptLicense()`, and CI/local runs should provide `ACCEPT_EULA=Y` when required by the environment. The initial Docker images are pinned to `pgvector/pgvector:pg17`, `mysql:8.4`, `mariadb:11.4`, `mcr.microsoft.com/mssql/server:2022-CU25-ubuntu-22.04`, and `gvenzl/oracle-free:23-slim-faststart`, and can be overridden with `-Dpostgres.integration.image=...`, `-Dmysql.integration.image=...`, `-Dmariadb.integration.image=...`, `-Dsqlserver.integration.image=...`, and `-Doracle.integration.image=...`. PostgreSQL image overrides must include the `vector` extension.
+The `integration` Maven profile runs JDBC integration tests against PostgreSQL, MySQL, and SQLite. PostgreSQL and MySQL use Testcontainers and require a working local Docker environment; SQLite uses a temporary local database file. Add `it-mariadb`, `it-sqlserver`, or `it-oracle` for the optional MariaDB, SQL Server, and Oracle integration source sets. SQL Server requires the Microsoft container EULA; the test container calls `acceptLicense()`, and CI/local runs should provide `ACCEPT_EULA=Y` when required by the environment. The default Docker image tags are `pgvector/pgvector:pg17`, `mysql:8.4`, `mariadb:11.4`, `mcr.microsoft.com/mssql/server:2022-CU25-ubuntu-22.04`, and `gvenzl/oracle-free:23-slim-faststart`. They can be overridden with `-Dpostgres.integration.image=...`, `-Dmysql.integration.image=...`, `-Dmariadb.integration.image=...`, `-Dsqlserver.integration.image=...`, and `-Doracle.integration.image=...`. PostgreSQL image overrides must include the `vector` extension.
 
 The portable integration suites cover named binding, repeated parameters, `IN` expansion, null binding/mapping, numeric and temporal conversions, JDBC-generated keys, transaction commit/rollback, transaction options where supported, batch chunking, streaming, guarded raw connection access, statement row limits, health checks, SQL ARRAY guards, and exception wrapping/classification. Vendor suites add coverage for PostgreSQL JSONB, SQL arrays, UUIDs, `RETURNING`, temporal binding/mapping, pgvector binding/read-back, and exception metadata; MySQL/MariaDB JSON, UUID strings, unsigned numerics, streaming, and MariaDB `INSERT ... RETURNING`; SQLite `RETURNING`, UUID text, and decimal text precision; SQL Server `OUTPUT`, trigger-safe `OUTPUT INTO`, `MERGE ... OUTPUT`, `uniqueidentifier`, and `datetimeoffset`; and Oracle explicit generated-key columns, UUID `RAW(16)`, empty-string-as-null, timestamp-with-time-zone, and `NUMBER` mapping.
 
@@ -1800,6 +1812,12 @@ mvn -q -P benchmarks test-compile exec:exec
 ```
 
 The `benchmarks` profile adds JMH only to the test classpath and compiles benchmark sources from `src/jmh/java`; it does not add runtime dependencies to the published Pyranid artifact. Override the default JMH arguments with `-Djmh.args="..."`, and add a thread setting such as `-t 8` when you want to stress shared-cache contention.
+
+The long-running heap-stability test is opt-in and is also available through the CI workflow's manual trigger:
+
+```bash
+mvn -q -Dpyranid.stress=true -Dtest=MemoryStabilityStressTests test
+```
 
 Artifact signing and Maven Central publishing are isolated in the `release` profile. Use `mvn -P release deploy` only when publishing a release or snapshot; normal local and CI `verify` runs do not require GPG credentials.
 

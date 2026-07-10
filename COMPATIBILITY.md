@@ -21,9 +21,10 @@ binary- or source-incompatible changes and to validate the version number agains
 (`breakBuildBasedOnSemanticVersioning`). The comparison baseline is pinned via the `japicmp.baseline.version`
 property.
 
-### Intentional historical exceptions
+### Historical compatibility notes
 
-The japicmp configuration excludes a small set of intentional changes, kept for the record:
+The following intentional changes predate the current 4.4.0 japicmp baseline. They are kept here for the record;
+the current japicmp configuration has no API exclusions:
 
 * `Database#transaction(TransactionIsolation, ...)` (two overloads) - replaced by
   `TransactionOptions`-based overloads.
@@ -44,6 +45,6 @@ The japicmp configuration excludes a small set of intentional changes, kept for 
 ## Dependencies
 
 The core `pyranid` artifact declares **zero runtime dependencies** - enforced at build time by a
-maven-enforcer `bannedDependencies` rule and provable from the published CycloneDX SBOM. Compile-time-only
-dependencies (annotations, the PostgreSQL driver for optional rich error metadata) are `provided` scope and
-never required at runtime.
+Maven Enforcer `bannedDependencies` rule and visible in the published POM. Compile-time-only dependencies
+(annotations and the PostgreSQL driver for optional rich error metadata) are `provided` scope and never required
+at runtime.

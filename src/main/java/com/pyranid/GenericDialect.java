@@ -247,7 +247,9 @@ class GenericDialect implements DatabaseDialect {
 			return false;
 
 		String normalizedTypeName = typeName.toUpperCase(Locale.ROOT);
-		return normalizedTypeName.contains("WITH TIME ZONE") || normalizedTypeName.contains("TIMESTAMPTZ");
+		return normalizedTypeName.contains("TIMESTAMP WITH TIME ZONE")
+				|| normalizedTypeName.contains("TIMESTAMP WITH LOCAL TIME ZONE")
+				|| normalizedTypeName.contains("TIMESTAMPTZ");
 	}
 
 	protected boolean hasErrorCode(@NonNull DatabaseExceptionMetadata metadata,

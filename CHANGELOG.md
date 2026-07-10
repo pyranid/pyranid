@@ -17,6 +17,22 @@ All notable changes to Pyranid will be documented in this file.
 - `StatementLog` now carries Pyranid's wrapped `DatabaseException` on driver-failure paths (previously
   the raw driver exception on some paths), so statement logs render scrubbed, redaction-aware
   diagnostics consistently.
+- Transaction retries no longer replay a closure after the database commit has succeeded but connection
+  cleanup or a post-transaction callback fails. JDBC `Error` instances also remain the primary failure
+  when connection cleanup produces a secondary exception.
+- Automatic database-type detection now uses the active transaction connection, so transaction metrics
+  and exception classification report the real dialect without borrowing a second connection.
+- Transaction connection and savepoint lock acquisition is now interruptible. A failed rollback to a
+  savepoint marks the transaction rollback-only instead of allowing a later commit attempt.
+- Named-parameter parsing now handles MySQL `#` comments and backslash-escaped strings, Oracle alternative
+  quoting, and whitespace before PostgreSQL array subscripts without misclassifying parameters. Ambiguous
+  MySQL syntax is resolved after dialect detection and cached per lexical mode.
+- Nested secure/optional IN-list values now unwrap consistently, reject null elements before JDBC work,
+  and retain element-level diagnostic masks.
+- Planned and non-planned row mapping now share additive column-alias semantics, unwrap driver wrapper
+  objects before assigning `Object` properties, and fall back when typed temporal getters are unsupported.
+- Guarded raw-connection vendor-interface unwrapping can no longer expose a lifecycle-capable physical
+  `Connection`, and any returned proxy expires when the callback finishes.
 
 ### Added
 
@@ -42,6 +58,13 @@ All notable changes to Pyranid will be documented in this file.
   the vector literal (such as `[0.1,0.2,0.3]`) that drivers surface for vector columns. Vector support
   is now symmetric with the existing `Parameters.vectorOfFloats(...)`/`vectorOfDoubles(...)` bind side.
 
+### Changed
+
+- Preferred custom-column-mapper caching was removed because cache keys could not safely represent mapper
+  applicability. The related 4.x builder setting and constant remain as deprecated no-ops for compatibility.
+- CI now enforces instruction and branch coverage floors, validates JDK 21 virtual-thread pin detection with
+  a positive control, and exposes the long-running heap-stability test through a manual workflow run.
+
 ### Migration Notes
 
 - `StatementLog.getException()` on driver-failure paths now returns the Pyranid `DatabaseException`
@@ -57,6 +80,9 @@ All notable changes to Pyranid will be documented in this file.
   outside a statement context - commit/rollback time (e.g. deferred constraint violations), connection
   acquisition, and raw-connection operations - are not scrubbed and may carry driver-echoed values in
   their message and DBMS metadata fields.
+- `ResultSetMapper.Builder.preferredColumnMapperCacheCapacity(...)` and
+  `DEFAULT_PREFERRED_COLUMN_MAPPER_CACHE_CAPACITY` are deprecated no-ops in 4.5.0 and are planned for
+  removal in 5.0.0.
 
 ## 4.4.0
 
@@ -69,7 +95,6 @@ All notable changes to Pyranid will be documented in this file.
 - Added `Database.transactionWithRetry(...)` overloads for retrying whole transaction closures after retryable database failures.
 - Added `TransactionRetryResult` for successful retry diagnostics, including the successful value and failures recovered before success.
 - Added `DatabaseException.isSerializationFailure()` and `DatabaseException.isTimeout()` classification predicates.
-- Released artifacts now include a CycloneDX SBOM (`bom.json` and `bom.xml`).
 
 ### Changed
 

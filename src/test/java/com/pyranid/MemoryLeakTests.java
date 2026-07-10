@@ -18,16 +18,11 @@ package com.pyranid;
 
 import org.hsqldb.jdbc.JDBCDataSource;
 import org.jspecify.annotations.NonNull;
-import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
-import java.math.BigDecimal;
-import java.sql.Date;
-import java.sql.ResultSet;
-import java.util.List;
 
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
@@ -41,7 +36,6 @@ import static java.util.Objects.requireNonNull;
 @ThreadSafe
 public class MemoryLeakTests {
 	private static final int PLAN_CACHE_CAPACITY = 8;
-	private static final int PREFERRED_MAPPER_CACHE_CAPACITY = 3;
 
 	@NonNull
 	protected DataSource createInMemoryDataSource(@NonNull String databaseName) {
@@ -85,69 +79,4 @@ public class MemoryLeakTests {
 				"Row planning cache should remain bounded after varied schemas");
 	}
 
-	public static final class SpecialType {
-		private final String value;
-
-		SpecialType(@NonNull String value) {
-			this.value = requireNonNull(value);
-		}
-
-		@NonNull
-		public String getValue() {
-			return this.value;
-		}
-	}
-
-	@Test
-	public void testPreferredColumnMapperCacheBoundedUnderVariedSourceTypes() {
-		DataSource ds = createInMemoryDataSource("preferred_mapper_bounded");
-
-		CustomColumnMapper specialTypeMapper = new CustomColumnMapper() {
-			@NonNull
-			@Override
-			public Boolean appliesTo(@NonNull TargetType targetType) {
-				return targetType.matchesClass(SpecialType.class);
-			}
-
-			@NonNull
-			@Override
-			public MappingResult map(@NonNull StatementContext<?> statementContext,
-															 @NonNull ResultSet resultSet,
-															 @NonNull Object resultSetValue,
-															 @NonNull TargetType targetType,
-															 @NonNull Integer columnIndex,
-															 @Nullable String columnLabel,
-															 @NonNull InstanceProvider instanceProvider) {
-				return MappingResult.of(new SpecialType(resultSetValue.toString()));
-			}
-		};
-
-		ResultSetMapper mapper = ResultSetMapper.withCustomColumnMappers(List.of(specialTypeMapper))
-				.preferredColumnMapperCacheCapacity(PREFERRED_MAPPER_CACHE_CAPACITY)
-				.build();
-
-		Database db = Database.withDataSource(ds)
-				.resultSetMapper(mapper)
-				.build();
-
-				db.query("CREATE TABLE t (s VARCHAR(50), i INT, l BIGINT, d DECIMAL(12,2), dt DATE)").execute();
-				db.query("INSERT INTO t VALUES ('s', 1, 2, 3.14, DATE '2023-01-01')").execute();
-
-		List<String> columns = List.of("s", "i", "l", "d", "dt");
-
-		for (String column : columns) {
-			db.query("SELECT " + column + " FROM t")
-					.fetchObject(SpecialType.class)
-					.orElseThrow();
-		}
-
-		DefaultResultSetMapper defaultMapper = (DefaultResultSetMapper) db.getResultSetMapper();
-		List<Class<?>> sourceClasses = List.of(String.class, Integer.class, Long.class, BigDecimal.class, Date.class);
-
-		for (Class<?> sourceClass : sourceClasses) {
-			int size = defaultMapper.getPreferredColumnMapperCacheForSourceClass(sourceClass).size();
-			Assertions.assertTrue(size <= PREFERRED_MAPPER_CACHE_CAPACITY,
-					"Preferred custom mapper cache should remain bounded across varied source types");
-		}
-	}
 }

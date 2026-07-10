@@ -56,8 +56,9 @@ import static java.lang.String.format;
 public class VirtualThreadPinningTests {
 	@Test
 	public void testVirtualThreadWorkloadDoesNotPinCarrierThreads() throws Exception {
+		Assumptions.assumeTrue(Runtime.version().feature() >= 21, "Virtual threads require JDK 21+");
 		ExecutorService executorService = virtualThreadExecutorIfAvailable();
-		Assumptions.assumeTrue(executorService != null, "Virtual threads require JDK 21+");
+		Assertions.assertNotNull(executorService, "JDK 21+ must expose the virtual-thread executor");
 
 		Path recordingFile = Files.createTempFile("pyranid-vt-pinning", ".jfr");
 
@@ -100,6 +101,61 @@ public class VirtualThreadPinningTests {
 				"Virtual threads were pinned to carrier threads with Pyranid frames on the stack - "
 						+ "a synchronized block (or Object.wait) was likely introduced in a blocking path. Events: %s",
 				pyranidPinningEvents));
+	}
+
+	@Test
+	public void testJdk21PinningRecorderDetectsKnownPin() throws Exception {
+		Assumptions.assumeTrue(Runtime.version().feature() == 21,
+				"JDK 21 positive control is not applicable after JEP 491");
+		ExecutorService executorService = virtualThreadExecutorIfAvailable();
+		Assertions.assertNotNull(executorService, "JDK 21 must expose the virtual-thread executor");
+		Path recordingFile = Files.createTempFile("pyranid-vt-pinning-positive-control", ".jfr");
+		Object monitor = new Object();
+		CountDownLatch enteredMonitor = new CountDownLatch(1);
+		CountDownLatch releaseMonitor = new CountDownLatch(1);
+
+		try (Recording recording = new Recording()) {
+			recording.enable("jdk.VirtualThreadPinned").withThreshold(Duration.ZERO).withStackTrace();
+			recording.start();
+
+			Future<?> future = executorService.submit(() -> {
+				synchronized (monitor) {
+					enteredMonitor.countDown();
+					try {
+						releaseMonitor.await();
+					} catch (InterruptedException e) {
+						Thread.currentThread().interrupt();
+						throw new RuntimeException(e);
+					}
+				}
+			});
+
+			Assertions.assertTrue(enteredMonitor.await(10, TimeUnit.SECONDS));
+			Thread.sleep(100);
+			releaseMonitor.countDown();
+			future.get(10, TimeUnit.SECONDS);
+			recording.stop();
+			recording.dump(recordingFile);
+		} finally {
+			releaseMonitor.countDown();
+			executorService.shutdownNow();
+			Assertions.assertTrue(executorService.awaitTermination(30, TimeUnit.SECONDS));
+		}
+
+		boolean observedPin = false;
+		try (RecordingFile events = new RecordingFile(recordingFile)) {
+			while (events.hasMoreEvents()) {
+				if ("jdk.VirtualThreadPinned".equals(events.readEvent().getEventType().getName())) {
+					observedPin = true;
+					break;
+				}
+			}
+		} finally {
+			Files.deleteIfExists(recordingFile);
+		}
+
+		Assertions.assertTrue(observedPin,
+				"The JDK 21 JFR positive control did not observe a deliberately pinned virtual thread");
 	}
 
 	/**

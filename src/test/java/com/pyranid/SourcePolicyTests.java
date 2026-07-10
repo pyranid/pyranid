@@ -17,7 +17,6 @@
 package com.pyranid;
 
 import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -51,7 +50,7 @@ public class SourcePolicyTests {
 	@Test
 	public void testMainSourceContainsNoSynchronized() throws IOException {
 		Path mainSourceRoot = Path.of("src", "main", "java");
-		Assumptions.assumeTrue(Files.isDirectory(mainSourceRoot),
+		Assertions.assertTrue(Files.isDirectory(mainSourceRoot),
 				"Main source root not found; test must run from the module root");
 
 		List<String> violations = new ArrayList<>();

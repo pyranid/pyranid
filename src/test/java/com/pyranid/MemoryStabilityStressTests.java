@@ -19,9 +19,9 @@ package com.pyranid;
 import org.hsqldb.jdbc.JDBCDataSource;
 import org.jspecify.annotations.NonNull;
 import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 import javax.annotation.concurrent.ThreadSafe;
 import javax.sql.DataSource;
@@ -38,9 +38,7 @@ import static java.util.Objects.requireNonNull;
 /**
  * Long-running heap stability tests intended to detect unbounded retention.
  * <p>
- * To run:
- * 1) Remove or comment out {@link Disabled}.
- * 2) Execute: mvn -Dtest=MemoryStabilityStressTests test
+ * Run with {@code mvn -Dpyranid.stress=true -Dtest=MemoryStabilityStressTests test}.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 4.0.0
@@ -51,7 +49,6 @@ public class MemoryStabilityStressTests {
 	private static final Duration TEST_DURATION = Duration.ofMinutes(4);
 	private static final Duration COOL_DOWN_DURATION = Duration.ofSeconds(10);
 	private static final int PLAN_CACHE_CAPACITY = 64;
-	private static final int PREFERRED_MAPPER_CACHE_CAPACITY = 32;
 	private static final long BASELINE_SLACK_BYTES = 64L * 1024L * 1024L;
 	private static final double BASELINE_SLACK_RATIO = 0.35d;
 
@@ -71,12 +68,11 @@ public class MemoryStabilityStressTests {
 
 	@Test
 	@Tag("stress")
-	@Disabled("Long-running heap stability test; enable manually.")
+	@EnabledIfSystemProperty(named = "pyranid.stress", matches = "true")
 	public void testHeapStabilityUnderVariedWorkload() {
 		DataSource ds = createInMemoryDataSource("heap_stability");
 		ResultSetMapper mapper = ResultSetMapper.withPlanCachingEnabled(true)
 				.planCacheCapacity(PLAN_CACHE_CAPACITY)
-				.preferredColumnMapperCacheCapacity(PREFERRED_MAPPER_CACHE_CAPACITY)
 				.build();
 
 		Database db = Database.withDataSource(ds)

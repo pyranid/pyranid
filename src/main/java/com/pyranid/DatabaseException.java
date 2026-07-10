@@ -88,6 +88,8 @@ public class DatabaseException extends RuntimeException {
 	private final Boolean serializationFailure;
 	@NonNull
 	private final Boolean timeout;
+	private boolean transactionOutcomeCommitted;
+	private boolean statementDiagnosticsApplied;
 
 	/**
 	 * Creates a {@code DatabaseException} with the given {@code message}.
@@ -170,6 +172,57 @@ public class DatabaseException extends RuntimeException {
 		this.transientException = databaseDialect.isTransient(metadata, cause);
 		this.serializationFailure = databaseDialect.isSerializationFailure(metadata, cause);
 		this.timeout = databaseDialect.isTimeout(metadata, cause);
+		this.transactionOutcomeCommitted = false;
+		this.statementDiagnosticsApplied = false;
+	}
+
+	DatabaseException(@Nullable String message,
+										@NonNull DatabaseException cause,
+										@Nullable UnaryOperator<String> diagnosticRedactor) {
+		super(message, cause);
+
+		this.errorCode = cause.errorCode;
+		this.sqlState = applyDiagnosticRedactor(diagnosticRedactor, cause.sqlState);
+		this.column = applyDiagnosticRedactor(diagnosticRedactor, cause.column);
+		this.constraint = applyDiagnosticRedactor(diagnosticRedactor, cause.constraint);
+		this.datatype = applyDiagnosticRedactor(diagnosticRedactor, cause.datatype);
+		this.detail = applyDiagnosticRedactor(diagnosticRedactor, cause.detail);
+		this.file = applyDiagnosticRedactor(diagnosticRedactor, cause.file);
+		this.hint = applyDiagnosticRedactor(diagnosticRedactor, cause.hint);
+		this.internalPosition = cause.internalPosition;
+		this.internalQuery = applyDiagnosticRedactor(diagnosticRedactor, cause.internalQuery);
+		this.line = cause.line;
+		this.dbmsMessage = applyDiagnosticRedactor(diagnosticRedactor, cause.dbmsMessage);
+		this.position = cause.position;
+		this.routine = applyDiagnosticRedactor(diagnosticRedactor, cause.routine);
+		this.schema = applyDiagnosticRedactor(diagnosticRedactor, cause.schema);
+		this.severity = applyDiagnosticRedactor(diagnosticRedactor, cause.severity);
+		this.table = applyDiagnosticRedactor(diagnosticRedactor, cause.table);
+		this.where = applyDiagnosticRedactor(diagnosticRedactor, cause.where);
+		this.uniqueConstraintViolation = cause.uniqueConstraintViolation;
+		this.foreignKeyViolation = cause.foreignKeyViolation;
+		this.deadlock = cause.deadlock;
+		this.transientException = cause.transientException;
+		this.serializationFailure = cause.serializationFailure;
+		this.timeout = cause.timeout;
+		this.transactionOutcomeCommitted = cause.transactionOutcomeCommitted;
+		this.statementDiagnosticsApplied = cause.statementDiagnosticsApplied;
+	}
+
+	void markTransactionOutcomeCommitted() {
+		this.transactionOutcomeCommitted = true;
+	}
+
+	boolean isTransactionOutcomeCommitted() {
+		return this.transactionOutcomeCommitted;
+	}
+
+	void markStatementDiagnosticsApplied() {
+		this.statementDiagnosticsApplied = true;
+	}
+
+	boolean areStatementDiagnosticsApplied() {
+		return this.statementDiagnosticsApplied;
 	}
 
 	@Nullable

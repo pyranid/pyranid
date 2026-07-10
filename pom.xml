@@ -58,8 +58,7 @@
 		<exec.maven.plugin.version>3.5.0</exec.maven.plugin.version>
 		<japicmp.maven.plugin.version>0.26.1</japicmp.maven.plugin.version>
 		<japicmp.baseline.version>4.4.0</japicmp.baseline.version>
-		<cyclonedx.maven.plugin.version>2.9.1</cyclonedx.maven.plugin.version>
-		<jacoco.maven.plugin.version>0.8.13</jacoco.maven.plugin.version>
+		<jacoco.maven.plugin.version>0.8.15</jacoco.maven.plugin.version>
 		<jmh.version>1.37</jmh.version>
 		<jmh.args>com.pyranid.*CacheBenchmark com.pyranid.ConcurrentLruMapBenchmark</jmh.args>
 		<testcontainers.version>1.21.4</testcontainers.version>
@@ -144,27 +143,6 @@
 				</executions>
 			</plugin>
 			<plugin>
-				<groupId>org.cyclonedx</groupId>
-				<artifactId>cyclonedx-maven-plugin</artifactId>
-				<version>${cyclonedx.maven.plugin.version}</version>
-				<executions>
-					<execution>
-						<id>build-sbom</id>
-						<phase>package</phase>
-						<goals>
-							<goal>makeBom</goal>
-						</goals>
-					</execution>
-				</executions>
-				<configuration>
-					<projectType>library</projectType>
-					<schemaVersion>1.5</schemaVersion>
-					<outputFormat>all</outputFormat>
-					<includeProvidedScope>false</includeProvidedScope>
-					<includeSystemScope>false</includeSystemScope>
-				</configuration>
-			</plugin>
-			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-jar-plugin</artifactId>
 				<version>${maven.jar.plugin.version}</version>
@@ -196,7 +174,7 @@
 					</additionalOptions>
 					<linksource>true</linksource>
 					<show>public</show>
-					<bottom><![CDATA[Copyright 2015-2022 <a href="https://www.xmog.com" target="_blank">Transmogrify LLC<a>, 2022-2026 <a href="https://www.revetware.com" target="_blank">Revetware LLC<a>.]]></bottom>
+					<bottom><![CDATA[Copyright 2015-2022 <a href="https://www.xmog.com" target="_blank">Transmogrify LLC</a>, 2022-2026 <a href="https://www.revetware.com" target="_blank">Revetware LLC</a>.]]></bottom>
 					<source>17</source>
 				</configuration>
 				<executions>
@@ -229,14 +207,6 @@
 					<parameter>
 						<accessModifier>public</accessModifier>
 						<onlyModified>true</onlyModified>
-						<excludes>
-							<exclude>com.pyranid.Database#transaction(com.pyranid.TransactionIsolation, com.pyranid.TransactionalOperation)</exclude>
-							<exclude>com.pyranid.Database#transaction(com.pyranid.TransactionIsolation, com.pyranid.ReturningTransactionalOperation)</exclude>
-							<exclude>com.pyranid.DatabaseException#isUniqueConstraintViolation()</exclude>
-							<exclude>com.pyranid.DatabaseException#isForeignKeyViolation()</exclude>
-							<exclude>com.pyranid.DatabaseException#isDeadlock()</exclude>
-							<exclude>com.pyranid.DatabaseException#isTransient()</exclude>
-						</excludes>
 					</parameter>
 					<breakBuildBasedOnSemanticVersioning>true</breakBuildBasedOnSemanticVersioning>
 					<breakBuildOnBinaryIncompatibleModifications>true</breakBuildOnBinaryIncompatibleModifications>
@@ -314,6 +284,32 @@
 								<goals>
 									<goal>report</goal>
 								</goals>
+							</execution>
+							<execution>
+								<id>check</id>
+								<phase>verify</phase>
+								<goals>
+									<goal>check</goal>
+								</goals>
+								<configuration>
+									<rules>
+										<rule>
+											<element>BUNDLE</element>
+											<limits>
+												<limit>
+													<counter>INSTRUCTION</counter>
+													<value>COVEREDRATIO</value>
+													<minimum>0.74</minimum>
+												</limit>
+												<limit>
+													<counter>BRANCH</counter>
+													<value>COVEREDRATIO</value>
+													<minimum>0.63</minimum>
+												</limit>
+											</limits>
+										</rule>
+									</rules>
+								</configuration>
 							</execution>
 						</executions>
 					</plugin>

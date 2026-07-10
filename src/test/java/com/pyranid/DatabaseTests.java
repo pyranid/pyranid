@@ -88,7 +88,8 @@ public class DatabaseTests {
 	public record UnmatchedRecord(String name, String emailAddress) {}
 	public record SqlArrayRecord(String[] tagsArray, List<String> tagsList, Set<String> tagsSet) {}
 	public record SqlArrayFanoutRecord(@DatabaseColumn("tags") String[] tagsArray,
-																			@DatabaseColumn("tags") List<String> tagsList) {}
+																										@DatabaseColumn("tags") List<String> tagsList) {}
+	public record AdditiveAliasRecord(@DatabaseColumn("legacy_value") String currentValue) {}
 	public record StringTemporalRecord(LocalDate localDate,
 																		 LocalTime localTime,
 																		 LocalDateTime localDateTime,
@@ -97,6 +98,36 @@ public class DatabaseTests {
 																		 ZonedDateTime zonedDateTime) {}
 
 	private interface ConnectionSubtype extends Connection {}
+	private interface VendorConnectionAccess {
+		String vendorName();
+		Connection physicalConnection();
+		VendorConnectionAccess self();
+		void close();
+	}
+
+	public static class AdditiveAliasBean {
+		private @DatabaseColumn("legacy_value") String currentValue;
+
+		public String getCurrentValue() {
+			return this.currentValue;
+		}
+
+		public void setCurrentValue(String currentValue) {
+			this.currentValue = currentValue;
+		}
+	}
+
+	public static class ObjectValueHolder {
+		private Object value;
+
+		public Object getValue() {
+			return this.value;
+		}
+
+		public void setValue(Object value) {
+			this.value = value;
+		}
+	}
 
 	public static class EmployeeClass {
 		private @DatabaseColumn("name") String displayName;
@@ -463,6 +494,37 @@ public class DatabaseTests {
 	}
 
 	@Test
+	public void testDatabaseColumnAliasesAreAdditiveWithAndWithoutRowPlanning() {
+		for (Boolean planCachingEnabled : List.of(false, true)) {
+			Database database = Database.withDataSource(createInMemoryDataSource("additive_aliases_" + planCachingEnabled))
+					.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(planCachingEnabled).build())
+					.build();
+
+			AdditiveAliasBean beanFromDefault = database.query(
+						"SELECT 'default-bean' AS current_value FROM (VALUES (0)) AS t(x)")
+					.fetchObject(AdditiveAliasBean.class)
+					.orElseThrow();
+			AdditiveAliasBean beanFromAlias = database.query(
+						"SELECT 'alias-bean' AS legacy_value FROM (VALUES (0)) AS t(x)")
+					.fetchObject(AdditiveAliasBean.class)
+					.orElseThrow();
+			AdditiveAliasRecord recordFromDefault = database.query(
+						"SELECT 'default-record' AS current_value FROM (VALUES (0)) AS t(x)")
+					.fetchObject(AdditiveAliasRecord.class)
+					.orElseThrow();
+			AdditiveAliasRecord recordFromAlias = database.query(
+						"SELECT 'alias-record' AS legacy_value FROM (VALUES (0)) AS t(x)")
+					.fetchObject(AdditiveAliasRecord.class)
+					.orElseThrow();
+
+			Assertions.assertEquals("default-bean", beanFromDefault.getCurrentValue());
+			Assertions.assertEquals("alias-bean", beanFromAlias.getCurrentValue());
+			Assertions.assertEquals("default-record", recordFromDefault.currentValue());
+			Assertions.assertEquals("alias-record", recordFromAlias.currentValue());
+		}
+	}
+
+	@Test
 	public void testAcronymJavaBeanPropertyNames() {
 		for (Boolean planCachingEnabled : List.of(false, true)) {
 			Database database = Database.withDataSource(createInMemoryDataSource(format("testAcronymJavaBeanPropertyNames%s", planCachingEnabled)))
@@ -724,6 +786,46 @@ public class DatabaseTests {
 	}
 
 	@Test
+	public void testNamedParameterParsingAllowsWhitespaceBeforeSubscripts() {
+		List<String> parameterNames = parseNamedParameters("SELECT tags [ :idx ] FROM t WHERE id = :id");
+
+		Assertions.assertEquals(List.of("idx", "id"), parameterNames);
+	}
+
+	@Test
+	public void testNamedParameterParsingSkipsOracleAlternativeQuotedStrings() {
+		String sql = "SELECT q'[text :ignored and ''quotes'']', q'!more :ignored!' FROM t WHERE id = :id";
+
+		Assertions.assertEquals(List.of("id"), parseNamedParameters(sql));
+	}
+
+	@Test
+	public void testMySqlNamedParameterParsingSkipsHashCommentsAndBackslashEscapedStrings() {
+		String sql = "SELECT 'it\\'s :ignored' # :also_ignored\nFROM t WHERE id = :id";
+
+		Assertions.assertEquals(List.of("id"), parseNamedParameters(sql, Database.SqlLexicalMode.MYSQL));
+	}
+
+	@Test
+	public void testStandardNamedParameterParsingPreservesPostgresHashOperators() {
+		String sql = "SELECT payload #> :path FROM t WHERE id = :id";
+
+		Assertions.assertEquals(List.of("path", "id"), parseNamedParameters(sql, Database.SqlLexicalMode.STANDARD));
+	}
+
+	@Test
+	public void testConfiguredMySqlUsesMySqlLexicalRulesWhenStandardParsingFails() {
+		PreparedStatement preparedStatement = preparedStatementWithDefaultBehavior();
+		Database db = Database.withDataSource(dataSourceForPreparedStatement(preparedStatement))
+				.databaseType(DatabaseType.MYSQL)
+				.build();
+
+		Assertions.assertDoesNotThrow(() -> db.query("UPDATE t SET value = 'it\\'s :ignored' WHERE id = :id")
+				.bind("id", 1)
+				.execute());
+	}
+
+	@Test
 	public void testNamedParameterParsingSkipsEscapedBracketIdentifiers() {
 		String sql = "SELECT [a]]b:ignored] FROM t WHERE id = :id";
 
@@ -901,6 +1003,38 @@ public class DatabaseTests {
 
 		Assertions.assertTrue(exception.getMessage().contains("contains null element at index 1"),
 				"Expected null element index in exception message");
+	}
+
+	@Test
+	public void testQueryInListRejectsNullAfterRecursiveSecureAndOptionalUnwrapping() {
+		Database db = Database.withDataSource(createInMemoryDataSource("in_list_recursive_null")).build();
+		Object nestedNull = Optional.of(Parameters.secure(Optional.of(Optional.empty())));
+
+		IllegalArgumentException exception = Assertions.assertThrows(IllegalArgumentException.class, () ->
+				db.query("SELECT id FROM t WHERE id IN (:ids)")
+						.bind("ids", Parameters.inList(new Object[]{nestedNull}))
+						.fetchList(Integer.class));
+
+		Assertions.assertTrue(exception.getMessage().contains("contains null element at index 0"));
+	}
+
+	@Test
+	public void testQueryInListPreservesElementLevelSecureMasks() {
+		AtomicReference<StatementLog<?>> statementLog = new AtomicReference<>();
+		Database db = Database.withDataSource(createInMemoryDataSource("in_list_element_secure"))
+				.statementLogger(statementLog::set)
+				.build();
+		db.query("CREATE TABLE t (value VARCHAR(64))").execute();
+		db.query("INSERT INTO t VALUES ('element-secret'), ('plain')").execute();
+		statementLog.set(null);
+
+		db.query("SELECT value FROM t WHERE value IN (:values) ORDER BY value")
+				.bind("values", Parameters.inList(new Object[]{
+						Parameters.secure(Optional.of("element-secret"), "<element>"), "plain"}))
+				.fetchList(String.class);
+
+		Assertions.assertEquals(List.of("<element>", "plain"),
+				statementLog.get().getStatementContext().getRedactedParameters());
 	}
 
 	@Test
@@ -1372,6 +1506,31 @@ public class DatabaseTests {
 	}
 
 	@Test
+	public void testRawConnectionErrorRemainsPrimaryWhenConnectionCloseFails() {
+		for (Boolean shouldParticipateInExistingTransactionIfPossible : List.of(false, true)) {
+			Connection connection = (Connection) Proxy.newProxyInstance(
+					Connection.class.getClassLoader(), new Class<?>[]{Connection.class}, (proxy, method, args) -> {
+						if ("close".equals(method.getName()))
+							throw new SQLException("close failed");
+
+						return defaultValue(method.getReturnType());
+					});
+			Database db = Database.withDataSource(dataSourceForConnection(connection)).build();
+			TestError error = new TestError("raw operation failed");
+
+			TestError thrown = Assertions.assertThrows(TestError.class, () ->
+					db.performRawConnectionOperation(rawConnection -> {
+						throw error;
+					}, shouldParticipateInExistingTransactionIfPossible));
+
+			Assertions.assertSame(error, thrown);
+			Assertions.assertEquals(1, thrown.getSuppressed().length);
+			Assertions.assertInstanceOf(DatabaseException.class, thrown.getSuppressed()[0]);
+			Assertions.assertTrue(thrown.getSuppressed()[0].getMessage().contains("Unable to close database connection"));
+		}
+	}
+
+	@Test
 	public void testParticipatePreservesInterruptFlag() {
 		DataSource ds = createInMemoryDataSource("participate_interrupt");
 		Database db = Database.withDataSource(ds).build();
@@ -1631,6 +1790,9 @@ public class DatabaseTests {
 		Assertions.assertFalse(DatabaseType.MYSQL.dialect().isTimestampWithTimeZone(
 						singleColumnResultSetMetaData("v", Types.TIMESTAMP, "datetime"), 1),
 				"Expected MySQL datetime to remain timestamp without time zone");
+		Assertions.assertFalse(DatabaseType.GENERIC.dialect().isTimestampWithTimeZone(
+						singleColumnResultSetMetaData("v", Types.TIME, "TIME WITH TIME ZONE"), 1),
+				"TIME WITH TIME ZONE must not be misclassified as a timestamp");
 	}
 
 	@Test
@@ -1645,6 +1807,54 @@ public class DatabaseTests {
 		String mapped = mapSingleColumn(db, "v", Types.OTHER, "jsonb", pgObject, String.class).orElseThrow();
 
 		Assertions.assertEquals("{\"enabled\":true}", mapped);
+	}
+
+	@Test
+	public void testPostgresDialectUnwrapsPgObjectForObjectPropertiesWithAndWithoutRowPlanning() throws SQLException {
+		for (Boolean planCachingEnabled : List.of(false, true)) {
+			Database db = Database.withDataSource(createInMemoryDataSource("pgobject_property_" + planCachingEnabled))
+					.databaseType(DatabaseType.POSTGRESQL)
+					.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(planCachingEnabled).build())
+					.build();
+			org.postgresql.util.PGobject pgObject = new org.postgresql.util.PGobject();
+			pgObject.setType("jsonb");
+			pgObject.setValue("{\"enabled\":true}");
+
+			ObjectValueHolder holder = mapSingleColumn(db, "value", Types.OTHER, "jsonb", pgObject,
+					ObjectValueHolder.class).orElseThrow();
+
+			Assertions.assertEquals("{\"enabled\":true}", holder.getValue());
+			Assertions.assertInstanceOf(String.class, holder.getValue());
+		}
+	}
+
+	@Test
+	public void testTimestampWithTimeZoneLocalDateTimeFallbackHandlesTypedGetterSqlException() throws SQLException {
+		ZoneId zone = ZoneId.of("America/New_York");
+		OffsetDateTime raw = OffsetDateTime.parse("2024-01-02T03:04:05+02:00");
+		AtomicReference<Class<?>> requestedType = new AtomicReference<>();
+		ResultSet resultSet = (ResultSet) Proxy.newProxyInstance(ResultSet.class.getClassLoader(),
+				new Class<?>[]{ResultSet.class}, (proxy, method, args) -> {
+					if ("getObject".equals(method.getName()) && args != null && args.length == 2) {
+						requestedType.set((Class<?>) args[1]);
+						throw new SQLException("typed conversion unsupported");
+					}
+					if ("getObject".equals(method.getName()))
+						return raw;
+					return defaultValue(method.getReturnType());
+				});
+		Database db = Database.withDataSource(createInMemoryDataSource("timestamp_tz_typed_fallback"))
+				.databaseType(DatabaseType.POSTGRESQL)
+				.timeZone(zone)
+				.build();
+		StatementContext<?> statementContext = StatementContext.with(
+				Statement.of("temporal-fallback", "SELECT value"), db).build();
+
+		LocalDateTime mapped = DefaultResultSetMapper.TemporalReaders.asLocalDateTime(
+				resultSet, 1, statementContext, true);
+
+		Assertions.assertEquals(OffsetDateTime.class, requestedType.get());
+		Assertions.assertEquals(raw.atZoneSameInstant(zone).toLocalDateTime(), mapped);
 	}
 
 	@Test
@@ -2027,76 +2237,66 @@ public class DatabaseTests {
 	}
 
 	@Test
-	public void testDefaultRowPlanAndPreferredMapperCachesUseLru() {
+	public void testDefaultRowPlanCacheUsesLru() {
 		DefaultResultSetMapper resultSetMapper = (DefaultResultSetMapper) ResultSetMapper.withDefaultConfiguration();
 
 		Assertions.assertTrue(resultSetMapper.getRowPlanningCacheForResultClass(EmployeeClass.class) instanceof ConcurrentLruMap,
 				"Row-plan cache should use LRU by default");
-		Assertions.assertTrue(resultSetMapper.getPreferredColumnMapperCacheForSourceClass(String.class) instanceof ConcurrentLruMap,
-				"Preferred mapper cache should use LRU by default");
 	}
 
 	@Test
-	public void testPreferredColumnMapperCacheCapacity() {
-		DataSource dataSource = createInMemoryDataSource("cm_cache_cap");
+	@SuppressWarnings("removal")
+	public void testPreferredColumnMapperCacheCapacityIsRetainedAsValidatedNoOp() {
+		Assertions.assertNotNull(ResultSetMapper.withPlanCachingEnabled(true)
+				.preferredColumnMapperCacheCapacity(2)
+				.build());
+		Assertions.assertThrows(IllegalArgumentException.class, () -> ResultSetMapper.withPlanCachingEnabled(true)
+				.preferredColumnMapperCacheCapacity(-1));
+	}
 
-		CustomColumnMapper mapper = new CustomColumnMapper() {
-			@NonNull
+	@Test
+	public void testCustomSpiListsAreDefensivelyCopied() {
+		CustomParameterBinder parameterBinder = new CustomParameterBinder() {
+			@Override
+			public BindingResult bind(@NonNull StatementContext<?> statementContext,
+																		@NonNull PreparedStatement preparedStatement,
+																		@NonNull Integer parameterIndex,
+																		@NonNull Object parameter) {
+				return BindingResult.fallback();
+			}
+
 			@Override
 			public Boolean appliesTo(@NonNull TargetType targetType) {
-				return targetType.matchesClass(Locale.class)
-						|| targetType.matchesClass(Currency.class)
-						|| targetType.matchesClass(ZoneId.class);
-			}
-
-			@NonNull
-			@Override
-			public MappingResult map(@NonNull StatementContext<?> statementContext,
-															 @NonNull ResultSet resultSet,
-															 @NonNull Object resultSetValue,
-															 @NonNull TargetType targetType,
-															 @NonNull Integer columnIndex,
-															 @Nullable String columnLabel,
-															 @NonNull InstanceProvider instanceProvider) {
-				if (targetType.matchesClass(Locale.class))
-					return MappingResult.of(Locale.CANADA);
-				if (targetType.matchesClass(Currency.class))
-					return MappingResult.of(Currency.getInstance("USD"));
-				if (targetType.matchesClass(ZoneId.class))
-					return MappingResult.of(ZoneId.of("UTC"));
-				return MappingResult.fallback();
+				return false;
 			}
 		};
+		CustomColumnMapper columnMapper = new CustomColumnMapper() {
+			@Override
+			public MappingResult map(@NonNull StatementContext<?> statementContext,
+														 @NonNull ResultSet resultSet,
+														 @NonNull Object resultSetValue,
+														 @NonNull TargetType targetType,
+														 @NonNull Integer columnIndex,
+														 @Nullable String columnLabel,
+														 @NonNull InstanceProvider instanceProvider) {
+				return MappingResult.fallback();
+			}
 
-		DefaultResultSetMapper resultSetMapper = (DefaultResultSetMapper) ResultSetMapper.withCustomColumnMappers(List.of(mapper))
-				.preferredColumnMapperCacheCapacity(2)
-				.build();
+			@Override
+			public Boolean appliesTo(@NonNull TargetType targetType) {
+				return false;
+			}
+		};
+		List<CustomParameterBinder> parameterBinders = new ArrayList<>(List.of(parameterBinder));
+		List<CustomColumnMapper> columnMappers = new ArrayList<>(List.of(columnMapper));
+		DefaultPreparedStatementBinder preparedStatementBinder = new DefaultPreparedStatementBinder(parameterBinders);
+		DefaultResultSetMapper resultSetMapper = (DefaultResultSetMapper) ResultSetMapper.withCustomColumnMappers(columnMappers).build();
 
-		Database db = Database.withDataSource(dataSource)
-				.resultSetMapper(resultSetMapper)
-				.build();
+		parameterBinders.clear();
+		columnMappers.clear();
 
-				db.query("""
-				CREATE TABLE cache_types (
-				  locale VARCHAR(255),
-				  currency VARCHAR(255),
-				  zone_id VARCHAR(255)
-				)
-				""")
-			.execute();
-				db.query("INSERT INTO cache_types VALUES ('en-US', 'USD', 'UTC')").execute();
-
-		db.query("SELECT locale FROM cache_types").fetchObject(LocaleHolder.class);
-		db.query("SELECT currency FROM cache_types").fetchObject(CurrencyHolder.class);
-		db.query("SELECT zone_id FROM cache_types").fetchObject(ZoneIdHolder.class);
-
-		Map<?, ?> cache = resultSetMapper.getPreferredColumnMapperCacheForSourceClass(String.class);
-		Assertions.assertTrue(cache instanceof ConcurrentLruMap, "Preferred mapper cache should use LRU when capacity is set");
-		ConcurrentLruMap<?, ?> lru = (ConcurrentLruMap<?, ?>) cache;
-		lru.drain();
-
-		Assertions.assertEquals(2, lru.capacity(), "Preferred mapper cache should honor configured LRU capacity");
-		Assertions.assertTrue(lru.size() <= 2, "Preferred mapper cache should honor configured capacity");
+		Assertions.assertEquals(List.of(parameterBinder), preparedStatementBinder.getCustomParameterBinders());
+		Assertions.assertEquals(List.of(columnMapper), resultSetMapper.getCustomColumnMappers());
 	}
 
 	@Test
@@ -3223,6 +3423,42 @@ public class DatabaseTests {
 			Assertions.assertThrows(SQLException.class, () -> connection.unwrap(ConnectionSubtype.class));
 			return Optional.empty();
 		});
+	}
+
+	@Test
+	public void testUseRawConnectionVendorInterfaceCannotExposePhysicalConnection() {
+		AtomicInteger physicalCloseCalls = new AtomicInteger();
+		AtomicReference<VendorConnectionAccess> retainedVendorConnection = new AtomicReference<>();
+		Connection physicalConnection = (Connection) Proxy.newProxyInstance(
+				getClass().getClassLoader(),
+				new Class<?>[]{Connection.class, VendorConnectionAccess.class},
+				(proxy, method, args) -> switch (method.getName()) {
+					case "vendorName" -> "test-driver";
+					case "physicalConnection", "self" -> proxy;
+					case "close" -> {
+						physicalCloseCalls.incrementAndGet();
+						yield null;
+					}
+					case "isClosed" -> false;
+					default -> defaultValue(method.getReturnType());
+				});
+		Database db = Database.withDataSource(dataSourceForConnection(physicalConnection)).build();
+
+		db.useRawConnection(connection -> {
+			Assertions.assertTrue(connection.isWrapperFor(VendorConnectionAccess.class));
+			VendorConnectionAccess vendorConnection = connection.unwrap(VendorConnectionAccess.class);
+			retainedVendorConnection.set(vendorConnection);
+
+			Assertions.assertFalse(vendorConnection instanceof Connection);
+			Assertions.assertEquals("test-driver", vendorConnection.vendorName());
+			Assertions.assertSame(vendorConnection, vendorConnection.self());
+			Assertions.assertSame(connection, vendorConnection.physicalConnection());
+			Assertions.assertThrows(IllegalStateException.class, vendorConnection::close);
+			return Optional.empty();
+		});
+
+		Assertions.assertEquals(1, physicalCloseCalls.get(), "Only Pyranid cleanup should close the physical connection");
+		Assertions.assertThrows(IllegalStateException.class, () -> retainedVendorConnection.get().vendorName());
 	}
 
 	@Test
@@ -5053,10 +5289,17 @@ public class DatabaseTests {
 
 	@SuppressWarnings("unchecked")
 	private static List<String> parseNamedParameters(@NonNull String sql) {
+		return parseNamedParameters(sql, Database.SqlLexicalMode.STANDARD);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static List<String> parseNamedParameters(@NonNull String sql,
+																							 Database.SqlLexicalMode lexicalMode) {
 		requireNonNull(sql);
+		requireNonNull(lexicalMode);
 
 		try {
-			Database.ParsedSql parsedSql = Database.parseNamedParameterSql(sql);
+			Database.ParsedSql parsedSql = Database.parseNamedParameterSql(sql, lexicalMode);
 			Field parameterNamesField = parsedSql.getClass().getDeclaredField("parameterNames");
 			parameterNamesField.setAccessible(true);
 			return (List<String>) parameterNamesField.get(parsedSql);

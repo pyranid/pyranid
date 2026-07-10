@@ -180,6 +180,16 @@ final class SecureParameterSupport {
 				return;
 			}
 
+			if (value instanceof SqlArrayParameter<?> sqlArrayParameter) {
+				Object[] elements = sqlArrayParameter.getElements().orElse(null);
+
+				if (elements != null)
+					for (Object element : elements)
+						addNeedlesForValue(unwrapSecureAndOptionalParameter(element), mask, needleMasks,
+								needleRenderingFailureDescriptions, depth + 1);
+				return;
+			}
+
 			if (value == null || value instanceof Boolean || value instanceof VectorParameter)
 				return;
 

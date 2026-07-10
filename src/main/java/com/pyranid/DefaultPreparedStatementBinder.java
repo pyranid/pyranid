@@ -80,7 +80,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 	DefaultPreparedStatementBinder(@NonNull List<CustomParameterBinder> customParameterBinders) {
 		requireNonNull(customParameterBinders);
-		this.customParameterBinders = Collections.unmodifiableList(customParameterBinders);
+		this.customParameterBinders = List.copyOf(customParameterBinders);
 	}
 
 	@Override
