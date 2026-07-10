@@ -826,6 +826,23 @@ public class DatabaseTests {
 	}
 
 	@Test
+	public void testParsedSqlCacheStoresLexicalVariantsAsOneEntry() throws Exception {
+		Database db = Database.withDataSource(createInMemoryDataSource("parsed_sql_variant_cache"))
+				.parsedSqlCacheCapacity(8)
+				.build();
+		String sql = "SELECT payload #> :path FROM t WHERE id = :id";
+
+		db.query(sql);
+		db.query(sql);
+
+		Field cacheField = Database.class.getDeclaredField("parsedSqlCache");
+		cacheField.setAccessible(true);
+		Map<?, ?> cache = (Map<?, ?>) cacheField.get(db);
+		Assertions.assertEquals(1, cache.size());
+		Assertions.assertTrue(cache.containsKey(sql));
+	}
+
+	@Test
 	public void testNamedParameterParsingSkipsEscapedBracketIdentifiers() {
 		String sql = "SELECT [a]]b:ignored] FROM t WHERE id = :id";
 

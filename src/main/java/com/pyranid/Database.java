@@ -118,7 +118,7 @@ public final class Database {
 	@Nullable
 	private final Integer maxRows;
 	@Nullable
-	private final Map<ParsedSqlCacheKey, ParsedSql> parsedSqlCache;
+	private final Map<String, ParsedSqlVariants> parsedSqlCache;
 	@NonNull
 	private final AtomicLong defaultIdGenerator;
 	@NonNull
@@ -1422,21 +1422,104 @@ public final class Database {
 	}
 
 	@NonNull
-	private ParsedSql getParsedSql(@NonNull String sql,
-															 @NonNull SqlLexicalMode lexicalMode) {
+	private ParsedSqlVariants getParsedSqlVariants(@NonNull String sql) {
 		requireNonNull(sql);
-		requireNonNull(lexicalMode);
 
 		if (this.parsedSqlCache == null)
-			return parseNamedParameterSql(sql, lexicalMode);
+			return parseNamedParameterSqlVariants(sql);
 
-		ParsedSqlCacheKey cacheKey = new ParsedSqlCacheKey(sql, lexicalMode);
-		return this.parsedSqlCache.computeIfAbsent(cacheKey,
-				key -> parseNamedParameterSql(key.sql(), key.lexicalMode()));
+		return this.parsedSqlCache.computeIfAbsent(sql, Database::parseNamedParameterSqlVariants);
 	}
 
-	private record ParsedSqlCacheKey(@NonNull String sql,
-																 @NonNull SqlLexicalMode lexicalMode) {}
+	@NonNull
+	private static ParsedSqlVariants parseNamedParameterSqlVariants(@NonNull String sql) {
+		requireNonNull(sql);
+
+		ParsedSql standardParsedSql = null;
+		ParsedSql mysqlParsedSql = null;
+		IllegalArgumentException standardParseFailure = null;
+		IllegalArgumentException mysqlParseFailure = null;
+
+		try {
+			standardParsedSql = parseNamedParameterSql(sql, SqlLexicalMode.STANDARD);
+		} catch (IllegalArgumentException e) {
+			standardParseFailure = e;
+		}
+
+		if (requiresMySqlLexicalVariant(sql)) {
+			try {
+				mysqlParsedSql = parseNamedParameterSql(sql, SqlLexicalMode.MYSQL);
+			} catch (IllegalArgumentException e) {
+				mysqlParseFailure = e;
+			}
+		} else {
+			mysqlParsedSql = standardParsedSql;
+			mysqlParseFailure = standardParseFailure;
+		}
+
+		if (standardParsedSql == null && mysqlParsedSql == null)
+			throw requireNonNull(standardParseFailure);
+
+		ParsedSql effectiveStandardParsedSql = standardParsedSql == null
+				? requireNonNull(mysqlParsedSql)
+				: standardParsedSql;
+		ParsedSql effectiveMysqlParsedSql = mysqlParsedSql == null
+				? effectiveStandardParsedSql
+				: mysqlParsedSql;
+		Set<String> distinctParameterNames;
+
+		if (effectiveStandardParsedSql.distinctParameterNames.equals(effectiveMysqlParsedSql.distinctParameterNames)) {
+			distinctParameterNames = effectiveStandardParsedSql.distinctParameterNames;
+		} else {
+			Set<String> combinedParameterNames = new HashSet<>(effectiveStandardParsedSql.distinctParameterNames);
+			combinedParameterNames.addAll(effectiveMysqlParsedSql.distinctParameterNames);
+			distinctParameterNames = Set.copyOf(combinedParameterNames);
+		}
+
+		boolean requiresDatabaseType = standardParseFailure != null
+				|| mysqlParseFailure != null
+				|| !effectiveStandardParsedSql.equivalentTo(effectiveMysqlParsedSql);
+
+		return new ParsedSqlVariants(effectiveStandardParsedSql,
+				effectiveMysqlParsedSql,
+				standardParseFailure == null ? null : requireNonNull(standardParseFailure.getMessage()),
+				mysqlParseFailure == null ? null : requireNonNull(mysqlParseFailure.getMessage()),
+				distinctParameterNames,
+				requiresDatabaseType);
+	}
+
+	private static boolean requiresMySqlLexicalVariant(@NonNull String sql) {
+		requireNonNull(sql);
+		return sql.indexOf('#') >= 0 || sql.indexOf("\\'") >= 0;
+	}
+
+	private static final class ParsedSqlVariants {
+		@NonNull
+		private final ParsedSql standardParsedSql;
+		@NonNull
+		private final ParsedSql mysqlParsedSql;
+		@Nullable
+		private final String standardParseFailureMessage;
+		@Nullable
+		private final String mysqlParseFailureMessage;
+		@NonNull
+		private final Set<String> distinctParameterNames;
+		private final boolean requiresDatabaseType;
+
+		private ParsedSqlVariants(@NonNull ParsedSql standardParsedSql,
+														@NonNull ParsedSql mysqlParsedSql,
+														@Nullable String standardParseFailureMessage,
+														@Nullable String mysqlParseFailureMessage,
+														@NonNull Set<String> distinctParameterNames,
+														boolean requiresDatabaseType) {
+			this.standardParsedSql = requireNonNull(standardParsedSql);
+			this.mysqlParsedSql = requireNonNull(mysqlParsedSql);
+			this.standardParseFailureMessage = standardParseFailureMessage;
+			this.mysqlParseFailureMessage = mysqlParseFailureMessage;
+			this.distinctParameterNames = Set.copyOf(requireNonNull(distinctParameterNames));
+			this.requiresDatabaseType = requiresDatabaseType;
+		}
+	}
 
 	/**
 	 * Default internal implementation of {@link Query}.
@@ -1450,15 +1533,7 @@ public final class Database {
 		@NonNull
 		private final String originalSql;
 		@NonNull
-		private final ParsedSql standardParsedSql;
-		@NonNull
-		private final ParsedSql mysqlParsedSql;
-		@Nullable
-		private final IllegalArgumentException standardParseFailure;
-		@Nullable
-		private final IllegalArgumentException mysqlParseFailure;
-		@NonNull
-		private final Set<String> distinctParameterNames;
+		private final ParsedSqlVariants parsedSqlVariants;
 		@NonNull
 		private final Map<String, Object> bindings;
 		@Nullable
@@ -1485,41 +1560,9 @@ public final class Database {
 
 			this.database = database;
 			this.originalSql = sql;
+			this.parsedSqlVariants = database.getParsedSqlVariants(sql);
 
-			ParsedSql standardParsedSql = null;
-			ParsedSql mysqlParsedSql = null;
-			IllegalArgumentException standardParseFailure = null;
-			IllegalArgumentException mysqlParseFailure = null;
-
-			try {
-				standardParsedSql = database.getParsedSql(sql, SqlLexicalMode.STANDARD);
-			} catch (IllegalArgumentException e) {
-				standardParseFailure = e;
-			}
-
-			if (requiresMySqlLexicalVariant(sql)) {
-				try {
-					mysqlParsedSql = database.getParsedSql(sql, SqlLexicalMode.MYSQL);
-				} catch (IllegalArgumentException e) {
-					mysqlParseFailure = e;
-				}
-			} else {
-				mysqlParsedSql = standardParsedSql;
-				mysqlParseFailure = standardParseFailure;
-			}
-
-			if (standardParsedSql == null && mysqlParsedSql == null)
-				throw requireNonNull(standardParseFailure);
-
-			this.standardParsedSql = standardParsedSql == null ? requireNonNull(mysqlParsedSql) : standardParsedSql;
-			this.mysqlParsedSql = mysqlParsedSql == null ? this.standardParsedSql : mysqlParsedSql;
-			this.standardParseFailure = standardParseFailure;
-			this.mysqlParseFailure = mysqlParseFailure;
-			Set<String> distinctParameterNames = new HashSet<>(this.standardParsedSql.distinctParameterNames);
-			distinctParameterNames.addAll(this.mysqlParsedSql.distinctParameterNames);
-			this.distinctParameterNames = Set.copyOf(distinctParameterNames);
-
-			this.bindings = new LinkedHashMap<>(Math.max(8, this.distinctParameterNames.size()));
+			this.bindings = new LinkedHashMap<>(Math.max(8, this.parsedSqlVariants.distinctParameterNames.size()));
 			this.preparedStatementCustomizer = null;
 			this.queryTimeout = null;
 			this.fetchSize = null;
@@ -1533,7 +1576,7 @@ public final class Database {
 											@Nullable Object value) {
 			requireNonNull(name);
 
-			if (!this.distinctParameterNames.contains(name))
+			if (!this.parsedSqlVariants.distinctParameterNames.contains(name))
 				throw new IllegalArgumentException(format("Unknown named parameter '%s' for SQL: %s", name, this.originalSql));
 
 			this.bindings.put(name, value);
@@ -1712,7 +1755,7 @@ public final class Database {
 				requireNonNull(parameterGroup);
 
 				for (String parameterName : parameterGroup.keySet())
-					if (!this.distinctParameterNames.contains(parameterName))
+					if (!this.parsedSqlVariants.distinctParameterNames.contains(parameterName))
 						throw new IllegalArgumentException(format("Unknown named parameter '%s' for SQL: %s", parameterName, this.originalSql));
 
 				Map<String, Object> mergedBindings;
@@ -1915,9 +1958,8 @@ public final class Database {
 
 		@NonNull
 		private ParsedSql parsedSqlForDatabaseType() {
-			if (this.standardParseFailure == null && this.mysqlParseFailure == null
-					&& this.standardParsedSql.equivalentTo(this.mysqlParsedSql))
-				return this.standardParsedSql;
+			if (!this.parsedSqlVariants.requiresDatabaseType)
+				return this.parsedSqlVariants.standardParsedSql;
 
 			DatabaseType databaseType;
 			Optional<Transaction> transaction = this.database.currentTransactionForDatabaseOperation();
@@ -1928,16 +1970,16 @@ public final class Database {
 				databaseType = this.database.getDatabaseType();
 
 			if (databaseType == DatabaseType.MYSQL || databaseType == DatabaseType.MARIA_DB) {
-				if (this.mysqlParseFailure != null)
-					throw this.mysqlParseFailure;
+				if (this.parsedSqlVariants.mysqlParseFailureMessage != null)
+					throw new IllegalArgumentException(this.parsedSqlVariants.mysqlParseFailureMessage);
 
-				return this.mysqlParsedSql;
+				return this.parsedSqlVariants.mysqlParsedSql;
 			}
 
-			if (this.standardParseFailure != null)
-				throw this.standardParseFailure;
+			if (this.parsedSqlVariants.standardParseFailureMessage != null)
+				throw new IllegalArgumentException(this.parsedSqlVariants.standardParseFailureMessage);
 
-			return this.standardParsedSql;
+			return this.parsedSqlVariants.standardParsedSql;
 		}
 
 		private void validateBindingsForParsedSql(@NonNull Map<String, Object> bindings,
@@ -1950,11 +1992,6 @@ public final class Database {
 					throw new IllegalArgumentException(format(
 							"Named parameter '%s' is not valid for the detected database SQL syntax. SQL: %s",
 							bindingName, this.originalSql));
-		}
-
-		private static boolean requiresMySqlLexicalVariant(@NonNull String sql) {
-			requireNonNull(sql);
-			return sql.indexOf('#') >= 0 || sql.indexOf("\\'") >= 0;
 		}
 
 		private void appendPlaceholders(@NonNull StringBuilder sql,
@@ -2451,8 +2488,7 @@ public final class Database {
 				--tokenStartIndex;
 
 			String previousToken = sql.substring(tokenStartIndex, previousIndex + 1).toUpperCase(Locale.ROOT);
-			return !Set.of("SELECT", "FROM", "JOIN", "AS", "INTO", "UPDATE", "TABLE", "BY", "ORDER", "GROUP")
-					.contains(previousToken);
+			return !BRACKET_IDENTIFIER_CONTEXT_KEYWORDS.contains(previousToken);
 		}
 
 		return previousChar == ')'
@@ -2507,6 +2543,11 @@ public final class Database {
 			"SELECT", "WHERE", "AND", "OR", "ON", "HAVING", "WHEN", "THEN", "ELSE", "IN",
 			"VALUES", "SET", "RETURNING", "USING", "LIKE", "BETWEEN", "IS", "NOT", "NULL",
 			"JOIN", "FROM"
+	);
+
+	@NonNull
+	private static final Set<@NonNull String> BRACKET_IDENTIFIER_CONTEXT_KEYWORDS = Set.of(
+			"SELECT", "FROM", "JOIN", "AS", "INTO", "UPDATE", "TABLE", "BY", "ORDER", "GROUP"
 	);
 
 	@NonNull
