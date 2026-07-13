@@ -55,7 +55,7 @@
 		<maven.failsafe.plugin.version>3.5.4</maven.failsafe.plugin.version>
 		<maven.jar.plugin.version>3.4.2</maven.jar.plugin.version>
 		<build.helper.maven.plugin.version>3.6.1</build.helper.maven.plugin.version>
-		<exec.maven.plugin.version>3.5.0</exec.maven.plugin.version>
+		<exec.maven.plugin.version>3.6.3</exec.maven.plugin.version>
 		<japicmp.maven.plugin.version>0.26.1</japicmp.maven.plugin.version>
 		<japicmp.baseline.version>4.4.0</japicmp.baseline.version>
 		<jacoco.maven.plugin.version>0.8.15</jacoco.maven.plugin.version>
