@@ -2,7 +2,7 @@
 
 All notable changes to Pyranid will be documented in this file.
 
-## 4.5.0 (unreleased)
+## 4.5.0
 
 ### Fixed
 

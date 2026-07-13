@@ -17,8 +17,6 @@ No new query languages to learn. No leaky object-relational abstractions. No kit
 
 Full documentation is available at [https://www.pyranid.com](https://www.pyranid.com).
 
-> **Development snapshot:** this branch documents unreleased 4.5.0 behavior. Installation examples continue to use the latest released version, 4.4.0, until 4.5.0 is published.
-
 ### Design Goals
 
 * Small codebase
@@ -50,7 +48,7 @@ Java 17+
   <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid</artifactId>
-  <version>4.4.0</version>
+  <version>4.5.0</version>
 </dependency>
 ```
 
@@ -66,7 +64,7 @@ Java 8+ (legacy; only critical fixes will be applied)
 
 ### Direct Download
 
-For released builds, you can download the Pyranid jar directly from [Maven Central](https://repo1.maven.org/maven2/com/pyranid/pyranid/4.4.0/pyranid-4.4.0.jar).  No other dependencies are required.
+For released builds, you can download the Pyranid jar directly from [Maven Central](https://repo1.maven.org/maven2/com/pyranid/pyranid/4.5.0/pyranid-4.5.0.jar).  No other dependencies are required.
 
 ## Configuration
 
@@ -1819,7 +1817,7 @@ The long-running heap-stability test is opt-in and is also available through the
 mvn -q -Dpyranid.stress=true -Dtest=MemoryStabilityStressTests test
 ```
 
-Artifact signing and Maven Central publishing are isolated in the `release` profile. Use `mvn -P release deploy` only when publishing a release or snapshot; normal local and CI `verify` runs do not require GPG credentials.
+Artifact signing and Maven Central publishing are isolated in the `release` profile. Use `mvn -P release deploy` only when publishing a release or snapshot; normal local and CI `verify` runs do not require GPG credentials. Automatic publishing is intentionally disabled: after deployment validation succeeds, review and publish the deployment in the Central Publisher Portal.
 
 ## Production Notes
 
