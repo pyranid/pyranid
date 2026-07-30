@@ -2,6 +2,26 @@
 
 All notable changes to Pyranid will be documented in this file.
 
+## 4.6.0 (unreleased)
+
+### Added
+
+- Added generic notification APIs: `Notification`, `NotificationSession`,
+  `NotificationSessionOperation`, `Database.sendNotification(...)`,
+  `Database.withNotificationSession(...)`, and
+  `Database.isNotificationListeningSupported()`. PostgreSQL `LISTEN`/`NOTIFY` is
+  the first implementation. Listening uses one caller-owned, callback-scoped
+  physical session with no automatic reconnect; applications own durable
+  reconciliation, retry, supervision, and topology.
+- Added low-cardinality notification-session lifecycle callbacks and
+  `NotificationSnapshot` to `MetricsCollector`.
+
+### Migration Notes
+
+- Notification delivery is lossy and non-durable. Treat notifications as hints
+  to reconcile authoritative state. PostgreSQL receive support requires
+  compatible pgjdbc classes at runtime; sending remains pure SQL and does not.
+
 ## 4.5.0
 
 ### Fixed

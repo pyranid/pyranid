@@ -17,6 +17,9 @@ No new query languages to learn. No leaky object-relational abstractions. No kit
 
 Full documentation is available at [https://www.pyranid.com](https://www.pyranid.com).
 
+> **Development snapshot:** this branch documents unreleased 4.6.0 behavior. Installation examples continue to
+> use the latest released version, 4.5.0, until 4.6.0 is published.
+
 ### Design Goals
 
 * Small codebase

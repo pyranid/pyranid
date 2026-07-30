@@ -22,6 +22,7 @@ import org.jspecify.annotations.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import java.time.Duration;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.atomic.LongAdder;
 
 /**
@@ -64,6 +65,13 @@ final class InMemoryMetricsCollector implements MetricsCollector {
 	private final LongAdder streamsEarlyClosed;
 	private final LongAdder streamsCallbackFailed;
 	private final LongAdder streamsIterationFailed;
+	private final LongAdder notificationSessionsStarted;
+	private final LongAdder notificationSessionsOpened;
+	private final LongAdder notificationSessionsCallbackReturned;
+	private final LongAdder notificationSessionsInterrupted;
+	private final LongAdder notificationSessionsFailed;
+	private final LongAdder notificationBatchesDelivered;
+	private final LongAdder notificationsDelivered;
 	private final LongAdder postTransactionOperationsRun;
 	private final LongAdder postTransactionOperationsFailed;
 
@@ -102,6 +110,13 @@ final class InMemoryMetricsCollector implements MetricsCollector {
 		this.streamsEarlyClosed = new LongAdder();
 		this.streamsCallbackFailed = new LongAdder();
 		this.streamsIterationFailed = new LongAdder();
+		this.notificationSessionsStarted = new LongAdder();
+		this.notificationSessionsOpened = new LongAdder();
+		this.notificationSessionsCallbackReturned = new LongAdder();
+		this.notificationSessionsInterrupted = new LongAdder();
+		this.notificationSessionsFailed = new LongAdder();
+		this.notificationBatchesDelivered = new LongAdder();
+		this.notificationsDelivered = new LongAdder();
 		this.postTransactionOperationsRun = new LongAdder();
 		this.postTransactionOperationsFailed = new LongAdder();
 	}
@@ -284,6 +299,48 @@ final class InMemoryMetricsCollector implements MetricsCollector {
 	}
 
 	@Override
+	public void willOpenNotificationSession(@NonNull DatabaseType databaseType,
+																				 @NonNull UUID notificationSessionId) {
+		this.notificationSessionsStarted.increment();
+	}
+
+	@Override
+	public void didOpenNotificationSession(@NonNull DatabaseType databaseType,
+																				@NonNull UUID notificationSessionId,
+																				@NonNull Duration openDuration) {
+		this.notificationSessionsOpened.increment();
+	}
+
+	@Override
+	public void didFailToOpenNotificationSession(@NonNull DatabaseType databaseType,
+																						 @NonNull UUID notificationSessionId,
+																						 @NonNull Duration openDuration,
+																						 @NonNull Throwable throwable) {
+		this.notificationSessionsFailed.increment();
+	}
+
+	@Override
+	public void didDeliverNotificationBatch(@NonNull DatabaseType databaseType,
+																				 @NonNull UUID notificationSessionId,
+																				 @NonNull Long notificationCount) {
+		this.notificationBatchesDelivered.increment();
+		this.notificationsDelivered.add(notificationCount);
+	}
+
+	@Override
+	public void didCloseNotificationSession(@NonNull DatabaseType databaseType,
+																				 @NonNull UUID notificationSessionId,
+																				 @NonNull NotificationSessionOutcome outcome,
+																				 @NonNull Duration sessionDuration,
+																				 @Nullable Throwable throwable) {
+		switch (outcome) {
+			case CALLBACK_RETURNED -> this.notificationSessionsCallbackReturned.increment();
+			case INTERRUPTED -> this.notificationSessionsInterrupted.increment();
+			case FAILED -> this.notificationSessionsFailed.increment();
+		}
+	}
+
+	@Override
 	public void didRunPostTransactionOperation(@NonNull Transaction transaction,
 																						 @NonNull TransactionResult result,
 																						 @NonNull DatabaseType databaseType,
@@ -293,6 +350,19 @@ final class InMemoryMetricsCollector implements MetricsCollector {
 
 		if (throwable != null)
 			this.postTransactionOperationsFailed.increment();
+	}
+
+	@Override
+	@NonNull
+	public Optional<NotificationSnapshot> notificationSnapshot() {
+		return Optional.of(new NotificationSnapshot(
+				this.notificationSessionsStarted.sum(),
+				this.notificationSessionsOpened.sum(),
+				this.notificationSessionsCallbackReturned.sum(),
+				this.notificationSessionsInterrupted.sum(),
+				this.notificationSessionsFailed.sum(),
+				this.notificationBatchesDelivered.sum(),
+				this.notificationsDelivered.sum()));
 	}
 
 	@Override
@@ -363,6 +433,13 @@ final class InMemoryMetricsCollector implements MetricsCollector {
 		this.streamsEarlyClosed.reset();
 		this.streamsCallbackFailed.reset();
 		this.streamsIterationFailed.reset();
+		this.notificationSessionsStarted.reset();
+		this.notificationSessionsOpened.reset();
+		this.notificationSessionsCallbackReturned.reset();
+		this.notificationSessionsInterrupted.reset();
+		this.notificationSessionsFailed.reset();
+		this.notificationBatchesDelivered.reset();
+		this.notificationsDelivered.reset();
 		this.postTransactionOperationsRun.reset();
 		this.postTransactionOperationsFailed.reset();
 	}

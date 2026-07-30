@@ -18,6 +18,7 @@ package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.postgresql.ds.PGSimpleDataSource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -44,6 +45,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -80,6 +82,443 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 		Database db = Database.withDataSource(dataSource()).build();
 
 		Assertions.assertEquals(DatabaseType.POSTGRESQL, db.getDatabaseType());
+	}
+
+	@Test
+	public void testNotificationDeliveryCommitRollbackPayloadsAndChannels() throws InterruptedException {
+		Database listenerDatabase = Database.withDataSource(dataSource())
+				.databaseType(DatabaseType.POSTGRESQL)
+				.build();
+		Database applicationDatabase = Database.withDataSource(dataSource())
+				.databaseType(DatabaseType.POSTGRESQL)
+				.build();
+		String suffix = UUID.randomUUID().toString().replace("-", "");
+		String firstChannel = "pyranid_first_" + suffix;
+		String secondChannel = "pyranid_second_" + suffix;
+
+		listenerDatabase.withNotificationSession(Set.of(firstChannel, secondChannel), session -> {
+			applicationDatabase.sendNotification(firstChannel, null);
+			Assertions.assertEquals(
+					Notification.of(firstChannel, ""),
+					awaitNotification(session, firstChannel, "", Duration.ofSeconds(5)));
+
+			applicationDatabase.sendNotification(firstChannel);
+			Assertions.assertEquals(
+					Notification.of(firstChannel, ""),
+					awaitNotification(session, firstChannel, "", Duration.ofSeconds(5)));
+
+			applicationDatabase.transaction(() ->
+					applicationDatabase.sendNotification(firstChannel, "committed"));
+			Assertions.assertEquals(
+					Notification.of(firstChannel, "committed"),
+					awaitNotification(session, firstChannel, "committed", Duration.ofSeconds(5)));
+
+			RuntimeException rollback = new RuntimeException("rollback notification publication");
+			RuntimeException thrown = Assertions.assertThrows(RuntimeException.class, () ->
+					applicationDatabase.transaction(() -> {
+						applicationDatabase.sendNotification(firstChannel, "rolled-back");
+						throw rollback;
+					}));
+			Assertions.assertSame(rollback, thrown);
+
+			// A later committed notification is an ordering fence for the rolled-back publication.
+			applicationDatabase.sendNotification(secondChannel, "rollback-fence");
+			List<Notification> throughFence = awaitThroughPayload(
+					session, secondChannel, "rollback-fence", Duration.ofSeconds(5));
+			Assertions.assertFalse(throughFence.contains(Notification.of(firstChannel, "rolled-back")));
+
+			applicationDatabase.transaction(() -> {
+				applicationDatabase.sendNotification(firstChannel, "distinct-one");
+				applicationDatabase.sendNotification(firstChannel, "distinct-two");
+			});
+
+			List<Notification> distinctNotifications = awaitAll(
+					session,
+					Set.of(
+							Notification.of(firstChannel, "distinct-one"),
+							Notification.of(firstChannel, "distinct-two")),
+					Duration.ofSeconds(5));
+			Assertions.assertTrue(distinctNotifications.contains(
+					Notification.of(firstChannel, "distinct-one")));
+			Assertions.assertTrue(distinctNotifications.contains(
+					Notification.of(firstChannel, "distinct-two")));
+
+			applicationDatabase.transaction(() -> {
+				applicationDatabase.sendNotification(firstChannel, "coalesced");
+				applicationDatabase.sendNotification(firstChannel, "coalesced");
+			});
+			applicationDatabase.sendNotification(secondChannel, "coalescing-fence");
+			List<Notification> coalescedThroughFence = awaitThroughPayload(
+					session, secondChannel, "coalescing-fence", Duration.ofSeconds(5));
+			Assertions.assertEquals(1L, coalescedThroughFence.stream()
+					.filter(Notification.of(firstChannel, "coalesced")::equals)
+					.count());
+		});
+	}
+
+	@Test
+	public void testMixedCaseNotificationChannelUsesExactQuotedIdentity() throws InterruptedException {
+		Database listenerDatabase = Database.withDataSource(dataSource())
+				.databaseType(DatabaseType.POSTGRESQL)
+				.build();
+		Database applicationDatabase = Database.withDataSource(dataSource())
+				.databaseType(DatabaseType.POSTGRESQL)
+				.build();
+		String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+		String mixedCaseChannel = "OrderChanged" + suffix;
+
+		listenerDatabase.withNotificationSession(mixedCaseChannel, session -> {
+			applicationDatabase.query("NOTIFY " + mixedCaseChannel + ", 'unquoted'").execute();
+			applicationDatabase.sendNotification(mixedCaseChannel, "bound-fence");
+
+			List<Notification> throughFence = awaitThroughPayload(
+					session, mixedCaseChannel, "bound-fence", Duration.ofSeconds(5));
+
+			Assertions.assertTrue(throughFence.contains(
+					Notification.of(mixedCaseChannel, "bound-fence")));
+			Assertions.assertFalse(throughFence.stream()
+					.anyMatch(notification -> "unquoted".equals(notification.getPayload())),
+					"An unquoted NOTIFY must fold the channel to lowercase and miss the quoted mixed-case listener");
+		});
+	}
+
+	@Test
+	public void testTwoDatabaseNotificationCompositionReconcilesSelfPublishedChange() throws InterruptedException {
+		CountingDataSource applicationDataSource = new CountingDataSource(dataSource());
+		CountingDataSource listenerDataSource = new CountingDataSource(dataSource());
+		MetricsCollector applicationMetrics = MetricsCollector.inMemoryInstance();
+		MetricsCollector listenerMetrics = MetricsCollector.inMemoryInstance();
+		Database applicationDatabase = Database.withDataSource(applicationDataSource)
+				.databaseType(DatabaseType.POSTGRESQL)
+				.metricsCollector(applicationMetrics)
+				.build();
+		Database listenerDatabase = Database.withDataSource(listenerDataSource)
+				.databaseType(DatabaseType.POSTGRESQL)
+				.metricsCollector(listenerMetrics)
+				.build();
+		String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+		String table = "pyranid_notify_state_" + suffix;
+		String channel = "pyranid_state_" + suffix;
+		AtomicInteger reconciliations = new AtomicInteger();
+
+		applicationDatabase.query("CREATE TABLE " + table
+				+ " (id INTEGER PRIMARY KEY, value INTEGER NOT NULL)").execute();
+
+		listenerDatabase.withNotificationSession(channel, session -> {
+			Assertions.assertEquals(0, applicationDatabase.query("SELECT COUNT(*) FROM " + table)
+					.fetchObject(Integer.class)
+					.orElseThrow());
+			reconciliations.incrementAndGet();
+
+			applicationDatabase.transaction(() -> {
+				applicationDatabase.query("INSERT INTO " + table + " (id, value) VALUES (1, 41)")
+						.execute();
+				applicationDatabase.sendNotification(channel, "self-published");
+			});
+
+			Assertions.assertEquals(
+					Notification.of(channel, "self-published"),
+					awaitNotification(session, channel, "self-published", Duration.ofSeconds(5)));
+			Assertions.assertEquals(41, applicationDatabase.query(
+							"SELECT value FROM " + table + " WHERE id = 1")
+					.fetchObject(Integer.class)
+					.orElseThrow());
+			reconciliations.incrementAndGet();
+		});
+
+		Assertions.assertNotSame(applicationDataSource, listenerDataSource);
+		Assertions.assertEquals(4, applicationDataSource.connectionCheckouts.get());
+		Assertions.assertEquals(1, listenerDataSource.connectionCheckouts.get());
+		Assertions.assertEquals(2, reconciliations.get());
+
+		MetricsCollector.NotificationSnapshot applicationSnapshot =
+				applicationMetrics.notificationSnapshot().orElseThrow();
+		Assertions.assertEquals(0L, applicationSnapshot.sessionsStarted());
+		Assertions.assertEquals(0L, applicationSnapshot.sessionsOpened());
+		Assertions.assertEquals(0L, applicationSnapshot.sessionsCallbackReturned());
+		Assertions.assertEquals(0L, applicationSnapshot.batchesDelivered());
+
+		MetricsCollector.NotificationSnapshot listenerSnapshot =
+				listenerMetrics.notificationSnapshot().orElseThrow();
+		Assertions.assertEquals(1L, listenerSnapshot.sessionsStarted());
+		Assertions.assertEquals(1L, listenerSnapshot.sessionsOpened());
+		Assertions.assertEquals(1L, listenerSnapshot.sessionsCallbackReturned());
+		Assertions.assertEquals(1L, listenerSnapshot.batchesDelivered());
+		Assertions.assertEquals(1L, listenerSnapshot.notificationsDelivered());
+	}
+
+	@Test
+	public void testNotificationCommittedWhileCallbackEntryReconciliationIsBlockedIsDeliveredAfterward()
+			throws Exception {
+		Database listenerDatabase = Database.withDataSource(dataSource())
+				.databaseType(DatabaseType.POSTGRESQL)
+				.build();
+		Database applicationDatabase = Database.withDataSource(dataSource())
+				.databaseType(DatabaseType.POSTGRESQL)
+				.build();
+		String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+		String table = "pyranid_notify_order_" + suffix;
+		String channel = "pyranid_order_" + suffix;
+		CountDownLatch callbackEntered = new CountDownLatch(1);
+		CountDownLatch releaseReconciliation = new CountDownLatch(1);
+		AtomicReference<Integer> reconciledValue = new AtomicReference<>();
+		AtomicReference<Notification> received = new AtomicReference<>();
+		ExecutorService executor = Executors.newSingleThreadExecutor();
+
+		applicationDatabase.query("CREATE TABLE " + table
+				+ " (id INTEGER PRIMARY KEY, value INTEGER NOT NULL)").execute();
+		applicationDatabase.query("INSERT INTO " + table + " (id, value) VALUES (1, 0)").execute();
+
+		try {
+			Future<?> listener = executor.submit(() -> {
+				listenerDatabase.withNotificationSession(channel, session -> {
+					callbackEntered.countDown();
+					awaitLatch(releaseReconciliation);
+
+					applicationDatabase.transaction(() -> reconciledValue.set(
+							applicationDatabase.query("SELECT value FROM " + table + " WHERE id = 1")
+									.fetchObject(Integer.class)
+									.orElseThrow()));
+					received.set(awaitNotification(
+							session, channel, "committed-during-reconcile", Duration.ofSeconds(5)));
+				});
+				return null;
+			});
+
+			awaitLatch(callbackEntered);
+			applicationDatabase.transaction(() -> {
+				applicationDatabase.query("UPDATE " + table + " SET value = 73 WHERE id = 1").execute();
+				applicationDatabase.sendNotification(channel, "committed-during-reconcile");
+			});
+			releaseReconciliation.countDown();
+			listener.get(10, TimeUnit.SECONDS);
+
+			Assertions.assertEquals(73, reconciledValue.get());
+			Assertions.assertEquals(
+					Notification.of(channel, "committed-during-reconcile"), received.get());
+		} finally {
+			releaseReconciliation.countDown();
+			executor.shutdownNow();
+		}
+	}
+
+	@Test
+	public void testNotificationReceiveRejectsAmbientTransactionsAtPostgreSqlIsolationLevels()
+			throws InterruptedException {
+		Database listenerDatabase = Database.withDataSource(dataSource())
+				.databaseType(DatabaseType.POSTGRESQL)
+				.build();
+		Database applicationDatabase = Database.withDataSource(dataSource())
+				.databaseType(DatabaseType.POSTGRESQL)
+				.build();
+		String channel = "pyranid_ambient_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+
+		listenerDatabase.withNotificationSession(channel, session -> {
+			for (TransactionIsolation isolation : List.of(
+					TransactionIsolation.READ_COMMITTED,
+					TransactionIsolation.REPEATABLE_READ,
+					TransactionIsolation.SERIALIZABLE)) {
+				String payload = isolation.name();
+				applicationDatabase.sendNotification(channel, payload);
+
+				applicationDatabase.transaction(
+						TransactionOptions.withIsolation(isolation).build(),
+						() -> {
+							Assertions.assertEquals(1, applicationDatabase.query("SELECT 1")
+									.fetchObject(Integer.class)
+									.orElseThrow());
+							Assertions.assertThrows(IllegalStateException.class,
+									() -> session.awaitNotifications(Duration.ZERO));
+							Assertions.assertThrows(IllegalStateException.class, session::drainNotifications);
+						});
+
+				Assertions.assertEquals(
+						Notification.of(channel, payload),
+						awaitNotification(session, channel, payload, Duration.ofSeconds(5)));
+			}
+		});
+	}
+
+	@Test
+	public void testTerminatedListenerBackendFailsOnceAndAbortsWithoutReacquisition() {
+		TrackingNotificationDataSource listenerDataSource = new TrackingNotificationDataSource(dataSource());
+		RecordingNotificationMetrics metrics = new RecordingNotificationMetrics();
+		Database listenerDatabase = Database.withDataSource(listenerDataSource)
+				.databaseType(DatabaseType.POSTGRESQL)
+				.metricsCollector(metrics)
+				.build();
+		Database applicationDatabase = Database.withDataSource(dataSource())
+				.databaseType(DatabaseType.POSTGRESQL)
+				.build();
+		String channel = "pyranid_terminate_"
+				+ UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+		AtomicReference<DatabaseException> receiveFailure = new AtomicReference<>();
+
+		DatabaseException thrown = Assertions.assertThrows(DatabaseException.class, () ->
+				listenerDatabase.withNotificationSession(channel, session -> {
+					Integer backendPid = listenerDataSource.backendPid.get();
+					Assertions.assertNotNull(backendPid);
+					Assertions.assertTrue(applicationDatabase.query(
+									"SELECT pg_terminate_backend(:backendPid)")
+							.bind("backendPid", backendPid)
+							.fetchObject(Boolean.class)
+							.orElseThrow());
+
+					DatabaseException failure = Assertions.assertThrows(DatabaseException.class,
+							() -> session.awaitNotifications(Duration.ofSeconds(5)));
+					receiveFailure.set(failure);
+					throw failure;
+				}));
+
+		Assertions.assertSame(receiveFailure.get(), thrown);
+		Assertions.assertEquals(1, listenerDataSource.connectionCheckouts.get());
+		Assertions.assertEquals(List.of("abort", "close"), listenerDataSource.lifecycleEvents);
+		Assertions.assertEquals(1, metrics.connectionLosses.get());
+		Assertions.assertEquals(1, metrics.closes.get());
+		Assertions.assertEquals(MetricsCollector.NotificationSessionOutcome.FAILED,
+				metrics.closeOutcome.get());
+		Assertions.assertSame(thrown, metrics.connectionLossFailure.get());
+		Assertions.assertSame(thrown, metrics.closeFailure.get());
+	}
+
+	@Test
+	public void testHealthyPlatformThreadInterruptionClosesWithoutConnectionLoss()
+			throws InterruptedException {
+		TrackingNotificationDataSource listenerDataSource = new TrackingNotificationDataSource(dataSource());
+		RecordingNotificationMetrics metrics = new RecordingNotificationMetrics();
+		Database listenerDatabase = Database.withDataSource(listenerDataSource)
+				.databaseType(DatabaseType.POSTGRESQL)
+				.metricsCollector(metrics)
+				.build();
+		String channel = "pyranid_interrupt_"
+				+ UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+		CountDownLatch aboutToWait = new CountDownLatch(1);
+		AtomicReference<Throwable> workerFailure = new AtomicReference<>();
+		Thread worker = new Thread(() -> {
+			try {
+				listenerDatabase.withNotificationSession(channel, session -> {
+					aboutToWait.countDown();
+					session.awaitNotifications(Duration.ofSeconds(30));
+				});
+			} catch (Throwable throwable) {
+				workerFailure.set(throwable);
+			}
+		}, "pyranid-platform-listener-interruption-test");
+		worker.setDaemon(true);
+
+		worker.start();
+		Assertions.assertTrue(aboutToWait.await(5, TimeUnit.SECONDS),
+				"Listener callback did not reach its receive boundary");
+		worker.interrupt();
+		worker.join(TimeUnit.SECONDS.toMillis(10));
+
+		Assertions.assertFalse(worker.isAlive(), "Interrupted listener worker did not terminate");
+		Assertions.assertInstanceOf(InterruptedException.class, workerFailure.get());
+		Assertions.assertEquals(0, metrics.connectionLosses.get());
+		Assertions.assertEquals(1, metrics.closes.get());
+		Assertions.assertEquals(MetricsCollector.NotificationSessionOutcome.INTERRUPTED,
+				metrics.closeOutcome.get());
+		Assertions.assertNull(metrics.closeFailure.get());
+		Assertions.assertEquals(List.of("close"), listenerDataSource.lifecycleEvents);
+	}
+
+	@Test
+	public void testVirtualThreadInterruptionUsesOneOfTheDocumentedTerminalPaths()
+			throws Exception {
+		Assumptions.assumeTrue(Runtime.version().feature() >= 21,
+				"Virtual threads require JDK 21 or newer");
+		TrackingNotificationDataSource listenerDataSource = new TrackingNotificationDataSource(dataSource());
+		RecordingNotificationMetrics metrics = new RecordingNotificationMetrics();
+		Database listenerDatabase = Database.withDataSource(listenerDataSource)
+				.databaseType(DatabaseType.POSTGRESQL)
+				.metricsCollector(metrics)
+				.build();
+		String channel = "pyranid_virtual_interrupt_"
+				+ UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+		CountDownLatch aboutToWait = new CountDownLatch(1);
+		AtomicReference<Throwable> workerFailure = new AtomicReference<>();
+		AtomicBoolean interruptPreservedWithFailure = new AtomicBoolean();
+		Runnable listener = () -> {
+			try {
+				listenerDatabase.withNotificationSession(channel, session -> {
+					aboutToWait.countDown();
+					session.awaitNotifications(Duration.ofSeconds(30));
+				});
+			} catch (Throwable throwable) {
+				workerFailure.set(throwable);
+				interruptPreservedWithFailure.set(Thread.currentThread().isInterrupted());
+			}
+		};
+		Method startVirtualThread = Thread.class.getMethod("startVirtualThread", Runnable.class);
+		Thread worker;
+
+		try {
+			worker = (Thread) startVirtualThread.invoke(null, listener);
+		} catch (InvocationTargetException exception) {
+			Throwable cause = requireNonNull(exception.getCause());
+
+			if (cause instanceof Exception checkedException)
+				throw checkedException;
+
+			if (cause instanceof Error error)
+				throw error;
+
+			throw new AssertionError(cause);
+		}
+
+		Assertions.assertTrue(aboutToWait.await(5, TimeUnit.SECONDS),
+				"Virtual listener callback did not reach its receive boundary");
+		worker.interrupt();
+		worker.join(TimeUnit.SECONDS.toMillis(10));
+
+		Assertions.assertFalse(worker.isAlive(), "Interrupted virtual listener worker did not terminate");
+		Throwable failure = workerFailure.get();
+		Assertions.assertNotNull(failure);
+		Assertions.assertEquals(1, metrics.closes.get());
+
+		if (failure instanceof InterruptedException) {
+			Assertions.assertEquals(0, metrics.connectionLosses.get());
+			Assertions.assertEquals(MetricsCollector.NotificationSessionOutcome.INTERRUPTED,
+					metrics.closeOutcome.get());
+			Assertions.assertNull(metrics.closeFailure.get());
+			Assertions.assertEquals(List.of("close"), listenerDataSource.lifecycleEvents);
+		} else {
+			Assertions.assertInstanceOf(DatabaseException.class, failure);
+			Assertions.assertTrue(interruptPreservedWithFailure.get());
+			Assertions.assertEquals(1, metrics.connectionLosses.get());
+			Assertions.assertEquals(MetricsCollector.NotificationSessionOutcome.FAILED,
+					metrics.closeOutcome.get());
+			Assertions.assertSame(failure, metrics.connectionLossFailure.get());
+			Assertions.assertSame(failure, metrics.closeFailure.get());
+			Assertions.assertEquals(List.of("abort", "close"), listenerDataSource.lifecycleEvents);
+		}
+	}
+
+	@Test
+	public void testCrossDatabaseNotificationSessionGuardRejectsBeforeListenerCheckout() {
+		Database applicationDatabase = Database.withDataSource(dataSource())
+				.databaseType(DatabaseType.POSTGRESQL)
+				.build();
+		CountingDataSource listenerDataSource = new CountingDataSource(dataSource());
+		Database listenerDatabase = Database.withDataSource(listenerDataSource)
+				.databaseType(DatabaseType.POSTGRESQL)
+				.build();
+		AtomicBoolean applicationStatementExecuted = new AtomicBoolean(false);
+
+		applicationDatabase.transaction(() -> {
+			Assertions.assertEquals(1, applicationDatabase.query("SELECT 1")
+					.fetchObject(Integer.class)
+					.orElseThrow());
+			applicationStatementExecuted.set(true);
+
+			Assertions.assertThrows(IllegalStateException.class, () ->
+					listenerDatabase.withNotificationSession(
+							"pyranid_guard_" + UUID.randomUUID().toString().replace("-", ""),
+							session -> {}));
+		});
+
+		Assertions.assertTrue(applicationStatementExecuted.get());
+		Assertions.assertEquals(0, listenerDataSource.connectionCheckouts.get());
 	}
 
 	@Test
@@ -615,6 +1054,60 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 	}
 
 	@NonNull
+	private static Notification awaitNotification(@NonNull NotificationSession session,
+																								@NonNull String channel,
+																								@NonNull String payload,
+																								@NonNull Duration timeout)
+			throws InterruptedException {
+		Notification expected = Notification.of(channel, payload);
+		List<Notification> notifications = awaitAll(session, Set.of(expected), timeout);
+		return notifications.stream()
+				.filter(expected::equals)
+				.findFirst()
+				.orElseThrow();
+	}
+
+	@NonNull
+	private static List<Notification> awaitThroughPayload(@NonNull NotificationSession session,
+																											 @NonNull String channel,
+																											 @NonNull String payload,
+																											 @NonNull Duration timeout)
+			throws InterruptedException {
+		Notification fence = Notification.of(channel, payload);
+		long startTime = System.nanoTime();
+		List<Notification> notifications = new java.util.ArrayList<>();
+
+		while (System.nanoTime() - startTime < timeout.toNanos()) {
+			notifications.addAll(session.awaitNotifications(Duration.ofMillis(250)));
+
+			if (notifications.contains(fence))
+				return List.copyOf(notifications);
+		}
+
+		Assertions.fail("Timed out waiting for notification " + fence);
+		return List.of();
+	}
+
+	@NonNull
+	private static List<Notification> awaitAll(@NonNull NotificationSession session,
+																						@NonNull Set<Notification> expected,
+																						@NonNull Duration timeout)
+			throws InterruptedException {
+		long startTime = System.nanoTime();
+		List<Notification> notifications = new java.util.ArrayList<>();
+
+		while (System.nanoTime() - startTime < timeout.toNanos()) {
+			notifications.addAll(session.awaitNotifications(Duration.ofMillis(250)));
+
+			if (notifications.containsAll(expected))
+				return List.copyOf(notifications);
+		}
+
+		Assertions.fail("Timed out waiting for notifications " + expected);
+		return List.of();
+	}
+
+	@NonNull
 	@Override
 	protected DatabaseType expectedDatabaseType() {
 		return DatabaseType.POSTGRESQL;
@@ -751,6 +1244,203 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 			} catch (InvocationTargetException e) {
 				throw e.getCause();
 			}
+		}
+	}
+
+	private static final class CountingDataSource implements DataSource {
+		@NonNull
+		private final DataSource delegate;
+		@NonNull
+		private final AtomicInteger connectionCheckouts;
+
+		private CountingDataSource(@NonNull DataSource delegate) {
+			this.delegate = requireNonNull(delegate);
+			this.connectionCheckouts = new AtomicInteger();
+		}
+
+		@Override
+		public Connection getConnection() throws SQLException {
+			this.connectionCheckouts.incrementAndGet();
+			return this.delegate.getConnection();
+		}
+
+		@Override
+		public Connection getConnection(String username, String password) throws SQLException {
+			this.connectionCheckouts.incrementAndGet();
+			return this.delegate.getConnection(username, password);
+		}
+
+		@Override
+		public PrintWriter getLogWriter() throws SQLException {
+			return this.delegate.getLogWriter();
+		}
+
+		@Override
+		public void setLogWriter(PrintWriter out) throws SQLException {
+			this.delegate.setLogWriter(out);
+		}
+
+		@Override
+		public void setLoginTimeout(int seconds) throws SQLException {
+			this.delegate.setLoginTimeout(seconds);
+		}
+
+		@Override
+		public int getLoginTimeout() throws SQLException {
+			return this.delegate.getLoginTimeout();
+		}
+
+		@Override
+		public Logger getParentLogger() throws SQLFeatureNotSupportedException {
+			return this.delegate.getParentLogger();
+		}
+
+		@Override
+		public <T> T unwrap(Class<T> iface) throws SQLException {
+			if (iface.isInstance(this))
+				return iface.cast(this);
+
+			return this.delegate.unwrap(iface);
+		}
+
+		@Override
+		public boolean isWrapperFor(Class<?> iface) throws SQLException {
+			return iface.isInstance(this) || this.delegate.isWrapperFor(iface);
+		}
+	}
+
+	private static final class TrackingNotificationDataSource implements DataSource {
+		@NonNull
+		private final DataSource delegate;
+		@NonNull
+		private final AtomicInteger connectionCheckouts;
+		@NonNull
+		private final AtomicReference<Integer> backendPid;
+		@NonNull
+		private final List<String> lifecycleEvents;
+
+		private TrackingNotificationDataSource(@NonNull DataSource delegate) {
+			this.delegate = requireNonNull(delegate);
+			this.connectionCheckouts = new AtomicInteger();
+			this.backendPid = new AtomicReference<>();
+			this.lifecycleEvents = new CopyOnWriteArrayList<>();
+		}
+
+		@Override
+		public Connection getConnection() throws SQLException {
+			this.connectionCheckouts.incrementAndGet();
+			return track(this.delegate.getConnection());
+		}
+
+		@Override
+		public Connection getConnection(String username, String password) throws SQLException {
+			this.connectionCheckouts.incrementAndGet();
+			return track(this.delegate.getConnection(username, password));
+		}
+
+		@Override
+		public PrintWriter getLogWriter() throws SQLException {
+			return this.delegate.getLogWriter();
+		}
+
+		@Override
+		public void setLogWriter(PrintWriter out) throws SQLException {
+			this.delegate.setLogWriter(out);
+		}
+
+		@Override
+		public void setLoginTimeout(int seconds) throws SQLException {
+			this.delegate.setLoginTimeout(seconds);
+		}
+
+		@Override
+		public int getLoginTimeout() throws SQLException {
+			return this.delegate.getLoginTimeout();
+		}
+
+		@Override
+		public Logger getParentLogger() throws SQLFeatureNotSupportedException {
+			return this.delegate.getParentLogger();
+		}
+
+		@Override
+		public <T> T unwrap(Class<T> iface) throws SQLException {
+			if (iface.isInstance(this))
+				return iface.cast(this);
+
+			return this.delegate.unwrap(iface);
+		}
+
+		@Override
+		public boolean isWrapperFor(Class<?> iface) throws SQLException {
+			return iface.isInstance(this) || this.delegate.isWrapperFor(iface);
+		}
+
+		@NonNull
+		private Connection track(@NonNull Connection connection) throws SQLException {
+			requireNonNull(connection);
+
+			try (java.sql.Statement statement = connection.createStatement();
+					 java.sql.ResultSet resultSet = statement.executeQuery("SELECT pg_backend_pid()")) {
+				Assertions.assertTrue(resultSet.next());
+				this.backendPid.set(resultSet.getInt(1));
+			}
+
+			return (Connection) Proxy.newProxyInstance(
+					Connection.class.getClassLoader(),
+					new Class<?>[]{Connection.class},
+					(proxy, method, args) -> {
+						if ("abort".equals(method.getName()))
+							this.lifecycleEvents.add("abort");
+						else if ("close".equals(method.getName()))
+							this.lifecycleEvents.add("close");
+
+						try {
+							return method.invoke(connection, args);
+						} catch (InvocationTargetException exception) {
+							throw exception.getCause();
+						}
+					});
+		}
+	}
+
+	private static final class RecordingNotificationMetrics implements MetricsCollector {
+		@NonNull
+		private final AtomicInteger connectionLosses;
+		@NonNull
+		private final AtomicInteger closes;
+		@NonNull
+		private final AtomicReference<Throwable> connectionLossFailure;
+		@NonNull
+		private final AtomicReference<NotificationSessionOutcome> closeOutcome;
+		@NonNull
+		private final AtomicReference<Throwable> closeFailure;
+
+		private RecordingNotificationMetrics() {
+			this.connectionLosses = new AtomicInteger();
+			this.closes = new AtomicInteger();
+			this.connectionLossFailure = new AtomicReference<>();
+			this.closeOutcome = new AtomicReference<>();
+			this.closeFailure = new AtomicReference<>();
+		}
+
+		@Override
+		public void didLoseNotificationConnection(@NonNull DatabaseType databaseType,
+															@NonNull UUID notificationSessionId,
+															@NonNull Throwable throwable) {
+			this.connectionLosses.incrementAndGet();
+			this.connectionLossFailure.set(throwable);
+		}
+
+		@Override
+		public void didCloseNotificationSession(@NonNull DatabaseType databaseType,
+														@NonNull UUID notificationSessionId,
+														@NonNull NotificationSessionOutcome outcome,
+														@NonNull Duration sessionDuration,
+														Throwable throwable) {
+			this.closes.incrementAndGet();
+			this.closeOutcome.set(outcome);
+			this.closeFailure.set(throwable);
 		}
 	}
 }

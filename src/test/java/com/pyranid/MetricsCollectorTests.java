@@ -38,6 +38,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Handler;
@@ -181,6 +182,149 @@ public class MetricsCollectorTests {
 		metricsCollector.didCloseStream(statementContext, MetricsCollector.StreamTerminalOutcome.OPEN_FAILURE, 0L, Duration.ZERO, null);
 
 		Assertions.assertEquals(1L, snapshot(metricsCollector).streamsOpenFailures());
+	}
+
+	@Test
+	public void notificationDispatcherForwardsLifecycleInOrder() {
+		List<List<Object>> events = new ArrayList<>();
+		UUID openedSessionId = UUID.randomUUID();
+		UUID failedOpenSessionId = UUID.randomUUID();
+		Duration openDuration = Duration.ofMillis(12);
+		Duration sessionDuration = Duration.ofSeconds(4);
+		IllegalStateException connectionFailure = new IllegalStateException("connection lost");
+		IllegalStateException openFailure = new IllegalStateException("open failed");
+		MetricsCollector metricsCollector = new MetricsCollector() {
+			@Override
+			public void willOpenNotificationSession(@NonNull DatabaseType databaseType,
+																						 @NonNull UUID notificationSessionId) {
+				events.add(List.of("willOpen", databaseType, notificationSessionId));
+			}
+
+			@Override
+			public void didOpenNotificationSession(@NonNull DatabaseType databaseType,
+																						@NonNull UUID notificationSessionId,
+																						@NonNull Duration duration) {
+				events.add(List.of("didOpen", databaseType, notificationSessionId, duration));
+			}
+
+			@Override
+			public void didFailToOpenNotificationSession(@NonNull DatabaseType databaseType,
+																									 @NonNull UUID notificationSessionId,
+																									 @NonNull Duration duration,
+																									 @NonNull Throwable throwable) {
+				events.add(List.of("didFailToOpen", databaseType, notificationSessionId, duration, throwable));
+			}
+
+			@Override
+			public void didDeliverNotificationBatch(@NonNull DatabaseType databaseType,
+																						 @NonNull UUID notificationSessionId,
+																						 @NonNull Long notificationCount) {
+				events.add(List.of("didDeliver", databaseType, notificationSessionId, notificationCount));
+			}
+
+			@Override
+			public void didLoseNotificationConnection(@NonNull DatabaseType databaseType,
+																								 @NonNull UUID notificationSessionId,
+																								 @NonNull Throwable throwable) {
+				events.add(List.of("didLose", databaseType, notificationSessionId, throwable));
+			}
+
+			@Override
+			public void didCloseNotificationSession(@NonNull DatabaseType databaseType,
+																						 @NonNull UUID notificationSessionId,
+																						 @NonNull NotificationSessionOutcome outcome,
+																						 @NonNull Duration duration,
+																						 @Nullable Throwable throwable) {
+				events.add(List.of("didClose", databaseType, notificationSessionId, outcome, duration, throwable));
+			}
+		};
+		MetricsCollectorDispatcher dispatcher = new MetricsCollectorDispatcher(metricsCollector);
+
+		dispatcher.willOpenNotificationSession(DatabaseType.POSTGRESQL, openedSessionId);
+		dispatcher.didOpenNotificationSession(DatabaseType.POSTGRESQL, openedSessionId, openDuration);
+		dispatcher.didDeliverNotificationBatch(DatabaseType.POSTGRESQL, openedSessionId, 3L);
+		dispatcher.didLoseNotificationConnection(DatabaseType.POSTGRESQL, openedSessionId, connectionFailure);
+		dispatcher.didCloseNotificationSession(DatabaseType.POSTGRESQL, openedSessionId,
+				MetricsCollector.NotificationSessionOutcome.FAILED, sessionDuration, connectionFailure);
+		dispatcher.willOpenNotificationSession(DatabaseType.POSTGRESQL, failedOpenSessionId);
+		dispatcher.didFailToOpenNotificationSession(DatabaseType.POSTGRESQL, failedOpenSessionId, openDuration,
+				openFailure);
+
+		Assertions.assertEquals(List.of(
+				List.of("willOpen", DatabaseType.POSTGRESQL, openedSessionId),
+				List.of("didOpen", DatabaseType.POSTGRESQL, openedSessionId, openDuration),
+				List.of("didDeliver", DatabaseType.POSTGRESQL, openedSessionId, 3L),
+				List.of("didLose", DatabaseType.POSTGRESQL, openedSessionId, connectionFailure),
+				List.of("didClose", DatabaseType.POSTGRESQL, openedSessionId,
+						MetricsCollector.NotificationSessionOutcome.FAILED, sessionDuration, connectionFailure),
+				List.of("willOpen", DatabaseType.POSTGRESQL, failedOpenSessionId),
+				List.of("didFailToOpen", DatabaseType.POSTGRESQL, failedOpenSessionId, openDuration, openFailure)),
+				events);
+	}
+
+	@Test
+	public void notificationDispatcherContainsCollectorFailures() {
+		MetricsCollectorDispatcher dispatcher = new MetricsCollectorDispatcher(throwingMetricsCollector());
+		UUID notificationSessionId = UUID.randomUUID();
+		Duration duration = Duration.ofMillis(1);
+		IllegalStateException failure = new IllegalStateException("notification failure");
+
+		Assertions.assertDoesNotThrow(() -> {
+			dispatcher.willOpenNotificationSession(DatabaseType.POSTGRESQL, notificationSessionId);
+			dispatcher.didOpenNotificationSession(DatabaseType.POSTGRESQL, notificationSessionId, duration);
+			dispatcher.didFailToOpenNotificationSession(DatabaseType.POSTGRESQL, notificationSessionId, duration,
+					failure);
+			dispatcher.didDeliverNotificationBatch(DatabaseType.POSTGRESQL, notificationSessionId, 1L);
+			dispatcher.didLoseNotificationConnection(DatabaseType.POSTGRESQL, notificationSessionId, failure);
+			dispatcher.didCloseNotificationSession(DatabaseType.POSTGRESQL, notificationSessionId,
+					MetricsCollector.NotificationSessionOutcome.FAILED, duration, failure);
+		});
+	}
+
+	@Test
+	public void inMemoryCollectorCountsAndResetsNotificationLifecycle() {
+		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
+		UUID returnedSessionId = UUID.randomUUID();
+		UUID interruptedSessionId = UUID.randomUUID();
+		UUID failedSessionId = UUID.randomUUID();
+		UUID failedOpenSessionId = UUID.randomUUID();
+		IllegalStateException failure = new IllegalStateException("notification failure");
+
+		metricsCollector.willOpenNotificationSession(DatabaseType.POSTGRESQL, returnedSessionId);
+		metricsCollector.didOpenNotificationSession(DatabaseType.POSTGRESQL, returnedSessionId, Duration.ZERO);
+		metricsCollector.didDeliverNotificationBatch(DatabaseType.POSTGRESQL, returnedSessionId, 2L);
+		metricsCollector.didDeliverNotificationBatch(DatabaseType.POSTGRESQL, returnedSessionId, 3L);
+		metricsCollector.didCloseNotificationSession(DatabaseType.POSTGRESQL, returnedSessionId,
+				MetricsCollector.NotificationSessionOutcome.CALLBACK_RETURNED, Duration.ZERO, null);
+
+		metricsCollector.willOpenNotificationSession(DatabaseType.POSTGRESQL, interruptedSessionId);
+		metricsCollector.didOpenNotificationSession(DatabaseType.POSTGRESQL, interruptedSessionId, Duration.ZERO);
+		metricsCollector.didCloseNotificationSession(DatabaseType.POSTGRESQL, interruptedSessionId,
+				MetricsCollector.NotificationSessionOutcome.INTERRUPTED, Duration.ZERO, null);
+
+		metricsCollector.willOpenNotificationSession(DatabaseType.POSTGRESQL, failedSessionId);
+		metricsCollector.didOpenNotificationSession(DatabaseType.POSTGRESQL, failedSessionId, Duration.ZERO);
+		metricsCollector.didLoseNotificationConnection(DatabaseType.POSTGRESQL, failedSessionId, failure);
+		metricsCollector.didCloseNotificationSession(DatabaseType.POSTGRESQL, failedSessionId,
+				MetricsCollector.NotificationSessionOutcome.FAILED, Duration.ZERO, failure);
+
+		metricsCollector.willOpenNotificationSession(DatabaseType.POSTGRESQL, failedOpenSessionId);
+		metricsCollector.didFailToOpenNotificationSession(DatabaseType.POSTGRESQL, failedOpenSessionId,
+				Duration.ZERO, failure);
+
+		MetricsCollector.NotificationSnapshot snapshot = notificationSnapshot(metricsCollector);
+		Assertions.assertEquals(4L, snapshot.sessionsStarted());
+		Assertions.assertEquals(3L, snapshot.sessionsOpened());
+		Assertions.assertEquals(1L, snapshot.sessionsCallbackReturned());
+		Assertions.assertEquals(1L, snapshot.sessionsInterrupted());
+		Assertions.assertEquals(2L, snapshot.sessionsFailed());
+		Assertions.assertEquals(2L, snapshot.batchesDelivered());
+		Assertions.assertEquals(5L, snapshot.notificationsDelivered());
+
+		metricsCollector.reset();
+
+		Assertions.assertEquals(new MetricsCollector.NotificationSnapshot(0L, 0L, 0L, 0L, 0L, 0L, 0L),
+				notificationSnapshot(metricsCollector));
 	}
 
 	@Test
@@ -622,6 +766,10 @@ public class MetricsCollectorTests {
 
 	private static MetricsCollector.Snapshot snapshot(@NonNull MetricsCollector metricsCollector) {
 		return metricsCollector.snapshot().orElseThrow();
+	}
+
+	private static MetricsCollector.NotificationSnapshot notificationSnapshot(@NonNull MetricsCollector metricsCollector) {
+		return metricsCollector.notificationSnapshot().orElseThrow();
 	}
 
 	@NonNull

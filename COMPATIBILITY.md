@@ -3,7 +3,7 @@
 Pyranid follows [Semantic Versioning](https://semver.org/):
 
 * **Major** (`5.0.0`): may remove or incompatibly change public API. Migration notes provided in the CHANGELOG.
-* **Minor** (`4.5.0`): additive public API and behavior changes documented under "Migration Notes" in the CHANGELOG.
+* **Minor** (`4.6.0`): additive public API and behavior changes documented under "Migration Notes" in the CHANGELOG.
 * **Patch** (`4.4.1`): fixes only; no new public API.
 
 ## What counts as public API
@@ -23,7 +23,7 @@ property.
 
 ### Historical compatibility notes
 
-The following intentional changes predate the current 4.4.0 japicmp baseline. They are kept here for the record;
+The following intentional changes predate the current 4.5.0 japicmp baseline. They are kept here for the record;
 the current japicmp configuration has no API exclusions:
 
 * `Database#transaction(TransactionIsolation, ...)` (two overloads) - replaced by
@@ -45,6 +45,7 @@ the current japicmp configuration has no API exclusions:
 ## Dependencies
 
 The core `pyranid` artifact declares **zero runtime dependencies** - enforced at build time by a
-Maven Enforcer `bannedDependencies` rule and visible in the published POM. Compile-time-only dependencies
-(annotations and the PostgreSQL driver for optional rich error metadata) are `provided` scope and never required
-at runtime.
+Maven Enforcer `bannedDependencies` rule and visible in the published POM. Compile-time-only dependencies are
+`provided` scope and never required for ordinary runtime use. The PostgreSQL driver is used for optional rich
+error metadata and notification receive; PostgreSQL notification sending remains pure SQL. Applications that use
+notification receive must supply a compatible pgjdbc version at runtime.

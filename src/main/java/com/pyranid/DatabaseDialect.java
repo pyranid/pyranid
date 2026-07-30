@@ -32,6 +32,9 @@ import java.util.UUID;
  */
 interface DatabaseDialect {
 	@NonNull
+	DatabaseNotificationSupport notificationSupport();
+
+	@NonNull
 	List<String> sqlFragmentsForOperators(boolean hasQuestionMarkOperators,
 																				@NonNull List<String> sqlFragments,
 																				@NonNull List<@NonNull List<@NonNull Integer>> questionMarkOperatorFragmentIndexes);

@@ -54,6 +54,12 @@ class GenericDialect implements DatabaseDialect {
 
 	@NonNull
 	@Override
+	public DatabaseNotificationSupport notificationSupport() {
+		return UnsupportedDatabaseNotificationSupport.INSTANCE;
+	}
+
+	@NonNull
+	@Override
 	public List<String> sqlFragmentsForOperators(boolean hasQuestionMarkOperators,
 																							 @NonNull List<String> sqlFragments,
 																							 @NonNull List<@NonNull List<@NonNull Integer>> questionMarkOperatorFragmentIndexes) {

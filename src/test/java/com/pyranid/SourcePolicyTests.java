@@ -36,6 +36,20 @@ import static java.lang.String.format;
  */
 public class SourcePolicyTests {
 	private static final Pattern SYNCHRONIZED_PATTERN = Pattern.compile("\\bsynchronized\\b");
+	private static final Pattern POSTGRES_NOTIFICATION_DRIVER_TYPE_PATTERN =
+			Pattern.compile("\\bPG(?:Connection|Notification)\\b");
+	private static final Pattern BACKGROUND_WORK_PATTERN = Pattern.compile(
+			"\\bnew\\s+Thread\\s*\\(|"
+					+ "\\bThread\\s*\\.\\s*(?:ofVirtual|ofPlatform|startVirtualThread)\\s*\\(|"
+					+ "\\bExecutors\\s*\\.|"
+					+ "\\bnew\\s+(?:ThreadPoolExecutor|ScheduledThreadPoolExecutor|ForkJoinPool)\\s*\\(|"
+					+ "\\bForkJoinPool\\s*\\.\\s*commonPool\\s*\\(|"
+					+ "\\bCompletableFuture\\s*\\.\\s*(?:runAsync|supplyAsync)\\s*\\(|"
+					+ "\\.\\s*(?:thenApplyAsync|thenAcceptAsync|thenRunAsync|thenComposeAsync"
+					+ "|whenCompleteAsync|handleAsync|exceptionallyAsync)\\s*\\(|"
+					+ "\\bnew\\s+(?:Timer|TimerTask)\\s*\\(|"
+					+ "\\bScheduledExecutor(?:Service)?\\b|"
+					+ "\\bCleaner\\s*\\.\\s*create\\s*\\(");
 
 	/**
 	 * Pyranid's main source deliberately contains zero {@code synchronized} - blocking while holding a monitor
@@ -75,6 +89,75 @@ public class SourcePolicyTests {
 		Assertions.assertTrue(violations.isEmpty(), () -> format(
 				"Found 'synchronized' in main source - this pins virtual threads to carrier threads. "
 						+ "Use ReentrantLock instead. Violations: %s", violations));
+	}
+
+	/**
+	 * Keeps optional pgjdbc notification types behind the one lazily loaded adapter.
+	 */
+	@Test
+	public void testPostgresNotificationDriverTypesAreIsolatedToAdapter() throws IOException {
+		Path mainSourceRoot = Path.of("src", "main", "java");
+		Assertions.assertTrue(Files.isDirectory(mainSourceRoot),
+				"Main source root not found; test must run from the module root");
+
+		List<String> violations = new ArrayList<>();
+
+		try (Stream<Path> paths = Files.walk(mainSourceRoot)) {
+			paths.filter(path -> path.toString().endsWith(".java"))
+					.filter(path -> !"PostgresNotificationTransport.java".equals(path.getFileName().toString()))
+					.forEach(path -> {
+						String source;
+						try {
+							source = Files.readString(path);
+						} catch (IOException e) {
+							throw new RuntimeException(e);
+						}
+
+						String[] lines = stripCommentsAndStrings(source).split("\n", -1);
+
+						for (int i = 0; i < lines.length; ++i)
+							if (POSTGRES_NOTIFICATION_DRIVER_TYPE_PATTERN.matcher(lines[i]).find())
+								violations.add(format("%s:%d", path, i + 1));
+					});
+		}
+
+		Assertions.assertTrue(violations.isEmpty(), () -> format(
+				"Direct pgjdbc notification type references must remain isolated to "
+						+ "PostgresNotificationTransport.java. Violations: %s", violations));
+	}
+
+	/**
+	 * Notification support is synchronous and caller-thread-owned. It must not grow a hidden listener,
+	 * reconnect, timer, scheduler, executor, or cleaner.
+	 */
+	@Test
+	public void testMainSourceCreatesNoBackgroundWorkers() throws IOException {
+		Path mainSourceRoot = Path.of("src", "main", "java");
+		Assertions.assertTrue(Files.isDirectory(mainSourceRoot),
+				"Main source root not found; test must run from the module root");
+
+		List<String> violations = new ArrayList<>();
+
+		try (Stream<Path> paths = Files.walk(mainSourceRoot)) {
+			paths.filter(path -> path.toString().endsWith(".java")).forEach(path -> {
+				String source;
+				try {
+					source = Files.readString(path);
+				} catch (IOException e) {
+					throw new RuntimeException(e);
+				}
+
+				String[] lines = stripCommentsAndStrings(source).split("\n", -1);
+
+				for (int i = 0; i < lines.length; ++i)
+					if (BACKGROUND_WORK_PATTERN.matcher(lines[i]).find())
+						violations.add(format("%s:%d", path, i + 1));
+			});
+		}
+
+		Assertions.assertTrue(violations.isEmpty(), () -> format(
+				"Pyranid must not create background threads, executors, timers, schedulers, or cleaners. "
+						+ "Notification supervision belongs to the application. Violations: %s", violations));
 	}
 
 	/**

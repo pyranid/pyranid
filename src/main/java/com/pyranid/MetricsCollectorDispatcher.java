@@ -21,6 +21,7 @@ import org.jspecify.annotations.Nullable;
 
 import javax.annotation.concurrent.ThreadSafe;
 import java.time.Duration;
+import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -432,6 +433,88 @@ final class MetricsCollectorDispatcher {
 
 		try {
 			this.metricsCollector.didCloseStream(ctx, outcome, rowsConsumed, streamDuration, throwable);
+		} catch (Throwable t) {
+			ignoreMetricsFailure(t);
+		}
+	}
+
+	void willOpenNotificationSession(@NonNull DatabaseType databaseType,
+																	 @NonNull UUID notificationSessionId) {
+		if (!isEnabled())
+			return;
+
+		try {
+			this.metricsCollector.willOpenNotificationSession(databaseType, notificationSessionId);
+		} catch (Throwable t) {
+			ignoreMetricsFailure(t);
+		}
+	}
+
+	void didOpenNotificationSession(@NonNull DatabaseType databaseType,
+																	@NonNull UUID notificationSessionId,
+																	@NonNull Duration openDuration) {
+		if (!isEnabled())
+			return;
+
+		try {
+			this.metricsCollector.didOpenNotificationSession(databaseType, notificationSessionId, openDuration);
+		} catch (Throwable t) {
+			ignoreMetricsFailure(t);
+		}
+	}
+
+	void didFailToOpenNotificationSession(@NonNull DatabaseType databaseType,
+																				@NonNull UUID notificationSessionId,
+																				@NonNull Duration openDuration,
+																				@NonNull Throwable throwable) {
+		if (!isEnabled())
+			return;
+
+		try {
+			this.metricsCollector.didFailToOpenNotificationSession(databaseType, notificationSessionId, openDuration,
+					throwable);
+		} catch (Throwable t) {
+			ignoreMetricsFailure(t);
+		}
+	}
+
+	void didDeliverNotificationBatch(@NonNull DatabaseType databaseType,
+																	 @NonNull UUID notificationSessionId,
+																	 @NonNull Long notificationCount) {
+		if (!isEnabled())
+			return;
+
+		try {
+			this.metricsCollector.didDeliverNotificationBatch(databaseType, notificationSessionId, notificationCount);
+		} catch (Throwable t) {
+			ignoreMetricsFailure(t);
+		}
+	}
+
+	void didLoseNotificationConnection(@NonNull DatabaseType databaseType,
+																		 @NonNull UUID notificationSessionId,
+																		 @NonNull Throwable throwable) {
+		if (!isEnabled())
+			return;
+
+		try {
+			this.metricsCollector.didLoseNotificationConnection(databaseType, notificationSessionId, throwable);
+		} catch (Throwable t) {
+			ignoreMetricsFailure(t);
+		}
+	}
+
+	void didCloseNotificationSession(@NonNull DatabaseType databaseType,
+																	 @NonNull UUID notificationSessionId,
+																	 MetricsCollector.@NonNull NotificationSessionOutcome outcome,
+																	 @NonNull Duration sessionDuration,
+																	 @Nullable Throwable throwable) {
+		if (!isEnabled())
+			return;
+
+		try {
+			this.metricsCollector.didCloseNotificationSession(databaseType, notificationSessionId, outcome,
+					sessionDuration, throwable);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
 		}

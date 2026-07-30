@@ -41,6 +41,12 @@ final class PostgresDialect extends GenericDialect {
 
 	@NonNull
 	@Override
+	public DatabaseNotificationSupport notificationSupport() {
+		return PostgresNotificationSupport.INSTANCE;
+	}
+
+	@NonNull
+	@Override
 	public List<String> sqlFragmentsForOperators(boolean hasQuestionMarkOperators,
 																							 @NonNull List<String> sqlFragments,
 																							 @NonNull List<@NonNull List<@NonNull Integer>> questionMarkOperatorFragmentIndexes) {

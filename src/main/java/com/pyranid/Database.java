@@ -38,6 +38,7 @@ import java.util.Collection;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -52,6 +53,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.UnaryOperator;
+import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
@@ -202,6 +204,11 @@ public final class Database {
 			throw wrongDatabaseTransactionException(transaction);
 
 		return Optional.of(transaction);
+	}
+
+	static boolean hasAmbientTransaction() {
+		Deque<Transaction> transactionStack = TRANSACTION_STACK_HOLDER.get();
+		return transactionStack != null && !transactionStack.isEmpty();
 	}
 
 	@NonNull
@@ -798,7 +805,9 @@ public final class Database {
 		if (existing == null)
 			return additional;
 
-		existing.addSuppressed(additional);
+		if (existing != additional)
+			existing.addSuppressed(additional);
+
 		return existing;
 	}
 
@@ -3466,6 +3475,606 @@ public final class Database {
 				rawConnection.release();
 			}
 		}, true);
+	}
+
+	/**
+	 * Performs an operation with one callback-scoped database-notification listener session.
+	 * <p>
+	 * This method is synchronous and blocking. It acquires at most one listener connection from this
+	 * {@code Database}'s configured {@link DataSource}, registers every requested channel, invokes {@code operation}
+	 * at most once, expires the supplied {@link NotificationSession}, and completes cleanup before returning or
+	 * throwing. It never reconnects.
+	 * <p>
+	 * The configured source must preserve one physical backend session for the entire checkout. For PostgreSQL,
+	 * direct connections and session pooling are suitable; transaction or statement pooling is not. Applications
+	 * whose ordinary source cannot provide that affinity should construct a separate {@code Database} over a suitable
+	 * listener source and invoke this method on that instance.
+	 * <p>
+	 * Notifications are lossy hints. Durable applications should normally reconcile authoritative state as the first
+	 * callback action. The operation may use ordinary database methods, but those methods acquire or select their
+	 * connection normally and never reuse the listener connection.
+	 *
+	 * @param channels  fixed, nonempty set of nonblank channels to register
+	 * @param operation operation to invoke after every channel has been registered
+	 * @throws NullPointerException if {@code channels}, a channel, or {@code operation} is null
+	 * @throws IllegalArgumentException if the set is empty or a channel violates common or backend-specific limits
+	 * @throws IllegalStateException if any Pyranid transaction is active on the calling thread
+	 * @throws InterruptedException if cooperative interruption wins after any required cleanup
+	 * @throws UnsupportedOperationException if the database dialect or runtime driver cannot receive notifications
+	 * @throws DatabaseException if connection acquisition, setup, receive, callback execution, or cleanup fails
+	 * @since 4.6.0
+	 */
+	public void withNotificationSession(@NonNull Set<@NonNull String> channels,
+																			@NonNull NotificationSessionOperation operation)
+			throws InterruptedException {
+		requireNonNull(channels);
+		requireNonNull(operation);
+
+		if (channels.isEmpty())
+			throw new IllegalArgumentException("channels must not be empty");
+
+		Set<String> validatedChannels = new LinkedHashSet<>(channels.size());
+
+		for (String channel : channels) {
+			Notification.validateChannel(channel);
+			validatedChannels.add(channel);
+		}
+
+		if (hasAmbientTransaction())
+			throw new IllegalStateException("Notification sessions are not permitted inside a Pyranid transaction");
+
+		if (Thread.interrupted())
+			throw new InterruptedException();
+
+		DatabaseType databaseType = getDatabaseType();
+		DatabaseNotificationSupport notificationSupport = getDatabaseDialect().notificationSupport();
+
+		for (String channel : validatedChannels)
+			notificationSupport.validateChannel(channel);
+
+		if (Thread.interrupted())
+			throw new InterruptedException();
+
+		performNotificationSession(Set.copyOf(validatedChannels), operation, databaseType, notificationSupport);
+	}
+
+	/**
+	 * Performs an operation with one callback-scoped database-notification listener session for a single channel.
+	 * <p>
+	 * This is the single-channel convenience form of
+	 * {@link #withNotificationSession(Set, NotificationSessionOperation)}. The listener connection comes from this
+	 * {@code Database}'s configured {@link DataSource}, which must preserve physical backend-session affinity for the
+	 * entire checkout.
+	 *
+	 * @param channel   nonblank channel to register
+	 * @param operation operation to invoke after the channel has been registered
+	 * @throws NullPointerException if {@code channel} or {@code operation} is null
+	 * @throws IllegalArgumentException if the channel violates common or backend-specific limits
+	 * @throws IllegalStateException if any Pyranid transaction is active on the calling thread
+	 * @throws InterruptedException if cooperative interruption wins after any required cleanup
+	 * @throws UnsupportedOperationException if the database dialect or runtime driver cannot receive notifications
+	 * @throws DatabaseException if connection acquisition, setup, receive, callback execution, or cleanup fails
+	 * @since 4.6.0
+	 */
+	public void withNotificationSession(@NonNull String channel,
+																			@NonNull NotificationSessionOperation operation)
+			throws InterruptedException {
+		requireNonNull(channel);
+		requireNonNull(operation);
+		withNotificationSession(Set.of(channel), operation);
+	}
+
+	/**
+	 * Sends a transient database notification with an empty payload.
+	 * <p>
+	 * Sending follows ordinary Pyranid statement and transaction selection. On PostgreSQL, a send inside a Pyranid
+	 * transaction becomes visible only if that transaction commits.
+	 *
+	 * @param channel nonblank notification channel
+	 * @throws NullPointerException if {@code channel} is null
+	 * @throws IllegalArgumentException if the channel violates common or backend-specific limits
+	 * @throws UnsupportedOperationException if the database dialect does not support notification sends
+	 * @throws DatabaseException if the send fails
+	 * @since 4.6.0
+	 */
+	public void sendNotification(@NonNull String channel) {
+		sendNotification(channel, "");
+	}
+
+	/**
+	 * Sends a transient database notification.
+	 * <p>
+	 * Sending follows ordinary Pyranid statement and transaction selection, including connection ownership,
+	 * parameter binding and redaction, statement logging, timeout configuration, and metrics. A null payload is
+	 * normalized to the empty string rather than sent as SQL {@code NULL}.
+	 * <p>
+	 * On PostgreSQL this executes bound {@code pg_notify(?, ?)} SQL. Delivery occurs only after commit and is discarded
+	 * by rollback; notification delivery itself remains non-durable and may be coalesced.
+	 *
+	 * @param channel nonblank notification channel
+	 * @param payload notification payload, possibly null or empty
+	 * @throws NullPointerException if {@code channel} is null
+	 * @throws IllegalArgumentException if the channel or payload violates common or backend-specific limits
+	 * @throws UnsupportedOperationException if the database dialect does not support notification sends
+	 * @throws DatabaseException if the send fails
+	 * @since 4.6.0
+	 */
+	public void sendNotification(@NonNull String channel,
+															 @Nullable String payload) {
+		Notification.validateChannel(channel);
+		String normalizedPayload = payload == null ? "" : payload;
+		DatabaseNotificationSupport notificationSupport = getDatabaseDialect().notificationSupport();
+
+		notificationSupport.validateChannel(channel);
+		notificationSupport.validatePayload(normalizedPayload);
+
+		if (!notificationSupport.isSendSupported())
+			throw new UnsupportedOperationException(format(
+					"Database type %s does not support notification sends", getDatabaseType()));
+
+		Statement statement = Statement.of(generateId(), notificationSupport.sendStatementSql());
+		StatementContext<Void> statementContext = StatementContext.with(statement, this)
+				.parameters(channel, normalizedPayload)
+				.build();
+
+		PreparedStatementCustomizer defaultPreparedStatementCustomizer = hasDefaultPreparedStatementSettings()
+				? (context, preparedStatement) -> applyDefaultPreparedStatementSettings(preparedStatement)
+				: null;
+
+		performDatabaseOperation(statementContext, List.of(channel, normalizedPayload),
+				defaultPreparedStatementCustomizer, preparedStatement -> {
+			long startTime = nanoTime();
+			executeAndDrain(preparedStatement);
+			return new DatabaseOperationResult(
+					Duration.ofNanos(nanoTime() - startTime), null, StatementResult.empty());
+		});
+	}
+
+	/**
+	 * Reports whether the configured database dialect and currently loadable runtime adapter expose the APIs required
+	 * to attempt a notification-listening session.
+	 * <p>
+	 * This method resolves the full database type. If it has not been configured or cached, resolution may acquire a
+	 * metadata connection and may throw {@link DatabaseException}. It does not acquire a listener session, inspect pool
+	 * or proxy mode, prove backend-session affinity, unwrap a physical listener connection, or emit notification-session
+	 * lifecycle metrics.
+	 *
+	 * @return true if notification listening can be attempted with the current dialect and runtime
+	 * @throws DatabaseException if automatic database-type detection fails
+	 * @since 4.6.0
+	 */
+	@NonNull
+	public Boolean isNotificationListeningSupported() {
+		return getDatabaseDialect().notificationSupport().isReceiveRuntimeAvailable();
+	}
+
+	private void executeAndDrain(@NonNull PreparedStatement preparedStatement) throws SQLException {
+		requireNonNull(preparedStatement);
+
+		boolean resultAvailable = preparedStatement.execute();
+
+		for (;;) {
+			if (resultAvailable) {
+				try (ResultSet resultSet = preparedStatement.getResultSet()) {
+					if (resultSet != null) {
+						while (resultSet.next()) {
+							// Drain every row before advancing to a possible subsequent result.
+						}
+					}
+				}
+			} else if (preparedStatement.getUpdateCount() == -1) {
+				break;
+			}
+
+			resultAvailable = preparedStatement.getMoreResults(java.sql.Statement.CLOSE_CURRENT_RESULT);
+		}
+	}
+
+	private void performNotificationSession(@NonNull Set<@NonNull String> channels,
+																					@NonNull NotificationSessionOperation operation,
+																					@NonNull DatabaseType databaseType,
+																					@NonNull DatabaseNotificationSupport notificationSupport)
+			throws InterruptedException {
+		requireNonNull(channels);
+		requireNonNull(operation);
+		requireNonNull(databaseType);
+		requireNonNull(notificationSupport);
+
+		MetricsCollectorDispatcher metricsCollectorDispatcher = getMetricsCollectorDispatcher();
+		UUID notificationSessionId = metricsCollectorDispatcher.isEnabled() ? UUID.randomUUID() : null;
+		long lifecycleStartTime = notificationSessionId == null ? 0L : nanoTime();
+
+		if (notificationSessionId != null)
+			metricsCollectorDispatcher.willOpenNotificationSession(databaseType, notificationSessionId);
+
+		Connection connection = null;
+		NotificationTransport transport = null;
+		NotificationSession session = null;
+		Boolean initialAutoCommit = null;
+		NotificationSetupPhase setupPhase = NotificationSetupPhase.CAPABILITY;
+		UnsupportedOperationException frameworkUnsupportedFailure = null;
+		boolean initialSanitationComplete = false;
+
+		try {
+			if (!notificationSupport.isReceiveRuntimeAvailable()) {
+				frameworkUnsupportedFailure = new UnsupportedOperationException(format(
+						"Database type %s does not support notification listening with the current runtime", databaseType));
+				throw frameworkUnsupportedFailure;
+			}
+
+			setupPhase = NotificationSetupPhase.ACQUIRE_CONNECTION;
+			connection = requireNonNull(getDataSource().getConnection(), "DataSource returned a null connection");
+
+			setupPhase = NotificationSetupPhase.CONFIGURE_CONNECTION;
+			initialAutoCommit = connection.getAutoCommit();
+
+			if (!initialAutoCommit) {
+				// A pooled connection can be returned with an unfinished transaction. Discard inherited work before
+				// enabling autocommit; LISTEN registration must not inherit that transaction.
+				connection.rollback();
+				connection.setAutoCommit(true);
+			}
+
+			setupPhase = NotificationSetupPhase.OPEN_TRANSPORT;
+			transport = notificationSupport.open(connection);
+
+			setupPhase = NotificationSetupPhase.SANITIZE_UNLISTEN;
+			transport.unlistenAll();
+
+			setupPhase = NotificationSetupPhase.SANITIZE_DRAIN;
+			requireNonNull(transport.drain(), "Notification transport returned a null batch");
+
+			if (transport.isConnectionUncertain())
+				throw new SQLException("Notification transport became uncertain during initial sanitation");
+
+			initialSanitationComplete = true;
+			setupPhase = NotificationSetupPhase.REGISTER;
+			transport.listen(channels);
+
+			if (transport.isConnectionUncertain())
+				throw new SQLException("Notification transport became uncertain during registration");
+
+			session = new NotificationSession(
+					this, requireNonNull(transport), databaseType, notificationSessionId);
+		} catch (Throwable setupCause) {
+			boolean connectionFailure = isNotificationConnectionFailure(connection, setupCause);
+			Throwable setupFailure = normalizeNotificationSetupFailure(
+					setupCause, frameworkUnsupportedFailure, setupPhase, connectionFailure, databaseType);
+
+			if (notificationSessionId != null) {
+				metricsCollectorDispatcher.didFailToOpenNotificationSession(
+						databaseType, notificationSessionId,
+						Duration.ofNanos(nanoTime() - lifecycleStartTime), setupFailure);
+			}
+
+			boolean interruptionObserved = Thread.interrupted();
+			boolean canAttemptHealthyCleanup = initialSanitationComplete
+					&& connection != null
+					&& transport != null
+					&& initialAutoCommit != null
+					&& setupPhase == NotificationSetupPhase.REGISTER
+					&& !connectionFailure
+					&& !transport.isConnectionUncertain();
+			Throwable cleanupFailure = canAttemptHealthyCleanup
+					? cleanupOpenedNotificationSession(connection, transport, initialAutoCommit, false, databaseType)
+					: cleanupFailedNotificationCandidate(connection, databaseType);
+			setupFailure = appendSuppressedIfPresent(setupFailure, cleanupFailure);
+
+			if (Thread.interrupted())
+				interruptionObserved = true;
+
+			if (interruptionObserved)
+				Thread.currentThread().interrupt();
+
+			throwNotificationFailure(setupFailure);
+			return;
+		}
+
+		if (notificationSessionId != null) {
+			metricsCollectorDispatcher.didOpenNotificationSession(
+					databaseType, notificationSessionId,
+					Duration.ofNanos(nanoTime() - lifecycleStartTime));
+		}
+
+		session = requireNonNull(session);
+		Throwable callbackFailure = null;
+		boolean callbackFailureIsError = false;
+		InterruptedException concreteInterruptedException = null;
+		boolean interruptionObserved = false;
+
+		try {
+			if (Thread.interrupted()) {
+				interruptionObserved = true;
+			} else {
+				operation.perform(session);
+			}
+		} catch (InterruptedException interruptedException) {
+			concreteInterruptedException = interruptedException;
+			interruptionObserved = true;
+			// Retain the exact exception while clearing any simultaneously pending status before cleanup.
+			Thread.interrupted();
+		} catch (DatabaseException databaseException) {
+			callbackFailure = databaseException;
+		} catch (Error error) {
+			callbackFailure = error;
+			callbackFailureIsError = true;
+		} catch (Throwable throwable) {
+			callbackFailure = new DatabaseException(
+					"Notification session operation failed", throwable, databaseType.dialect());
+		} finally {
+			session.expire();
+		}
+
+		Throwable transportFailure = session.terminalFailure();
+		Throwable primaryFailure;
+
+		if (callbackFailureIsError) {
+			primaryFailure = appendSuppressedIfPresent(callbackFailure, transportFailure);
+		} else if (transportFailure != null) {
+			primaryFailure = appendSuppressedIfPresent(transportFailure, callbackFailure);
+		} else {
+			primaryFailure = callbackFailure;
+		}
+
+		// Cleanup begins flag-clear with respect to status already pending at this boundary.
+		if (Thread.interrupted())
+			interruptionObserved = true;
+
+		Throwable cleanupFailure = cleanupOpenedNotificationSession(
+				requireNonNull(connection), requireNonNull(transport), requireNonNull(initialAutoCommit),
+				session.isConnectionUncertain(), databaseType);
+		primaryFailure = appendSuppressedIfPresent(primaryFailure, cleanupFailure);
+
+		if (Thread.interrupted())
+			interruptionObserved = true;
+
+		MetricsCollector.NotificationSessionOutcome outcome;
+
+		if (primaryFailure != null)
+			outcome = MetricsCollector.NotificationSessionOutcome.FAILED;
+		else if (interruptionObserved)
+			outcome = MetricsCollector.NotificationSessionOutcome.INTERRUPTED;
+		else
+			outcome = MetricsCollector.NotificationSessionOutcome.CALLBACK_RETURNED;
+
+		if (notificationSessionId != null) {
+			metricsCollectorDispatcher.didCloseNotificationSession(
+					databaseType, notificationSessionId, outcome,
+					Duration.ofNanos(nanoTime() - lifecycleStartTime),
+					outcome == MetricsCollector.NotificationSessionOutcome.FAILED ? primaryFailure : null);
+		}
+
+		if (primaryFailure != null) {
+			if (interruptionObserved) {
+				primaryFailure = appendSuppressedIfPresent(primaryFailure, concreteInterruptedException);
+				Thread.currentThread().interrupt();
+			}
+
+			throwNotificationFailure(primaryFailure);
+			return;
+		}
+
+		if (interruptionObserved)
+			throw concreteInterruptedException == null ? new InterruptedException() : concreteInterruptedException;
+	}
+
+	@NonNull
+	private Throwable normalizeNotificationSetupFailure(@NonNull Throwable setupCause,
+																											 @Nullable UnsupportedOperationException frameworkUnsupportedFailure,
+																											 @NonNull NotificationSetupPhase setupPhase,
+																											 boolean connectionFailure,
+																											 @NonNull DatabaseType databaseType) {
+		requireNonNull(setupCause);
+		requireNonNull(setupPhase);
+		requireNonNull(databaseType);
+
+		if (setupCause == frameworkUnsupportedFailure)
+			return setupCause;
+
+		if (setupCause instanceof NotificationReceiveUnsupportedException && !connectionFailure) {
+			return new UnsupportedOperationException(
+					"Notification listening is not supported by the current database driver connection", setupCause);
+		}
+
+		if (setupPhase == NotificationSetupPhase.OPEN_TRANSPORT
+				&& !connectionFailure
+				&& (setupCause instanceof SQLFeatureNotSupportedException
+				|| setupCause instanceof UnsupportedOperationException
+				|| setupCause instanceof AbstractMethodError)) {
+			return new UnsupportedOperationException(
+					"Notification listening is not supported by the current database driver connection", setupCause);
+		}
+
+		return normalizeNotificationFailure("Unable to open notification session", setupCause, databaseType);
+	}
+
+	private boolean isNotificationConnectionFailure(@Nullable Connection connection,
+																								 @NonNull Throwable throwable) {
+		requireNonNull(throwable);
+
+		if (throwable instanceof SQLException sqlException) {
+			String sqlState = sqlException.getSQLState();
+
+			if (sqlState != null && sqlState.startsWith("08"))
+				return true;
+		}
+
+		if (connection != null) {
+			try {
+				return connection.isClosed();
+			} catch (Throwable diagnosticFailure) {
+				if (diagnosticFailure != throwable)
+					throwable.addSuppressed(diagnosticFailure);
+
+				if (diagnosticFailure instanceof SQLException diagnosticSqlException) {
+					String sqlState = diagnosticSqlException.getSQLState();
+
+					if (sqlState != null && sqlState.startsWith("08"))
+						return true;
+				}
+
+				// If connection health cannot be inspected, never return the candidate to a pool as healthy.
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	@Nullable
+	private Throwable cleanupFailedNotificationCandidate(@Nullable Connection connection,
+																											 @NonNull DatabaseType databaseType) {
+		requireNonNull(databaseType);
+
+		if (connection == null)
+			return null;
+
+		Throwable cleanupFailure = null;
+
+		try {
+			connection.abort(Runnable::run);
+		} catch (Throwable throwable) {
+			cleanupFailure = appendSuppressed(cleanupFailure,
+					normalizeNotificationFailure("Unable to abort failed notification-session connection",
+							throwable, databaseType));
+		}
+
+		try {
+			connection.close();
+		} catch (Throwable throwable) {
+			cleanupFailure = appendSuppressed(cleanupFailure,
+					normalizeNotificationFailure("Unable to close failed notification-session connection",
+							throwable, databaseType));
+		}
+
+		return cleanupFailure;
+	}
+
+	@Nullable
+	private Throwable cleanupOpenedNotificationSession(@NonNull Connection connection,
+																										 @NonNull NotificationTransport transport,
+																										 @NonNull Boolean initialAutoCommit,
+																										 boolean connectionUncertain,
+																										 @NonNull DatabaseType databaseType) {
+		requireNonNull(connection);
+		requireNonNull(transport);
+		requireNonNull(initialAutoCommit);
+		requireNonNull(databaseType);
+
+		Throwable cleanupFailure = null;
+		boolean abortRequired = connectionUncertain;
+
+		if (!abortRequired) {
+			try {
+				transport.unlistenAll();
+			} catch (Throwable throwable) {
+				cleanupFailure = appendSuppressed(cleanupFailure,
+						normalizeNotificationFailure("Unable to unregister notification channels", throwable, databaseType));
+				abortRequired = true;
+			}
+		}
+
+		if (!abortRequired) {
+			try {
+				requireNonNull(transport.drain(), "Notification transport returned a null cleanup batch");
+
+				if (transport.isConnectionUncertain())
+					throw new SQLException("Notification transport became uncertain during cleanup");
+			} catch (Throwable throwable) {
+				cleanupFailure = appendSuppressed(cleanupFailure,
+						normalizeNotificationFailure("Unable to drain notification connection during cleanup",
+								throwable, databaseType));
+				abortRequired = true;
+			}
+		}
+
+		if (!abortRequired && !initialAutoCommit) {
+			try {
+				connection.setAutoCommit(false);
+			} catch (Throwable throwable) {
+				cleanupFailure = appendSuppressed(cleanupFailure,
+						normalizeNotificationFailure("Unable to restore notification connection autocommit",
+								throwable, databaseType));
+				abortRequired = true;
+			}
+		}
+
+		if (!abortRequired) {
+			try {
+				connection.close();
+			} catch (Throwable throwable) {
+				cleanupFailure = appendSuppressed(cleanupFailure,
+						normalizeNotificationFailure("Unable to close notification-session connection",
+								throwable, databaseType));
+				// Once close has been invoked, the connection handle might already have been returned to a pool.
+				// Do not attempt abort or a second close through a handle whose ownership is now unknown.
+			}
+		}
+
+		if (abortRequired) {
+			try {
+				connection.abort(Runnable::run);
+			} catch (Throwable throwable) {
+				cleanupFailure = appendSuppressed(cleanupFailure,
+						normalizeNotificationFailure("Unable to abort uncertain notification-session connection",
+								throwable, databaseType));
+			}
+
+			try {
+				connection.close();
+			} catch (Throwable throwable) {
+				cleanupFailure = appendSuppressed(cleanupFailure,
+						normalizeNotificationFailure("Unable to close uncertain notification-session connection",
+								throwable, databaseType));
+			}
+		}
+
+		return cleanupFailure;
+	}
+
+	@NonNull
+	private Throwable normalizeNotificationFailure(@NonNull String message,
+																							 @NonNull Throwable throwable,
+																							 @NonNull DatabaseType databaseType) {
+		requireNonNull(message);
+		requireNonNull(throwable);
+		requireNonNull(databaseType);
+
+		if (throwable instanceof DatabaseException || throwable instanceof Error)
+			return throwable;
+
+		return new DatabaseException(message, throwable, databaseType.dialect());
+	}
+
+	private static void throwNotificationFailure(@NonNull Throwable throwable) {
+		requireNonNull(throwable);
+
+		if (throwable instanceof RuntimeException runtimeException)
+			throw runtimeException;
+
+		if (throwable instanceof Error error)
+			throw error;
+
+		throw new DatabaseException("Notification session failed", throwable);
+	}
+
+	@Nullable
+	private static Throwable appendSuppressedIfPresent(@Nullable Throwable existing,
+																										@Nullable Throwable additional) {
+		if (additional == null)
+			return existing;
+
+		return appendSuppressed(existing, additional);
+	}
+
+	private enum NotificationSetupPhase {
+		CAPABILITY,
+		ACQUIRE_CONNECTION,
+		CONFIGURE_CONNECTION,
+		OPEN_TRANSPORT,
+		SANITIZE_UNLISTEN,
+		SANITIZE_DRAIN,
+		REGISTER
 	}
 
 	private <T> void performDatabaseOperation(@NonNull StatementContext<T> statementContext,

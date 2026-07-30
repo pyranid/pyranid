@@ -22,6 +22,7 @@ import org.jspecify.annotations.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import java.time.Duration;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Contract for collecting operational metrics from Pyranid.
@@ -433,6 +434,138 @@ public interface MetricsCollector {
 	}
 
 	/**
+	 * Called immediately before Pyranid attempts to open a notification session.
+	 * <p>
+	 * Argument validation, ambient-transaction rejection, database-type resolution, and backend-specific channel
+	 * validation occur before this callback. Exactly one of
+	 * {@link #didOpenNotificationSession(DatabaseType, UUID, Duration)} or
+	 * {@link #didFailToOpenNotificationSession(DatabaseType, UUID, Duration, Throwable)} follows it.
+	 *
+	 * @param databaseType         database type resolved for the notification session
+	 * @param notificationSessionId identifier for this notification-session invocation
+	 * @since 4.6.0
+	 */
+	default void willOpenNotificationSession(@NonNull DatabaseType databaseType,
+																					@NonNull UUID notificationSessionId) {
+		// No-op by default
+	}
+
+	/**
+	 * Called after Pyranid successfully opens a notification session and registers every requested channel.
+	 * <p>
+	 * This callback occurs before the application operation is dispatched. It does not indicate that application
+	 * reconciliation or readiness work has completed.
+	 *
+	 * @param databaseType          database type resolved for the notification session
+	 * @param notificationSessionId identifier for this notification-session invocation
+	 * @param openDuration          elapsed time from the corresponding
+	 *                              {@link #willOpenNotificationSession(DatabaseType, UUID)} callback through successful
+	 *                              channel registration
+	 * @since 4.6.0
+	 */
+	default void didOpenNotificationSession(@NonNull DatabaseType databaseType,
+																				 @NonNull UUID notificationSessionId,
+																				 @NonNull Duration openDuration) {
+		// No-op by default
+	}
+
+	/**
+	 * Called after Pyranid fails to open a notification session.
+	 * <p>
+	 * This is the terminal lifecycle callback for an invocation that never reached
+	 * {@link #didOpenNotificationSession(DatabaseType, UUID, Duration)}. It is not followed by
+	 * {@link #didCloseNotificationSession(DatabaseType, UUID, NotificationSessionOutcome, Duration, Throwable)}.
+	 * Pyranid emits it after selecting the opening failure and before cleaning up any acquired candidate connection.
+	 *
+	 * @param databaseType          database type resolved for the notification session
+	 * @param notificationSessionId identifier for this notification-session invocation
+	 * @param openDuration          elapsed time from the corresponding
+	 *                              {@link #willOpenNotificationSession(DatabaseType, UUID)} callback through the opening
+	 *                              failure
+	 * @param throwable             failure that prevented the notification session from opening
+	 * @since 4.6.0
+	 */
+	default void didFailToOpenNotificationSession(@NonNull DatabaseType databaseType,
+																					 @NonNull UUID notificationSessionId,
+																					 @NonNull Duration openDuration,
+																					 @NonNull Throwable throwable) {
+		// No-op by default
+	}
+
+	/**
+	 * Called when Pyranid delivers a nonempty notification batch to application code.
+	 * <p>
+	 * Empty receive results and notifications discarded during setup or cleanup are not reported.
+	 *
+	 * @param databaseType          database type resolved for the notification session
+	 * @param notificationSessionId identifier for the notification session that delivered the batch
+	 * @param notificationCount     number of notifications in the delivered batch
+	 * @since 4.6.0
+	 */
+	default void didDeliverNotificationBatch(@NonNull DatabaseType databaseType,
+																					@NonNull UUID notificationSessionId,
+																					@NonNull Long notificationCount) {
+		// No-op by default
+	}
+
+	/**
+	 * Called when a receive operation detects terminal uncertainty or loss of an opened notification connection.
+	 * <p>
+	 * This callback is emitted at most once for a notification session. It does not report setup failures, failures
+	 * from ordinary database operations performed by application code, or cleanup-only failures.
+	 *
+	 * @param databaseType          database type resolved for the notification session
+	 * @param notificationSessionId identifier for the notification session whose connection was lost
+	 * @param throwable             terminal connection failure
+	 * @since 4.6.0
+	 */
+	default void didLoseNotificationConnection(@NonNull DatabaseType databaseType,
+																						@NonNull UUID notificationSessionId,
+																						@NonNull Throwable throwable) {
+		// No-op by default
+	}
+
+	/**
+	 * Called after an opened notification session reaches a terminal state and cleanup completes.
+	 * <p>
+	 * Every invocation that emits {@link #didOpenNotificationSession(DatabaseType, UUID, Duration)} emits this callback
+	 * exactly once. Invocations that fail before opening terminate through
+	 * {@link #didFailToOpenNotificationSession(DatabaseType, UUID, Duration, Throwable)} instead.
+	 *
+	 * @param databaseType          database type resolved for the notification session
+	 * @param notificationSessionId identifier for the notification session
+	 * @param outcome               terminal notification-session outcome
+	 * @param sessionDuration       elapsed time from the corresponding
+	 *                              {@link #willOpenNotificationSession(DatabaseType, UUID)} callback through completed
+	 *                              cleanup
+	 * @param throwable             selected failure for {@link NotificationSessionOutcome#FAILED}, or {@code null} for
+	 *                              {@link NotificationSessionOutcome#CALLBACK_RETURNED} and
+	 *                              {@link NotificationSessionOutcome#INTERRUPTED}
+	 * @since 4.6.0
+	 */
+	default void didCloseNotificationSession(@NonNull DatabaseType databaseType,
+																					 @NonNull UUID notificationSessionId,
+																					 @NonNull NotificationSessionOutcome outcome,
+																					 @NonNull Duration sessionDuration,
+																					 @Nullable Throwable throwable) {
+		// No-op by default
+	}
+
+	/**
+	 * Returns a notification counter snapshot if this collector supports in-process inspection.
+	 * <p>
+	 * Implementations may read counters independently without cross-counter atomicity. Callers that need
+	 * invariant-consistent snapshots should drain in-flight work before reading.
+	 *
+	 * @return a notification metrics snapshot, if supported
+	 * @since 4.6.0
+	 */
+	@NonNull
+	default Optional<NotificationSnapshot> notificationSnapshot() {
+		return Optional.empty();
+	}
+
+	/**
 	 * Returns a counter snapshot if this collector supports in-process inspection.
 	 * <p>
 	 * Implementations may read counters independently without cross-counter atomicity. Callers that need invariant-consistent
@@ -468,13 +601,61 @@ public interface MetricsCollector {
 	/**
 	 * Creates a fresh in-memory counter collector.
 	 * <p>
-	 * This collector is intended for tests and lightweight local inspection through {@link #snapshot()}.
+	 * This collector is intended for tests and lightweight local inspection through {@link #snapshot()} and
+	 * {@link #notificationSnapshot()}.
 	 *
 	 * @return new in-memory metrics collector
 	 */
 	@NonNull
 	static MetricsCollector inMemoryInstance() {
 		return InMemoryMetricsCollector.defaultInstance();
+	}
+
+	/**
+	 * Terminal outcome for an opened notification session.
+	 *
+	 * @since 4.6.0
+	 */
+	enum NotificationSessionOutcome {
+		/**
+		 * The application callback returned and notification-session cleanup completed normally.
+		 */
+		CALLBACK_RETURNED,
+
+		/**
+		 * Cooperative interruption ended the notification session and cleanup completed normally.
+		 */
+		INTERRUPTED,
+
+		/**
+		 * Setup after opening, notification receive, application callback, or cleanup failed.
+		 */
+		FAILED
+	}
+
+	/**
+	 * Counter snapshot for notification metrics.
+	 * <p>
+	 * Implementations may read counters independently without cross-counter atomicity. Callers that need
+	 * invariant-consistent snapshots should drain in-flight work before reading.
+	 *
+	 * @param sessionsStarted          valid, type-resolved notification-session invocations that entered measured setup
+	 * @param sessionsOpened           notification sessions that completed channel registration
+	 * @param sessionsCallbackReturned opened notification sessions whose callbacks returned and cleanup completed normally
+	 * @param sessionsInterrupted      opened notification sessions that ended through clean cooperative interruption
+	 * @param sessionsFailed           notification-session invocations that failed before opening or after opening
+	 * @param batchesDelivered         nonempty notification batches delivered to application code
+	 * @param notificationsDelivered   notifications contained in delivered batches
+	 * @since 4.6.0
+	 */
+	@ThreadSafe
+	record NotificationSnapshot(@NonNull Long sessionsStarted,
+															@NonNull Long sessionsOpened,
+															@NonNull Long sessionsCallbackReturned,
+															@NonNull Long sessionsInterrupted,
+															@NonNull Long sessionsFailed,
+															@NonNull Long batchesDelivered,
+															@NonNull Long notificationsDelivered) {
 	}
 
 	/**

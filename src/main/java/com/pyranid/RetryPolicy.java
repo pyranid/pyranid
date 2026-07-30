@@ -188,7 +188,7 @@ public final class RetryPolicy {
 	}
 
 	/**
-	 * Determines how long to wait before retrying after a failed transaction attempt.
+	 * Determines how long to wait before retrying after a failed attempt.
 	 * <p>
 	 * Implementations should be thread-safe if the {@link RetryPolicy} is shared across threads.
 	 *
