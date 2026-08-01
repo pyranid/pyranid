@@ -418,11 +418,11 @@ public class NotificationSessionTests {
 	}
 
 	@Test
-	public void unrelatedDecodeErrorDoesNotPoisonACertainTransport() throws InterruptedException {
+	public void unrelatedBatchCopyErrorDoesNotPoisonACertainTransport() throws InterruptedException {
 		RecordingMetricsCollector metricsCollector = new RecordingMetricsCollector();
 		FakeNotificationTransport transport = new FakeNotificationTransport();
-		AssertionError expected = new AssertionError("application-side batch decoding failed");
-		List<Notification> undecodableBatch = new java.util.AbstractList<>() {
+		AssertionError expected = new AssertionError("application-side batch copy failed");
+		List<Notification> uncopyableBatch = new java.util.AbstractList<>() {
 			@Override
 			public Notification get(int index) {
 				throw expected;
@@ -433,7 +433,7 @@ public class NotificationSessionTests {
 				return 1;
 			}
 		};
-		transport.receiveOperation = waitSlice -> undecodableBatch;
+		transport.receiveOperation = waitSlice -> uncopyableBatch;
 		NotificationSession session = new NotificationSession(
 				database(metricsCollector), transport, DatabaseType.POSTGRESQL, UUID.randomUUID());
 

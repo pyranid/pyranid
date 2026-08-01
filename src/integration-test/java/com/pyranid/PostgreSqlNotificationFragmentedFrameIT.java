@@ -26,6 +26,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
+import javax.net.SocketFactory;
 import javax.sql.DataSource;
 import java.io.EOFException;
 import java.io.IOException;
@@ -46,6 +47,8 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -69,8 +72,12 @@ import static java.util.Objects.requireNonNull;
 public class PostgreSqlNotificationFragmentedFrameIT {
 	private static final int POSTGRES_PORT = 5432;
 	private static final int SOCKET_TIMEOUT_MILLISECONDS = 1_000;
+	private static final int FRAGMENT_PREFIX_BYTES = 10;
 	private static final int MAX_SERVER_FRAME_BYTES = 16 * 1024 * 1024;
 	private static final Duration COORDINATION_TIMEOUT = Duration.ofSeconds(10);
+	@NonNull
+	private static final ConcurrentMap<String, ClientSocketCapture> CLIENT_SOCKET_CAPTURES =
+			new ConcurrentHashMap<>();
 	private static final String POSTGRES_IMAGE_NAME =
 			System.getProperty("postgres.integration.image", "pgvector/pgvector:pg17");
 	private static final DockerImageName POSTGRES_IMAGE = DockerImageName.parse(POSTGRES_IMAGE_NAME)
@@ -86,8 +93,7 @@ public class PostgreSqlNotificationFragmentedFrameIT {
 	@Timeout(value = 30, unit = TimeUnit.SECONDS)
 	public void publicDrainSurvivesFragmentedNotificationFrameAndRetainsConnection() throws Exception {
 		try (ScriptedPostgreSqlProxy proxy = proxy()) {
-			CapturingDataSource listenerDataSource =
-					new CapturingDataSource(listenerDataSource(proxy));
+			CapturingDataSource listenerDataSource = listenerDataSource(proxy);
 			Database listenerDatabase = Database.withDataSource(listenerDataSource)
 					.databaseType(DatabaseType.POSTGRESQL)
 					.build();
@@ -111,6 +117,10 @@ public class PostgreSqlNotificationFragmentedFrameIT {
 					applicationDatabase.sendNotification(channel, expected.getPayload());
 					Assertions.assertTrue(fragmentPlan.awaitPrefix(COORDINATION_TIMEOUT),
 							"The proxy did not forward the fragmented notification prefix");
+					Assertions.assertTrue(
+							listenerDataSource.awaitClientReadableBytes(
+									FRAGMENT_PREFIX_BYTES, COORDINATION_TIMEOUT),
+							"The pgjdbc client socket did not expose the complete fragmented prefix");
 
 					control.receiveStarting.countDown();
 					long receiveStartedAt = System.nanoTime();
@@ -153,8 +163,7 @@ public class PostgreSqlNotificationFragmentedFrameIT {
 	@Timeout(value = 30, unit = TimeUnit.SECONDS)
 	public void timedAwaitSurvivesFragmentAfterAccumulatedNotificationAndRetainsConnection() throws Exception {
 		try (ScriptedPostgreSqlProxy proxy = proxy()) {
-			CapturingDataSource listenerDataSource =
-					new CapturingDataSource(listenerDataSource(proxy));
+			CapturingDataSource listenerDataSource = listenerDataSource(proxy);
 			Database listenerDatabase = Database.withDataSource(listenerDataSource)
 					.databaseType(DatabaseType.POSTGRESQL)
 					.build();
@@ -190,6 +199,10 @@ public class PostgreSqlNotificationFragmentedFrameIT {
 					applicationDatabase.sendNotification(channel, fragmented.getPayload());
 					Assertions.assertTrue(fragmentPlan.awaitPrefix(COORDINATION_TIMEOUT),
 							"The proxy did not forward the fragmented notification prefix");
+					Assertions.assertTrue(
+							listenerDataSource.awaitClientReadableBytes(
+									FRAGMENT_PREFIX_BYTES, COORDINATION_TIMEOUT),
+							"The pgjdbc client socket did not expose the complete fragmented prefix");
 
 					control.receiveStarting.countDown();
 					long receiveStartedAt = System.nanoTime();
@@ -346,14 +359,22 @@ public class PostgreSqlNotificationFragmentedFrameIT {
 	}
 
 	@NonNull
-	private static DataSource listenerDataSource(@NonNull ScriptedPostgreSqlProxy proxy) {
+	private static CapturingDataSource listenerDataSource(@NonNull ScriptedPostgreSqlProxy proxy) {
 		requireNonNull(proxy);
 		PGSimpleDataSource dataSource = configuredDataSource(
 				proxy.getListenAddress(),
 				proxy.getListenPort());
+		String captureId = UUID.randomUUID().toString();
+		ClientSocketCapture clientSocketCapture = new ClientSocketCapture();
+
+		if (CLIENT_SOCKET_CAPTURES.putIfAbsent(captureId, clientSocketCapture) != null)
+			throw new IllegalStateException("Duplicate fragmented-frame client-socket capture identifier");
+
+		dataSource.setSocketFactory(ClientSocketCapturingFactory.class.getName());
+		dataSource.setSocketFactoryArg(captureId);
 		dataSource.setSocketTimeout(
 				(int) TimeUnit.MILLISECONDS.toSeconds(SOCKET_TIMEOUT_MILLISECONDS));
-		return dataSource;
+		return new CapturingDataSource(dataSource, captureId, clientSocketCapture);
 	}
 
 	@NonNull
@@ -425,10 +446,18 @@ public class PostgreSqlNotificationFragmentedFrameIT {
 		@NonNull
 		private final DataSource delegate;
 		@NonNull
+		private final String clientSocketCaptureId;
+		@NonNull
+		private final ClientSocketCapture clientSocketCapture;
+		@NonNull
 		private final AtomicReference<Connection> connection = new AtomicReference<>();
 
-		private CapturingDataSource(@NonNull DataSource delegate) {
+		private CapturingDataSource(@NonNull DataSource delegate,
+				@NonNull String clientSocketCaptureId,
+				@NonNull ClientSocketCapture clientSocketCapture) {
 			this.delegate = requireNonNull(delegate);
+			this.clientSocketCaptureId = requireNonNull(clientSocketCaptureId);
+			this.clientSocketCapture = requireNonNull(clientSocketCapture);
 		}
 
 		@Override
@@ -499,6 +528,7 @@ public class PostgreSqlNotificationFragmentedFrameIT {
 		}
 
 		private void abortCapturedConnection() {
+			CLIENT_SOCKET_CAPTURES.remove(this.clientSocketCaptureId, this.clientSocketCapture);
 			Connection capturedConnection = this.connection.get();
 
 			if (capturedConnection == null)
@@ -509,6 +539,104 @@ public class PostgreSqlNotificationFragmentedFrameIT {
 			} catch (SQLException ignored) {
 				// Best-effort harness escape hatch; the proxy socket is closed next.
 			}
+		}
+
+		private boolean awaitClientReadableBytes(int byteCount, @NonNull Duration timeout)
+				throws IOException, InterruptedException {
+			return this.clientSocketCapture.awaitReadableBytes(byteCount, requireNonNull(timeout));
+		}
+	}
+
+	private static final class ClientSocketCapture {
+		@NonNull
+		private final AtomicReference<Socket> socket = new AtomicReference<>();
+
+		private void capture(@NonNull Socket capturedSocket) throws IOException {
+			requireNonNull(capturedSocket);
+
+			if (!this.socket.compareAndSet(null, capturedSocket))
+				throw new IOException("Fragmented-frame fixture created more than one listener client socket");
+		}
+
+		private boolean awaitReadableBytes(int byteCount, @NonNull Duration timeout)
+				throws IOException, InterruptedException {
+			if (byteCount <= 0)
+				throw new IllegalArgumentException("byteCount must be positive");
+
+			requireNonNull(timeout);
+			long deadlineNanos = System.nanoTime() + timeout.toNanos();
+
+			for (;;) {
+				Socket capturedSocket = this.socket.get();
+
+				if (capturedSocket != null
+						&& capturedSocket.getInputStream().available() >= byteCount)
+					return true;
+
+				long remainingNanos = deadlineNanos - System.nanoTime();
+
+				if (remainingNanos <= 0)
+					return false;
+
+				TimeUnit.NANOSECONDS.sleep(Math.min(
+						remainingNanos,
+						TimeUnit.MILLISECONDS.toNanos(1)));
+			}
+		}
+	}
+
+	/**
+	 * Test-only pgjdbc socket factory that exposes the exact client socket without consuming protocol bytes.
+	 */
+	public static final class ClientSocketCapturingFactory extends SocketFactory {
+		@NonNull
+		private final SocketFactory delegate;
+		@NonNull
+		private final ClientSocketCapture clientSocketCapture;
+
+		public ClientSocketCapturingFactory(@NonNull String captureId) {
+			this.delegate = SocketFactory.getDefault();
+			this.clientSocketCapture = requireNonNull(
+					CLIENT_SOCKET_CAPTURES.remove(requireNonNull(captureId)),
+					"Unknown fragmented-frame client-socket capture identifier");
+		}
+
+		@Override
+		@NonNull
+		public Socket createSocket() throws IOException {
+			return capture(this.delegate.createSocket());
+		}
+
+		@Override
+		@NonNull
+		public Socket createSocket(String host, int port) throws IOException {
+			return capture(this.delegate.createSocket(host, port));
+		}
+
+		@Override
+		@NonNull
+		public Socket createSocket(String host, int port,
+				InetAddress localHost, int localPort) throws IOException {
+			return capture(this.delegate.createSocket(host, port, localHost, localPort));
+		}
+
+		@Override
+		@NonNull
+		public Socket createSocket(InetAddress host, int port) throws IOException {
+			return capture(this.delegate.createSocket(host, port));
+		}
+
+		@Override
+		@NonNull
+		public Socket createSocket(InetAddress address, int port,
+				InetAddress localAddress, int localPort) throws IOException {
+			return capture(this.delegate.createSocket(address, port, localAddress, localPort));
+		}
+
+		@NonNull
+		private Socket capture(@NonNull Socket socket) throws IOException {
+			this.clientSocketCapture.capture(requireNonNull(socket));
+			return socket;
 		}
 	}
 
@@ -701,7 +829,7 @@ public class PostgreSqlNotificationFragmentedFrameIT {
 			if (frame.length < 11)
 				throw new IOException("PostgreSQL NotificationResponse frame was unexpectedly short");
 
-			int splitAt = 10;
+			int splitAt = FRAGMENT_PREFIX_BYTES;
 			output.write(frame, 0, splitAt);
 			output.flush();
 			plan.prefixForwarded.countDown();

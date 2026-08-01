@@ -3486,13 +3486,20 @@ public final class Database {
 	 * throwing. It never reconnects.
 	 * <p>
 	 * The configured source must preserve one physical backend session for the entire checkout. For PostgreSQL,
-	 * direct connections and session pooling are suitable; transaction or statement pooling is not. Applications
-	 * whose ordinary source cannot provide that affinity should construct a separate {@code Database} over a suitable
+	 * direct connections and session pooling are suitable. Using PgBouncer transaction or statement pooling as the
+	 * listener source is unsupported: registration can appear to succeed before backend-session affinity is lost and
+	 * notification delivery silently stops. Pyranid does not inspect or validate proxy topology. Applications whose
+	 * ordinary source cannot provide the required affinity should construct a separate {@code Database} over a suitable
 	 * listener source and invoke this method on that instance.
 	 * <p>
 	 * Notifications are lossy hints. Durable applications should normally reconcile authoritative state as the first
 	 * callback action. The operation may use ordinary database methods, but those methods acquire or select their
 	 * connection normally and never reuse the listener connection.
+	 * <p>
+	 * A terminal receive failure is retained by the session and rethrown after cleanup even if {@code operation} catches
+	 * it and returns. A retained transport {@link Error} propagates as that exact, unwrapped instance. If the callback
+	 * instead throws a distinct {@code Error}, that callback error remains primary and the retained transport failure is
+	 * suppressed beneath it.
 	 *
 	 * @param channels  fixed, nonempty set of nonblank channels to register
 	 * @param operation operation to invoke after every channel has been registered
@@ -3544,7 +3551,13 @@ public final class Database {
 	 * This is the single-channel convenience form of
 	 * {@link #withNotificationSession(Set, NotificationSessionOperation)}. The listener connection comes from this
 	 * {@code Database}'s configured {@link DataSource}, which must preserve physical backend-session affinity for the
-	 * entire checkout.
+	 * entire checkout. For PostgreSQL, using PgBouncer transaction or statement pooling as the listener source is
+	 * unsupported: registration can appear to succeed before affinity is lost and delivery silently stops. Pyranid does
+	 * not inspect or validate proxy topology.
+	 * <p>
+	 * A terminal receive failure is retained and rethrown after cleanup even if {@code operation} catches it and returns.
+	 * A retained transport {@link Error} propagates as the exact, unwrapped instance unless a distinct callback
+	 * {@code Error} takes precedence as described by the set-based overload.
 	 *
 	 * @param channel   nonblank channel to register
 	 * @param operation operation to invoke after the channel has been registered
@@ -3748,6 +3761,8 @@ public final class Database {
 			}
 
 			boolean interruptionObserved = Thread.interrupted();
+			// Synthetic uncertainty failures need not carry a connection-class SQLSTATE. Cleanup still fails closed:
+			// this independent transport-state check prevents reuse even if generic exception classification does not.
 			boolean canAttemptHealthyCleanup = initialSanitationComplete
 					&& connection != null
 					&& transport != null

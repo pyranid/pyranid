@@ -468,6 +468,7 @@
 						<artifactId>maven-failsafe-plugin</artifactId>
 						<version>${maven.failsafe.plugin.version}</version>
 						<configuration>
+							<failIfNoTests>true</failIfNoTests>
 							<includes>
 								<include>**/PostgreSqlNotificationTopologyIT.java</include>
 							</includes>

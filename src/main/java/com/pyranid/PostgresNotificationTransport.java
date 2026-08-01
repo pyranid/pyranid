@@ -116,13 +116,13 @@ final class PostgresNotificationTransport implements NotificationTransport {
 		int waitMilliseconds = (int) Math.max(1L,
 				(waitNanos + NANOS_PER_MILLISECOND - 1L) / NANOS_PER_MILLISECOND);
 
-		return notifications(guardedReceive(() -> this.pgConnection.getNotifications(waitMilliseconds)));
+		return mapNotifications(guardedReceive(() -> this.pgConnection.getNotifications(waitMilliseconds)));
 	}
 
 	@NonNull
 	@Override
 	public List<@NonNull Notification> drain() throws SQLException {
-		return notifications(guardedReceive(this.pgConnection::getNotifications));
+		return mapNotifications(guardedReceive(this.pgConnection::getNotifications));
 	}
 
 	@Override
@@ -218,7 +218,13 @@ final class PostgresNotificationTransport implements NotificationTransport {
 	}
 
 	@NonNull
-	private static List<@NonNull Notification> notifications(PGNotification[] pgNotifications) {
+	private static List<@NonNull Notification> mapNotifications(PGNotification[] pgNotifications) {
+		/*
+		 * Conversion intentionally occurs after guardedReceive returns. pgjdbc has already decoded and dequeued the
+		 * protocol batch, and the original network timeout has been restored. A mapping Error therefore does not imply
+		 * physical-connection uncertainty and must not trigger connection-loss metrics or abort an otherwise healthy
+		 * connection.
+		 */
 		if (pgNotifications == null || pgNotifications.length == 0)
 			return List.of();
 

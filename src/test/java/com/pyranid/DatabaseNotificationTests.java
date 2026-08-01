@@ -477,6 +477,23 @@ public class DatabaseNotificationTests {
 	}
 
 	@Test
+	public void sendNotificationWithoutDatabaseDefaultsDoesNotMutatePreparedStatementSettings() {
+		ConnectionHarness harness = new ConnectionHarness(true);
+		Database database = postgresDatabase(harness, null);
+
+		database.sendNotification("car_changed", "42");
+
+		Assertions.assertEquals(List.of(
+				"checkout",
+				"prepareStatement:SELECT pg_notify(?, ?)",
+				"setObject:1:car_changed",
+				"setObject:2:42",
+				"executePreparedStatement",
+				"closePreparedStatement",
+				"close"), harness.events());
+	}
+
+	@Test
 	public void callbackCaughtReceiveFailureStillEscapesOuterScopeAndAborts() {
 		SQLException receiveFailure = new SQLException("receive failed", "08006");
 		ConnectionHarness harness = new ConnectionHarness(true).failDrainOn(2, receiveFailure);

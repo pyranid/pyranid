@@ -105,6 +105,7 @@ jobs:
   notification-topology:
     name: Notification Topology (PgBouncer)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Check out
         uses: actions/checkout@v6

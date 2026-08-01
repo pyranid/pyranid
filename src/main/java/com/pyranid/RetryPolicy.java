@@ -201,7 +201,7 @@ public final class RetryPolicy {
 		 * Determines how long to wait after a failed attempt before the next retry.
 		 *
 		 * @param failedAttemptNumber one-based number of the attempt that just failed
-		 * @param failure             the database failure that caused the transaction attempt to fail
+		 * @param failure             the database failure that caused the attempt to fail
 		 * @return delay before the next retry
 		 */
 		@NonNull
