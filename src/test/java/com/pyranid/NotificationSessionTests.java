@@ -77,7 +77,7 @@ public class NotificationSessionTests {
 	@Test
 	public void zeroWaitUsesDrainAndReturnsAnImmutableBatch() throws InterruptedException {
 		FakeNotificationTransport transport = new FakeNotificationTransport();
-		Notification expected = Notification.of("car_changed", "42");
+		Notification expected = Notification.of("car_changed", null);
 		List<Notification> transportBatch = new ArrayList<>(List.of(expected));
 		transport.drainOperation = () -> transportBatch;
 		transport.receiveOperation = waitSlice -> {
@@ -88,6 +88,7 @@ public class NotificationSessionTests {
 		List<Notification> actual = session.awaitNotifications(Duration.ZERO);
 
 		Assertions.assertEquals(List.of(expected), actual);
+		Assertions.assertNull(actual.get(0).getPayload());
 		Assertions.assertNotSame(transportBatch, actual);
 		Assertions.assertEquals(1, transport.drainCalls.get());
 		Assertions.assertEquals(0, transport.receiveCalls.get());

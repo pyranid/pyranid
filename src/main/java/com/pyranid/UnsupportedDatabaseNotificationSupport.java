@@ -17,6 +17,7 @@
 package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 
 import java.sql.Connection;
 
@@ -47,9 +48,7 @@ final class UnsupportedDatabaseNotificationSupport implements DatabaseNotificati
 	}
 
 	@Override
-	public void validatePayload(@NonNull String payload) {
-		requireNonNull(payload);
-	}
+	public void validatePayload(@Nullable String payload) {}
 
 	@NonNull
 	@Override

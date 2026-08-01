@@ -31,8 +31,8 @@ import static java.util.Objects.requireNonNull;
  * Notifications are transient, lossy hints rather than durable events. An implementation may coalesce notifications,
  * and the number of returned {@code Notification} instances does not represent an underlying event count.
  * <p>
- * This value deliberately omits any backend-specific sender identifier. Its payload is always non-null and may be
- * empty.
+ * This value deliberately omits any backend-specific sender identifier. Payload nullability and null/empty-string
+ * handling are database-specific; Pyranid performs no generic normalization.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 4.6.0
@@ -41,13 +41,13 @@ import static java.util.Objects.requireNonNull;
 public final class Notification {
 	@NonNull
 	private final String channel;
-	@NonNull
+	@Nullable
 	private final String payload;
 
 	private Notification(@NonNull String channel,
-											 @NonNull String payload) {
+											 @Nullable String payload) {
 		this.channel = requireNonNull(channel);
-		this.payload = requireNonNull(payload);
+		this.payload = payload;
 	}
 
 	/**
@@ -56,17 +56,16 @@ public final class Notification {
 	 * This factory enforces the common channel contract but does not apply backend-specific byte limits.
 	 *
 	 * @param channel nonblank notification channel, which must not contain a NUL character
-	 * @param payload notification payload, which may be empty
+	 * @param payload notification payload, which may be null or empty
 	 * @return a notification value
-	 * @throws NullPointerException if {@code channel} or {@code payload} is null
+	 * @throws NullPointerException if {@code channel} is null
 	 * @throws IllegalArgumentException if {@code channel} is blank or contains a NUL character
 	 * @since 4.6.0
 	 */
 	@NonNull
 	public static Notification of(@NonNull String channel,
-																	@NonNull String payload) {
+																	@Nullable String payload) {
 		validateChannel(channel);
-		requireNonNull(payload);
 
 		return new Notification(channel, payload);
 	}
@@ -98,10 +97,10 @@ public final class Notification {
 	/**
 	 * Gets the notification payload.
 	 *
-	 * @return notification payload, which may be empty but is never null
+	 * @return notification payload, which may be null or empty according to backend behavior
 	 * @since 4.6.0
 	 */
-	@NonNull
+	@Nullable
 	public String getPayload() {
 		return this.payload;
 	}
@@ -132,7 +131,10 @@ public final class Notification {
 	@Override
 	@NonNull
 	public String toString() {
+		String payload = getPayload();
+		String payloadLength = payload == null ? "null" : String.valueOf(payload.length());
+
 		return format("%s{channel=%s, payloadLength=%s}",
-				getClass().getSimpleName(), getChannel(), getPayload().length());
+				getClass().getSimpleName(), getChannel(), payloadLength);
 	}
 }

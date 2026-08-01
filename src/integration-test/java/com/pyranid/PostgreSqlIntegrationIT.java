@@ -107,6 +107,11 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 					Notification.of(firstChannel, ""),
 					awaitNotification(session, firstChannel, "", Duration.ofSeconds(5)));
 
+			applicationDatabase.sendNotification(firstChannel, "");
+			Assertions.assertEquals(
+					Notification.of(firstChannel, ""),
+					awaitNotification(session, firstChannel, "", Duration.ofSeconds(5)));
+
 			applicationDatabase.transaction(() ->
 					applicationDatabase.sendNotification(firstChannel, "committed"));
 			Assertions.assertEquals(

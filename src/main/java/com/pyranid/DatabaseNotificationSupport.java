@@ -17,6 +17,7 @@
 package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -31,7 +32,7 @@ interface DatabaseNotificationSupport {
 
 	void validateChannel(@NonNull String channel);
 
-	void validatePayload(@NonNull String payload);
+	void validatePayload(@Nullable String payload);
 
 	@NonNull
 	String sendStatementSql();

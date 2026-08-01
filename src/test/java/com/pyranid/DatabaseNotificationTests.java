@@ -64,6 +64,8 @@ public class DatabaseNotificationTests {
 		Assertions.assertThrows(UnsupportedOperationException.class,
 				() -> database.sendNotification("car_changed", "42"));
 		Assertions.assertThrows(UnsupportedOperationException.class,
+				() -> database.sendNotification("car_changed", null));
+		Assertions.assertThrows(UnsupportedOperationException.class,
 				() -> database.withNotificationSession("car_changed", session -> callbackInvoked.set(true)));
 
 		Assertions.assertFalse(callbackInvoked.get());
@@ -491,6 +493,31 @@ public class DatabaseNotificationTests {
 				"executePreparedStatement",
 				"closePreparedStatement",
 				"close"), harness.events());
+	}
+
+	@Test
+	public void sendNotificationPassesNullAndOmittedPayloadsThroughToBackend() {
+		List<String> expectedEvents = List.of(
+				"checkout",
+				"prepareStatement:SELECT pg_notify(?, ?)",
+				"setObject:1:car_changed",
+				"setNull:2:0",
+				"executePreparedStatement",
+				"closePreparedStatement",
+				"close");
+		ConnectionHarness explicitNullHarness = new ConnectionHarness(true);
+		Database explicitNullDatabase = postgresDatabase(explicitNullHarness, null);
+
+		explicitNullDatabase.sendNotification("car_changed", null);
+
+		Assertions.assertEquals(expectedEvents, explicitNullHarness.events());
+
+		ConnectionHarness omittedPayloadHarness = new ConnectionHarness(true);
+		Database omittedPayloadDatabase = postgresDatabase(omittedPayloadHarness, null);
+
+		omittedPayloadDatabase.sendNotification("car_changed");
+
+		Assertions.assertEquals(expectedEvents, omittedPayloadHarness.events());
 	}
 
 	@Test
@@ -1104,6 +1131,10 @@ public class DatabaseNotificationTests {
 				}
 				case "setObject" -> {
 					this.events.add("setObject:" + args[0] + ":" + args[1]);
+					yield null;
+				}
+				case "setNull" -> {
+					this.events.add("setNull:" + args[0] + ":" + args[1]);
 					yield null;
 				}
 				case "execute" -> {

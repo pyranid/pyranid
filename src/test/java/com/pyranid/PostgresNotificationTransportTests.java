@@ -64,6 +64,7 @@ public class PostgresNotificationTransportTests {
 		Assertions.assertThrows(IllegalArgumentException.class,
 				() -> support.validateChannel("car\0changed"));
 
+		Assertions.assertDoesNotThrow(() -> support.validatePayload(null));
 		Assertions.assertDoesNotThrow(() -> support.validatePayload(sevenThousandNineHundredNinetyNineAsciiBytes));
 		Assertions.assertDoesNotThrow(() -> support.validatePayload(sevenThousandNineHundredNinetyNineMultibyteBytes));
 		Assertions.assertThrows(IllegalArgumentException.class,

@@ -233,6 +233,7 @@ final class PostgresNotificationTransport implements NotificationTransport {
 		for (PGNotification pgNotification : pgNotifications) {
 			requireNonNull(pgNotification);
 			String payload = pgNotification.getParameter();
+			// PostgreSQL's notification payload is never null; defensively preserve that backend-specific contract.
 			notifications.add(Notification.of(pgNotification.getName(), payload == null ? "" : payload));
 		}
 

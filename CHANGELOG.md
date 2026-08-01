@@ -12,7 +12,8 @@ All notable changes to Pyranid will be documented in this file.
   `Database.isNotificationListeningSupported()`. PostgreSQL `LISTEN`/`NOTIFY` is
   the first implementation. Listening uses one caller-owned, callback-scoped
   physical session with no automatic reconnect; applications own durable
-  reconciliation, retry, supervision, and topology.
+  reconciliation, retry, supervision, and topology. Notification payloads are
+  nullable, and their null/empty-string behavior remains database-specific.
 - Added low-cardinality notification-session lifecycle callbacks and
   `NotificationSnapshot` to `MetricsCollector`.
 

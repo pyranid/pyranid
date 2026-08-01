@@ -17,6 +17,7 @@
 package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
@@ -61,8 +62,9 @@ final class PostgresNotificationSupport implements DatabaseNotificationSupport {
 	}
 
 	@Override
-	public void validatePayload(@NonNull String payload) {
-		requireNonNull(payload);
+	public void validatePayload(@Nullable String payload) {
+		if (payload == null)
+			return;
 
 		if (payload.indexOf('\0') >= 0)
 			throw new IllegalArgumentException("PostgreSQL notification payload must not contain a NUL character");

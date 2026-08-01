@@ -30,15 +30,15 @@ public class NotificationTests {
 	@Test
 	public void factoryValidatesCommonContract() {
 		Assertions.assertThrows(NullPointerException.class, () -> Notification.of(null, ""));
-		Assertions.assertThrows(NullPointerException.class, () -> Notification.of("car_changed", null));
 		Assertions.assertThrows(IllegalArgumentException.class, () -> Notification.of("", ""));
 		Assertions.assertThrows(IllegalArgumentException.class, () -> Notification.of(" \t\n", ""));
 		Assertions.assertThrows(IllegalArgumentException.class, () -> Notification.of("car\0changed", ""));
 
-		Notification notification = Notification.of("car_changed", "");
+		Notification notification = Notification.of("car_changed", null);
 
 		Assertions.assertEquals("car_changed", notification.getChannel());
-		Assertions.assertEquals("", notification.getPayload());
+		Assertions.assertNull(notification.getPayload());
+		Assertions.assertEquals("", Notification.of("car_changed", "").getPayload());
 	}
 
 	@Test
@@ -49,8 +49,13 @@ public class NotificationTests {
 		Assertions.assertNotSame(notification, equivalent);
 		Assertions.assertEquals(notification, equivalent);
 		Assertions.assertEquals(notification.hashCode(), equivalent.hashCode());
+		Notification nullPayload = Notification.of("car_changed", null);
+		Notification equivalentNullPayload = Notification.of("car_changed", null);
+		Assertions.assertEquals(nullPayload, equivalentNullPayload);
+		Assertions.assertEquals(nullPayload.hashCode(), equivalentNullPayload.hashCode());
 		Assertions.assertNotEquals(notification, Notification.of("other_channel", "42"));
 		Assertions.assertNotEquals(notification, Notification.of("car_changed", "43"));
+		Assertions.assertNotEquals(Notification.of("car_changed", null), Notification.of("car_changed", ""));
 		Assertions.assertNotEquals(notification, null);
 		Assertions.assertNotEquals(notification, "car_changed");
 	}
@@ -63,5 +68,12 @@ public class NotificationTests {
 
 		Assertions.assertEquals("Notification{channel=car_changed, payloadLength=" + payload.length() + "}", rendered);
 		Assertions.assertFalse(rendered.contains(payload));
+	}
+
+	@Test
+	public void toStringSupportsNullPayload() {
+		Assertions.assertEquals(
+				"Notification{channel=car_changed, payloadLength=null}",
+				Notification.of("car_changed", null).toString());
 	}
 }

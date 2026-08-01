@@ -3578,10 +3578,11 @@ public final class Database {
 	}
 
 	/**
-	 * Sends a transient database notification with an empty payload.
+	 * Sends a transient database notification without specifying a payload.
 	 * <p>
 	 * Sending follows ordinary Pyranid statement and transaction selection. On PostgreSQL, a send inside a Pyranid
-	 * transaction becomes visible only if that transaction commits.
+	 * transaction becomes visible only if that transaction commits. Payload representation is database-specific;
+	 * PostgreSQL converts the resulting null payload to the empty string.
 	 *
 	 * @param channel nonblank notification channel
 	 * @throws NullPointerException if {@code channel} is null
@@ -3591,18 +3592,19 @@ public final class Database {
 	 * @since 4.6.0
 	 */
 	public void sendNotification(@NonNull String channel) {
-		sendNotification(channel, "");
+		sendNotification(channel, null);
 	}
 
 	/**
 	 * Sends a transient database notification.
 	 * <p>
 	 * Sending follows ordinary Pyranid statement and transaction selection, including connection ownership,
-	 * parameter binding and redaction, statement logging, timeout configuration, and metrics. A null payload is
-	 * normalized to the empty string rather than sent as SQL {@code NULL}.
+	 * parameter binding and redaction, statement logging, timeout configuration, and metrics. Payload nullability
+	 * and null/empty-string handling are database-specific; Pyranid performs no generic normalization.
 	 * <p>
-	 * On PostgreSQL this executes bound {@code pg_notify(?, ?)} SQL. Delivery occurs only after commit and is discarded
-	 * by rollback; notification delivery itself remains non-durable and may be coalesced.
+	 * On PostgreSQL this executes bound {@code pg_notify(?, ?)} SQL. PostgreSQL converts a null payload to the empty
+	 * string. Delivery occurs only after commit and is discarded by rollback; notification delivery itself remains
+	 * non-durable and may be coalesced.
 	 *
 	 * @param channel nonblank notification channel
 	 * @param payload notification payload, possibly null or empty
@@ -3613,13 +3615,12 @@ public final class Database {
 	 * @since 4.6.0
 	 */
 	public void sendNotification(@NonNull String channel,
-															 @Nullable String payload) {
+												 @Nullable String payload) {
 		Notification.validateChannel(channel);
-		String normalizedPayload = payload == null ? "" : payload;
 		DatabaseNotificationSupport notificationSupport = getDatabaseDialect().notificationSupport();
 
 		notificationSupport.validateChannel(channel);
-		notificationSupport.validatePayload(normalizedPayload);
+		notificationSupport.validatePayload(payload);
 
 		if (!notificationSupport.isSendSupported())
 			throw new UnsupportedOperationException(format(
@@ -3627,14 +3628,14 @@ public final class Database {
 
 		Statement statement = Statement.of(generateId(), notificationSupport.sendStatementSql());
 		StatementContext<Void> statementContext = StatementContext.with(statement, this)
-				.parameters(channel, normalizedPayload)
+				.parameters(channel, payload)
 				.build();
 
 		PreparedStatementCustomizer defaultPreparedStatementCustomizer = hasDefaultPreparedStatementSettings()
 				? (context, preparedStatement) -> applyDefaultPreparedStatementSettings(preparedStatement)
 				: null;
 
-		performDatabaseOperation(statementContext, List.of(channel, normalizedPayload),
+		performDatabaseOperation(statementContext, Arrays.asList(channel, payload),
 				defaultPreparedStatementCustomizer, preparedStatement -> {
 			long startTime = nanoTime();
 			executeAndDrain(preparedStatement);
