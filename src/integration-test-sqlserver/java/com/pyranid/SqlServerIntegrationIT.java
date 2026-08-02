@@ -19,9 +19,9 @@ package com.pyranid;
 import org.jspecify.annotations.NonNull;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.MSSQLServerContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.mssqlserver.MSSQLServerContainer;
 import org.testcontainers.utility.DockerImageName;
 
 import javax.sql.DataSource;
@@ -40,12 +40,12 @@ public class SqlServerIntegrationIT extends AbstractPortableJdbcIntegrationTests
 	public record MergeActionRow(String mergeAction, Long id, String name) {}
 
 	private static final String SQL_SERVER_IMAGE_NAME =
-			System.getProperty("sqlserver.integration.image", "mcr.microsoft.com/mssql/server:2022-CU25-ubuntu-22.04");
+			System.getProperty("sqlserver.integration.image", "mcr.microsoft.com/mssql/server:2022-CU26-ubuntu-22.04");
 	private static final DockerImageName SQL_SERVER_IMAGE = DockerImageName.parse(SQL_SERVER_IMAGE_NAME)
 			.asCompatibleSubstituteFor("mcr.microsoft.com/mssql/server");
 
 	@Container
-	private static final MSSQLServerContainer<?> SQL_SERVER = new MSSQLServerContainer<>(SQL_SERVER_IMAGE)
+	private static final MSSQLServerContainer SQL_SERVER = new MSSQLServerContainer(SQL_SERVER_IMAGE)
 			.acceptLicense();
 
 	@Test

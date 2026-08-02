@@ -124,6 +124,8 @@ public final class Notification {
 
 	/**
 	 * Returns a diagnostic representation containing the channel and payload length, but never the payload contents.
+	 * A non-null payload's length is its Java {@link String#length()} in UTF-16 code units, not a backend-specific
+	 * encoded byte count.
 	 *
 	 * @return diagnostic representation of this notification
 	 * @since 4.6.0

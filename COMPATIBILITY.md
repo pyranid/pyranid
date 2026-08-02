@@ -49,8 +49,8 @@ Maven Enforcer `bannedDependencies` rule and visible in the published POM. Compi
 `provided` scope and never required for ordinary runtime use. The PostgreSQL driver is used for optional rich
 error metadata and notification receive; PostgreSQL notification sending remains pure SQL.
 
-The supported and tested pgjdbc baseline for notification receive is **42.7.11**. pgjdbc remains a Maven
-`provided` dependency, so applications that receive PostgreSQL notifications must supply pgjdbc 42.7.11 or newer
+The supported and tested pgjdbc baseline for notification receive is **42.7.13**. pgjdbc remains a Maven
+`provided` dependency, so applications that receive PostgreSQL notifications must supply pgjdbc 42.7.13 or newer
 at runtime. Ordinary Pyranid use and PostgreSQL notification sending do not require the receive adapter.
 
 ## Notification integration topology
@@ -62,7 +62,7 @@ Notification integration CI runs on JDK 21 and covers these PostgreSQL topologie
 * two bounded, non-TLS scripted-proxy cases that fragment PostgreSQL asynchronous-notification frames and verify
   the pgjdbc receive-integrity guard;
 * a listener `Database` backed by PgBouncer session pooling using the configured
-  `edoburu/pgbouncer:v1.24.1-p1` image; and
+  `edoburu/pgbouncer:v1.25.2-p0` image; and
 * an ordinary application `Database` backed by PgBouncer transaction pooling together with a distinct
   session-pooled listener `Database`, both routed to the same PostgreSQL primary.
 

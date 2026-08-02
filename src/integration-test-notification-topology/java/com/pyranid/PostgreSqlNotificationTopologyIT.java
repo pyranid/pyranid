@@ -22,10 +22,10 @@ import org.junit.jupiter.api.Test;
 import org.postgresql.ds.PGSimpleDataSource;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
-import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.utility.MountableFile;
 
@@ -50,13 +50,13 @@ public class PostgreSqlNotificationTopologyIT {
 	private static final String POSTGRES_IMAGE_NAME =
 			System.getProperty("postgres.integration.image", "pgvector/pgvector:pg17");
 	private static final String PGBOUNCER_IMAGE_NAME =
-			System.getProperty("pgbouncer.notification.topology.image", "edoburu/pgbouncer:v1.24.1-p1");
+			System.getProperty("pgbouncer.notification.topology.image", "edoburu/pgbouncer:v1.25.2-p0");
 	private static final DockerImageName POSTGRES_IMAGE = DockerImageName.parse(POSTGRES_IMAGE_NAME)
 			.asCompatibleSubstituteFor("postgres");
 	private static final DockerImageName PGBOUNCER_IMAGE = DockerImageName.parse(PGBOUNCER_IMAGE_NAME);
 
 	@Container
-	private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(POSTGRES_IMAGE)
+	private static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer(POSTGRES_IMAGE)
 			.withNetwork(Network.SHARED)
 			.withNetworkAliases("notification-primary")
 			.withDatabaseName("pyranid")

@@ -17,8 +17,9 @@ No new query languages to learn. No leaky object-relational abstractions. No kit
 
 Full documentation is available at [https://www.pyranid.com](https://www.pyranid.com).
 
-> **Development snapshot:** this branch documents unreleased 4.6.0 behavior. Installation examples continue to
-> use the latest released version, 4.5.0, until 4.6.0 is published.
+> **Development snapshot:** this branch documents unreleased 4.6.0 behavior. Core installation examples continue
+> to use the latest released version, 4.5.0, until 4.6.0 is published; companion-module sections may describe
+> their coordinated upcoming releases.
 
 ### Design Goals
 
@@ -1806,7 +1807,7 @@ mvn -q -P integration verify
 mvn -q -P integration,it-mariadb -Dit.test=MariaDbIntegrationIT verify
 ```
 
-The `integration` Maven profile runs JDBC integration tests against PostgreSQL, MySQL, and SQLite. PostgreSQL and MySQL use Testcontainers and require a working local Docker environment; SQLite uses a temporary local database file. Add `it-mariadb`, `it-sqlserver`, or `it-oracle` for the optional MariaDB, SQL Server, and Oracle integration source sets. SQL Server requires the Microsoft container EULA; the test container calls `acceptLicense()`, and CI/local runs should provide `ACCEPT_EULA=Y` when required by the environment. The default Docker image tags are `pgvector/pgvector:pg17`, `mysql:8.4`, `mariadb:11.4`, `mcr.microsoft.com/mssql/server:2022-CU25-ubuntu-22.04`, and `gvenzl/oracle-free:23-slim-faststart`. They can be overridden with `-Dpostgres.integration.image=...`, `-Dmysql.integration.image=...`, `-Dmariadb.integration.image=...`, `-Dsqlserver.integration.image=...`, and `-Doracle.integration.image=...`. PostgreSQL image overrides must include the `vector` extension.
+The `integration` Maven profile runs JDBC integration tests against PostgreSQL, MySQL, and SQLite. PostgreSQL and MySQL use Testcontainers and require a working local Docker environment; SQLite uses a temporary local database file. Add `it-mariadb`, `it-sqlserver`, or `it-oracle` for the optional MariaDB, SQL Server, and Oracle integration source sets. SQL Server requires the Microsoft container EULA; the test container calls `acceptLicense()`, and CI/local runs should provide `ACCEPT_EULA=Y` when required by the environment. The default Docker image tags are `pgvector/pgvector:pg17`, `mysql:8.4`, `mariadb:11.4`, `mcr.microsoft.com/mssql/server:2022-CU26-ubuntu-22.04`, and `gvenzl/oracle-free:23-slim-faststart`. They can be overridden with `-Dpostgres.integration.image=...`, `-Dmysql.integration.image=...`, `-Dmariadb.integration.image=...`, `-Dsqlserver.integration.image=...`, and `-Doracle.integration.image=...`. PostgreSQL image overrides must include the `vector` extension.
 
 The portable integration suites cover named binding, repeated parameters, `IN` expansion, null binding/mapping, numeric and temporal conversions, JDBC-generated keys, transaction commit/rollback, transaction options where supported, batch chunking, streaming, guarded raw connection access, statement row limits, health checks, SQL ARRAY guards, and exception wrapping/classification. Vendor suites add coverage for PostgreSQL JSONB, SQL arrays, UUIDs, `RETURNING`, temporal binding/mapping, pgvector binding/read-back, and exception metadata; MySQL/MariaDB JSON, UUID strings, unsigned numerics, streaming, and MariaDB `INSERT ... RETURNING`; SQLite `RETURNING`, UUID text, and decimal text precision; SQL Server `OUTPUT`, trigger-safe `OUTPUT INTO`, `MERGE ... OUTPUT`, `uniqueidentifier`, and `datetimeoffset`; and Oracle explicit generated-key columns, UUID `RAW(16)`, empty-string-as-null, timestamp-with-time-zone, and `NUMBER` mapping.
 
@@ -1828,7 +1829,7 @@ Artifact signing and Maven Central publishing are isolated in the `release` prof
 
 ## Production Notes
 
-Pyranid is a zero-runtime-dependency library, but applications still need to provide the JDBC driver for their database. PostgreSQL-specific helpers such as JSONB, `text[]`, and pgvector parameters require pgjdbc on the application classpath; pgvector also requires the database extension to be installed. SQL Server, Oracle, MySQL, MariaDB, and SQLite driver artifacts are used only for tests in Pyranid itself and are not forced onto application classpaths by the core jar.
+Pyranid is a zero-runtime-dependency library, but applications still need to provide the JDBC driver for their database. PostgreSQL-specific helpers such as JSONB, `text[]`, and pgvector parameters require pgjdbc on the application classpath; pgvector also requires the database extension to be installed. PostgreSQL notification receive requires pgjdbc 42.7.13 or newer, while notification sending remains pure SQL and does not require the receive adapter. SQL Server, Oracle, MySQL, MariaDB, and SQLite driver artifacts are used only for tests in Pyranid itself and are not forced onto application classpaths by the core jar.
 
 ### SQL Injection and Dynamic SQL
 
@@ -1892,9 +1893,15 @@ Savepoints are stack-like on most drivers. Prefer [`Transaction::withSavepoint(.
 
 Pyranid uses JDBC `executeLargeUpdate(...)` / `executeLargeBatch(...)` when supported and falls back to standard update APIs when the driver reports lack of support. That support decision is cached per `Database` instance.
 
+### Notifications
+
+Pyranid 4.6 adds a database-neutral API for transient named notifications, with PostgreSQL `LISTEN`/`NOTIFY` as the first implementation. Notifications are lossy hints: applications remain responsible for reconciling authoritative durable state and for supervising or reopening listener sessions.
+
+Each listener holds one backend session for the callback lifetime. Use a direct or session-pooled listener source; PgBouncer transaction and statement pooling are unsupported for listeners and can appear to register before delivery silently stops. See the [Notifications guide](https://www.pyranid.com/docs/notifications) for the API, topology, interruption, and reconciliation contracts.
+
 ### Metrics Collection
 
-Metrics collection is disabled by default. Configure a [`MetricsCollector`](https://javadoc.pyranid.com/com/pyranid/MetricsCollector.html) at build time to collect statement, transaction, connection, savepoint, stream, and post-transaction counters.
+Metrics collection is disabled by default. Configure a [`MetricsCollector`](https://javadoc.pyranid.com/com/pyranid/MetricsCollector.html) at build time to collect statement, transaction, connection, savepoint, stream, post-transaction, and notification-session metrics.
 
 ```java
 MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
@@ -1910,11 +1917,11 @@ Use `com.pyranid:pyranid-otel` for OpenTelemetry export:
 <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid-otel</artifactId>
-  <version>1.1.0</version>
+  <version>1.3.0</version>
 </dependency>
 ```
 
-OTel support is optional; the core Pyranid jar remains dependency-free.
+OTel support is optional; the core Pyranid jar remains dependency-free. `pyranid-otel` 1.3.0 exports the notification-session lifecycle, delivery, and connection-loss metrics introduced by Pyranid 4.6.0.
 
 ## About
 

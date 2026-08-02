@@ -355,7 +355,7 @@ final class InMemoryMetricsCollector implements MetricsCollector {
 	@Override
 	@NonNull
 	public Optional<NotificationSnapshot> notificationSnapshot() {
-		return Optional.of(new NotificationSnapshot(
+		return Optional.of(NotificationSnapshot.of(
 				this.notificationSessionsStarted.sum(),
 				this.notificationSessionsOpened.sum(),
 				this.notificationSessionsCallbackReturned.sum(),

@@ -323,8 +323,53 @@ public class MetricsCollectorTests {
 
 		metricsCollector.reset();
 
-		Assertions.assertEquals(new MetricsCollector.NotificationSnapshot(0L, 0L, 0L, 0L, 0L, 0L, 0L),
+		Assertions.assertEquals(MetricsCollector.NotificationSnapshot.of(0L, 0L, 0L, 0L, 0L, 0L, 0L),
 				notificationSnapshot(metricsCollector));
+	}
+
+	@Test
+	public void notificationSnapshotHasValueSemantics() {
+		MetricsCollector.NotificationSnapshot snapshot =
+				MetricsCollector.NotificationSnapshot.of(1L, 2L, 3L, 4L, 5L, 6L, 7L);
+		MetricsCollector.NotificationSnapshot equalSnapshot =
+				MetricsCollector.NotificationSnapshot.of(1L, 2L, 3L, 4L, 5L, 6L, 7L);
+
+		Assertions.assertAll(
+				() -> Assertions.assertEquals(1L, snapshot.sessionsStarted()),
+				() -> Assertions.assertEquals(2L, snapshot.sessionsOpened()),
+				() -> Assertions.assertEquals(3L, snapshot.sessionsCallbackReturned()),
+				() -> Assertions.assertEquals(4L, snapshot.sessionsInterrupted()),
+				() -> Assertions.assertEquals(5L, snapshot.sessionsFailed()),
+				() -> Assertions.assertEquals(6L, snapshot.batchesDelivered()),
+				() -> Assertions.assertEquals(7L, snapshot.notificationsDelivered()),
+				() -> Assertions.assertEquals(snapshot, equalSnapshot),
+				() -> Assertions.assertEquals(snapshot.hashCode(), equalSnapshot.hashCode()),
+				() -> Assertions.assertNotEquals(snapshot,
+						MetricsCollector.NotificationSnapshot.of(1L, 2L, 3L, 4L, 5L, 6L, 8L)),
+				() -> Assertions.assertNotEquals(snapshot, null),
+				() -> Assertions.assertNotEquals(snapshot, "not a snapshot"),
+				() -> Assertions.assertEquals("NotificationSnapshot[sessionsStarted=1, sessionsOpened=2, " +
+						"sessionsCallbackReturned=3, sessionsInterrupted=4, sessionsFailed=5, batchesDelivered=6, " +
+						"notificationsDelivered=7]", snapshot.toString()));
+	}
+
+	@Test
+	public void notificationSnapshotRejectsNullCounters() {
+		Assertions.assertAll(
+				() -> Assertions.assertThrows(NullPointerException.class,
+						() -> MetricsCollector.NotificationSnapshot.of(null, 0L, 0L, 0L, 0L, 0L, 0L)),
+				() -> Assertions.assertThrows(NullPointerException.class,
+						() -> MetricsCollector.NotificationSnapshot.of(0L, null, 0L, 0L, 0L, 0L, 0L)),
+				() -> Assertions.assertThrows(NullPointerException.class,
+						() -> MetricsCollector.NotificationSnapshot.of(0L, 0L, null, 0L, 0L, 0L, 0L)),
+				() -> Assertions.assertThrows(NullPointerException.class,
+						() -> MetricsCollector.NotificationSnapshot.of(0L, 0L, 0L, null, 0L, 0L, 0L)),
+				() -> Assertions.assertThrows(NullPointerException.class,
+						() -> MetricsCollector.NotificationSnapshot.of(0L, 0L, 0L, 0L, null, 0L, 0L)),
+				() -> Assertions.assertThrows(NullPointerException.class,
+						() -> MetricsCollector.NotificationSnapshot.of(0L, 0L, 0L, 0L, 0L, null, 0L)),
+				() -> Assertions.assertThrows(NullPointerException.class,
+						() -> MetricsCollector.NotificationSnapshot.of(0L, 0L, 0L, 0L, 0L, 0L, null)));
 	}
 
 	@Test

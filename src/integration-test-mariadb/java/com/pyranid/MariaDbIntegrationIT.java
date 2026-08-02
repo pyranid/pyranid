@@ -19,9 +19,9 @@ package com.pyranid;
 import org.jspecify.annotations.NonNull;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.MariaDBContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.mariadb.MariaDBContainer;
 import org.testcontainers.utility.DockerImageName;
 
 import javax.sql.DataSource;
@@ -43,7 +43,7 @@ public class MariaDbIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 			.asCompatibleSubstituteFor("mariadb");
 
 	@Container
-	private static final MariaDBContainer<?> MARIA_DB = new MariaDBContainer<>(MARIA_DB_IMAGE)
+	private static final MariaDBContainer MARIA_DB = new MariaDBContainer(MARIA_DB_IMAGE)
 			.withDatabaseName("pyranid")
 			.withUsername("pyranid")
 			.withPassword("pyranid");

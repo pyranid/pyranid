@@ -21,8 +21,11 @@ import org.jspecify.annotations.Nullable;
 
 import javax.annotation.concurrent.ThreadSafe;
 import java.time.Duration;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+
+import static java.util.Objects.requireNonNull;
 
 /**
  * Contract for collecting operational metrics from Pyranid.
@@ -638,24 +641,171 @@ public interface MetricsCollector {
 	 * <p>
 	 * Implementations may read counters independently without cross-counter atomicity. Callers that need
 	 * invariant-consistent snapshots should drain in-flight work before reading.
+	 * <p>
+	 * Instances are immutable value objects created through {@link #of(Long, Long, Long, Long, Long, Long, Long)}.
+	 * Future releases may add counters and accessors while retaining this factory with defined defaults for any
+	 * newly added values.
 	 *
-	 * @param sessionsStarted          valid, type-resolved notification-session invocations that entered measured setup
-	 * @param sessionsOpened           notification sessions that completed channel registration
-	 * @param sessionsCallbackReturned opened notification sessions whose callbacks returned and cleanup completed normally
-	 * @param sessionsInterrupted      opened notification sessions that ended through clean cooperative interruption
-	 * @param sessionsFailed           notification-session invocations that failed before opening or after opening
-	 * @param batchesDelivered         nonempty notification batches delivered to application code
-	 * @param notificationsDelivered   notifications contained in delivered batches
 	 * @since 4.6.0
 	 */
 	@ThreadSafe
-	record NotificationSnapshot(@NonNull Long sessionsStarted,
-															@NonNull Long sessionsOpened,
-															@NonNull Long sessionsCallbackReturned,
-															@NonNull Long sessionsInterrupted,
-															@NonNull Long sessionsFailed,
-															@NonNull Long batchesDelivered,
-															@NonNull Long notificationsDelivered) {
+	final class NotificationSnapshot {
+		@NonNull
+		private final Long sessionsStarted;
+		@NonNull
+		private final Long sessionsOpened;
+		@NonNull
+		private final Long sessionsCallbackReturned;
+		@NonNull
+		private final Long sessionsInterrupted;
+		@NonNull
+		private final Long sessionsFailed;
+		@NonNull
+		private final Long batchesDelivered;
+		@NonNull
+		private final Long notificationsDelivered;
+
+		private NotificationSnapshot(@NonNull Long sessionsStarted,
+														 @NonNull Long sessionsOpened,
+														 @NonNull Long sessionsCallbackReturned,
+														 @NonNull Long sessionsInterrupted,
+														 @NonNull Long sessionsFailed,
+														 @NonNull Long batchesDelivered,
+														 @NonNull Long notificationsDelivered) {
+			this.sessionsStarted = requireNonNull(sessionsStarted);
+			this.sessionsOpened = requireNonNull(sessionsOpened);
+			this.sessionsCallbackReturned = requireNonNull(sessionsCallbackReturned);
+			this.sessionsInterrupted = requireNonNull(sessionsInterrupted);
+			this.sessionsFailed = requireNonNull(sessionsFailed);
+			this.batchesDelivered = requireNonNull(batchesDelivered);
+			this.notificationsDelivered = requireNonNull(notificationsDelivered);
+		}
+
+		/**
+		 * Creates a notification metrics snapshot.
+		 *
+		 * @param sessionsStarted          valid, type-resolved notification-session invocations that entered measured setup
+		 * @param sessionsOpened           notification sessions that completed channel registration
+		 * @param sessionsCallbackReturned opened notification sessions whose callbacks returned and cleanup completed normally
+		 * @param sessionsInterrupted      opened notification sessions that ended through clean cooperative interruption
+		 * @param sessionsFailed           notification-session invocations that failed before opening or after opening
+		 * @param batchesDelivered         nonempty notification batches delivered to application code
+		 * @param notificationsDelivered   notifications contained in delivered batches
+		 * @return notification metrics snapshot
+		 * @throws NullPointerException if any counter is null
+		 * @since 4.6.0
+		 */
+		@NonNull
+		public static NotificationSnapshot of(@NonNull Long sessionsStarted,
+																							 @NonNull Long sessionsOpened,
+																							 @NonNull Long sessionsCallbackReturned,
+																							 @NonNull Long sessionsInterrupted,
+																							 @NonNull Long sessionsFailed,
+																							 @NonNull Long batchesDelivered,
+																							 @NonNull Long notificationsDelivered) {
+			return new NotificationSnapshot(sessionsStarted, sessionsOpened, sessionsCallbackReturned, sessionsInterrupted,
+					sessionsFailed, batchesDelivered, notificationsDelivered);
+		}
+
+		/**
+		 * @return valid, type-resolved notification-session invocations that entered measured setup
+		 * @since 4.6.0
+		 */
+		@NonNull
+		public Long sessionsStarted() {
+			return this.sessionsStarted;
+		}
+
+		/**
+		 * @return notification sessions that completed channel registration
+		 * @since 4.6.0
+		 */
+		@NonNull
+		public Long sessionsOpened() {
+			return this.sessionsOpened;
+		}
+
+		/**
+		 * @return opened notification sessions whose callbacks returned and cleanup completed normally
+		 * @since 4.6.0
+		 */
+		@NonNull
+		public Long sessionsCallbackReturned() {
+			return this.sessionsCallbackReturned;
+		}
+
+		/**
+		 * @return opened notification sessions that ended through clean cooperative interruption
+		 * @since 4.6.0
+		 */
+		@NonNull
+		public Long sessionsInterrupted() {
+			return this.sessionsInterrupted;
+		}
+
+		/**
+		 * @return notification-session invocations that failed before opening or after opening
+		 * @since 4.6.0
+		 */
+		@NonNull
+		public Long sessionsFailed() {
+			return this.sessionsFailed;
+		}
+
+		/**
+		 * @return nonempty notification batches delivered to application code
+		 * @since 4.6.0
+		 */
+		@NonNull
+		public Long batchesDelivered() {
+			return this.batchesDelivered;
+		}
+
+		/**
+		 * @return notifications contained in delivered batches
+		 * @since 4.6.0
+		 */
+		@NonNull
+		public Long notificationsDelivered() {
+			return this.notificationsDelivered;
+		}
+
+		@Override
+		public boolean equals(@Nullable Object object) {
+			if (this == object)
+				return true;
+
+			if (!(object instanceof NotificationSnapshot notificationSnapshot))
+				return false;
+
+			return sessionsStarted().equals(notificationSnapshot.sessionsStarted())
+					&& sessionsOpened().equals(notificationSnapshot.sessionsOpened())
+					&& sessionsCallbackReturned().equals(notificationSnapshot.sessionsCallbackReturned())
+					&& sessionsInterrupted().equals(notificationSnapshot.sessionsInterrupted())
+					&& sessionsFailed().equals(notificationSnapshot.sessionsFailed())
+					&& batchesDelivered().equals(notificationSnapshot.batchesDelivered())
+					&& notificationsDelivered().equals(notificationSnapshot.notificationsDelivered());
+		}
+
+		@Override
+		public int hashCode() {
+			return Objects.hash(sessionsStarted(), sessionsOpened(), sessionsCallbackReturned(), sessionsInterrupted(),
+					sessionsFailed(), batchesDelivered(), notificationsDelivered());
+		}
+
+		@Override
+		@NonNull
+		public String toString() {
+			return "NotificationSnapshot[" +
+					"sessionsStarted=" + sessionsStarted() +
+					", sessionsOpened=" + sessionsOpened() +
+					", sessionsCallbackReturned=" + sessionsCallbackReturned() +
+					", sessionsInterrupted=" + sessionsInterrupted() +
+					", sessionsFailed=" + sessionsFailed() +
+					", batchesDelivered=" + batchesDelivered() +
+					", notificationsDelivered=" + notificationsDelivered() +
+					']';
+		}
 	}
 
 	/**

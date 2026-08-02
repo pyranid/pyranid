@@ -17,11 +17,24 @@ All notable changes to Pyranid will be documented in this file.
 - Added low-cardinality notification-session lifecycle callbacks and
   `NotificationSnapshot` to `MetricsCollector`.
 
+### Changed
+
+- Updated the provided pgjdbc dependency and PostgreSQL notification-receive
+  baseline to 42.7.13.
+
 ### Migration Notes
 
 - Notification delivery is lossy and non-durable. Treat notifications as hints
-  to reconcile authoritative state. PostgreSQL receive support requires
-  compatible pgjdbc classes at runtime; sending remains pure SQL and does not.
+  to reconcile authoritative state. PostgreSQL receive support requires pgjdbc
+  42.7.13 or newer at runtime; sending remains pure SQL and does not require the
+  receive adapter.
+- Listener connections require backend-session affinity. Direct PostgreSQL and
+  PgBouncer session pooling are supported listener sources; PgBouncer transaction
+  or statement pooling is unsupported and can appear to register successfully
+  before notification delivery silently stops.
+- On Java 21 or newer, interrupting a virtual thread during an applicable
+  system-default socket read can close the listener connection and surface as a
+  terminal `DatabaseException` instead of a clean `InterruptedException`.
 
 ## 4.5.0
 

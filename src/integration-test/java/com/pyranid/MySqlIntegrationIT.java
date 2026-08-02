@@ -19,9 +19,9 @@ package com.pyranid;
 import org.jspecify.annotations.NonNull;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.mysql.MySQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
 import javax.sql.DataSource;
@@ -52,7 +52,7 @@ public class MySqlIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 			.asCompatibleSubstituteFor("mysql");
 
 	@Container
-	private static final MySQLContainer<?> MYSQL = new MySQLContainer<>(MYSQL_IMAGE)
+	private static final MySQLContainer MYSQL = new MySQLContainer(MYSQL_IMAGE)
 			.withDatabaseName("pyranid")
 			.withUsername("pyranid")
 			.withPassword("pyranid");
