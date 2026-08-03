@@ -671,7 +671,7 @@ class EmployeeService {
         // Rolled back? We can clean up
         payrollSystem.cancelLengthyWarmupProcess();
       } else if(transactionResult == TransactionResult.IN_DOUBT) {
-        // Commit was attempted but the final database outcome is unknown.
+        // Commit or rollback failed and the final database outcome is unknown.
         // Avoid commit-only side effects and reconcile separately.
         payrollSystem.queueReconciliation();
       }
@@ -705,8 +705,8 @@ class DatabaseTransactionFilter implements Filter {
 Post-transaction callbacks receive a [`TransactionResult`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html) value:
 
 * [`COMMITTED`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#COMMITTED) if commit completed successfully
-* [`ROLLED_BACK`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#ROLLED_BACK) if the transaction completed on the rollback path before commit was attempted
-* [`IN_DOUBT`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#IN_DOUBT) if Pyranid attempted commit but the commit call failed, so the final database outcome is unknown
+* [`ROLLED_BACK`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#ROLLED_BACK) if rollback completed successfully before commit was attempted
+* [`IN_DOUBT`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#IN_DOUBT) if commit or rollback failed, so the final database outcome is unknown
 
 Post-transaction callbacks are fail-fast. If a callback throws, Pyranid wraps the failure in a [`PostTransactionOperationException`](https://javadoc.pyranid.com/com/pyranid/PostTransactionOperationException.html). When there is no other transaction or cleanup failure, [`Database::transaction(TransactionalOperation)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transaction(com.pyranid.TransactionalOperation)) throws this exception as the primary failure. When the transaction operation, commit, rollback, or cleanup already failed, Pyranid suppresses it onto the primary exception. Check [`PostTransactionOperationException::getTransactionResult()`](https://javadoc.pyranid.com/com/pyranid/PostTransactionOperationException.html#getTransactionResult()) to distinguish a successful commit followed by callback failure from a failed or in-doubt transaction.
 

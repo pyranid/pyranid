@@ -30,13 +30,14 @@ public enum TransactionResult {
 	/**
 	 * Pyranid did not attempt to commit the transaction.
 	 * <p>
-	 * This is the result for transactions that leave the closure through the rollback path before commit.
+	 * This is the result for transactions whose rollback completes successfully before commit is attempted.
 	 */
 	ROLLED_BACK,
 	/**
-	 * Pyranid attempted to commit the transaction, but the commit call failed, so the final database outcome is unknown.
+	 * Pyranid cannot prove the final database outcome because commit or rollback failed.
 	 * <p>
-	 * For example, the database may have committed successfully but the client may not have received the acknowledgement.
+	 * For example, the database may have committed successfully but the client may not have received the acknowledgement, or
+	 * rollback may have failed before the database confirmed that pending work was discarded.
 	 *
 	 * @since 4.2.0
 	 */

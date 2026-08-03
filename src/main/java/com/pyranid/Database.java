@@ -410,6 +410,7 @@ public final class Database {
 
 			Throwable cleanupFailure = null;
 			boolean hadPhysicalTransaction = false;
+			boolean completionFailed = commitFailed || rollbackFailed;
 
 			try {
 				transaction.getConnectionLock().lock();
@@ -420,16 +421,19 @@ public final class Database {
 					if (!transaction.isCompleted())
 						transaction.markCompleted();
 
-					cleanupFailure = cleanupCompletedTransactionConnection(transaction, cleanupFailure);
+					cleanupFailure = cleanupCompletedTransactionConnection(transaction, cleanupFailure, completionFailed);
 				} finally {
 					transaction.getConnectionLock().unlock();
 				}
 			} finally {
+				if (completionFailed && thrown instanceof DatabaseException)
+					((DatabaseException) thrown).markTransactionOutcomeIndeterminate();
+
 				// Execute any user-supplied post-execution hooks
 				for (Consumer<TransactionResult> postTransactionOperation : transaction.getPostTransactionOperations()) {
 					long postTransactionStartTime = nanoTime();
 					Throwable postTransactionThrowable = null;
-					TransactionResult transactionResult = transactionResult(committed, commitFailed);
+					TransactionResult transactionResult = transactionResult(committed, commitFailed, rollbackFailed);
 					try {
 						postTransactionOperation.accept(transactionResult);
 					} catch (Throwable cleanupException) {
@@ -455,7 +459,8 @@ public final class Database {
 
 			if (cleanupFailure != null) {
 				if (thrown != null) {
-					thrown.addSuppressed(cleanupFailure);
+					if (thrown != cleanupFailure)
+						thrown.addSuppressed(cleanupFailure);
 				} else if (cleanupFailure instanceof RuntimeException) {
 					if (committed && cleanupFailure instanceof DatabaseException)
 						((DatabaseException) cleanupFailure).markTransactionOutcomeCommitted();
@@ -595,7 +600,7 @@ public final class Database {
 			try {
 				return TransactionRetryResult.of(transaction(transactionOptions, transactionalOperation), priorFailures);
 			} catch (DatabaseException e) {
-				if (e.isTransactionOutcomeCommitted()) {
+				if (e.isTransactionOutcomeRetryUnsafe()) {
 					suppressPriorFailures(e, priorFailures);
 					throw e;
 				}
@@ -729,7 +734,8 @@ public final class Database {
 				transaction.rollback();
 			} catch (Throwable rollbackException) {
 				rollbackFailed = true;
-				primary.addSuppressed(rollbackException);
+				if (primary != rollbackException)
+					primary.addSuppressed(rollbackException);
 			} finally {
 				transaction.markCompleted();
 			}
@@ -753,27 +759,38 @@ public final class Database {
 
 	@Nullable
 	private Throwable cleanupCompletedTransactionConnection(@NonNull Transaction transaction,
-																												 @Nullable Throwable cleanupFailure) {
+																							 @Nullable Throwable cleanupFailure,
+																							 boolean completionFailed) {
 		requireNonNull(transaction);
+		boolean abortRequired = completionFailed;
 
-		try {
-			transaction.restoreTransactionIsolationIfNeeded();
-		} catch (Throwable cleanupException) {
-			cleanupFailure = appendSuppressed(cleanupFailure, cleanupException);
-		}
-
-		try {
-			transaction.restoreReadOnlyIfNeeded();
-		} catch (Throwable cleanupException) {
-			cleanupFailure = appendSuppressed(cleanupFailure, cleanupException);
-		}
-
-		if (transaction.getInitialAutoCommit().isPresent() && transaction.getInitialAutoCommit().get()) {
+		// A failed commit or rollback leaves the physical outcome unknown. Mutating connection state in that condition is
+		// unsafe: in particular, restoring auto-commit to true can commit work that Pyranid meant to roll back.
+		if (!abortRequired) {
 			try {
-				// Autocommit was true initially, so restoring to true now that transaction has completed
-				transaction.setAutoCommit(true);
+				transaction.restoreTransactionIsolationIfNeeded();
 			} catch (Throwable cleanupException) {
 				cleanupFailure = appendSuppressed(cleanupFailure, cleanupException);
+				abortRequired = true;
+			}
+
+			if (!abortRequired) {
+				try {
+					transaction.restoreReadOnlyIfNeeded();
+				} catch (Throwable cleanupException) {
+					cleanupFailure = appendSuppressed(cleanupFailure, cleanupException);
+					abortRequired = true;
+				}
+			}
+
+			if (!abortRequired && transaction.getInitialAutoCommit().isPresent() && transaction.getInitialAutoCommit().get()) {
+				try {
+					// Autocommit was true initially, so restoring to true now that transaction has completed
+					transaction.setAutoCommit(true);
+				} catch (Throwable cleanupException) {
+					cleanupFailure = appendSuppressed(cleanupFailure, cleanupException);
+					abortRequired = true;
+				}
 			}
 		}
 
@@ -784,13 +801,23 @@ public final class Database {
 					.map(acquiredAtNanos -> Duration.ofNanos(nanoTime() - acquiredAtNanos))
 					.orElse(Duration.ZERO);
 
+			if (abortRequired) {
+				try {
+					abortConnection(connection);
+				} catch (Throwable cleanupException) {
+					cleanupFailure = appendSuppressed(cleanupFailure, cleanupException);
+				}
+			}
+
 			try {
 				closeConnection(connection);
 				getMetricsCollectorDispatcher().didReleaseTransactionConnection(transaction, transaction.getDatabaseType(), heldDuration);
-				transaction.clearConnection();
 			} catch (Throwable cleanupException) {
 				getMetricsCollectorDispatcher().didFailToReleaseTransactionConnection(transaction, transaction.getDatabaseType(), heldDuration, cleanupException);
 				cleanupFailure = appendSuppressed(cleanupFailure, cleanupException);
+			} finally {
+				// A completed Transaction must never retain a discarded or closed connection handle, including when close fails.
+				transaction.clearConnection();
 			}
 		}
 
@@ -818,6 +845,16 @@ public final class Database {
 			connection.close();
 		} catch (SQLException e) {
 			throw new DatabaseException("Unable to close database connection", e);
+		}
+	}
+
+	private void abortConnection(@NonNull Connection connection) {
+		requireNonNull(connection);
+
+		try {
+			connection.abort(Runnable::run);
+		} catch (SQLException e) {
+			throw new DatabaseException("Unable to abort database connection", e);
 		}
 	}
 
@@ -991,14 +1028,16 @@ public final class Database {
 
 	@NonNull
 	private static TransactionResult transactionResult(@NonNull Boolean committed,
-																										 @NonNull Boolean commitFailed) {
+																					 @NonNull Boolean commitFailed,
+																					 @NonNull Boolean rollbackFailed) {
 		requireNonNull(committed);
 		requireNonNull(commitFailed);
+		requireNonNull(rollbackFailed);
 
 		if (committed)
 			return TransactionResult.COMMITTED;
 
-		return commitFailed ? TransactionResult.IN_DOUBT : TransactionResult.ROLLED_BACK;
+		return commitFailed || rollbackFailed ? TransactionResult.IN_DOUBT : TransactionResult.ROLLED_BACK;
 	}
 
 	private static MetricsCollector.TransactionClosureOutcome transactionClosureOutcome(@NonNull Boolean committed,

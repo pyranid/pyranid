@@ -306,10 +306,9 @@ public final class Transaction {
 	 * Adds an operation to the list of operations to be executed when the transaction completes.
 	 * <p>
 	 * The supplied operation receives {@link TransactionResult#COMMITTED} if commit completed successfully,
-	 * {@link TransactionResult#ROLLED_BACK} if the transaction completed on the rollback path before commit was attempted,
-	 * or
-	 * {@link TransactionResult#IN_DOUBT} if the commit call failed and Pyranid cannot prove whether the database
-	 * committed or rolled back.
+	 * {@link TransactionResult#ROLLED_BACK} if rollback completed successfully before commit was attempted,
+	 * or {@link TransactionResult#IN_DOUBT} if commit or rollback failed and Pyranid cannot prove the final database
+	 * outcome.
 	 * <p>
 	 * If the operation throws, Pyranid wraps the thrown value in a {@link PostTransactionOperationException}. If another
 	 * transaction or cleanup failure is already primary, the wrapper is suppressed onto that primary failure; otherwise,
@@ -413,6 +412,9 @@ public final class Transaction {
 				DatabaseException wrapped = databaseException("Unable to commit transaction", e);
 				getMetricsCollectorDispatcher().didFailToCommitPhysicalTransaction(this, getDatabaseType(), Duration.ofNanos(nanoTime() - startTime), wrapped);
 				throw wrapped;
+			} catch (RuntimeException | Error e) {
+				getMetricsCollectorDispatcher().didFailToCommitPhysicalTransaction(this, getDatabaseType(), Duration.ofNanos(nanoTime() - startTime), e);
+				throw e;
 			}
 		} finally {
 			getConnectionLock().unlock();
@@ -440,6 +442,9 @@ public final class Transaction {
 				DatabaseException wrapped = databaseException("Unable to roll back transaction", e);
 				getMetricsCollectorDispatcher().didFailToRollbackPhysicalTransaction(this, getDatabaseType(), Duration.ofNanos(nanoTime() - startTime), wrapped);
 				throw wrapped;
+			} catch (RuntimeException | Error e) {
+				getMetricsCollectorDispatcher().didFailToRollbackPhysicalTransaction(this, getDatabaseType(), Duration.ofNanos(nanoTime() - startTime), e);
+				throw e;
 			}
 		} finally {
 			getConnectionLock().unlock();
@@ -779,9 +784,17 @@ public final class Transaction {
 
 	private void lockConnectionInterruptibly(@NonNull String operation) {
 		requireNonNull(operation);
+		ReentrantLock connectionLock = getConnectionLock();
+
+		// Interruptibility is for a participant waiting on another thread. Reentrant acquisition never waits, and using
+		// lockInterruptibly() here would instead make a pending interrupt abort commit/rollback before JDBC cleanup runs.
+		if (connectionLock.isHeldByCurrentThread()) {
+			connectionLock.lock();
+			return;
+		}
 
 		try {
-			getConnectionLock().lockInterruptibly();
+			connectionLock.lockInterruptibly();
 		} catch (InterruptedException e) {
 			Thread.currentThread().interrupt();
 			throw databaseException(format("Interrupted while waiting to %s", operation), e);

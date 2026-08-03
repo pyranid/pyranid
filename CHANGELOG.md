@@ -18,6 +18,14 @@ All notable changes to Pyranid will be documented in this file.
 - Added low-cardinality notification-session lifecycle callbacks and
   `NotificationSnapshot` to `MetricsCollector`.
 
+### Fixed
+
+- Transaction completion now remains safe with a pending thread interrupt and
+  when JDBC commit or rollback fails. Connections with an indeterminate outcome
+  are aborted and closed without restoring auto-commit or other mutable state,
+  post-transaction hooks receive `IN_DOUBT`, and retry policies do not replay
+  potentially committed work.
+
 ### Changed
 
 - Updated the provided pgjdbc dependency and PostgreSQL notification-receive

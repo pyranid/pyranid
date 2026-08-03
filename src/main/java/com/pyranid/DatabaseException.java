@@ -40,6 +40,8 @@ import static java.lang.String.format;
  */
 @NotThreadSafe
 public class DatabaseException extends RuntimeException {
+	private static final long serialVersionUID = 3913934772829113027L;
+
 	@Nullable
 	private final Integer errorCode;
 	@Nullable
@@ -89,6 +91,7 @@ public class DatabaseException extends RuntimeException {
 	@NonNull
 	private final Boolean timeout;
 	private boolean transactionOutcomeCommitted;
+	private boolean transactionOutcomeIndeterminate;
 	private boolean statementDiagnosticsApplied;
 
 	/**
@@ -173,6 +176,7 @@ public class DatabaseException extends RuntimeException {
 		this.serializationFailure = databaseDialect.isSerializationFailure(metadata, cause);
 		this.timeout = databaseDialect.isTimeout(metadata, cause);
 		this.transactionOutcomeCommitted = false;
+		this.transactionOutcomeIndeterminate = false;
 		this.statementDiagnosticsApplied = false;
 	}
 
@@ -206,6 +210,7 @@ public class DatabaseException extends RuntimeException {
 		this.serializationFailure = cause.serializationFailure;
 		this.timeout = cause.timeout;
 		this.transactionOutcomeCommitted = cause.transactionOutcomeCommitted;
+		this.transactionOutcomeIndeterminate = cause.transactionOutcomeIndeterminate;
 		this.statementDiagnosticsApplied = cause.statementDiagnosticsApplied;
 	}
 
@@ -215,6 +220,18 @@ public class DatabaseException extends RuntimeException {
 
 	boolean isTransactionOutcomeCommitted() {
 		return this.transactionOutcomeCommitted;
+	}
+
+	void markTransactionOutcomeIndeterminate() {
+		this.transactionOutcomeIndeterminate = true;
+	}
+
+	boolean isTransactionOutcomeIndeterminate() {
+		return this.transactionOutcomeIndeterminate;
+	}
+
+	boolean isTransactionOutcomeRetryUnsafe() {
+		return isTransactionOutcomeCommitted() || isTransactionOutcomeIndeterminate();
 	}
 
 	void markStatementDiagnosticsApplied() {
