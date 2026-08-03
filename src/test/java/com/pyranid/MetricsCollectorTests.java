@@ -627,7 +627,7 @@ public class MetricsCollectorTests {
 	}
 
 	@Test
-	public void commitFailureFollowedByRollbackSuccessRecordsFailedClosureAndInDoubtHookResult() {
+	public void commitSerializationFailureFollowedByRollbackSuccessRecordsRolledBackOutcome() {
 		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
 		AtomicInteger rollbacks = new AtomicInteger();
 		AtomicReference<TransactionResult> transactionResult = new AtomicReference<>();
@@ -638,19 +638,22 @@ public class MetricsCollectorTests {
 		database.query("CREATE TABLE t (id INT)").execute();
 		metricsCollector.reset();
 
-		Assertions.assertThrows(DatabaseException.class, () ->
+		DatabaseException thrown = Assertions.assertThrows(DatabaseException.class, () ->
 				database.transaction(() -> {
 					database.currentTransaction().orElseThrow().addPostTransactionOperation(transactionResult::set);
 					database.query("INSERT INTO t VALUES (1)").execute();
 				}));
 
 		MetricsCollector.Snapshot snapshot = snapshot(metricsCollector);
-		Assertions.assertEquals(TransactionResult.IN_DOUBT, transactionResult.get());
+		Assertions.assertTrue(thrown.isSerializationFailure());
+		Assertions.assertFalse(thrown.isTransactionOutcomeIndeterminate());
+		Assertions.assertEquals(TransactionResult.ROLLED_BACK, transactionResult.get());
 		Assertions.assertEquals(1, rollbacks.get());
 		Assertions.assertEquals(1L, snapshot.physicalTransactionsCommitFailed());
 		Assertions.assertEquals(1L, snapshot.physicalTransactionsRolledBack());
-		Assertions.assertEquals(0L, snapshot.transactionClosuresRolledBack());
-		Assertions.assertEquals(1L, snapshot.transactionClosuresFailed());
+		Assertions.assertEquals(1L, snapshot.transactionClosuresRolledBack());
+		Assertions.assertEquals(0L, snapshot.transactionClosuresFailed());
+		Assertions.assertEquals(0L, database.query("SELECT COUNT(*) FROM t").fetchObject(Long.class).orElseThrow());
 	}
 
 	@Test

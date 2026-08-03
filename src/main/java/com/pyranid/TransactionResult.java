@@ -28,13 +28,15 @@ public enum TransactionResult {
 	 */
 	COMMITTED,
 	/**
-	 * Pyranid did not attempt to commit the transaction.
+	 * The transaction was rolled back.
 	 * <p>
-	 * This is the result for transactions whose rollback completes successfully before commit is attempted.
+	 * This is the result when rollback completes successfully before commit is attempted, or when the physical commit reports
+	 * a recognized serialization failure and Pyranid's follow-up rollback completes successfully.
 	 */
 	ROLLED_BACK,
 	/**
-	 * Pyranid cannot prove the final database outcome because commit or rollback failed.
+	 * Pyranid cannot prove the final database outcome because commit failed without a recognized serialization failure followed
+	 * by successful rollback, or because rollback failed.
 	 * <p>
 	 * For example, the database may have committed successfully but the client may not have received the acknowledgement, or
 	 * rollback may have failed before the database confirmed that pending work was discarded.

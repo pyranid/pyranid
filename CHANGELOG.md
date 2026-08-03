@@ -2,7 +2,7 @@
 
 All notable changes to Pyranid will be documented in this file.
 
-## 4.6.0 (unreleased)
+## 4.6.0
 
 ### Added
 
@@ -20,11 +20,21 @@ All notable changes to Pyranid will be documented in this file.
 
 ### Fixed
 
-- Transaction completion now remains safe with a pending thread interrupt and
-  when JDBC commit or rollback fails. Connections with an indeterminate outcome
-  are aborted and closed without restoring auto-commit or other mutable state,
+- Fixed a transaction-completion data-integrity risk on rollback failure.
+  Cleanup could restore JDBC auto-commit after rollback failed, which could
+  implicitly commit still-active work that the caller expected to be rolled
+  back even though the transaction reported failure. The failed-rollback route
+  dates to Pyranid's original transaction implementation; an additional route
+  through a pending thread interrupt was introduced in 4.5.0.
+- Transaction completion now preserves pending interrupts while still running
+  commit or rollback. Connections whose final outcome is indeterminate are
+  aborted and closed without restoring auto-commit or other mutable state,
   post-transaction hooks receive `IN_DOUBT`, and retry policies do not replay
-  potentially committed work.
+  the work. A commit-phase serialization failure remains eligible for a
+  policy-approved retry only when Pyranid's follow-up rollback succeeds; a
+  failed rollback remains `IN_DOUBT` and terminal. If connection-state
+  restoration fails after an otherwise definite commit or rollback, Pyranid
+  stops further restoration and conservatively discards that connection too.
 
 ### Changed
 
@@ -33,6 +43,17 @@ All notable changes to Pyranid will be documented in this file.
 
 ### Migration Notes
 
+- Treat `TransactionResult.IN_DOUBT` as terminal uncertainty, not as a synonym
+  for rollback. It now includes rollback failures; reconcile authoritative
+  state instead of running commit-only or rollback-only side effects.
+  `transactionWithRetry(...)` never replays an `IN_DOUBT` attempt. A
+  commit-phase serialization failure followed by a successful rollback is a
+  definite `ROLLED_BACK` result and remains eligible for the configured retry
+  policy.
+- Transaction connections are now discarded after an indeterminate completion
+  or failed connection-state restoration instead of being returned to the pool
+  with uncertain state. Pools may create replacement connections if these
+  failures occur.
 - Notification delivery is lossy and non-durable. Treat notifications as hints
   to reconcile authoritative state. PostgreSQL receive support requires pgjdbc
   42.7.13 or newer at runtime; sending remains pure SQL and does not require the

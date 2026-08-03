@@ -818,7 +818,8 @@ public interface MetricsCollector {
 		COMMITTED,
 
 		/**
-		 * The transaction used a physical JDBC transaction and rollback completed normally.
+		 * The transaction used a physical JDBC transaction and was rolled back, including a recognized commit-time
+		 * serialization failure whose follow-up rollback completed normally.
 		 */
 		ROLLED_BACK,
 

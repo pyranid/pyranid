@@ -17,10 +17,6 @@ No new query languages to learn. No leaky object-relational abstractions. No kit
 
 Full documentation is available at [https://www.pyranid.com](https://www.pyranid.com).
 
-> **Development snapshot:** this branch documents unreleased 4.6.0 behavior. Core installation examples continue
-> to use the latest released version, 4.5.0, until 4.6.0 is published; companion-module sections may describe
-> their coordinated upcoming releases.
-
 ### Design Goals
 
 * Small codebase
@@ -52,7 +48,7 @@ Java 17+
   <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid</artifactId>
-  <version>4.5.0</version>
+  <version>4.6.0</version>
 </dependency>
 ```
 
@@ -68,7 +64,7 @@ Java 8+ (legacy; only critical fixes will be applied)
 
 ### Direct Download
 
-For released builds, you can download the Pyranid jar directly from [Maven Central](https://repo1.maven.org/maven2/com/pyranid/pyranid/4.5.0/pyranid-4.5.0.jar).  No other dependencies are required.
+For released builds, you can download the Pyranid jar directly from [Maven Central](https://repo1.maven.org/maven2/com/pyranid/pyranid/4.6.0/pyranid-4.6.0.jar).  No other dependencies are required.
 
 ## Configuration
 
@@ -671,7 +667,7 @@ class EmployeeService {
         // Rolled back? We can clean up
         payrollSystem.cancelLengthyWarmupProcess();
       } else if(transactionResult == TransactionResult.IN_DOUBT) {
-        // Commit or rollback failed and the final database outcome is unknown.
+        // The final database outcome is unknown.
         // Avoid commit-only side effects and reconcile separately.
         payrollSystem.queueReconciliation();
       }
@@ -705,10 +701,12 @@ class DatabaseTransactionFilter implements Filter {
 Post-transaction callbacks receive a [`TransactionResult`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html) value:
 
 * [`COMMITTED`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#COMMITTED) if commit completed successfully
-* [`ROLLED_BACK`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#ROLLED_BACK) if rollback completed successfully before commit was attempted
-* [`IN_DOUBT`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#IN_DOUBT) if commit or rollback failed, so the final database outcome is unknown
+* [`ROLLED_BACK`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#ROLLED_BACK) if rollback completed successfully before commit was attempted, or if a commit-phase serialization failure was followed by a successful rollback
+* [`IN_DOUBT`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#IN_DOUBT) if Pyranid cannot prove the final database outcome, including any rollback failure or a commit failure not covered by the definite serialization-failure case above
 
 Post-transaction callbacks are fail-fast. If a callback throws, Pyranid wraps the failure in a [`PostTransactionOperationException`](https://javadoc.pyranid.com/com/pyranid/PostTransactionOperationException.html). When there is no other transaction or cleanup failure, [`Database::transaction(TransactionalOperation)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transaction(com.pyranid.TransactionalOperation)) throws this exception as the primary failure. When the transaction operation, commit, rollback, or cleanup already failed, Pyranid suppresses it onto the primary exception. Check [`PostTransactionOperationException::getTransactionResult()`](https://javadoc.pyranid.com/com/pyranid/PostTransactionOperationException.html#getTransactionResult()) to distinguish a successful commit followed by callback failure from a failed or in-doubt transaction.
+
+Connection reuse is conservative and separate from the transaction result. When the final database outcome is unknown, Pyranid skips mutable-state restoration and attempts to abort and close the connection. If transaction-isolation, read-only, or auto-commit restoration fails after an otherwise definite commit or rollback, Pyranid stops further restoration and discards that connection as well rather than returning it to the pool with uncertain state.
 
 ### Retrying Serialization Failures
 
@@ -736,7 +734,7 @@ TransactionRetryResult<Void> retryResult = database.transactionWithRetry(retryPo
 
 [`RetryPolicy::ofMaxAttempts(Integer, RetryPolicy.Backoff, RetryPolicy.Condition)`](https://javadoc.pyranid.com/com/pyranid/RetryPolicy.html#ofMaxAttempts(java.lang.Integer,com.pyranid.RetryPolicy.Backoff,com.pyranid.RetryPolicy.Condition)) means three total attempts in this example: the initial transaction plus up to two retries. Pyranid starts a fresh physical transaction for each attempt. The whole closure may run more than once, so keep non-idempotent external side effects outside the retried closure.
 
-`transactionWithRetry(...)` must own the complete transaction boundary and fails fast when called inside an active transaction for the same `Database`. Failures that occur after a successful commit, including connection cleanup and post-transaction callback failures, are returned to the caller and are never replayed.
+`transactionWithRetry(...)` must own the complete transaction boundary and fails fast when called inside an active transaction for the same `Database`. Pyranid consults the configured retry condition only after the failed attempt has a definite rolled-back outcome. Body-level serialization failures and deadlocks remain eligible after a successful rollback; a commit-phase serialization failure is eligible only when Pyranid's follow-up rollback succeeds. Any rollback failure, any other indeterminate commit failure, and failures that occur after a successful commit—including connection cleanup and post-transaction callback failures—are returned to the caller and are never replayed.
 
 Unlike [`Database::transaction(ReturningTransactionalOperation<T>)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transaction(com.pyranid.ReturningTransactionalOperation)), [`Database::transactionWithRetry(RetryPolicy, TransactionalOperation)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transactionWithRetry(com.pyranid.RetryPolicy,com.pyranid.TransactionalOperation)) returns a [`TransactionRetryResult`](https://javadoc.pyranid.com/com/pyranid/TransactionRetryResult.html) so callers can inspect failures recovered before success. [`TransactionRetryResult::getValue()`](https://javadoc.pyranid.com/com/pyranid/TransactionRetryResult.html#getValue()) contains the successful transaction value, and [`TransactionRetryResult::getFailures()`](https://javadoc.pyranid.com/com/pyranid/TransactionRetryResult.html#getFailures()) contains failed attempts that Pyranid retried before the transaction eventually succeeded.
 
@@ -784,7 +782,7 @@ RetryPolicy exponentialRetryPolicy = RetryPolicy.ofMaxAttempts(
 
 Timeouts can be classified with [`DatabaseException::isTimeout()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#isTimeout()) and opted into with [`RetryPolicy.Condition::timeout()`](https://javadoc.pyranid.com/com/pyranid/RetryPolicy.Condition.html#timeout()), but Pyranid does not treat them as automatically safe to retry. A timeout may surface after the database has already performed part or all of the work.
 
-Post-transaction operations registered with [`Transaction::addPostTransactionOperation(Consumer<TransactionResult>)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#addPostTransactionOperation(java.util.function.Consumer)) remain per-attempt hooks. Under retry, a hook registered during a rolled-back attempt runs with [`ROLLED_BACK`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#ROLLED_BACK), and a hook registered during the successful attempt runs with [`COMMITTED`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#COMMITTED).
+Post-transaction operations registered with [`Transaction::addPostTransactionOperation(Consumer<TransactionResult>)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#addPostTransactionOperation(java.util.function.Consumer)) remain per-attempt hooks. A failed attempt whose rollback completes—including a commit-phase serialization failure followed by successful rollback—runs its hook with [`ROLLED_BACK`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#ROLLED_BACK) and may be retried if the policy permits. An attempt with an indeterminate outcome runs its hook with [`IN_DOUBT`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#IN_DOUBT) and terminates without replay; the successful attempt runs its hook with [`COMMITTED`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#COMMITTED).
 
 ## ResultSet Mapping
 
@@ -1917,7 +1915,7 @@ Use `com.pyranid:pyranid-otel` for OpenTelemetry export:
 <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid-otel</artifactId>
-  <version>1.3.0-SNAPSHOT</version>
+  <version>1.3.0</version>
 </dependency>
 ```
 

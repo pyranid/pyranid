@@ -204,6 +204,81 @@ public class TransactionCompletionSafetyTests {
 	}
 
 	@Test
+	public void commitSerializationFailureWithSuccessfulRollbackIsRetried() {
+		DataSource delegate = createInMemoryDataSource("commit_serialization_retry");
+		Database setupDatabase = Database.withDataSource(delegate).build();
+		setupDatabase.query("CREATE TABLE events (id INT)").execute();
+		AtomicInteger commitAttempts = new AtomicInteger();
+		AtomicInteger aborts = new AtomicInteger();
+		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
+		Database database = Database.withDataSource(commitSerializationFailingOnceDataSource(delegate, commitAttempts, aborts, false))
+				.metricsCollector(metricsCollector)
+				.build();
+		AtomicInteger closureRuns = new AtomicInteger();
+		AtomicInteger conditionCalls = new AtomicInteger();
+		List<TransactionResult> transactionResults = new ArrayList<>();
+		RetryPolicy retryPolicy = RetryPolicy.ofMaxAttempts(3, RetryPolicy.Backoff.fixed(Duration.ZERO), exception -> {
+			conditionCalls.incrementAndGet();
+			return exception.isSerializationFailure();
+		});
+
+		TransactionRetryResult<Void> retryResult = database.transactionWithRetry(retryPolicy, () -> {
+			closureRuns.incrementAndGet();
+			database.currentTransaction().orElseThrow().addPostTransactionOperation(transactionResults::add);
+			database.query("INSERT INTO events(id) VALUES (1)").execute();
+		});
+
+		Assertions.assertEquals(2, closureRuns.get());
+		Assertions.assertEquals(1, conditionCalls.get());
+		Assertions.assertEquals(2, commitAttempts.get());
+		Assertions.assertEquals(1, aborts.get());
+		Assertions.assertEquals(List.of(TransactionResult.ROLLED_BACK, TransactionResult.COMMITTED), transactionResults);
+		Assertions.assertEquals(2, retryResult.getAttemptCount());
+		Assertions.assertEquals(1, retryResult.getFailures().size());
+		Assertions.assertTrue(retryResult.getFailures().get(0).isSerializationFailure());
+		Assertions.assertFalse(retryResult.getFailures().get(0).isTransactionOutcomeIndeterminate());
+		Assertions.assertEquals(1L, rowCount(setupDatabase));
+
+		MetricsCollector.Snapshot snapshot = metricsCollector.snapshot().orElseThrow();
+		Assertions.assertEquals(1L, snapshot.transactionClosuresCommitted());
+		Assertions.assertEquals(1L, snapshot.transactionClosuresRolledBack());
+		Assertions.assertEquals(0L, snapshot.transactionClosuresFailed());
+	}
+
+	@Test
+	public void commitSerializationFailureWithRollbackFailureIsNeverReplayed() {
+		DataSource delegate = createInMemoryDataSource("commit_serialization_rollback_failure");
+		Database setupDatabase = Database.withDataSource(delegate).build();
+		setupDatabase.query("CREATE TABLE events (id INT)").execute();
+		AtomicInteger commitAttempts = new AtomicInteger();
+		AtomicInteger aborts = new AtomicInteger();
+		Database database = Database.withDataSource(commitSerializationFailingOnceDataSource(delegate, commitAttempts, aborts, true)).build();
+		AtomicInteger closureRuns = new AtomicInteger();
+		AtomicInteger conditionCalls = new AtomicInteger();
+		AtomicReference<TransactionResult> transactionResult = new AtomicReference<>();
+		RetryPolicy retryPolicy = RetryPolicy.ofMaxAttempts(3, RetryPolicy.Backoff.fixed(Duration.ZERO), exception -> {
+			conditionCalls.incrementAndGet();
+			return true;
+		});
+
+		DatabaseException thrown = Assertions.assertThrows(DatabaseException.class, () ->
+				database.transactionWithRetry(retryPolicy, () -> {
+					closureRuns.incrementAndGet();
+					database.currentTransaction().orElseThrow().addPostTransactionOperation(transactionResult::set);
+					database.query("INSERT INTO events(id) VALUES (1)").execute();
+				}));
+
+		Assertions.assertTrue(thrown.isSerializationFailure());
+		Assertions.assertTrue(thrown.isTransactionOutcomeIndeterminate());
+		Assertions.assertEquals(TransactionResult.IN_DOUBT, transactionResult.get());
+		Assertions.assertEquals(1, closureRuns.get());
+		Assertions.assertEquals(0, conditionCalls.get());
+		Assertions.assertEquals(1, commitAttempts.get());
+		Assertions.assertEquals(1, aborts.get());
+		Assertions.assertEquals(0L, rowCount(setupDatabase));
+	}
+
+	@Test
 	public void commitAcknowledgementFailureThatPersistedWorkIsNeverReplayed() {
 		DataSource delegate = createInMemoryDataSource("commit_failure_no_retry");
 		Database setupDatabase = Database.withDataSource(delegate).build();
@@ -223,6 +298,7 @@ public class TransactionCompletionSafetyTests {
 				}));
 
 		Assertions.assertTrue(thrown.isTransactionOutcomeIndeterminate());
+		Assertions.assertFalse(thrown.isSerializationFailure());
 		Assertions.assertEquals(1, attempts.get());
 		Assertions.assertEquals(0, conditionCalls.get());
 		Assertions.assertEquals(1L, rowCount(setupDatabase));
@@ -317,9 +393,30 @@ public class TransactionCompletionSafetyTests {
 			Object result = invoke(connection, method, args);
 
 			if ("commit".equals(method.getName()) && method.getParameterCount() == 0)
-				throw new SQLException("commit acknowledgement lost", "40001");
+				throw new SQLException("commit acknowledgement lost", "08007");
 
 			return result;
+		}));
+	}
+
+	@NonNull
+	private DataSource commitSerializationFailingOnceDataSource(@NonNull DataSource delegate,
+																																		 @NonNull AtomicInteger commitAttempts,
+																																		 @NonNull AtomicInteger aborts,
+																																		 boolean failRollback) {
+		return connectionWrappingDataSource(delegate, connection -> connectionProxy(connection, (method, args) -> {
+			String methodName = method.getName();
+
+			if ("commit".equals(methodName) && method.getParameterCount() == 0 && commitAttempts.incrementAndGet() == 1)
+				throw new SQLException("serialization failure", "40001");
+
+			if (failRollback && "rollback".equals(methodName) && method.getParameterCount() == 0)
+				throw new SQLException("rollback failed", "08006");
+
+			if ("abort".equals(methodName))
+				aborts.incrementAndGet();
+
+			return invoke(connection, method, args);
 		}));
 	}
 

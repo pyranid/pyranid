@@ -411,6 +411,9 @@ public final class Database {
 			Throwable cleanupFailure = null;
 			boolean hadPhysicalTransaction = false;
 			boolean completionFailed = commitFailed || rollbackFailed;
+			boolean commitSerializationFailureRolledBack = commitFailed && !rollbackFailed
+					&& transaction.didCommitFailWithSerializationFailure();
+			boolean transactionOutcomeIndeterminate = completionFailed && !commitSerializationFailureRolledBack;
 
 			try {
 				transaction.getConnectionLock().lock();
@@ -426,14 +429,14 @@ public final class Database {
 					transaction.getConnectionLock().unlock();
 				}
 			} finally {
-				if (completionFailed && thrown instanceof DatabaseException)
+				if (transactionOutcomeIndeterminate && thrown instanceof DatabaseException)
 					((DatabaseException) thrown).markTransactionOutcomeIndeterminate();
 
 				// Execute any user-supplied post-execution hooks
 				for (Consumer<TransactionResult> postTransactionOperation : transaction.getPostTransactionOperations()) {
 					long postTransactionStartTime = nanoTime();
 					Throwable postTransactionThrowable = null;
-					TransactionResult transactionResult = transactionResult(committed, commitFailed, rollbackFailed);
+					TransactionResult transactionResult = transactionResult(committed, transactionOutcomeIndeterminate);
 					try {
 						postTransactionOperation.accept(transactionResult);
 					} catch (Throwable cleanupException) {
@@ -454,7 +457,7 @@ public final class Database {
 
 			Throwable exitThrown = thrown == null ? cleanupFailure : thrown;
 			getMetricsCollectorDispatcher().didExitTransactionClosure(transaction,
-					transactionClosureOutcome(committed, commitFailed, hadPhysicalTransaction, rollbackFailed),
+					transactionClosureOutcome(committed, hadPhysicalTransaction, transactionOutcomeIndeterminate),
 					transaction.getDatabaseType(), Duration.ofNanos(nanoTime() - transactionStartTime), exitThrown);
 
 			if (cleanupFailure != null) {
@@ -479,6 +482,10 @@ public final class Database {
 	 * <p>
 	 * The entire transaction closure may run more than once. Keep non-idempotent external side effects outside the closure
 	 * unless they are safe to repeat.
+	 * <p>
+	 * Pyranid consults the retry policy only after the database outcome is known to be rolled back. This includes a recognized
+	 * serialization failure reported by physical commit when the follow-up rollback succeeds. Other commit failures and all
+	 * rollback failures are terminal because their outcome is indeterminate.
 	 * <p>
 	 * Unlike {@link #transaction(TransactionalOperation)} and related transaction methods, retrying methods return
 	 * {@link TransactionRetryResult} so callers can inspect failures that were recovered before success.
@@ -508,6 +515,10 @@ public final class Database {
 	 * <p>
 	 * The entire transaction closure may run more than once. Keep non-idempotent external side effects outside the closure
 	 * unless they are safe to repeat.
+	 * <p>
+	 * Pyranid consults the retry policy only after the database outcome is known to be rolled back. This includes a recognized
+	 * serialization failure reported by physical commit when the follow-up rollback succeeds. Other commit failures and all
+	 * rollback failures are terminal because their outcome is indeterminate.
 	 * <p>
 	 * Unlike {@link #transaction(TransactionOptions, TransactionalOperation)} and related transaction methods, retrying
 	 * methods return {@link TransactionRetryResult} so callers can inspect failures that were recovered before success.
@@ -541,6 +552,10 @@ public final class Database {
 	 * The entire transaction closure may run more than once. Keep non-idempotent external side effects outside the closure
 	 * unless they are safe to repeat.
 	 * <p>
+	 * Pyranid consults the retry policy only after the database outcome is known to be rolled back. This includes a recognized
+	 * serialization failure reported by physical commit when the follow-up rollback succeeds. Other commit failures and all
+	 * rollback failures are terminal because their outcome is indeterminate.
+	 * <p>
 	 * Unlike {@link #transaction(ReturningTransactionalOperation)} and related transaction methods, retrying methods return
 	 * {@link TransactionRetryResult} so callers can inspect failures that were recovered before success.
 	 * <p>
@@ -568,6 +583,10 @@ public final class Database {
 	 * <p>
 	 * The entire transaction closure may run more than once. Keep non-idempotent external side effects outside the closure
 	 * unless they are safe to repeat.
+	 * <p>
+	 * Pyranid consults the retry policy only after the database outcome is known to be rolled back. This includes a recognized
+	 * serialization failure reported by physical commit when the follow-up rollback succeeds. Other commit failures and all
+	 * rollback failures are terminal because their outcome is indeterminate.
 	 * <p>
 	 * Unlike {@link #transaction(TransactionOptions, ReturningTransactionalOperation)} and related transaction methods,
 	 * retrying methods return {@link TransactionRetryResult} so callers can inspect failures that were recovered before
@@ -764,8 +783,9 @@ public final class Database {
 		requireNonNull(transaction);
 		boolean abortRequired = completionFailed;
 
-		// A failed commit or rollback leaves the physical outcome unknown. Mutating connection state in that condition is
-		// unsafe: in particular, restoring auto-commit to true can commit work that Pyranid meant to roll back.
+		// A failed commit or rollback makes the connection unsafe to restore and reuse, even when a recognized serialization
+		// failure plus successful rollback proves the logical outcome. When the outcome is unknown, restoring auto-commit to
+		// true is especially dangerous because it can commit work that Pyranid meant to roll back.
 		if (!abortRequired) {
 			try {
 				transaction.restoreTransactionIsolationIfNeeded();
@@ -1028,26 +1048,22 @@ public final class Database {
 
 	@NonNull
 	private static TransactionResult transactionResult(@NonNull Boolean committed,
-																					 @NonNull Boolean commitFailed,
-																					 @NonNull Boolean rollbackFailed) {
+																				 @NonNull Boolean transactionOutcomeIndeterminate) {
 		requireNonNull(committed);
-		requireNonNull(commitFailed);
-		requireNonNull(rollbackFailed);
+		requireNonNull(transactionOutcomeIndeterminate);
 
 		if (committed)
 			return TransactionResult.COMMITTED;
 
-		return commitFailed || rollbackFailed ? TransactionResult.IN_DOUBT : TransactionResult.ROLLED_BACK;
+		return transactionOutcomeIndeterminate ? TransactionResult.IN_DOUBT : TransactionResult.ROLLED_BACK;
 	}
 
 	private static MetricsCollector.TransactionClosureOutcome transactionClosureOutcome(@NonNull Boolean committed,
-																																										 @NonNull Boolean commitFailed,
-																																										 @NonNull Boolean hadPhysicalTransaction,
-																																										 @NonNull Boolean rollbackFailed) {
+																													 @NonNull Boolean hadPhysicalTransaction,
+																													 @NonNull Boolean transactionOutcomeIndeterminate) {
 		requireNonNull(committed);
-		requireNonNull(commitFailed);
 		requireNonNull(hadPhysicalTransaction);
-		requireNonNull(rollbackFailed);
+		requireNonNull(transactionOutcomeIndeterminate);
 
 		if (!hadPhysicalTransaction)
 			return MetricsCollector.TransactionClosureOutcome.NO_PHYSICAL_TX;
@@ -1055,10 +1071,7 @@ public final class Database {
 		if (committed)
 			return MetricsCollector.TransactionClosureOutcome.COMMITTED;
 
-		if (commitFailed)
-			return MetricsCollector.TransactionClosureOutcome.FAILED;
-
-		return rollbackFailed
+		return transactionOutcomeIndeterminate
 				? MetricsCollector.TransactionClosureOutcome.FAILED
 				: MetricsCollector.TransactionClosureOutcome.ROLLED_BACK;
 	}

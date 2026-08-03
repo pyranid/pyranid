@@ -84,6 +84,8 @@ public final class Transaction {
 	private final AtomicBoolean rollbackOnly;
 	@NonNull
 	private final AtomicBoolean completed;
+	@NonNull
+	private final AtomicBoolean commitSerializationFailure;
 	@Nullable
 	private volatile Connection connection;
 	@Nullable
@@ -127,6 +129,7 @@ public final class Transaction {
 		this.connection = null;
 		this.rollbackOnly = new AtomicBoolean(false);
 		this.completed = new AtomicBoolean(false);
+		this.commitSerializationFailure = new AtomicBoolean(false);
 		this.initialAutoCommit = null;
 		this.initialReadOnly = null;
 		this.connectionAcquiredAtNanos = null;
@@ -306,9 +309,8 @@ public final class Transaction {
 	 * Adds an operation to the list of operations to be executed when the transaction completes.
 	 * <p>
 	 * The supplied operation receives {@link TransactionResult#COMMITTED} if commit completed successfully,
-	 * {@link TransactionResult#ROLLED_BACK} if rollback completed successfully before commit was attempted,
-	 * or {@link TransactionResult#IN_DOUBT} if commit or rollback failed and Pyranid cannot prove the final database
-	 * outcome.
+	 * {@link TransactionResult#ROLLED_BACK} if rollback completed successfully (including after a recognized commit-time
+	 * serialization failure), or {@link TransactionResult#IN_DOUBT} if Pyranid cannot prove the final database outcome.
 	 * <p>
 	 * If the operation throws, Pyranid wraps the thrown value in a {@link PostTransactionOperationException}. If another
 	 * transaction or cleanup failure is already primary, the wrapper is suppressed onto that primary failure; otherwise,
@@ -410,6 +412,12 @@ public final class Transaction {
 				LOGGER.finer("Transaction committed.");
 			} catch (SQLException e) {
 				DatabaseException wrapped = databaseException("Unable to commit transaction", e);
+
+				// This catch is scoped to the physical JDBC commit call, so a serialization classification here cannot come from
+				// the transaction body or later cleanup.
+				if (wrapped.isSerializationFailure())
+					this.commitSerializationFailure.set(true);
+
 				getMetricsCollectorDispatcher().didFailToCommitPhysicalTransaction(this, getDatabaseType(), Duration.ofNanos(nanoTime() - startTime), wrapped);
 				throw wrapped;
 			} catch (RuntimeException | Error e) {
@@ -419,6 +427,10 @@ public final class Transaction {
 		} finally {
 			getConnectionLock().unlock();
 		}
+	}
+
+	boolean didCommitFailWithSerializationFailure() {
+		return this.commitSerializationFailure.get();
 	}
 
 	void rollback() {

@@ -176,7 +176,7 @@ final class PostgresDialect extends GenericDialect {
 			cleanupFailure = addCleanupFailure(cleanupFailure, cleanupException);
 		}
 
-		if (Boolean.TRUE.equals(databaseStreamState.getInitialAutoCommit())) {
+		if (!streamTransactionCleanupFailed && Boolean.TRUE.equals(databaseStreamState.getInitialAutoCommit())) {
 			try {
 				connection.setAutoCommit(true);
 			} catch (Throwable cleanupException) {
