@@ -36,6 +36,7 @@ import static java.util.Objects.requireNonNull;
  * pgjdbc-facing transport for one physical PostgreSQL notification session.
  */
 final class PostgresNotificationTransport implements NotificationTransport {
+	private static final int CLEANUP_NETWORK_TIMEOUT_MILLISECONDS = 30_000;
 	private static final long NANOS_PER_MILLISECOND = 1_000_000L;
 	@NonNull
 	private static final Duration MAX_WAIT_SLICE = Duration.ofMillis(250);
@@ -98,6 +99,29 @@ final class PostgresNotificationTransport implements NotificationTransport {
 	public void unlistenAll() throws SQLException {
 		try (Statement statement = this.connection.createStatement()) {
 			statement.execute("UNLISTEN *");
+		}
+	}
+
+	@Override
+	public void unlistenAllForCleanup() throws SQLException {
+		try {
+			int originalTimeout = this.connection.getNetworkTimeout();
+			int cleanupTimeout = originalTimeout > 0
+					? Math.min(originalTimeout, CLEANUP_NETWORK_TIMEOUT_MILLISECONDS)
+					: CLEANUP_NETWORK_TIMEOUT_MILLISECONDS;
+			boolean timeoutChanged = cleanupTimeout != originalTimeout;
+
+			if (timeoutChanged)
+				this.connection.setNetworkTimeout(Runnable::run, cleanupTimeout);
+
+			// unlistenAll() returns only after both statement execution and try-with-resources close succeed.
+			unlistenAll();
+
+			if (timeoutChanged)
+				this.connection.setNetworkTimeout(Runnable::run, originalTimeout);
+		} catch (SQLException | RuntimeException | Error failure) {
+			this.connectionUncertain = true;
+			throw failure;
 		}
 	}
 

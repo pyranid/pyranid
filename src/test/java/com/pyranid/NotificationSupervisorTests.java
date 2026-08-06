@@ -16,6 +16,7 @@
 
 package com.pyranid;
 
+import org.hsqldb.jdbc.JDBCDataSource;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -511,6 +512,52 @@ public class NotificationSupervisorTests {
 		} finally {
 			Thread.interrupted();
 		}
+	}
+
+	@Test
+	public void lateInterruptFinalReconciliationCanUseRealPyranidTransaction() {
+		JDBCDataSource dataSource = new JDBCDataSource();
+		dataSource.setUrl("jdbc:hsqldb:mem:notification_supervisor_late_interrupt_transaction");
+		dataSource.setUser("sa");
+		dataSource.setPassword("");
+		Database database = Database.withDataSource(dataSource).build();
+		database.query("CREATE TABLE events (id INT)").execute();
+		AtomicInteger reconciliations = new AtomicInteger();
+		AtomicInteger receiveCalls = new AtomicInteger();
+		StartupSignal startup = new StartupSignal();
+		NotificationSupervisor supervisor = supervisor(
+				operation -> operation.perform(maxWait -> {
+					if (receiveCalls.incrementAndGet() == 1) {
+						Thread.currentThread().interrupt();
+						return List.of(Notification.of("job_ready", ""));
+					}
+
+					if (Thread.interrupted())
+						throw new InterruptedException("stop after final transactional reconciliation");
+
+					throw new AssertionError("Expected the restored interrupt before another receive");
+				}),
+				() -> database.transaction(() -> {
+					database.query("INSERT INTO events(id) VALUES (1)").execute();
+					reconciliations.incrementAndGet();
+				}),
+				() -> 0L,
+				(failureNumber, failure) -> Duration.ZERO,
+				delay -> true,
+				failureNumber -> {});
+
+		try {
+			supervisor.run(startup, failure -> true);
+			Assertions.assertEquals(2, reconciliations.get());
+			Assertions.assertEquals(2, receiveCalls.get());
+			Assertions.assertTrue(startup.isReady());
+			Assertions.assertTrue(Thread.currentThread().isInterrupted());
+		} finally {
+			Thread.interrupted();
+		}
+
+		Assertions.assertEquals(2L,
+				database.query("SELECT COUNT(*) FROM events").fetchObject(Long.class).orElseThrow());
 	}
 
 	@Test

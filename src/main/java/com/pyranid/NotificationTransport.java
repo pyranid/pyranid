@@ -31,6 +31,8 @@ interface NotificationTransport {
 
 	void unlistenAll() throws SQLException;
 
+	void unlistenAllForCleanup() throws SQLException;
+
 	@NonNull
 	List<@NonNull Notification> receive(@NonNull Duration waitSlice) throws SQLException;
 

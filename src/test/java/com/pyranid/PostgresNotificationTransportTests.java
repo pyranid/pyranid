@@ -95,6 +95,152 @@ public class PostgresNotificationTransportTests {
 	}
 
 	@Test
+	public void testCleanupUnlistenCapsZeroNetworkTimeoutAndRestoresAfterStatementClose() throws Exception {
+		TransportFixture fixture = new TransportFixture();
+		fixture.networkTimeout = 0;
+		NotificationTransport transport = fixture.openTransport();
+
+		transport.unlistenAllForCleanup();
+
+		Assertions.assertEquals(List.of("UNLISTEN *"), fixture.executedSql);
+		Assertions.assertEquals(List.of(
+				"getNetworkTimeout",
+				"setNetworkTimeout:30000",
+				"execute:UNLISTEN *",
+				"closeStatement",
+				"setNetworkTimeout:0"), fixture.receiveEvents);
+		Assertions.assertEquals(0, fixture.networkTimeout);
+		Assertions.assertTrue(fixture.statementClosed);
+		Assertions.assertFalse(transport.isConnectionUncertain());
+	}
+
+	@Test
+	public void testCleanupUnlistenPreservesStricterPositiveNetworkTimeout() throws Exception {
+		TransportFixture fixture = new TransportFixture();
+		fixture.networkTimeout = 271;
+		NotificationTransport transport = fixture.openTransport();
+
+		transport.unlistenAllForCleanup();
+
+		Assertions.assertEquals(List.of(
+				"getNetworkTimeout",
+				"execute:UNLISTEN *",
+				"closeStatement"), fixture.receiveEvents);
+		Assertions.assertEquals(271, fixture.networkTimeout);
+		Assertions.assertFalse(transport.isConnectionUncertain());
+	}
+
+	@Test
+	public void testCleanupUnlistenCapsAndRestoresLooserPositiveNetworkTimeout() throws Exception {
+		TransportFixture fixture = new TransportFixture();
+		fixture.networkTimeout = 45_123;
+		NotificationTransport transport = fixture.openTransport();
+
+		transport.unlistenAllForCleanup();
+
+		Assertions.assertEquals(List.of(
+				"getNetworkTimeout",
+				"setNetworkTimeout:30000",
+				"execute:UNLISTEN *",
+				"closeStatement",
+				"setNetworkTimeout:45123"), fixture.receiveEvents);
+		Assertions.assertEquals(45_123, fixture.networkTimeout);
+		Assertions.assertFalse(transport.isConnectionUncertain());
+	}
+
+	@Test
+	public void testCleanupUnlistenInspectionAndGuardSetFailuresLatchUncertainty() throws Exception {
+		SQLException inspectionFailure = new SQLException("cleanup timeout inspection failed");
+		TransportFixture inspectionFixture = new TransportFixture();
+		inspectionFixture.networkTimeoutInspectionFailure = inspectionFailure;
+		NotificationTransport inspectionTransport = inspectionFixture.openTransport();
+
+		SQLException inspectionThrown = Assertions.assertThrows(
+				SQLException.class, inspectionTransport::unlistenAllForCleanup);
+
+		Assertions.assertSame(inspectionFailure, inspectionThrown);
+		Assertions.assertEquals(List.of("getNetworkTimeout"), inspectionFixture.receiveEvents);
+		Assertions.assertTrue(inspectionFixture.executedSql.isEmpty());
+		Assertions.assertTrue(inspectionTransport.isConnectionUncertain());
+
+		SQLException setFailure = new SQLException("cleanup timeout set failed");
+		TransportFixture setFixture = new TransportFixture();
+		setFixture.failNetworkTimeoutSetCall = 1;
+		setFixture.networkTimeoutSetFailure = setFailure;
+		NotificationTransport setTransport = setFixture.openTransport();
+
+		SQLException setThrown = Assertions.assertThrows(
+				SQLException.class, setTransport::unlistenAllForCleanup);
+
+		Assertions.assertSame(setFailure, setThrown);
+		Assertions.assertEquals(List.of(
+				"getNetworkTimeout",
+				"setNetworkTimeout:30000"), setFixture.receiveEvents);
+		Assertions.assertTrue(setFixture.executedSql.isEmpty());
+		Assertions.assertTrue(setTransport.isConnectionUncertain());
+	}
+
+	@Test
+	public void testCleanupUnlistenExecuteAndStatementCloseFailuresSkipTimeoutRestoration() throws Exception {
+		SQLException executeFailure = new SQLException("cleanup unlisten failed");
+		TransportFixture executeFixture = new TransportFixture();
+		executeFixture.statementExecutionFailure = executeFailure;
+		NotificationTransport executeTransport = executeFixture.openTransport();
+
+		SQLException executeThrown = Assertions.assertThrows(
+				SQLException.class, executeTransport::unlistenAllForCleanup);
+
+		Assertions.assertSame(executeFailure, executeThrown);
+		Assertions.assertEquals(List.of(
+				"getNetworkTimeout",
+				"setNetworkTimeout:30000",
+				"execute:UNLISTEN *",
+				"closeStatement"), executeFixture.receiveEvents);
+		Assertions.assertEquals(30_000, executeFixture.networkTimeout);
+		Assertions.assertTrue(executeFixture.statementClosed);
+		Assertions.assertTrue(executeTransport.isConnectionUncertain());
+
+		SQLException closeFailure = new SQLException("cleanup statement close failed");
+		TransportFixture closeFixture = new TransportFixture();
+		closeFixture.statementCloseFailure = closeFailure;
+		NotificationTransport closeTransport = closeFixture.openTransport();
+
+		SQLException closeThrown = Assertions.assertThrows(
+				SQLException.class, closeTransport::unlistenAllForCleanup);
+
+		Assertions.assertSame(closeFailure, closeThrown);
+		Assertions.assertEquals(List.of(
+				"getNetworkTimeout",
+				"setNetworkTimeout:30000",
+				"execute:UNLISTEN *",
+				"closeStatement"), closeFixture.receiveEvents);
+		Assertions.assertEquals(30_000, closeFixture.networkTimeout);
+		Assertions.assertTrue(closeTransport.isConnectionUncertain());
+	}
+
+	@Test
+	public void testCleanupUnlistenRestorationFailureLatchesUncertaintyAfterStatementClose() throws Exception {
+		SQLException restorationFailure = new SQLException("cleanup timeout restoration failed");
+		TransportFixture fixture = new TransportFixture();
+		fixture.failNetworkTimeoutSetCall = 2;
+		fixture.networkTimeoutSetFailure = restorationFailure;
+		NotificationTransport transport = fixture.openTransport();
+
+		SQLException thrown = Assertions.assertThrows(SQLException.class, transport::unlistenAllForCleanup);
+
+		Assertions.assertSame(restorationFailure, thrown);
+		Assertions.assertEquals(List.of(
+				"getNetworkTimeout",
+				"setNetworkTimeout:30000",
+				"execute:UNLISTEN *",
+				"closeStatement",
+				"setNetworkTimeout:0"), fixture.receiveEvents);
+		Assertions.assertEquals(30_000, fixture.networkTimeout);
+		Assertions.assertTrue(fixture.statementClosed);
+		Assertions.assertTrue(transport.isConnectionUncertain());
+	}
+
+	@Test
 	public void testZeroNetworkTimeoutDrainUsesNoArgumentReceiveAndTimedReceiveRoundsAndBounds() throws Exception {
 		TransportFixture fixture = new TransportFixture();
 		fixture.networkTimeout = 0;
@@ -442,6 +588,8 @@ public class PostgresNotificationTransportTests {
 		private boolean closed;
 		private boolean statementClosed;
 		private int networkTimeout;
+		private int networkTimeoutSetCalls;
+		private int failNetworkTimeoutSetCall;
 		private int noArgumentReceiveCount;
 		private Throwable isWrapperForFailure;
 		private Throwable unwrapFailure;
@@ -449,6 +597,9 @@ public class PostgresNotificationTransportTests {
 		private Throwable networkTimeoutInspectionFailure;
 		private Throwable networkTimeoutZeroingFailure;
 		private Throwable networkTimeoutRestorationFailure;
+		private Throwable networkTimeoutSetFailure;
+		private Throwable statementExecutionFailure;
+		private Throwable statementCloseFailure;
 		private Throwable driverReceiveFailure;
 		private PGNotification[] drainNotifications;
 		private PGNotification[] timedNotifications;
@@ -458,6 +609,7 @@ public class PostgresNotificationTransportTests {
 			this.receiveEvents = new ArrayList<>();
 			this.timedWaitMilliseconds = new ArrayList<>();
 			this.wrapperAvailable = true;
+			this.failNetworkTimeoutSetCall = -1;
 			this.drainNotifications = new PGNotification[0];
 			this.timedNotifications = new PGNotification[0];
 			this.connection = (Connection) Proxy.newProxyInstance(
@@ -504,7 +656,11 @@ public class PostgresNotificationTransportTests {
 					return this.networkTimeout;
 				case "setNetworkTimeout":
 					int requestedTimeout = (Integer) arguments[1];
+					++this.networkTimeoutSetCalls;
 					this.receiveEvents.add("setNetworkTimeout:" + requestedTimeout);
+
+					if (this.networkTimeoutSetCalls == this.failNetworkTimeoutSetCall)
+						throw this.networkTimeoutSetFailure;
 
 					if (requestedTimeout == 0 && this.networkTimeoutZeroingFailure != null)
 						throw this.networkTimeoutZeroingFailure;
@@ -546,12 +702,23 @@ public class PostgresNotificationTransportTests {
 							return objectMethod(proxy, method, arguments);
 
 						if ("execute".equals(method.getName())) {
-							this.executedSql.add((String) arguments[0]);
+							String sql = (String) arguments[0];
+							this.executedSql.add(sql);
+							this.receiveEvents.add("execute:" + sql);
+
+							if (this.statementExecutionFailure != null)
+								throw this.statementExecutionFailure;
+
 							return false;
 						}
 
 						if ("close".equals(method.getName())) {
 							this.statementClosed = true;
+							this.receiveEvents.add("closeStatement");
+
+							if (this.statementCloseFailure != null)
+								throw this.statementCloseFailure;
+
 							return null;
 						}
 

@@ -545,6 +545,27 @@ public class DatabaseNotificationTests {
 	}
 
 	@Test
+	public void initialSanitizeUnlistenFailureAbortsAndClosesCandidate() {
+		// Use a non-connection SQLSTATE so the incomplete-sanitation gate is what forces discard.
+		SQLException sanitationFailure = new SQLException("initial unlisten failed", "42000");
+		ConnectionHarness harness = new ConnectionHarness(true).failUnlistenOn(1, sanitationFailure);
+		Database database = postgresDatabase(harness, null);
+		AtomicBoolean callbackInvoked = new AtomicBoolean();
+
+		DatabaseException thrown = Assertions.assertThrows(DatabaseException.class,
+				() -> database.withNotificationSession("car_changed", session -> callbackInvoked.set(true)));
+
+		Assertions.assertSame(sanitationFailure, thrown.getCause());
+		Assertions.assertFalse(callbackInvoked.get());
+		Assertions.assertEquals(List.of(
+				"checkout",
+				"getAutoCommit:true",
+				"UNLISTEN *",
+				"abort",
+				"close"), harness.events());
+	}
+
+	@Test
 	public void partialRegistrationFailureUsesHealthyUnlistenAndDrainCleanup() {
 		SQLException registrationFailure = new SQLException("registration failed", "42000");
 		ConnectionHarness harness = new ConnectionHarness(true).failListenOn(2, registrationFailure);
@@ -571,6 +592,29 @@ public class DatabaseNotificationTests {
 		Assertions.assertEquals(1L, snapshot.sessionsStarted());
 		Assertions.assertEquals(0L, snapshot.sessionsOpened());
 		Assertions.assertEquals(1L, snapshot.sessionsFailed());
+	}
+
+	@Test
+	public void registrationConnectionFailureAbortsAndClosesCandidate() {
+		// Initial sanitation completes and the transport is not latched uncertain; SQLSTATE 08 alone must force discard.
+		SQLException registrationFailure = new SQLException("registration connection failed", "08006");
+		ConnectionHarness harness = new ConnectionHarness(true).failListenOn(1, registrationFailure);
+		Database database = postgresDatabase(harness, null);
+		AtomicBoolean callbackInvoked = new AtomicBoolean();
+
+		DatabaseException thrown = Assertions.assertThrows(DatabaseException.class,
+				() -> database.withNotificationSession("car_changed", session -> callbackInvoked.set(true)));
+
+		Assertions.assertSame(registrationFailure, thrown.getCause());
+		Assertions.assertFalse(callbackInvoked.get());
+		Assertions.assertEquals(List.of(
+				"checkout",
+				"getAutoCommit:true",
+				"UNLISTEN *",
+				"drain:1",
+				"LISTEN \"car_changed\"",
+				"abort",
+				"close"), harness.events());
 	}
 
 	@Test
@@ -738,6 +782,31 @@ public class DatabaseNotificationTests {
 		Assertions.assertEquals(1L, snapshot.sessionsOpened());
 		Assertions.assertEquals(0L, snapshot.sessionsInterrupted());
 		Assertions.assertEquals(1L, snapshot.sessionsFailed());
+	}
+
+	@Test
+	public void cleanupUsesBoundedUnlistenGuardAndAbortsWhenGuardInstallationFails() {
+		SQLException guardFailure = new SQLException("cleanup network-timeout guard failed", "HY000");
+		ConnectionHarness harness = new ConnectionHarness(true)
+				.failNetworkTimeoutSetOn(1, guardFailure);
+		Database database = postgresDatabase(harness, null);
+		AtomicBoolean callbackInvoked = new AtomicBoolean();
+
+		DatabaseException thrown = Assertions.assertThrows(DatabaseException.class,
+				() -> database.withNotificationSession(
+						"car_changed", session -> callbackInvoked.set(true)));
+
+		Assertions.assertSame(guardFailure, thrown.getCause());
+		Assertions.assertTrue(callbackInvoked.get());
+		Assertions.assertEquals(1, harness.networkTimeoutSetCalls);
+		Assertions.assertEquals(List.of(
+				"checkout",
+				"getAutoCommit:true",
+				"UNLISTEN *",
+				"drain:1",
+				"LISTEN \"car_changed\"",
+				"abort",
+				"close"), harness.events());
 	}
 
 	@Test
@@ -928,6 +997,8 @@ public class DatabaseNotificationTests {
 		private int failDrainCall;
 		private int setAutoCommitCalls;
 		private int failSetAutoCommitCall;
+		private int networkTimeoutSetCalls;
+		private int failNetworkTimeoutSetCall;
 		private Throwable getAutoCommitFailure;
 		private Throwable setAutoCommitFailure;
 		private Throwable unlistenFailure;
@@ -936,6 +1007,7 @@ public class DatabaseNotificationTests {
 		private Throwable abortFailure;
 		private Throwable closeFailure;
 		private Throwable networkTimeoutInspectionFailure;
+		private Throwable networkTimeoutSetFailure;
 		private Throwable closedCheckFailure;
 		private boolean interruptWithDrainFailure;
 
@@ -947,6 +1019,7 @@ public class DatabaseNotificationTests {
 			this.failListenCall = -1;
 			this.failDrainCall = -1;
 			this.failSetAutoCommitCall = -1;
+			this.failNetworkTimeoutSetCall = -1;
 			this.connection = (Connection) Proxy.newProxyInstance(
 					DatabaseNotificationTests.class.getClassLoader(),
 					new Class<?>[]{Connection.class, PGConnection.class},
@@ -1023,6 +1096,14 @@ public class DatabaseNotificationTests {
 		}
 
 		@NonNull
+		private ConnectionHarness failNetworkTimeoutSetOn(int call,
+				@NonNull Throwable failure) {
+			this.failNetworkTimeoutSetCall = call;
+			this.networkTimeoutSetFailure = requireNonNull(failure);
+			return this;
+		}
+
+		@NonNull
 		private ConnectionHarness failClosedCheck(@NonNull Throwable failure) {
 			this.closedCheckFailure = requireNonNull(failure);
 			return this;
@@ -1070,7 +1151,14 @@ public class DatabaseNotificationTests {
 
 					yield 0;
 				}
-				case "setNetworkTimeout" -> null;
+				case "setNetworkTimeout" -> {
+					this.networkTimeoutSetCalls++;
+
+					if (this.networkTimeoutSetCalls == this.failNetworkTimeoutSetCall)
+						throw requireNonNull(this.networkTimeoutSetFailure);
+
+					yield null;
+				}
 				case "isWrapperFor" -> ((Class<?>) args[0]).isInstance(proxy);
 				case "unwrap" -> unwrap(proxy, (Class<?>) args[0]);
 				case "isClosed" -> {

@@ -4,7 +4,7 @@ Pyranid follows [Semantic Versioning](https://semver.org/):
 
 * **Major** (`5.0.0`): may remove or incompatibly change public API. Migration notes provided in the CHANGELOG.
 * **Minor** (`4.6.0`): additive public API and behavior changes documented under "Migration Notes" in the CHANGELOG.
-* **Patch** (`4.4.1`): fixes only; no new public API.
+* **Patch** (`4.6.1`): fixes only; no new public API.
 
 ## What counts as public API
 
@@ -23,7 +23,7 @@ property.
 
 ### Historical compatibility notes
 
-The following intentional changes predate the current 4.5.0 japicmp baseline. They are kept here for the record;
+The following intentional changes predate the current 4.6.0 japicmp baseline. They are kept here for the record;
 the current japicmp configuration has no API exclusions:
 
 * `Database#transaction(TransactionIsolation, ...)` (two overloads) - replaced by

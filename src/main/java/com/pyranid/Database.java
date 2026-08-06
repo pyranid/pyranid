@@ -348,6 +348,11 @@ public final class Database {
 			transaction.getConnectionLock().lock();
 
 			try {
+				// A failed physical begin is terminal for this transaction even if application code caught its first
+				// manifestation. Never commit, or report success from a rollback-only path, through a partially initialized
+				// connection.
+				transaction.throwPhysicalTransactionBeginFailureIfPresent();
+
 				if (transaction.isRollbackOnly()) {
 					rollbackAttempted = true;
 					transaction.rollback();
@@ -410,21 +415,26 @@ public final class Database {
 
 			Throwable cleanupFailure = null;
 			boolean hadPhysicalTransaction = false;
+			boolean physicalTransactionBeganSuccessfully = false;
 			boolean completionFailed = commitFailed || rollbackFailed;
 			boolean commitSerializationFailureRolledBack = commitFailed && !rollbackFailed
 					&& transaction.didCommitFailWithSerializationFailure();
-			boolean transactionOutcomeIndeterminate = completionFailed && !commitSerializationFailureRolledBack;
+			boolean transactionOutcomeIndeterminate =
+					(commitFailed && !commitSerializationFailureRolledBack)
+							|| (rollbackFailed && transaction.couldApplicationWorkHaveExecuted());
+			boolean discardConnection = completionFailed || transaction.didPhysicalTransactionBeginFail();
 
 			try {
 				transaction.getConnectionLock().lock();
 
 				try {
 					hadPhysicalTransaction = transaction.hasConnection();
+					physicalTransactionBeganSuccessfully = transaction.didPhysicalTransactionBeginSuccessfully();
 
 					if (!transaction.isCompleted())
 						transaction.markCompleted();
 
-					cleanupFailure = cleanupCompletedTransactionConnection(transaction, cleanupFailure, completionFailed);
+					cleanupFailure = cleanupCompletedTransactionConnection(transaction, cleanupFailure, discardConnection);
 				} finally {
 					transaction.getConnectionLock().unlock();
 				}
@@ -457,7 +467,8 @@ public final class Database {
 
 			Throwable exitThrown = thrown == null ? cleanupFailure : thrown;
 			getMetricsCollectorDispatcher().didExitTransactionClosure(transaction,
-					transactionClosureOutcome(committed, hadPhysicalTransaction, transactionOutcomeIndeterminate),
+					transactionClosureOutcome(committed, hadPhysicalTransaction, physicalTransactionBeganSuccessfully,
+							transactionOutcomeIndeterminate),
 					transaction.getDatabaseType(), Duration.ofNanos(nanoTime() - transactionStartTime), exitThrown);
 
 			if (cleanupFailure != null) {
@@ -483,9 +494,11 @@ public final class Database {
 	 * The entire transaction closure may run more than once. Keep non-idempotent external side effects outside the closure
 	 * unless they are safe to repeat.
 	 * <p>
-	 * Pyranid consults the retry policy only after the database outcome is known to be rolled back. This includes a recognized
-	 * serialization failure reported by physical commit when the follow-up rollback succeeds. Other commit failures and all
-	 * rollback failures are terminal because their outcome is indeterminate.
+	 * Pyranid consults the retry policy only when replay is known to be safe. This includes a failure before a physical
+	 * transaction becomes available to application work, even if best-effort rollback of that begin candidate fails, because
+	 * the candidate is discarded. It also includes a recognized serialization failure reported by physical commit when the
+	 * follow-up rollback succeeds. Other commit failures and rollback failures after application work could execute are
+	 * terminal because their outcome is indeterminate.
 	 * <p>
 	 * Unlike {@link #transaction(TransactionalOperation)} and related transaction methods, retrying methods return
 	 * {@link TransactionRetryResult} so callers can inspect failures that were recovered before success.
@@ -516,9 +529,11 @@ public final class Database {
 	 * The entire transaction closure may run more than once. Keep non-idempotent external side effects outside the closure
 	 * unless they are safe to repeat.
 	 * <p>
-	 * Pyranid consults the retry policy only after the database outcome is known to be rolled back. This includes a recognized
-	 * serialization failure reported by physical commit when the follow-up rollback succeeds. Other commit failures and all
-	 * rollback failures are terminal because their outcome is indeterminate.
+	 * Pyranid consults the retry policy only when replay is known to be safe. This includes a failure before a physical
+	 * transaction becomes available to application work, even if best-effort rollback of that begin candidate fails, because
+	 * the candidate is discarded. It also includes a recognized serialization failure reported by physical commit when the
+	 * follow-up rollback succeeds. Other commit failures and rollback failures after application work could execute are
+	 * terminal because their outcome is indeterminate.
 	 * <p>
 	 * Unlike {@link #transaction(TransactionOptions, TransactionalOperation)} and related transaction methods, retrying
 	 * methods return {@link TransactionRetryResult} so callers can inspect failures that were recovered before success.
@@ -552,9 +567,11 @@ public final class Database {
 	 * The entire transaction closure may run more than once. Keep non-idempotent external side effects outside the closure
 	 * unless they are safe to repeat.
 	 * <p>
-	 * Pyranid consults the retry policy only after the database outcome is known to be rolled back. This includes a recognized
-	 * serialization failure reported by physical commit when the follow-up rollback succeeds. Other commit failures and all
-	 * rollback failures are terminal because their outcome is indeterminate.
+	 * Pyranid consults the retry policy only when replay is known to be safe. This includes a failure before a physical
+	 * transaction becomes available to application work, even if best-effort rollback of that begin candidate fails, because
+	 * the candidate is discarded. It also includes a recognized serialization failure reported by physical commit when the
+	 * follow-up rollback succeeds. Other commit failures and rollback failures after application work could execute are
+	 * terminal because their outcome is indeterminate.
 	 * <p>
 	 * Unlike {@link #transaction(ReturningTransactionalOperation)} and related transaction methods, retrying methods return
 	 * {@link TransactionRetryResult} so callers can inspect failures that were recovered before success.
@@ -584,9 +601,11 @@ public final class Database {
 	 * The entire transaction closure may run more than once. Keep non-idempotent external side effects outside the closure
 	 * unless they are safe to repeat.
 	 * <p>
-	 * Pyranid consults the retry policy only after the database outcome is known to be rolled back. This includes a recognized
-	 * serialization failure reported by physical commit when the follow-up rollback succeeds. Other commit failures and all
-	 * rollback failures are terminal because their outcome is indeterminate.
+	 * Pyranid consults the retry policy only when replay is known to be safe. This includes a failure before a physical
+	 * transaction becomes available to application work, even if best-effort rollback of that begin candidate fails, because
+	 * the candidate is discarded. It also includes a recognized serialization failure reported by physical commit when the
+	 * follow-up rollback succeeds. Other commit failures and rollback failures after application work could execute are
+	 * terminal because their outcome is indeterminate.
 	 * <p>
 	 * Unlike {@link #transaction(TransactionOptions, ReturningTransactionalOperation)} and related transaction methods,
 	 * retrying methods return {@link TransactionRetryResult} so callers can inspect failures that were recovered before
@@ -750,11 +769,15 @@ public final class Database {
 
 		try {
 			try {
-				transaction.rollback();
-			} catch (Throwable rollbackException) {
-				rollbackFailed = true;
-				if (primary != rollbackException)
-					primary.addSuppressed(rollbackException);
+				if (transaction.isPhysicalRollbackPermitted()) {
+					try {
+						transaction.rollback();
+					} catch (Throwable rollbackException) {
+						rollbackFailed = true;
+						if (primary != rollbackException)
+							primary.addSuppressed(rollbackException);
+					}
+				}
 			} finally {
 				transaction.markCompleted();
 			}
@@ -778,14 +801,14 @@ public final class Database {
 
 	@Nullable
 	private Throwable cleanupCompletedTransactionConnection(@NonNull Transaction transaction,
-																							 @Nullable Throwable cleanupFailure,
-																							 boolean completionFailed) {
+																		 @Nullable Throwable cleanupFailure,
+																		 boolean discardConnection) {
 		requireNonNull(transaction);
-		boolean abortRequired = completionFailed;
+		boolean abortRequired = discardConnection;
 
-		// A failed commit or rollback makes the connection unsafe to restore and reuse, even when a recognized serialization
-		// failure plus successful rollback proves the logical outcome. When the outcome is unknown, restoring auto-commit to
-		// true is especially dangerous because it can commit work that Pyranid meant to roll back.
+		// A begin, commit, or rollback failure makes the connection unsafe to restore and reuse, even when the logical outcome
+		// is known. When the outcome is unknown, restoring auto-commit to true is especially dangerous because it can commit
+		// work that Pyranid meant to roll back.
 		if (!abortRequired) {
 			try {
 				transaction.restoreTransactionIsolationIfNeeded();
@@ -1059,14 +1082,19 @@ public final class Database {
 	}
 
 	private static MetricsCollector.TransactionClosureOutcome transactionClosureOutcome(@NonNull Boolean committed,
-																													 @NonNull Boolean hadPhysicalTransaction,
-																													 @NonNull Boolean transactionOutcomeIndeterminate) {
+																							 @NonNull Boolean hadPhysicalTransaction,
+																							 @NonNull Boolean physicalTransactionBeganSuccessfully,
+																							 @NonNull Boolean transactionOutcomeIndeterminate) {
 		requireNonNull(committed);
 		requireNonNull(hadPhysicalTransaction);
+		requireNonNull(physicalTransactionBeganSuccessfully);
 		requireNonNull(transactionOutcomeIndeterminate);
 
 		if (!hadPhysicalTransaction)
 			return MetricsCollector.TransactionClosureOutcome.NO_PHYSICAL_TX;
+
+		if (!physicalTransactionBeganSuccessfully)
+			return MetricsCollector.TransactionClosureOutcome.FAILED;
 
 		if (committed)
 			return MetricsCollector.TransactionClosureOutcome.COMMITTED;
@@ -3546,7 +3574,9 @@ public final class Database {
 	 * <p>
 	 * Notifications are lossy hints. Durable applications should normally reconcile authoritative state as the first
 	 * callback action. The operation may use ordinary database methods, but those methods acquire or select their
-	 * connection normally and never reuse the listener connection.
+	 * connection normally and never reuse the listener connection. Pyranid transaction entry is interrupt-sensitive;
+	 * when a receive returns a batch with a racing interrupt, temporarily clear and remember the flag during bounded
+	 * reconciliation and restore it afterward as described by {@link NotificationSession#awaitNotifications(Duration)}.
 	 * <p>
 	 * A terminal receive failure is retained by the session and rethrown after cleanup even if {@code operation} catches
 	 * it and returns. A retained transport {@link Error} propagates as that exact, unwrapped instance. If the callback
@@ -4034,7 +4064,7 @@ public final class Database {
 
 		if (!abortRequired) {
 			try {
-				transport.unlistenAll();
+				transport.unlistenAllForCleanup();
 			} catch (Throwable throwable) {
 				cleanupFailure = appendSuppressed(cleanupFailure,
 						normalizeNotificationFailure("Unable to unregister notification channels", throwable, databaseType));

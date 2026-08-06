@@ -97,6 +97,9 @@ public final class NotificationSession {
 	 * <p>
 	 * A nonempty batch wins over an interrupt that races after the driver returns; the batch is returned and the
 	 * interrupt flag remains set for application code or the next receive to observe.
+	 * If final reconciliation uses interrupt-sensitive work such as Pyranid transaction entry, clear and remember
+	 * that flag with {@link Thread#interrupted()}, perform only bounded reconciliation, and restore the flag in a
+	 * {@code finally} block.
 	 *
 	 * @param maxWait maximum best-effort elapsed time to wait, which must not be negative
 	 * @return an immutable notification batch, empty only when the budget expires without an observed notification
@@ -165,7 +168,10 @@ public final class NotificationSession {
 	 * Polls the existing listener connection once using the adapter's driver-specific non-waiting mode.
 	 * <p>
 	 * The method performs no acquisition, registration, sleep, reconnect, or reconciliation. A nonempty batch wins
-	 * over an interrupt that races after the driver returns.
+	 * over an interrupt that races after the driver returns; the batch is returned and the interrupt flag remains set.
+	 * If final reconciliation uses interrupt-sensitive work such as Pyranid transaction entry, clear and remember that
+	 * flag with {@link Thread#interrupted()}, perform only bounded reconciliation, and restore the flag in a
+	 * {@code finally} block.
 	 *
 	 * @return an immutable notification batch, possibly empty
 	 * @throws IllegalStateException if the session is expired, failed, used from another thread, used reentrantly, or

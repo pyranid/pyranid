@@ -119,6 +119,166 @@ public class TransactionCompletionSafetyTests {
 	}
 
 	@Test
+	public void setAutoCommitBeginFailureSkipsIllegalRollbackAndRemainsRetryable() {
+		DataSource delegate = createInMemoryDataSource("begin_autocommit_failure_retry");
+		Database setupDatabase = Database.withDataSource(delegate).build();
+		setupDatabase.query("CREATE TABLE events (id INT)").execute();
+		AtomicInteger rollbackCallsOnFailedBegin = new AtomicInteger();
+		AtomicInteger aborts = new AtomicInteger();
+		AtomicInteger commits = new AtomicInteger();
+		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
+		Database database = Database.withDataSource(autoCommitBeginFailingOnceDataSource(
+				delegate, rollbackCallsOnFailedBegin, aborts, commits))
+				.metricsCollector(metricsCollector)
+				.build();
+		AtomicInteger closureRuns = new AtomicInteger();
+		AtomicInteger conditionCalls = new AtomicInteger();
+		List<TransactionResult> transactionResults = new ArrayList<>();
+		RetryPolicy retryPolicy = RetryPolicy.ofMaxAttempts(2, RetryPolicy.Backoff.fixed(Duration.ZERO), exception -> {
+			conditionCalls.incrementAndGet();
+			return true;
+		});
+
+		TransactionRetryResult<Void> retryResult = database.transactionWithRetry(retryPolicy, () -> {
+			int attempt = closureRuns.incrementAndGet();
+			database.currentTransaction().orElseThrow().addPostTransactionOperation(transactionResults::add);
+			database.query("INSERT INTO events(id) VALUES (:id)").bind("id", attempt).execute();
+		});
+
+		Assertions.assertEquals(2, closureRuns.get());
+		Assertions.assertEquals(1, conditionCalls.get());
+		Assertions.assertEquals(0, rollbackCallsOnFailedBegin.get(),
+				"Rollback must not run when disabling autocommit never completed");
+		Assertions.assertEquals(1, aborts.get());
+		Assertions.assertEquals(1, commits.get());
+		Assertions.assertEquals(List.of(TransactionResult.ROLLED_BACK, TransactionResult.COMMITTED), transactionResults);
+		Assertions.assertEquals(2, retryResult.getAttemptCount());
+		Assertions.assertEquals(1, retryResult.getFailures().size());
+		Assertions.assertFalse(retryResult.getFailures().get(0).isTransactionOutcomeIndeterminate());
+		Assertions.assertEquals(1L, rowCount(setupDatabase));
+
+		MetricsCollector.Snapshot snapshot = metricsCollector.snapshot().orElseThrow();
+		Assertions.assertEquals(1L, snapshot.physicalTransactionsBeginFailed());
+		Assertions.assertEquals(0L, snapshot.transactionClosuresRolledBack());
+		Assertions.assertEquals(1L, snapshot.transactionClosuresCommitted());
+		Assertions.assertEquals(1L, snapshot.transactionClosuresFailed());
+	}
+
+	@Test
+	public void caughtUncheckedConnectionAcquisitionFailureRemainsRetryable() {
+		DataSource delegate = createInMemoryDataSource("caught_unchecked_begin_failure_retry");
+		Database setupDatabase = Database.withDataSource(delegate).build();
+		setupDatabase.query("CREATE TABLE events (id INT)").execute();
+		IllegalStateException acquisitionFailure = new IllegalStateException("connection unavailable");
+		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
+		Database database = Database.withDataSource(
+				runtimeConnectionAcquisitionFailingOnceDataSource(delegate, acquisitionFailure))
+				.metricsCollector(metricsCollector)
+				.build();
+		AtomicInteger closureRuns = new AtomicInteger();
+		AtomicInteger conditionCalls = new AtomicInteger();
+		AtomicReference<DatabaseException> caughtFailure = new AtomicReference<>();
+		RetryPolicy retryPolicy = RetryPolicy.ofMaxAttempts(2, RetryPolicy.Backoff.fixed(Duration.ZERO), exception -> {
+			conditionCalls.incrementAndGet();
+			return true;
+		});
+
+		TransactionRetryResult<Void> retryResult = database.transactionWithRetry(retryPolicy, () -> {
+			int attempt = closureRuns.incrementAndGet();
+
+			try {
+				database.query("INSERT INTO events(id) VALUES (:id)").bind("id", attempt).execute();
+			} catch (DatabaseException failure) {
+				if (attempt != 1)
+					throw failure;
+
+				caughtFailure.set(failure);
+			}
+		});
+
+		Assertions.assertEquals(2, closureRuns.get());
+		Assertions.assertEquals(1, conditionCalls.get());
+		Assertions.assertEquals(2, retryResult.getAttemptCount());
+		Assertions.assertEquals(1, retryResult.getFailures().size());
+		Assertions.assertSame(caughtFailure.get(), retryResult.getFailures().get(0));
+		Assertions.assertSame(acquisitionFailure, retryResult.getFailures().get(0).getCause());
+		Assertions.assertFalse(retryResult.getFailures().get(0).isTransactionOutcomeIndeterminate());
+		Assertions.assertEquals(1L, rowCount(setupDatabase));
+
+		MetricsCollector.Snapshot snapshot = metricsCollector.snapshot().orElseThrow();
+		Assertions.assertEquals(1L, snapshot.transactionClosuresNoPhysical());
+		Assertions.assertEquals(1L, snapshot.transactionClosuresCommitted());
+		Assertions.assertEquals(0L, snapshot.transactionClosuresFailed());
+	}
+
+	@Test
+	public void rollbackFailureDuringBeginCleanupDoesNotMakeUnexposedWorkInDoubt() {
+		DataSource delegate = createInMemoryDataSource("begin_rollback_failure_retry");
+		Database setupDatabase = Database.withDataSource(delegate).build();
+		setupDatabase.query("CREATE TABLE events (id INT)").execute();
+		AtomicInteger beginCleanupRollbacks = new AtomicInteger();
+		AtomicInteger aborts = new AtomicInteger();
+		Database database = Database.withDataSource(isolationReadAndRollbackFailingOnceDataSource(
+				delegate, beginCleanupRollbacks, aborts)).build();
+		AtomicInteger closureRuns = new AtomicInteger();
+		AtomicInteger conditionCalls = new AtomicInteger();
+		List<TransactionResult> transactionResults = new ArrayList<>();
+		RetryPolicy retryPolicy = RetryPolicy.ofMaxAttempts(2, RetryPolicy.Backoff.fixed(Duration.ZERO), exception -> {
+			conditionCalls.incrementAndGet();
+			return true;
+		});
+
+		TransactionRetryResult<Void> retryResult = database.transactionWithRetry(retryPolicy, () -> {
+			int attempt = closureRuns.incrementAndGet();
+			database.currentTransaction().orElseThrow().addPostTransactionOperation(transactionResults::add);
+			database.query("INSERT INTO events(id) VALUES (:id)").bind("id", attempt).execute();
+		});
+
+		Assertions.assertEquals(2, closureRuns.get());
+		Assertions.assertEquals(1, conditionCalls.get());
+		Assertions.assertEquals(1, beginCleanupRollbacks.get(),
+				"A known non-autocommit connection should still receive best-effort rollback");
+		Assertions.assertEquals(1, aborts.get());
+		Assertions.assertEquals(List.of(TransactionResult.ROLLED_BACK, TransactionResult.COMMITTED), transactionResults);
+		Assertions.assertEquals(2, retryResult.getAttemptCount());
+		Assertions.assertEquals(1, retryResult.getFailures().size());
+		Assertions.assertFalse(retryResult.getFailures().get(0).isTransactionOutcomeIndeterminate());
+		Assertions.assertTrue(List.of(retryResult.getFailures().get(0).getSuppressed()).stream().anyMatch(suppressed ->
+				"Unable to roll back transaction".equals(suppressed.getMessage())));
+		Assertions.assertEquals(1L, rowCount(setupDatabase));
+	}
+
+	@Test
+	public void caughtBeginFailureIsRethrownBeforeCommit() {
+		DataSource delegate = createInMemoryDataSource("caught_begin_failure");
+		AtomicInteger rollbackCallsOnFailedBegin = new AtomicInteger();
+		AtomicInteger aborts = new AtomicInteger();
+		AtomicInteger commits = new AtomicInteger();
+		Database database = Database.withDataSource(autoCommitBeginFailingOnceDataSource(
+				delegate, rollbackCallsOnFailedBegin, aborts, commits)).build();
+		AtomicReference<DatabaseException> caughtFailure = new AtomicReference<>();
+		AtomicReference<TransactionResult> transactionResult = new AtomicReference<>();
+
+		DatabaseException thrown = Assertions.assertThrows(DatabaseException.class, () -> database.transaction(() -> {
+			Transaction transaction = database.currentTransaction().orElseThrow();
+			transaction.addPostTransactionOperation(transactionResult::set);
+
+			try {
+				transaction.getConnection();
+			} catch (DatabaseException failure) {
+				caughtFailure.set(failure);
+			}
+		}));
+
+		Assertions.assertSame(caughtFailure.get(), thrown);
+		Assertions.assertFalse(thrown.isTransactionOutcomeIndeterminate());
+		Assertions.assertEquals(TransactionResult.ROLLED_BACK, transactionResult.get());
+		Assertions.assertEquals(0, commits.get(), "A retained begin failure must be rethrown before JDBC commit");
+		Assertions.assertEquals(0, rollbackCallsOnFailedBegin.get());
+		Assertions.assertEquals(1, aborts.get());
+	}
+
+	@Test
 	public void rollbackFailureSkipsRestorationAbortsThenClosesAndReportsInDoubt() {
 		DataSource delegate = createInMemoryDataSource("rollback_failure_discard");
 		Database setupDatabase = Database.withDataSource(delegate).build();
@@ -356,6 +516,89 @@ public class TransactionCompletionSafetyTests {
 
 			return invoke(connection, method, args);
 		}));
+	}
+
+	@NonNull
+	private DataSource autoCommitBeginFailingOnceDataSource(@NonNull DataSource delegate,
+			@NonNull AtomicInteger rollbackCallsOnFailedBegin,
+			@NonNull AtomicInteger aborts,
+			@NonNull AtomicInteger commits) {
+		AtomicBoolean beginFailurePending = new AtomicBoolean(true);
+
+		return connectionWrappingDataSource(delegate, connection -> {
+			AtomicBoolean failedBeginConnection = new AtomicBoolean();
+
+			return connectionProxy(connection, (method, args) -> {
+				String methodName = method.getName();
+
+				if ("setAutoCommit".equals(methodName)
+						&& args != null
+						&& Boolean.FALSE.equals(args[0])
+						&& beginFailurePending.compareAndSet(true, false)) {
+					failedBeginConnection.set(true);
+					throw new SQLException("stale connection failed while disabling autocommit", "08006");
+				}
+
+				if (failedBeginConnection.get() && "rollback".equals(methodName) && method.getParameterCount() == 0) {
+					rollbackCallsOnFailedBegin.incrementAndGet();
+					throw new SQLException("rollback is illegal while autocommit remains enabled", "25000");
+				}
+
+				if ("abort".equals(methodName))
+					aborts.incrementAndGet();
+				else if ("commit".equals(methodName) && method.getParameterCount() == 0)
+					commits.incrementAndGet();
+
+				return invoke(connection, method, args);
+			});
+		});
+	}
+
+	@NonNull
+	private DataSource isolationReadAndRollbackFailingOnceDataSource(@NonNull DataSource delegate,
+			@NonNull AtomicInteger beginCleanupRollbacks,
+			@NonNull AtomicInteger aborts) {
+		AtomicBoolean beginFailurePending = new AtomicBoolean(true);
+
+		return connectionWrappingDataSource(delegate, connection -> {
+			boolean failThisConnection = beginFailurePending.compareAndSet(true, false);
+
+			if (failThisConnection)
+				connection.setAutoCommit(false);
+
+			return connectionProxy(connection, (method, args) -> {
+				String methodName = method.getName();
+
+				if (failThisConnection && "getTransactionIsolation".equals(methodName))
+					throw new SQLException("stale connection failed while reading isolation", "08006");
+
+				if (failThisConnection && "rollback".equals(methodName) && method.getParameterCount() == 0) {
+					beginCleanupRollbacks.incrementAndGet();
+					throw new SQLException("rollback failed during begin cleanup", "08006");
+				}
+
+				if ("abort".equals(methodName))
+					aborts.incrementAndGet();
+
+				return invoke(connection, method, args);
+			});
+		});
+	}
+
+	@NonNull
+	private DataSource runtimeConnectionAcquisitionFailingOnceDataSource(@NonNull DataSource delegate,
+			@NonNull RuntimeException failure) {
+		requireNonNull(delegate);
+		requireNonNull(failure);
+		AtomicBoolean failurePending = new AtomicBoolean(true);
+
+		return (DataSource) Proxy.newProxyInstance(getClass().getClassLoader(), new Class<?>[]{DataSource.class},
+				(proxy, method, args) -> {
+					if ("getConnection".equals(method.getName()) && failurePending.compareAndSet(true, false))
+						throw failure;
+
+					return invoke(delegate, method, args);
+				});
 	}
 
 	@NonNull

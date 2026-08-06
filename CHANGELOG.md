@@ -2,6 +2,25 @@
 
 All notable changes to Pyranid will be documented in this file.
 
+## 4.6.1 (unreleased)
+
+### Fixed
+
+- Transaction attempts that fail while beginning the physical transaction no longer manufacture an illegal rollback,
+  report a false `IN_DOUBT` outcome, or suppress a policy-approved retry before transactional database work could execute.
+  Failed begin candidates are discarded, and a begin failure caught inside the closure is retained and rethrown before
+  commit.
+- PostgreSQL notification cleanup now caps the `UNLISTEN *` statement round trip at 30 seconds while preserving any
+  stricter positive JDBC network timeout. Timeout inspection, mutation, command, statement-close, or restoration failure
+  marks the listener connection uncertain and routes it through abort-then-close instead of returning it to the pool.
+
+### Documentation
+
+- Clarified late-interrupt reconciliation in the notification receive Javadocs and corrected the supervisor example so
+  bounded Pyranid transactions run with the interrupt temporarily cleared and restore the cancellation signal afterward.
+- Documented PostgreSQL listener `socketTimeout` guidance and the distinct bounds for statement cleanup versus partial
+  protocol-frame receive stalls.
+
 ## 4.6.0
 
 ### Added

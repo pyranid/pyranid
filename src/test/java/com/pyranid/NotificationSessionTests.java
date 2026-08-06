@@ -561,6 +561,11 @@ public class NotificationSessionTests {
 			// Not used by NotificationSession.
 		}
 
+		@Override
+		public void unlistenAllForCleanup() {
+			// Not used by NotificationSession.
+		}
+
 		@NonNull
 		@Override
 		public List<@NonNull Notification> receive(@NonNull Duration waitSlice) throws SQLException {
