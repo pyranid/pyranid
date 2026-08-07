@@ -28,18 +28,22 @@ public enum TransactionResult {
 	 */
 	COMMITTED,
 	/**
-	 * The transaction was rolled back.
+	 * Pyranid can prove that no application transaction work committed.
 	 * <p>
-	 * This is the result when rollback completes successfully before commit is attempted, or when the physical commit reports
-	 * a recognized serialization failure and Pyranid's follow-up rollback completes successfully.
+	 * This includes a successful rollback before commit, a successful follow-up rollback after the physical commit reports a
+	 * recognized serialization failure, and a failed physical-transaction begin whose candidate connection Pyranid discarded
+	 * before application transaction work could execute. Therefore, this result does not necessarily mean that Pyranid invoked
+	 * the JDBC {@code rollback()} method.
 	 */
 	ROLLED_BACK,
 	/**
 	 * Pyranid cannot prove the final database outcome because commit failed without a recognized serialization failure followed
-	 * by successful rollback, or because rollback failed.
+	 * by successful rollback, or because rollback failed after application transaction work could have executed.
 	 * <p>
 	 * For example, the database may have committed successfully but the client may not have received the acknowledgement, or
 	 * rollback may have failed before the database confirmed that pending work was discarded.
+	 * A rollback failure while cleaning up a failed physical-transaction begin is not {@code IN_DOUBT} when application
+	 * transaction work could not have executed; Pyranid discards the candidate connection and reports {@link #ROLLED_BACK}.
 	 *
 	 * @since 4.2.0
 	 */

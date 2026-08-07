@@ -105,14 +105,32 @@ final class PostgresNotificationTransport implements NotificationTransport {
 	@Override
 	public void unlistenAllForCleanup() throws SQLException {
 		try {
-			int originalTimeout = this.connection.getNetworkTimeout();
+			int originalTimeout;
+
+			try {
+				originalTimeout = this.connection.getNetworkTimeout();
+			} catch (SQLFeatureNotSupportedException | UnsupportedOperationException | AbstractMethodError failure) {
+				// Legacy wrappers may not expose JDBC 4.1 network-timeout support. Cleanup remains compatible,
+				// but cannot apply the defensive timeout cap when capability discovery itself is unsupported.
+				unlistenAll();
+				return;
+			}
+
 			int cleanupTimeout = originalTimeout > 0
 					? Math.min(originalTimeout, CLEANUP_NETWORK_TIMEOUT_MILLISECONDS)
 					: CLEANUP_NETWORK_TIMEOUT_MILLISECONDS;
 			boolean timeoutChanged = cleanupTimeout != originalTimeout;
 
-			if (timeoutChanged)
-				this.connection.setNetworkTimeout(Runnable::run, cleanupTimeout);
+			if (timeoutChanged) {
+				try {
+					this.connection.setNetworkTimeout(Runnable::run, cleanupTimeout);
+				} catch (SQLFeatureNotSupportedException | UnsupportedOperationException | AbstractMethodError failure) {
+					// An explicit capability failure from the initial guard installation occurs before the
+					// timeout is mutated. Fall back to the same cleanup available to legacy JDBC wrappers.
+					unlistenAll();
+					return;
+				}
+			}
 
 			// unlistenAll() returns only after both statement execution and try-with-resources close succeed.
 			unlistenAll();

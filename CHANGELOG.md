@@ -10,9 +10,10 @@ All notable changes to Pyranid will be documented in this file.
   report a false `IN_DOUBT` outcome, or suppress a policy-approved retry before transactional database work could execute.
   Failed begin candidates are discarded, and a begin failure caught inside the closure is retained and rethrown before
   commit.
-- PostgreSQL notification cleanup now caps the `UNLISTEN *` statement round trip at 30 seconds while preserving any
-  stricter positive JDBC network timeout. Timeout inspection, mutation, command, statement-close, or restoration failure
-  marks the listener connection uncertain and routes it through abort-then-close instead of returning it to the pool.
+- When the JDBC connection supports network-timeout inspection and mutation, PostgreSQL notification cleanup now caps the
+  `UNLISTEN *` statement round trip at 30 seconds while preserving any stricter positive timeout. Explicit capability
+  failures before timeout mutation retain the legacy cleanup path. Other timeout, command, statement-close, or restoration
+  failures mark the listener connection uncertain and route it through abort-then-close instead of returning it to the pool.
 
 ### Documentation
 
@@ -20,6 +21,13 @@ All notable changes to Pyranid will be documented in this file.
   bounded Pyranid transactions run with the interrupt temporarily cleared and restore the cancellation signal afterward.
 - Documented PostgreSQL listener `socketTimeout` guidance and the distinct bounds for statement cleanup versus partial
   protocol-frame receive stalls.
+
+### Migration Notes
+
+- Post-transaction operations can receive `ROLLED_BACK` for a failed physical-transaction begin whose candidate connection
+  Pyranid discarded before application transaction work could execute, even when no JDBC `rollback()` call was made. Treat
+  `ROLLED_BACK` as a determinate guarantee that no application transaction work committed. `IN_DOUBT` remains reserved for
+  failures where application transaction work could have executed and Pyranid cannot prove the final database outcome.
 
 ## 4.6.0
 

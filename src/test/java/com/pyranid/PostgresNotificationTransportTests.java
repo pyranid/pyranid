@@ -149,6 +149,54 @@ public class PostgresNotificationTransportTests {
 	}
 
 	@Test
+	public void testCleanupUnlistenFallsBackWhenNetworkTimeoutInspectionIsUnsupported() throws Exception {
+		for (Throwable capabilityFailure : List.of(
+				new SQLFeatureNotSupportedException("network timeout inspection unsupported"),
+				new UnsupportedOperationException("network timeout inspection unsupported"),
+				new AbstractMethodError("network timeout inspection unsupported"))) {
+			TransportFixture fixture = new TransportFixture();
+			fixture.networkTimeoutInspectionFailure = capabilityFailure;
+			NotificationTransport transport = fixture.openTransport();
+
+			transport.unlistenAllForCleanup();
+
+			Assertions.assertEquals(List.of("UNLISTEN *"), fixture.executedSql);
+			Assertions.assertEquals(List.of(
+					"getNetworkTimeout",
+					"execute:UNLISTEN *",
+					"closeStatement"), fixture.receiveEvents);
+			Assertions.assertTrue(fixture.statementClosed);
+			Assertions.assertFalse(transport.isConnectionUncertain());
+		}
+	}
+
+	@Test
+	public void testCleanupUnlistenFallsBackWhenInitialTimeoutCapIsUnsupported() throws Exception {
+		for (Throwable capabilityFailure : List.of(
+				new SQLFeatureNotSupportedException("network timeout cap unsupported"),
+				new UnsupportedOperationException("network timeout cap unsupported"),
+				new AbstractMethodError("network timeout cap unsupported"))) {
+			TransportFixture fixture = new TransportFixture();
+			fixture.networkTimeout = 0;
+			fixture.failNetworkTimeoutSetCall = 1;
+			fixture.networkTimeoutSetFailure = capabilityFailure;
+			NotificationTransport transport = fixture.openTransport();
+
+			transport.unlistenAllForCleanup();
+
+			Assertions.assertEquals(List.of("UNLISTEN *"), fixture.executedSql);
+			Assertions.assertEquals(List.of(
+					"getNetworkTimeout",
+					"setNetworkTimeout:30000",
+					"execute:UNLISTEN *",
+					"closeStatement"), fixture.receiveEvents);
+			Assertions.assertEquals(0, fixture.networkTimeout);
+			Assertions.assertTrue(fixture.statementClosed);
+			Assertions.assertFalse(transport.isConnectionUncertain());
+		}
+	}
+
+	@Test
 	public void testCleanupUnlistenInspectionAndGuardSetFailuresLatchUncertainty() throws Exception {
 		SQLException inspectionFailure = new SQLException("cleanup timeout inspection failed");
 		TransportFixture inspectionFixture = new TransportFixture();
@@ -229,6 +277,31 @@ public class PostgresNotificationTransportTests {
 		SQLException thrown = Assertions.assertThrows(SQLException.class, transport::unlistenAllForCleanup);
 
 		Assertions.assertSame(restorationFailure, thrown);
+		Assertions.assertEquals(List.of(
+				"getNetworkTimeout",
+				"setNetworkTimeout:30000",
+				"execute:UNLISTEN *",
+				"closeStatement",
+				"setNetworkTimeout:0"), fixture.receiveEvents);
+		Assertions.assertEquals(30_000, fixture.networkTimeout);
+		Assertions.assertTrue(fixture.statementClosed);
+		Assertions.assertTrue(transport.isConnectionUncertain());
+	}
+
+	@Test
+	public void testCleanupUnlistenCapabilityFailureAfterGuardInstallationDoesNotFallBack() throws Exception {
+		UnsupportedOperationException restorationFailure =
+				new UnsupportedOperationException("cleanup timeout restoration unsupported");
+		TransportFixture fixture = new TransportFixture();
+		fixture.failNetworkTimeoutSetCall = 2;
+		fixture.networkTimeoutSetFailure = restorationFailure;
+		NotificationTransport transport = fixture.openTransport();
+
+		UnsupportedOperationException thrown = Assertions.assertThrows(
+				UnsupportedOperationException.class, transport::unlistenAllForCleanup);
+
+		Assertions.assertSame(restorationFailure, thrown);
+		Assertions.assertEquals(List.of("UNLISTEN *"), fixture.executedSql);
 		Assertions.assertEquals(List.of(
 				"getNetworkTimeout",
 				"setNetworkTimeout:30000",

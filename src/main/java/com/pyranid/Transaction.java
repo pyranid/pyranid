@@ -317,8 +317,11 @@ public final class Transaction {
 	 * Adds an operation to the list of operations to be executed when the transaction completes.
 	 * <p>
 	 * The supplied operation receives {@link TransactionResult#COMMITTED} if commit completed successfully,
-	 * {@link TransactionResult#ROLLED_BACK} if rollback completed successfully (including after a recognized commit-time
-	 * serialization failure), or {@link TransactionResult#IN_DOUBT} if Pyranid cannot prove the final database outcome.
+	 * {@link TransactionResult#ROLLED_BACK} if Pyranid can prove that no application transaction work committed (including when
+	 * a failed physical-transaction begin is discarded before application transaction work could execute), or
+	 * {@link TransactionResult#IN_DOUBT} if Pyranid cannot prove the final database outcome after application transaction work
+	 * could have executed. A {@code ROLLED_BACK} result therefore does not necessarily mean that Pyranid invoked the JDBC
+	 * {@code rollback()} method.
 	 * <p>
 	 * If the operation throws, Pyranid wraps the thrown value in a {@link PostTransactionOperationException}. If another
 	 * transaction or cleanup failure is already primary, the wrapper is suppressed onto that primary failure; otherwise,

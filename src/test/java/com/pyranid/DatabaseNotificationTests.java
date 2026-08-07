@@ -810,6 +810,33 @@ public class DatabaseNotificationTests {
 	}
 
 	@Test
+	public void cleanupFallsBackWhenNetworkTimeoutGuardIsUnsupported()
+			throws InterruptedException {
+		SQLFeatureNotSupportedException unsupported =
+				new SQLFeatureNotSupportedException("cleanup network-timeout guard unsupported");
+		ConnectionHarness harness = new ConnectionHarness(true)
+				.failNetworkTimeoutSetOn(1, unsupported);
+		Database database = postgresDatabase(harness, null);
+		AtomicBoolean callbackInvoked = new AtomicBoolean();
+
+		database.withNotificationSession(
+				"car_changed", session -> callbackInvoked.set(true));
+
+		Assertions.assertTrue(callbackInvoked.get());
+		Assertions.assertEquals(1, harness.networkTimeoutSetCalls);
+		Assertions.assertEquals(List.of(
+				"checkout",
+				"getAutoCommit:true",
+				"UNLISTEN *",
+				"drain:1",
+				"LISTEN \"car_changed\"",
+				"UNLISTEN *",
+				"drain:2",
+				"close"), harness.events());
+		Assertions.assertFalse(harness.events().contains("abort"));
+	}
+
+	@Test
 	public void cleanupDrainFailureAbortsInsteadOfReturningConnection() {
 		SQLException cleanupFailure = new SQLException("cleanup drain failed", "XX000");
 		ConnectionHarness harness = new ConnectionHarness(true).failDrainOn(2, cleanupFailure);

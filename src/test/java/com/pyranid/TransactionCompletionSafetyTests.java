@@ -126,9 +126,10 @@ public class TransactionCompletionSafetyTests {
 		AtomicInteger rollbackCallsOnFailedBegin = new AtomicInteger();
 		AtomicInteger aborts = new AtomicInteger();
 		AtomicInteger commits = new AtomicInteger();
+		AtomicInteger acquisitions = new AtomicInteger();
 		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
 		Database database = Database.withDataSource(autoCommitBeginFailingOnceDataSource(
-				delegate, rollbackCallsOnFailedBegin, aborts, commits))
+				delegate, rollbackCallsOnFailedBegin, aborts, commits, acquisitions))
 				.metricsCollector(metricsCollector)
 				.build();
 		AtomicInteger closureRuns = new AtomicInteger();
@@ -151,6 +152,7 @@ public class TransactionCompletionSafetyTests {
 				"Rollback must not run when disabling autocommit never completed");
 		Assertions.assertEquals(1, aborts.get());
 		Assertions.assertEquals(1, commits.get());
+		Assertions.assertEquals(2, acquisitions.get());
 		Assertions.assertEquals(List.of(TransactionResult.ROLLED_BACK, TransactionResult.COMMITTED), transactionResults);
 		Assertions.assertEquals(2, retryResult.getAttemptCount());
 		Assertions.assertEquals(1, retryResult.getFailures().size());
@@ -249,14 +251,16 @@ public class TransactionCompletionSafetyTests {
 	}
 
 	@Test
-	public void caughtBeginFailureIsRethrownBeforeCommit() {
+	public void caughtBeginFailureIsRetainedAcrossReentryAndRethrownBeforeCommit() {
 		DataSource delegate = createInMemoryDataSource("caught_begin_failure");
 		AtomicInteger rollbackCallsOnFailedBegin = new AtomicInteger();
 		AtomicInteger aborts = new AtomicInteger();
 		AtomicInteger commits = new AtomicInteger();
+		AtomicInteger acquisitions = new AtomicInteger();
 		Database database = Database.withDataSource(autoCommitBeginFailingOnceDataSource(
-				delegate, rollbackCallsOnFailedBegin, aborts, commits)).build();
+				delegate, rollbackCallsOnFailedBegin, aborts, commits, acquisitions)).build();
 		AtomicReference<DatabaseException> caughtFailure = new AtomicReference<>();
+		AtomicReference<DatabaseException> reentryFailure = new AtomicReference<>();
 		AtomicReference<TransactionResult> transactionResult = new AtomicReference<>();
 
 		DatabaseException thrown = Assertions.assertThrows(DatabaseException.class, () -> database.transaction(() -> {
@@ -264,15 +268,21 @@ public class TransactionCompletionSafetyTests {
 			transaction.addPostTransactionOperation(transactionResult::set);
 
 			try {
-				transaction.getConnection();
+				database.query("SELECT 1").execute();
 			} catch (DatabaseException failure) {
 				caughtFailure.set(failure);
 			}
+
+			reentryFailure.set(Assertions.assertThrows(DatabaseException.class,
+					() -> database.query("SELECT 2").execute()));
+			Assertions.assertSame(caughtFailure.get(), reentryFailure.get());
 		}));
 
 		Assertions.assertSame(caughtFailure.get(), thrown);
+		Assertions.assertSame(reentryFailure.get(), thrown);
 		Assertions.assertFalse(thrown.isTransactionOutcomeIndeterminate());
 		Assertions.assertEquals(TransactionResult.ROLLED_BACK, transactionResult.get());
+		Assertions.assertEquals(1, acquisitions.get(), "A retained begin failure must prevent another DataSource acquisition");
 		Assertions.assertEquals(0, commits.get(), "A retained begin failure must be rethrown before JDBC commit");
 		Assertions.assertEquals(0, rollbackCallsOnFailedBegin.get());
 		Assertions.assertEquals(1, aborts.get());
@@ -522,10 +532,12 @@ public class TransactionCompletionSafetyTests {
 	private DataSource autoCommitBeginFailingOnceDataSource(@NonNull DataSource delegate,
 			@NonNull AtomicInteger rollbackCallsOnFailedBegin,
 			@NonNull AtomicInteger aborts,
-			@NonNull AtomicInteger commits) {
+			@NonNull AtomicInteger commits,
+			@NonNull AtomicInteger acquisitions) {
 		AtomicBoolean beginFailurePending = new AtomicBoolean(true);
 
 		return connectionWrappingDataSource(delegate, connection -> {
+			acquisitions.incrementAndGet();
 			AtomicBoolean failedBeginConnection = new AtomicBoolean();
 
 			return connectionProxy(connection, (method, args) -> {
