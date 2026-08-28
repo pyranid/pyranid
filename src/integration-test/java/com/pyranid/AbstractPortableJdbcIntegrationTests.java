@@ -58,7 +58,7 @@ abstract class AbstractPortableJdbcIntegrationTests {
 	// Global floor for legs without a @PortableContractCoverageFloor override. This is a blunt numeric
 	// guard against accidental mass-skips, not a per-flag validation; legs whose databases legitimately
 	// skip more portable tests declare a lower floor explicitly so every other leg keeps this default.
-	private static final int MINIMUM_EXECUTED_PORTABLE_CONTRACT_TESTS = 18;
+	private static final int MINIMUM_EXECUTED_PORTABLE_CONTRACT_TESTS = 19;
 	private static final ConcurrentMap<Class<?>, PortableCoverage> PORTABLE_COVERAGE = new ConcurrentHashMap<>();
 
 	public record PersonRow(Long personId, String name, String emailAddress, Locale locale) {}

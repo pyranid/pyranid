@@ -38,8 +38,9 @@ final class OracleDialect extends GenericDialect {
 
 	private OracleDialect() {}
 
+	@NonNull
 	@Override
-	public boolean supportsSqlArray() {
+	public Boolean supportsSqlArray() {
 		return false;
 	}
 
@@ -70,56 +71,63 @@ final class OracleDialect extends GenericDialect {
 		return super.prepareGeneratedKeysStatement(connection, statementContext, keyColumnNames);
 	}
 
+	@NonNull
 	@Override
-	public boolean isUniqueConstraintViolation(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isUniqueConstraintViolation(@NonNull DatabaseExceptionMetadata metadata,
 																						 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
 		return hasErrorCode(metadata, cause, 1);
 	}
 
+	@NonNull
 	@Override
-	public boolean isForeignKeyViolation(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isForeignKeyViolation(@NonNull DatabaseExceptionMetadata metadata,
 																			 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
 		return hasErrorCode(metadata, cause, 2291, 2292);
 	}
 
+	@NonNull
 	@Override
-	public boolean isDeadlock(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isDeadlock(@NonNull DatabaseExceptionMetadata metadata,
 														@Nullable Throwable cause) {
 		requireNonNull(metadata);
 
 		return hasErrorCode(metadata, cause, 60);
 	}
 
+	@NonNull
 	@Override
-	public boolean isTransient(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isTransient(@NonNull DatabaseExceptionMetadata metadata,
 														 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
 		return super.isTransient(metadata, cause) || hasErrorCode(metadata, cause, 60, 8177);
 	}
 
+	@NonNull
 	@Override
-	public boolean isSerializationFailure(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isSerializationFailure(@NonNull DatabaseExceptionMetadata metadata,
 																				@Nullable Throwable cause) {
 		requireNonNull(metadata);
 
 		return hasErrorCode(metadata, cause, 8177);
 	}
 
+	@NonNull
 	@Override
-	public boolean isTimeout(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isTimeout(@NonNull DatabaseExceptionMetadata metadata,
 													 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
 		return super.isTimeout(metadata, cause) || hasErrorCode(metadata, cause, 1013, 51);
 	}
 
+	@NonNull
 	@Override
-	public boolean isTimestampWithTimeZone(@NonNull ResultSetMetaData resultSetMetaData,
+	public Boolean isTimestampWithTimeZone(@NonNull ResultSetMetaData resultSetMetaData,
 																				 @NonNull Integer columnIndex) throws SQLException {
 		requireNonNull(resultSetMetaData);
 		requireNonNull(columnIndex);

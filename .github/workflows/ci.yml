@@ -57,6 +57,7 @@ jobs:
   integration:
     name: ${{ matrix.name }} Integration (JDK 21)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     continue-on-error: ${{ matrix.experimental }}
     strategy:
       fail-fast: false

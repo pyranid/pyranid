@@ -57,8 +57,9 @@ final class SqliteDialect extends UuidStringDialect {
 
 	private SqliteDialect() {}
 
+	@NonNull
 	@Override
-	public boolean isUniqueConstraintViolation(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isUniqueConstraintViolation(@NonNull DatabaseExceptionMetadata metadata,
 																						 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
@@ -66,8 +67,9 @@ final class SqliteDialect extends UuidStringDialect {
 				|| hasSqliteResultCode(cause, UNIQUE_CONSTRAINT_RESULT_CODES);
 	}
 
+	@NonNull
 	@Override
-	public boolean isForeignKeyViolation(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isForeignKeyViolation(@NonNull DatabaseExceptionMetadata metadata,
 																			 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
@@ -75,8 +77,9 @@ final class SqliteDialect extends UuidStringDialect {
 				|| hasSqliteResultCode(cause, FOREIGN_KEY_RESULT_CODES);
 	}
 
+	@NonNull
 	@Override
-	public boolean isTransient(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isTransient(@NonNull DatabaseExceptionMetadata metadata,
 														 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
@@ -85,16 +88,18 @@ final class SqliteDialect extends UuidStringDialect {
 				|| hasSqliteResultCode(cause, TRANSIENT_RESULT_CODES);
 	}
 
+	@NonNull
 	@Override
-	public boolean isSerializationFailure(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isSerializationFailure(@NonNull DatabaseExceptionMetadata metadata,
 																				@Nullable Throwable cause) {
 		requireNonNull(metadata);
 
 		return false;
 	}
 
+	@NonNull
 	@Override
-	public boolean isTimeout(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isTimeout(@NonNull DatabaseExceptionMetadata metadata,
 													 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 

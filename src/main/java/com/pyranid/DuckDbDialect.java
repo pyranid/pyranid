@@ -19,6 +19,7 @@ package com.pyranid;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
+import java.math.BigInteger;
 import java.sql.Array;
 import java.sql.Blob;
 import java.sql.Connection;
@@ -26,7 +27,15 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Struct;
 import java.sql.Types;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.OffsetTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -65,29 +74,67 @@ final class DuckDbDialect extends GenericDialect {
 	@NonNull
 	private static final String UNIQUE_VIOLATION_FRAGMENT = "violates unique constraint";
 	@NonNull
+	private static final String UNIQUE_INDEX_DUPLICATES_FRAGMENT = "data contains duplicates on indexed column";
+	@NonNull
 	private static final String FOREIGN_KEY_VIOLATION_FRAGMENT = "violates foreign key constraint";
 	@NonNull
 	private static final String CONFLICT_FRAGMENT = "conflict";
 
 	private DuckDbDialect() {}
 
+	@NonNull
 	@Override
-	public boolean supportsVector() {
+	public Boolean supportsVector() {
 		return true;
 	}
 
+	@NonNull
 	@Override
-	public boolean supportsSetObjectWithTargetSqlType() {
+	public Boolean supportsSetObjectWithTargetSqlType() {
 		// The driver rejects setObject(int, Object, int targetSqlType) for temporal types with
 		// "Unknown target type"; it binds java.time values natively via untyped setObject
 		return false;
 	}
 
+	@NonNull
 	@Override
-	public boolean bindsOffsetTimeAsString() {
+	public Boolean bindsOffsetTimeAsString() {
 		// The driver accepts setObject(OffsetTime) but fails at execute time with
 		// "Invalid Input Error: Unsupported parameter type"; the ISO-8601 string form casts cleanly to TIMETZ
 		return true;
+	}
+
+	@NonNull
+	@Override
+	public Object normalizeSqlArrayElement(@NonNull String baseTypeName,
+																				 @NonNull Object element,
+																				 @NonNull ZoneId timeZone) {
+		requireNonNull(baseTypeName);
+		requireNonNull(element);
+		requireNonNull(timeZone);
+
+		// DuckDB's driver accepts these values as scalar parameters but rejects them inside
+		// createArrayOf(...) with "Unsupported parameter type". Supply an equivalent form while
+		// preserving Pyranid's scalar timestamp-zone semantics.
+		if (element instanceof BigInteger || element instanceof OffsetTime)
+			return element.toString();
+
+		if (!(element instanceof Instant instant))
+			return element;
+
+		String normalizedBaseTypeName = baseTypeName.toUpperCase(Locale.ROOT);
+		boolean timestampWithTimeZone = normalizedBaseTypeName.contains("WITH TIME ZONE")
+				|| normalizedBaseTypeName.contains("WITH LOCAL TIME ZONE")
+				|| normalizedBaseTypeName.contains("TIMESTAMPTZ");
+		boolean timestampWithoutTimeZone = !timestampWithTimeZone
+				&& (normalizedBaseTypeName.contains("TIMESTAMP") || normalizedBaseTypeName.contains("DATETIME"));
+
+		if (timestampWithoutTimeZone)
+			return LocalDateTime.ofInstant(instant, timeZone);
+		if (timestampWithTimeZone)
+			return OffsetDateTime.ofInstant(instant, ZoneOffset.UTC);
+
+		return instant.toString();
 	}
 
 	@Override
@@ -131,17 +178,20 @@ final class DuckDbDialect extends GenericDialect {
 				DatabaseType.class.getSimpleName(), DatabaseType.DUCK_DB.name()));
 	}
 
+	@NonNull
 	@Override
-	public boolean isUniqueConstraintViolation(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isUniqueConstraintViolation(@NonNull DatabaseExceptionMetadata metadata,
 																						 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
 		return super.isUniqueConstraintViolation(metadata, cause)
-				|| hasDuckDbMessage(cause, CONSTRAINT_ERROR_FRAGMENT, PRIMARY_KEY_VIOLATION_FRAGMENT, UNIQUE_VIOLATION_FRAGMENT);
+				|| hasDuckDbMessage(cause, CONSTRAINT_ERROR_FRAGMENT, PRIMARY_KEY_VIOLATION_FRAGMENT,
+				UNIQUE_VIOLATION_FRAGMENT, UNIQUE_INDEX_DUPLICATES_FRAGMENT);
 	}
 
+	@NonNull
 	@Override
-	public boolean isForeignKeyViolation(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isForeignKeyViolation(@NonNull DatabaseExceptionMetadata metadata,
 																			 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
@@ -149,16 +199,18 @@ final class DuckDbDialect extends GenericDialect {
 				|| hasDuckDbMessage(cause, CONSTRAINT_ERROR_FRAGMENT, FOREIGN_KEY_VIOLATION_FRAGMENT);
 	}
 
+	@NonNull
 	@Override
-	public boolean isTransient(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isTransient(@NonNull DatabaseExceptionMetadata metadata,
 														 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
 		return super.isTransient(metadata, cause) || isWriteWriteConflict(cause);
 	}
 
+	@NonNull
 	@Override
-	public boolean isSerializationFailure(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isSerializationFailure(@NonNull DatabaseExceptionMetadata metadata,
 																				@Nullable Throwable cause) {
 		requireNonNull(metadata);
 
@@ -190,6 +242,12 @@ final class DuckDbDialect extends GenericDialect {
 		// returned untouched when no element needs unwrapping.
 		if (resultSetValue instanceof Object[] elements)
 			return unwrapArrayElements(elements);
+
+		if (resultSetValue instanceof List<?> elements)
+			return unwrapListElements(elements);
+
+		if (resultSetValue instanceof Map<?, ?> entries)
+			return unwrapMapEntries(entries);
 
 		return resultSetValue;
 	}
@@ -266,6 +324,41 @@ final class DuckDbDialect extends GenericDialect {
 		}
 
 		return unwrappedElements == null ? elements : unwrappedElements;
+	}
+
+	@NonNull
+	private List<?> unwrapListElements(@NonNull List<?> elements) {
+		requireNonNull(elements);
+
+		List<Object> unwrappedElements = new ArrayList<>(elements.size());
+		boolean changed = false;
+
+		for (Object element : elements) {
+			Object unwrappedElement = unwrapStructAttributeValue(element);
+			unwrappedElements.add(unwrappedElement);
+			changed |= unwrappedElement != element;
+		}
+
+		return changed ? unwrappedElements : elements;
+	}
+
+	@NonNull
+	private Map<?, ?> unwrapMapEntries(@NonNull Map<?, ?> entries) {
+		requireNonNull(entries);
+
+		Map<Object, Object> unwrappedEntries = new LinkedHashMap<>(entries.size());
+		boolean changed = false;
+
+		for (Map.Entry<?, ?> entry : entries.entrySet()) {
+			Object key = entry.getKey();
+			Object value = entry.getValue();
+			Object unwrappedKey = unwrapStructAttributeValue(key);
+			Object unwrappedValue = unwrapStructAttributeValue(value);
+			unwrappedEntries.put(unwrappedKey, unwrappedValue);
+			changed |= unwrappedKey != key || unwrappedValue != value;
+		}
+
+		return changed ? unwrappedEntries : entries;
 	}
 
 	@Nullable

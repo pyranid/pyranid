@@ -35,9 +35,11 @@ final class MariaDbDialect extends MySqlFamilyDialect {
 	@Override
 	public void configureStreamingPreparedStatement(@NonNull PreparedStatement preparedStatement,
 																									@NonNull DatabaseStreamState databaseStreamState,
-																									boolean transactionPresent,
-																									boolean queryFetchSizeConfigured) throws SQLException {
+																									@NonNull Boolean transactionPresent,
+																									@NonNull Boolean queryFetchSizeConfigured) throws SQLException {
 		requireNonNull(preparedStatement);
 		requireNonNull(databaseStreamState);
+		requireNonNull(transactionPresent);
+		requireNonNull(queryFetchSizeConfigured);
 	}
 }

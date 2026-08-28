@@ -29,7 +29,10 @@ All notable changes to Pyranid will be documented in this file.
   classify as retryable serialization failures, integrating with `RetryPolicy`. Query timeouts surface as
   `SQLTimeoutException` and classify via the generic path.
 - DuckDB result-set niceties: `JSON` columns surface as `String`, `BLOB` columns as `byte[]`, `HUGEINT` as
-  `BigInteger`, and `UUID` columns bind and map natively.
+  `BigInteger`, and `UUID` columns bind and map natively. Nested lists and maps are unwrapped recursively so
+  map-shaped results do not retain DuckDB driver types.
+- DuckDB list literals and subscripts use a DuckDB-aware SQL lexical mode, so named parameters work inside
+  expressions such as `[:first, :second]` without being mistaken for SQL Server bracket-quoted identifiers.
 - JDBC generated-key retrieval (`executeReturningGeneratedKey(...)`) is guarded on DuckDB with a clear
   `DatabaseException` directing callers to `INSERT ... RETURNING`, instead of the driver's unhelpful
   `SQLFeatureNotSupportedException`.
@@ -46,14 +49,19 @@ All notable changes to Pyranid will be documented in this file.
 
 - `DatabaseType` gained the `DUCK_DB` constant. Exhaustive `switch` expressions over `DatabaseType` in
   application code must add a `DUCK_DB` (or `default`) arm when recompiling against 4.7.0.
-- `DefaultResultSetMapper::mapResultSetToRecord` may now return `null` (previously it always returned a
-  record or threw) when the row is a single `NULL` SQL STRUCT column. Single-object fetches surface such
-  rows as `Optional.empty()`; list and stream fetches surface a `null` element for each such row,
-  consistent with existing `NULL` standard-type handling.
+- A single `NULL` SQL STRUCT fetched directly as a record produces `Optional.empty()` from single-object
+  fetches and a `null` element in list/stream results, consistent with existing `NULL` standard-type handling.
 - DuckDB SQL that uses `:` in struct literals (`{'key':expr}`) or list slicing (`list[a:b]`) collides with
   Pyranid's named-parameter syntax when the character after `:` can start an identifier. Write a space
   after the colon (`{'key': expr}`), or use `struct_pack(key := expr)` / `list_slice(...)` instead.
-  DuckDB's `::` casts and `->`/`->>` JSON operators need no escaping.
+  DuckDB's `::` casts and `->`/`->>` JSON operators need no escaping. Named parameters inside DuckDB list
+  literals (`[:first, :second]`) now bind as expected.
+- SQL containing `[` whose DuckDB lexical parse differs from the standard parse - for example a SQL Server
+  bracket-quoted identifier that contains a colon, as in `[a:ignored]` - now requires a known
+  `DatabaseType`, so such a statement may trigger lazy database-type detection (and its connection
+  checkout) where it previously did not. Ordinary bracket-quoted identifiers such as `[order]` parse
+  identically in both modes and are unaffected. Configure `Database.Builder::databaseType(...)`
+  explicitly to avoid the lookup. This matches the existing behavior for MySQL-specific lexical variants.
 
 ## 4.6.1
 

@@ -669,8 +669,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			if (standardTypeResult.isStandardType())
 				return standardTypeResult.getValue();
 
-			if (resultSetRowType.isRecord())
-				return Optional.ofNullable((T) mapResultSetToRecord((StatementContext<? extends Record>) statementContext, resultSet, instanceProvider, resultSetMetaData));
+			if (resultSetRowType.isRecord()) {
+				if (isSingleStructColumn(resultSetMetaData) && !resultSetHasMappedRowColumns(resultSetRowType, resultSetMetaData))
+					return Optional.ofNullable(mapStructColumnToRecord(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData));
+
+				return Optional.of((T) mapResultSetToRecord((StatementContext<? extends Record>) statementContext, resultSet, instanceProvider, resultSetMetaData));
+			}
 
 			return Optional.ofNullable(mapResultSetToBean(statementContext, resultSet, instanceProvider, resultSetMetaData));
 		} catch (DatabaseException e) {
@@ -1199,10 +1203,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	 * @param statementContext current SQL context
 	 * @param resultSet        provides raw row data to pull from
 	 * @param instanceProvider an instance-creation factory, used to instantiate resultset row objects as needed.
-	 * @return the result of the mapping, or {@code null} when the row is a single {@code NULL} SQL STRUCT column
+	 * @return the result of the mapping
 	 * @throws Exception if an error occurs during mapping
 	 */
-	@Nullable
+	@NonNull
 	protected <T extends Record> T mapResultSetToRecord(@NonNull StatementContext<T> statementContext,
 																											@NonNull ResultSet resultSet,
 																											@NonNull InstanceProvider instanceProvider,
@@ -1295,12 +1299,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			}
 		}
 
-		if (mappedColumnCount == 0) {
-			if (isSingleStructColumn(resultSetMetaData))
-				return mapStructColumnToRecord(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData);
-
+		if (mappedColumnCount == 0)
 			throw noRecordColumnMappingsException(resultSetRowType, resultSetMetaData);
-		}
 
 		if (!missingPrimitiveRecordComponents.isEmpty()) {
 			RecordComponent missingPrimitiveRecordComponent = missingPrimitiveRecordComponents.get(0);

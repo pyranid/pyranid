@@ -44,10 +44,12 @@ abstract class MySqlFamilyDialect extends UuidStringDialect {
 	@Override
 	public void configureStreamingPreparedStatement(@NonNull PreparedStatement preparedStatement,
 																										@NonNull DatabaseStreamState databaseStreamState,
-																										boolean transactionPresent,
-																									boolean queryFetchSizeConfigured) throws SQLException {
+																										@NonNull Boolean transactionPresent,
+																									@NonNull Boolean queryFetchSizeConfigured) throws SQLException {
 		requireNonNull(preparedStatement);
 		requireNonNull(databaseStreamState);
+		requireNonNull(transactionPresent);
+		requireNonNull(queryFetchSizeConfigured);
 
 		if (queryFetchSizeConfigured)
 			return;
@@ -55,40 +57,45 @@ abstract class MySqlFamilyDialect extends UuidStringDialect {
 		preparedStatement.setFetchSize(Integer.MIN_VALUE);
 	}
 
+	@NonNull
 	@Override
-	public boolean isUniqueConstraintViolation(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isUniqueConstraintViolation(@NonNull DatabaseExceptionMetadata metadata,
 																						 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
 		return hasErrorCode(metadata, cause, 1062);
 	}
 
+	@NonNull
 	@Override
-	public boolean isForeignKeyViolation(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isForeignKeyViolation(@NonNull DatabaseExceptionMetadata metadata,
 																			 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
 		return hasErrorCode(metadata, cause, 1451, 1452);
 	}
 
+	@NonNull
 	@Override
-	public boolean isDeadlock(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isDeadlock(@NonNull DatabaseExceptionMetadata metadata,
 														@Nullable Throwable cause) {
 		requireNonNull(metadata);
 
 		return hasErrorCode(metadata, cause, 1213);
 	}
 
+	@NonNull
 	@Override
-	public boolean isTransient(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isTransient(@NonNull DatabaseExceptionMetadata metadata,
 														 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
 		return super.isTransient(metadata, cause) || hasErrorCode(metadata, cause, 1213, 1205);
 	}
 
+	@NonNull
 	@Override
-	public boolean isSerializationFailure(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isSerializationFailure(@NonNull DatabaseExceptionMetadata metadata,
 																				@Nullable Throwable cause) {
 		requireNonNull(metadata);
 
@@ -98,8 +105,9 @@ abstract class MySqlFamilyDialect extends UuidStringDialect {
 		return !hasErrorCode(metadata, cause, 1213, 1205, 3024) && super.isSerializationFailure(metadata, cause);
 	}
 
+	@NonNull
 	@Override
-	public boolean isTimeout(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isTimeout(@NonNull DatabaseExceptionMetadata metadata,
 													 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 

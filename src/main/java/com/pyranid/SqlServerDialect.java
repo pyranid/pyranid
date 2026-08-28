@@ -34,32 +34,36 @@ final class SqlServerDialect extends UuidStringDialect {
 
 	private SqlServerDialect() {}
 
+	@NonNull
 	@Override
-	public boolean isUniqueConstraintViolation(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isUniqueConstraintViolation(@NonNull DatabaseExceptionMetadata metadata,
 																						 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
 		return hasErrorCode(metadata, cause, 2627, 2601);
 	}
 
+	@NonNull
 	@Override
-	public boolean isDeadlock(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isDeadlock(@NonNull DatabaseExceptionMetadata metadata,
 														@Nullable Throwable cause) {
 		requireNonNull(metadata);
 
 		return hasErrorCode(metadata, cause, 1205);
 	}
 
+	@NonNull
 	@Override
-	public boolean isTransient(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isTransient(@NonNull DatabaseExceptionMetadata metadata,
 														 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
 		return super.isTransient(metadata, cause) || hasErrorCode(metadata, cause, 1205, 1222);
 	}
 
+	@NonNull
 	@Override
-	public boolean isSerializationFailure(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isSerializationFailure(@NonNull DatabaseExceptionMetadata metadata,
 																				@Nullable Throwable cause) {
 		requireNonNull(metadata);
 
@@ -67,16 +71,18 @@ final class SqlServerDialect extends UuidStringDialect {
 				|| (!hasErrorCode(metadata, cause, 1205) && super.isSerializationFailure(metadata, cause));
 	}
 
+	@NonNull
 	@Override
-	public boolean isTimeout(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isTimeout(@NonNull DatabaseExceptionMetadata metadata,
 													 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
 		return super.isTimeout(metadata, cause) || hasErrorCode(metadata, cause, -2, 1222);
 	}
 
+	@NonNull
 	@Override
-	public boolean isTimestampWithTimeZone(@NonNull ResultSetMetaData resultSetMetaData,
+	public Boolean isTimestampWithTimeZone(@NonNull ResultSetMetaData resultSetMetaData,
 																				 @NonNull Integer columnIndex) throws SQLException {
 		requireNonNull(resultSetMetaData);
 		requireNonNull(columnIndex);

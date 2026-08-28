@@ -199,6 +199,11 @@ public class DatabaseExceptionClassificationTests {
 		Assertions.assertTrue(unique.isUniqueConstraintViolation());
 		Assertions.assertFalse(unique.isForeignKeyViolation());
 
+		DatabaseException uniqueIndex = databaseException(DatabaseType.DUCK_DB,
+				new SQLException("Constraint Error: Data contains duplicates on indexed column(s)"));
+		Assertions.assertTrue(uniqueIndex.isUniqueConstraintViolation());
+		Assertions.assertFalse(uniqueIndex.isForeignKeyViolation());
+
 		DatabaseException foreignKey = databaseException(DatabaseType.DUCK_DB,
 				new SQLException("Constraint Error: Violates foreign key constraint because key \"id: 999\" does not exist in the referenced table"));
 		Assertions.assertTrue(foreignKey.isForeignKeyViolation());

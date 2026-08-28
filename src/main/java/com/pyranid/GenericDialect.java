@@ -29,6 +29,7 @@ import java.sql.SQLTransientException;
 import java.sql.SQLTimeoutException;
 import java.sql.Statement;
 import java.sql.Types;
+import java.time.ZoneId;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Collections;
@@ -60,33 +61,49 @@ class GenericDialect implements DatabaseDialect {
 
 	@NonNull
 	@Override
-	public List<String> sqlFragmentsForOperators(boolean hasQuestionMarkOperators,
+	public List<String> sqlFragmentsForOperators(@NonNull Boolean hasQuestionMarkOperators,
 																							 @NonNull List<String> sqlFragments,
 																							 @NonNull List<@NonNull List<@NonNull Integer>> questionMarkOperatorFragmentIndexes) {
+		requireNonNull(hasQuestionMarkOperators);
 		requireNonNull(sqlFragments);
 		requireNonNull(questionMarkOperatorFragmentIndexes);
 
 		return sqlFragments;
 	}
 
+	@NonNull
 	@Override
-	public boolean supportsSqlArray() {
+	public Boolean supportsSqlArray() {
 		return true;
 	}
 
+	@NonNull
 	@Override
-	public boolean supportsVector() {
+	public Boolean supportsVector() {
 		return false;
 	}
 
+	@NonNull
 	@Override
-	public boolean supportsSetObjectWithTargetSqlType() {
+	public Boolean supportsSetObjectWithTargetSqlType() {
 		return true;
 	}
 
+	@NonNull
 	@Override
-	public boolean bindsOffsetTimeAsString() {
+	public Boolean bindsOffsetTimeAsString() {
 		return false;
+	}
+
+	@NonNull
+	@Override
+	public Object normalizeSqlArrayElement(@NonNull String baseTypeName,
+																				 @NonNull Object element,
+																				 @NonNull ZoneId timeZone) {
+		requireNonNull(baseTypeName);
+		requireNonNull(element);
+		requireNonNull(timeZone);
+		return element;
 	}
 
 	@NonNull
@@ -128,15 +145,17 @@ class GenericDialect implements DatabaseDialect {
 		requireNonNull(preparedStatement);
 		requireNonNull(parameterIndex);
 
-		throw new IllegalArgumentException(format("%s supported only on %s.%s",
-				VectorParameter.class.getSimpleName(), DatabaseType.class.getSimpleName(), DatabaseType.POSTGRESQL.name()));
+		throw new IllegalArgumentException(format("%s supported only on %s.%s and %s.%s",
+				VectorParameter.class.getSimpleName(), DatabaseType.class.getSimpleName(), DatabaseType.POSTGRESQL.name(),
+				DatabaseType.class.getSimpleName(), DatabaseType.DUCK_DB.name()));
 	}
 
 	@NonNull
 	@Override
 	public DatabaseStreamState configureStreamingConnection(@NonNull Connection connection,
-																												 boolean transactionPresent) throws SQLException {
+																												 @NonNull Boolean transactionPresent) throws SQLException {
 		requireNonNull(connection);
+		requireNonNull(transactionPresent);
 
 		return DatabaseStreamState.none();
 	}
@@ -168,20 +187,23 @@ class GenericDialect implements DatabaseDialect {
 	@Override
 	public void configureStreamingPreparedStatement(@NonNull PreparedStatement preparedStatement,
 																									@NonNull DatabaseStreamState databaseStreamState,
-																									boolean transactionPresent,
-																									boolean queryFetchSizeConfigured) throws SQLException {
+																									@NonNull Boolean transactionPresent,
+																									@NonNull Boolean queryFetchSizeConfigured) throws SQLException {
 		requireNonNull(preparedStatement);
 		requireNonNull(databaseStreamState);
+		requireNonNull(transactionPresent);
+		requireNonNull(queryFetchSizeConfigured);
 	}
 
 	@Nullable
 	@Override
 	public Throwable completeStreamingConnection(@NonNull Connection connection,
 																							 @NonNull DatabaseStreamState databaseStreamState,
-																							 boolean streamSucceeded,
+																							 @NonNull Boolean streamSucceeded,
 																							 @Nullable Throwable cleanupFailure) {
 		requireNonNull(connection);
 		requireNonNull(databaseStreamState);
+		requireNonNull(streamSucceeded);
 
 		return cleanupFailure;
 	}
@@ -192,32 +214,36 @@ class GenericDialect implements DatabaseDialect {
 		return DatabaseExceptionMetadata.fromCause(cause);
 	}
 
+	@NonNull
 	@Override
-	public boolean isUniqueConstraintViolation(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isUniqueConstraintViolation(@NonNull DatabaseExceptionMetadata metadata,
 																						 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
 		return hasSqlState(metadata, cause, "23505");
 	}
 
+	@NonNull
 	@Override
-	public boolean isForeignKeyViolation(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isForeignKeyViolation(@NonNull DatabaseExceptionMetadata metadata,
 																			 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
 		return hasSqlState(metadata, cause, "23503");
 	}
 
+	@NonNull
 	@Override
-	public boolean isDeadlock(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isDeadlock(@NonNull DatabaseExceptionMetadata metadata,
 														@Nullable Throwable cause) {
 		requireNonNull(metadata);
 
 		return false;
 	}
 
+	@NonNull
 	@Override
-	public boolean isTransient(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isTransient(@NonNull DatabaseExceptionMetadata metadata,
 														 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
@@ -226,16 +252,18 @@ class GenericDialect implements DatabaseDialect {
 				|| hasSqlStateClass(metadata, cause, "08", "40");
 	}
 
+	@NonNull
 	@Override
-	public boolean isSerializationFailure(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isSerializationFailure(@NonNull DatabaseExceptionMetadata metadata,
 																				@Nullable Throwable cause) {
 		requireNonNull(metadata);
 
 		return hasSqlState(metadata, cause, "40001");
 	}
 
+	@NonNull
 	@Override
-	public boolean isTimeout(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isTimeout(@NonNull DatabaseExceptionMetadata metadata,
 													 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
@@ -249,8 +277,9 @@ class GenericDialect implements DatabaseDialect {
 		return requireNonNull(resultSetValue);
 	}
 
+	@NonNull
 	@Override
-	public boolean isTimestampWithTimeZone(@NonNull ResultSetMetaData resultSetMetaData,
+	public Boolean isTimestampWithTimeZone(@NonNull ResultSetMetaData resultSetMetaData,
 																				 @NonNull Integer columnIndex) throws SQLException {
 		requireNonNull(resultSetMetaData);
 		requireNonNull(columnIndex);

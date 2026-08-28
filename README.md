@@ -233,7 +233,7 @@ Pyranid supports named parameters (e.g. `:id`) only; positional `?` parameters a
 
 ### SQL Parsing Rules
 
-Pyranid scans SQL before handing it to JDBC so it can translate named parameters into `PreparedStatement` placeholders. It ignores parameter-looking text inside string literals, quoted identifiers, comments, PostgreSQL dollar-quoted strings, and SQL Server-style bracket-quoted identifiers. Unterminated quotes, dollar-quoted strings, and block comments fail fast with an `IllegalArgumentException`.
+Pyranid scans SQL before handing it to JDBC so it can translate named parameters into `PreparedStatement` placeholders. It ignores parameter-looking text inside string literals, quoted identifiers, comments, PostgreSQL dollar-quoted strings, and SQL Server-style bracket-quoted identifiers. For a configured or detected DuckDB database, brackets are treated as list/subscript syntax instead, so list literals such as `[:first, :second]` can contain named parameters. Unterminated quotes, dollar-quoted strings, and block comments fail fast with an `IllegalArgumentException`.
 
 PostgreSQL JSONB/hstore `?`, `?|`, and `?&` operators are supported. When the `Database` is configured or detected as PostgreSQL, Pyranid automatically emits pgjdbc's escaped `??` form for those operators while preserving named-parameter binding.
 
@@ -940,9 +940,9 @@ Pyranid preserves the fractional-second precision returned by your JDBC driver; 
 
 SQL ARRAY columns can be mapped to Java array targets such as `String[]` or `UUID[]`. They can also be mapped to `List<T>` or `Set<T>` when Pyranid can see the generic element type from a Record component or JavaBean setter, for example `record Row(List<String> tags, Set<String> labels) {}` or `void setTags(Set<String> tags)`. Raw scalar `List.class` and `Set.class` targets are supported too, but the element type is whatever the JDBC driver returns because Java's `Class<List>` and `Class<Set>` tokens carry no generic type argument. Set targets use insertion order from the SQL ARRAY and apply normal Set semantics, so duplicates collapse and multiple SQL `NULL` elements become one `null`.
 
-PostgreSQL `JSON`/`JSONB` values returned by pgjdbc as `PGobject` map to `String` by default. Pyranid does not parse JSON into application objects; register a [`CustomColumnMapper`](https://javadoc.pyranid.com/com/pyranid/CustomColumnMapper.html) when you want to inflate JSON into your own type.
+PostgreSQL `JSON`/`JSONB` values returned by pgjdbc as `PGobject`, and DuckDB `JSON` values returned as driver nodes, map to `String` by default. Pyranid does not parse JSON into application objects; register a [`CustomColumnMapper`](https://javadoc.pyranid.com/com/pyranid/CustomColumnMapper.html) when you want to inflate JSON into your own type.
 
-Vector columns (e.g. pgvector), which drivers surface as text such as `[0.1,0.2,0.3]`, map to `float[]` and `double[]` targets - Pyranid parses the vector literal. See the Vector section in Parameter Binding for the bind side.
+Text-backed vector columns such as pgvector, which pgjdbc surfaces as literals like `[0.1,0.2,0.3]`, map to `float[]` and `double[]` targets by parsing that literal. DuckDB fixed-size vector ARRAYs use Pyranid's SQL ARRAY conversion path. See the Vector section in Parameter Binding for the bind side.
 
 ### SQL STRUCT Results
 

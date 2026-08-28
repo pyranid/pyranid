@@ -19,15 +19,20 @@ package com.pyranid;
 import org.jspecify.annotations.NonNull;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 import javax.sql.DataSource;
 import java.math.BigInteger;
 import java.nio.file.Path;
+import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.OffsetTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -58,6 +63,8 @@ public class DuckDbIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 	public record BlobRow(byte[] payload) {}
 
 	public record ArrayRow(List<Integer> vals) {}
+
+	public record MapPayload(Map<String, Object> values) {}
 
 	@TempDir
 	private Path tempDir;
@@ -200,6 +207,35 @@ public class DuckDbIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 	}
 
 	@Test
+	public void testDuckDbNestedMapValuesContainNoDriverTypes() {
+		Database db = database();
+		String sql = "SELECT {'values': map(['doc'], ['{\"kind\":\"nested\"}'::JSON])} AS payload";
+
+		MapPayload payload = db.query(sql)
+				.fetchObject(MapPayload.class)
+				.orElseThrow();
+		Assertions.assertEquals("{\"kind\":\"nested\"}", payload.values().get("doc"));
+
+		Map<?, ?> row = db.query(sql)
+				.fetchObject(Map.class)
+				.orElseThrow();
+		Map<?, ?> payloadMap = Assertions.assertInstanceOf(Map.class, row.get("payload"));
+		Map<?, ?> nestedValues = Assertions.assertInstanceOf(Map.class, payloadMap.get("values"));
+		Assertions.assertEquals("{\"kind\":\"nested\"}", nestedValues.get("doc"));
+	}
+
+	@Test
+	public void testDuckDbNamedParametersWorkInsideListLiterals() {
+		List<?> values = database().query("SELECT [:first, :second]")
+				.bind("first", 7)
+				.bind("second", 8)
+				.fetchObject(List.class)
+				.orElseThrow();
+
+		Assertions.assertEquals(List.of(7, 8), values);
+	}
+
+	@Test
 	public void testDuckDbUuidNativeRoundTrip() {
 		Database db = database();
 		String table = "pyranid_duckdb_uuid_items";
@@ -319,6 +355,63 @@ public class DuckDbIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 				.fetchObject(ArrayRow.class)
 				.orElseThrow()
 				.vals());
+	}
+
+	@Test
+	public void testDuckDbSqlArrayElementsNormalizeDriverUnsupportedTypes() {
+		ZoneId databaseTimeZone = ZoneId.of("America/New_York");
+		Database db = Database.withDataSource(dataSource())
+				.databaseType(DatabaseType.DUCK_DB)
+				.timeZone(databaseTimeZone)
+				.build();
+		String table = "pyranid_duckdb_array_normalization_items";
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "offset_times TIMETZ[], "
+				+ "instants_with_time_zone TIMESTAMPTZ[], "
+				+ "instants_without_time_zone TIMESTAMP[], "
+				+ "sql_timestamps TIMESTAMPTZ[], "
+				+ "util_dates TIMESTAMPTZ[], "
+				+ "hugeints HUGEINT[]"
+				+ ")");
+
+		OffsetTime offsetTime = OffsetTime.of(10, 30, 15, 123456000, ZoneOffset.ofHours(-4));
+		Instant instant = Instant.parse("2026-08-27T14:30:15.123456Z");
+		Timestamp sqlTimestamp = Timestamp.from(Instant.parse("2026-08-27T15:30:15.654321Z"));
+		Date utilDate = Date.from(Instant.parse("2026-08-27T16:30:15.123Z"));
+		BigInteger hugeint = new BigInteger("170141183460469231731687303715884105727");
+
+		db.query("INSERT INTO " + table + " VALUES ("
+						+ ":offsetTimes, :instantsWithTimeZone, :instantsWithoutTimeZone, "
+						+ ":sqlTimestamps, :utilDates, :hugeints)")
+				.bind("offsetTimes", Parameters.sqlArrayOf("TIMETZ", List.of(offsetTime)))
+				.bind("instantsWithTimeZone", Parameters.sqlArrayOf("TIMESTAMPTZ", List.of(instant)))
+				.bind("instantsWithoutTimeZone", Parameters.sqlArrayOf("TIMESTAMP", List.of(instant)))
+				.bind("sqlTimestamps", Parameters.sqlArrayOf("TIMESTAMPTZ", List.of(sqlTimestamp)))
+				.bind("utilDates", Parameters.sqlArrayOf("TIMESTAMPTZ", List.of(utilDate)))
+				.bind("hugeints", Parameters.sqlArrayOf("HUGEINT", List.of(hugeint)))
+				.execute();
+
+		OffsetTime fetchedOffsetTime = db.query("SELECT offset_times[1] FROM " + table)
+				.fetchObject(OffsetTime.class)
+				.orElseThrow();
+		Assertions.assertTrue(offsetTime.isEqual(fetchedOffsetTime),
+				"Expected " + offsetTime + " but fetched " + fetchedOffsetTime);
+		Assertions.assertEquals(instant, db.query("SELECT instants_with_time_zone[1] FROM " + table)
+				.fetchObject(Instant.class)
+				.orElseThrow());
+		Assertions.assertEquals(LocalDateTime.ofInstant(instant, databaseTimeZone),
+				db.query("SELECT instants_without_time_zone[1] FROM " + table)
+						.fetchObject(LocalDateTime.class)
+						.orElseThrow());
+		Assertions.assertEquals(sqlTimestamp.toInstant(), db.query("SELECT sql_timestamps[1] FROM " + table)
+				.fetchObject(Instant.class)
+				.orElseThrow());
+		Assertions.assertEquals(utilDate.toInstant(), db.query("SELECT util_dates[1] FROM " + table)
+				.fetchObject(Instant.class)
+				.orElseThrow());
+		Assertions.assertEquals(hugeint, db.query("SELECT hugeints[1] FROM " + table)
+				.fetchObject(BigInteger.class)
+				.orElseThrow());
 	}
 
 	@Test
@@ -493,6 +586,40 @@ public class DuckDbIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 	}
 
 	@Test
+	public void testDuckDbUniqueIndexCreationFailureIsClassified() {
+		Database db = database();
+		String table = "pyranid_duckdb_unique_index_items";
+		recreateTable(db, table, "CREATE TABLE " + table + " (value INTEGER NOT NULL)");
+		db.query("INSERT INTO " + table + " VALUES (1), (1)").execute();
+
+		DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("CREATE UNIQUE INDEX " + table + "_value_uidx ON " + table + " (value)").execute());
+
+		Assertions.assertTrue(exception.isUniqueConstraintViolation(),
+				"Duplicate data rejected by CREATE UNIQUE INDEX should classify as a unique violation; message was: "
+						+ exception.getMessage());
+	}
+
+	@Test
+	public void testDuckDbForeignKeyViolationIsClassified() {
+		Database db = database();
+		String parentTable = "pyranid_duckdb_fk_parents";
+		String childTable = "pyranid_duckdb_fk_children";
+		db.query("DROP TABLE IF EXISTS " + childTable).execute();
+		db.query("DROP TABLE IF EXISTS " + parentTable).execute();
+		db.query("CREATE TABLE " + parentTable + " (id INTEGER PRIMARY KEY)").execute();
+		db.query("CREATE TABLE " + childTable + " (parent_id INTEGER REFERENCES " + parentTable + " (id))").execute();
+
+		DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("INSERT INTO " + childTable + " (parent_id) VALUES (999)").execute());
+
+		Assertions.assertTrue(exception.isForeignKeyViolation(),
+				"Missing parent should classify as a foreign-key violation; message was: " + exception.getMessage());
+		Assertions.assertFalse(exception.isUniqueConstraintViolation());
+	}
+
+	@Test
+	@Timeout(value = 10, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
 	public void testDuckDbQueryTimeoutClassifiesAsTimeout() {
 		Database db = database();
 
@@ -507,6 +634,7 @@ public class DuckDbIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 	}
 
 	@Test
+	@Timeout(value = 10, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
 	public void testDuckDbWriteWriteConflictClassifiesAsSerializationFailure() {
 		Database db = database();
 		Database otherDb = Database.withDataSource(new DriverManagerDataSource(jdbcUrl(), null, null))
@@ -530,16 +658,23 @@ public class DuckDbIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 				try {
 					otherDb.query("UPDATE " + table + " SET val = 2 WHERE id = 1").execute();
 				} catch (DatabaseException e) {
-					conflictException.set(e);
+						conflictException.set(e);
 				}
 			});
+			writer.setName("pyranid-duckdb-conflicting-writer");
+			writer.setDaemon(true);
 			writer.start();
 
 			try {
-				writer.join();
+				writer.join(5_000);
 			} catch (InterruptedException e) {
 				Thread.currentThread().interrupt();
 				throw new IllegalStateException("Interrupted waiting for the conflicting writer", e);
+			}
+
+			if (writer.isAlive()) {
+				writer.interrupt();
+				Assertions.fail("Timed out waiting for DuckDB to reject the conflicting writer");
 			}
 		});
 

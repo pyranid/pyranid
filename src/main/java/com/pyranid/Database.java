@@ -1526,8 +1526,10 @@ public final class Database {
 
 		ParsedSql standardParsedSql = null;
 		ParsedSql mysqlParsedSql = null;
+		ParsedSql duckDbParsedSql = null;
 		IllegalArgumentException standardParseFailure = null;
 		IllegalArgumentException mysqlParseFailure = null;
+		IllegalArgumentException duckDbParseFailure = null;
 
 		try {
 			standardParsedSql = parseNamedParameterSql(sql, SqlLexicalMode.STANDARD);
@@ -1546,33 +1548,50 @@ public final class Database {
 			mysqlParseFailure = standardParseFailure;
 		}
 
-		if (standardParsedSql == null && mysqlParsedSql == null)
-			throw requireNonNull(standardParseFailure);
+		if (requiresDuckDbLexicalVariant(sql)) {
+			try {
+				duckDbParsedSql = parseNamedParameterSql(sql, SqlLexicalMode.DUCK_DB);
+			} catch (IllegalArgumentException e) {
+				duckDbParseFailure = e;
+			}
+		} else {
+			duckDbParsedSql = standardParsedSql;
+			duckDbParseFailure = standardParseFailure;
+		}
+
+		if (standardParsedSql == null && mysqlParsedSql == null && duckDbParsedSql == null)
+			throw requireNonNull(standardParseFailure != null ? standardParseFailure
+					: mysqlParseFailure != null ? mysqlParseFailure : duckDbParseFailure);
+
+		ParsedSql fallbackParsedSql = standardParsedSql != null ? standardParsedSql
+				: mysqlParsedSql != null ? mysqlParsedSql : requireNonNull(duckDbParsedSql);
 
 		ParsedSql effectiveStandardParsedSql = standardParsedSql == null
-				? requireNonNull(mysqlParsedSql)
+				? fallbackParsedSql
 				: standardParsedSql;
 		ParsedSql effectiveMysqlParsedSql = mysqlParsedSql == null
-				? effectiveStandardParsedSql
+				? fallbackParsedSql
 				: mysqlParsedSql;
-		Set<String> distinctParameterNames;
-
-		if (effectiveStandardParsedSql.distinctParameterNames.equals(effectiveMysqlParsedSql.distinctParameterNames)) {
-			distinctParameterNames = effectiveStandardParsedSql.distinctParameterNames;
-		} else {
-			Set<String> combinedParameterNames = new HashSet<>(effectiveStandardParsedSql.distinctParameterNames);
-			combinedParameterNames.addAll(effectiveMysqlParsedSql.distinctParameterNames);
-			distinctParameterNames = Set.copyOf(combinedParameterNames);
-		}
+		ParsedSql effectiveDuckDbParsedSql = duckDbParsedSql == null
+				? fallbackParsedSql
+				: duckDbParsedSql;
+		Set<String> combinedParameterNames = new HashSet<>(effectiveStandardParsedSql.distinctParameterNames);
+		combinedParameterNames.addAll(effectiveMysqlParsedSql.distinctParameterNames);
+		combinedParameterNames.addAll(effectiveDuckDbParsedSql.distinctParameterNames);
+		Set<String> distinctParameterNames = Set.copyOf(combinedParameterNames);
 
 		boolean requiresDatabaseType = standardParseFailure != null
 				|| mysqlParseFailure != null
-				|| !effectiveStandardParsedSql.equivalentTo(effectiveMysqlParsedSql);
+				|| duckDbParseFailure != null
+				|| !effectiveStandardParsedSql.equivalentTo(effectiveMysqlParsedSql)
+				|| !effectiveStandardParsedSql.equivalentTo(effectiveDuckDbParsedSql);
 
 		return new ParsedSqlVariants(effectiveStandardParsedSql,
 				effectiveMysqlParsedSql,
+				effectiveDuckDbParsedSql,
 				standardParseFailure == null ? null : requireNonNull(standardParseFailure.getMessage()),
 				mysqlParseFailure == null ? null : requireNonNull(mysqlParseFailure.getMessage()),
+				duckDbParseFailure == null ? null : requireNonNull(duckDbParseFailure.getMessage()),
 				distinctParameterNames,
 				requiresDatabaseType);
 	}
@@ -1582,29 +1601,42 @@ public final class Database {
 		return sql.indexOf('#') >= 0 || sql.indexOf("\\'") >= 0;
 	}
 
+	private static boolean requiresDuckDbLexicalVariant(@NonNull String sql) {
+		requireNonNull(sql);
+		return sql.indexOf('[') >= 0;
+	}
+
 	private static final class ParsedSqlVariants {
 		@NonNull
 		private final ParsedSql standardParsedSql;
 		@NonNull
 		private final ParsedSql mysqlParsedSql;
+		@NonNull
+		private final ParsedSql duckDbParsedSql;
 		@Nullable
 		private final String standardParseFailureMessage;
 		@Nullable
 		private final String mysqlParseFailureMessage;
+		@Nullable
+		private final String duckDbParseFailureMessage;
 		@NonNull
 		private final Set<String> distinctParameterNames;
 		private final boolean requiresDatabaseType;
 
 		private ParsedSqlVariants(@NonNull ParsedSql standardParsedSql,
 														@NonNull ParsedSql mysqlParsedSql,
+														@NonNull ParsedSql duckDbParsedSql,
 														@Nullable String standardParseFailureMessage,
 														@Nullable String mysqlParseFailureMessage,
+														@Nullable String duckDbParseFailureMessage,
 														@NonNull Set<String> distinctParameterNames,
 														boolean requiresDatabaseType) {
 			this.standardParsedSql = requireNonNull(standardParsedSql);
 			this.mysqlParsedSql = requireNonNull(mysqlParsedSql);
+			this.duckDbParsedSql = requireNonNull(duckDbParsedSql);
 			this.standardParseFailureMessage = standardParseFailureMessage;
 			this.mysqlParseFailureMessage = mysqlParseFailureMessage;
+			this.duckDbParseFailureMessage = duckDbParseFailureMessage;
 			this.distinctParameterNames = Set.copyOf(requireNonNull(distinctParameterNames));
 			this.requiresDatabaseType = requiresDatabaseType;
 		}
@@ -2065,6 +2097,13 @@ public final class Database {
 				return this.parsedSqlVariants.mysqlParsedSql;
 			}
 
+			if (databaseType == DatabaseType.DUCK_DB) {
+				if (this.parsedSqlVariants.duckDbParseFailureMessage != null)
+					throw new IllegalArgumentException(this.parsedSqlVariants.duckDbParseFailureMessage);
+
+				return this.parsedSqlVariants.duckDbParsedSql;
+			}
+
 			if (this.parsedSqlVariants.standardParseFailureMessage != null)
 				throw new IllegalArgumentException(this.parsedSqlVariants.standardParseFailureMessage);
 
@@ -2148,7 +2187,8 @@ public final class Database {
 
 	enum SqlLexicalMode {
 		STANDARD,
-		MYSQL
+		MYSQL,
+		DUCK_DB
 	}
 
 	@NonNull
@@ -2409,7 +2449,7 @@ public final class Database {
 				continue;
 			}
 
-			if (c == '[' && !isBracketSubscriptStart(sql, i)) {
+			if (lexicalMode != SqlLexicalMode.DUCK_DB && c == '[' && !isBracketSubscriptStart(sql, i)) {
 				inBracketQuote = true;
 				bracketQuoteStartIndex = i;
 				sqlFragment.append(c);
@@ -2636,7 +2676,7 @@ public final class Database {
 
 	@NonNull
 	private static final Set<@NonNull String> BRACKET_IDENTIFIER_CONTEXT_KEYWORDS = Set.of(
-			"SELECT", "FROM", "JOIN", "AS", "INTO", "UPDATE", "TABLE", "BY", "ORDER", "GROUP"
+			"SELECT", "FROM", "JOIN", "AS", "INTO", "UPDATE", "TABLE", "BY", "ORDER", "GROUP", "SET"
 	);
 
 	@NonNull

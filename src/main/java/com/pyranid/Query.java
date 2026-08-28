@@ -33,9 +33,10 @@ import java.util.stream.Stream;
  * Obtain instances via {@link Database#query(String)}.
  * Positional parameters via {@code ?} are not supported; use named parameters (e.g. {@code :id}) and {@link #bind(String, Object)}.
  * Parameter-looking text inside SQL string literals, quoted identifiers, comments, PostgreSQL dollar-quoted strings,
- * and SQL Server-style bracket-quoted identifiers is ignored. PostgreSQL JSONB/hstore {@code ?}, {@code ?|}, and
- * {@code ?&} operators are supported and are escaped automatically for pgjdbc when the {@link Database} is configured
- * or detected as PostgreSQL.
+ * and SQL Server-style bracket-quoted identifiers is ignored. For DuckDB, brackets are parsed as list/subscript syntax,
+ * so list literals can contain named parameters. PostgreSQL JSONB/hstore {@code ?}, {@code ?|}, and {@code ?&}
+ * operators are supported and are escaped automatically for pgjdbc when the {@link Database} is configured or detected
+ * as PostgreSQL.
  * <p>
  * Example usage:
  * <pre>{@code

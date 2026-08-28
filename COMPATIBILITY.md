@@ -49,8 +49,8 @@ Maven Enforcer `bannedDependencies` rule and visible in the published POM. Compi
 `provided` scope and never required for ordinary runtime use. The PostgreSQL driver is used for optional rich
 error metadata and notification receive; PostgreSQL notification sending remains pure SQL.
 
-The tested DuckDB JDBC driver baseline is **1.5.5.1**; the DuckDB driver is used only by Pyranid's own
-integration tests and is never required on application classpaths.
+The tested DuckDB JDBC driver baseline is **1.5.5.1**. Pyranid uses it only in test scope and does not force
+it onto application classpaths; applications that connect to DuckDB must provide the driver themselves.
 
 The supported and tested pgjdbc baseline for notification receive is **42.7.13**. pgjdbc remains a Maven
 `provided` dependency, so applications that receive PostgreSQL notifications must supply pgjdbc 42.7.13 or newer

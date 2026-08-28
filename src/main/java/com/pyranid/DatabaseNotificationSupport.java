@@ -26,9 +26,11 @@ import java.sql.SQLException;
  * Internal strategy for database-specific notification behavior.
  */
 interface DatabaseNotificationSupport {
-	boolean isSendSupported();
+	@NonNull
+	Boolean isSendSupported();
 
-	boolean isReceiveRuntimeAvailable();
+	@NonNull
+	Boolean isReceiveRuntimeAvailable();
 
 	void validateChannel(@NonNull String channel);
 

@@ -36,7 +36,10 @@ import java.util.UUID;
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 4.3.0
  */
+// Oracle legitimately skips three portable tests: read-only transactions and the two temporal round-trip
+// contracts. 21 portable tests - 3 capability skips = 18.
 @Testcontainers
+@PortableContractCoverageFloor(18)
 public class OracleIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 	public record OracleNumberRow(BigInteger bigValue, Integer intValue, Long longValue) {}
 

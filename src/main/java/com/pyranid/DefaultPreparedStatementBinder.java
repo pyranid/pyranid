@@ -260,7 +260,8 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 				setNullWithFallback(preparedStatement, parameterIndex, Types.ARRAY, sqlArrayParameter.getBaseTypeName(),
 						sqlTypeOptional.map(ParameterSqlType::getSqlType).orElse(null));
 			} else {
-				Object[] normalizedElements = normalizedArrayElements(statementContext, elements);
+				Object[] normalizedElements = normalizedSqlArrayElements(statementContext,
+						sqlArrayParameter.getBaseTypeName(), elements);
 				Array array = preparedStatement.getConnection().createArrayOf(sqlArrayParameter.getBaseTypeName(), normalizedElements);
 				try {
 					preparedStatement.setArray(parameterIndex, array);
@@ -335,9 +336,31 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	}
 
 	@NonNull
-	protected boolean trySetObject(@NonNull PreparedStatement preparedStatement,
-																 @NonNull Integer parameterIndex,
-																 @Nullable Object parameter) throws SQLException {
+	private <T> Object[] normalizedSqlArrayElements(@NonNull StatementContext<T> statementContext,
+																	 @NonNull String baseTypeName,
+																	 Object @NonNull [] elements) {
+		requireNonNull(statementContext);
+		requireNonNull(baseTypeName);
+		requireNonNull(elements);
+
+		Object[] normalizedElements = normalizedArrayElements(statementContext, elements);
+		DatabaseDialect databaseDialect = statementContext.getDatabaseDialect();
+
+		for (int i = 0; i < normalizedElements.length; i++) {
+			Object element = normalizedElements[i];
+
+			if (element != null)
+				normalizedElements[i] = databaseDialect.normalizeSqlArrayElement(
+						baseTypeName, element, statementContext.getTimeZone());
+		}
+
+		return normalizedElements;
+	}
+
+	@NonNull
+	protected Boolean trySetObject(@NonNull PreparedStatement preparedStatement,
+															 @NonNull Integer parameterIndex,
+															 @Nullable Object parameter) throws SQLException {
 		requireNonNull(preparedStatement);
 		requireNonNull(parameterIndex);
 
@@ -376,13 +399,13 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		return lower.contains("not supported") || lower.contains("not implemented") || lower.contains("unsupported");
 	}
 
-	@NonNull
 	/**
 	 * Binds a temporal value with an explicit target SQL type when the dialect supports it, or with an
 	 * untyped {@link PreparedStatement#setObject(int, Object)} for drivers (e.g. DuckDB) that reject
 	 * target-typed binds but accept {@code java.time} values natively.
 	 */
-	private <T> boolean trySetTemporalObject(@NonNull StatementContext<T> statementContext,
+	@NonNull
+	private <T> Boolean trySetTemporalObject(@NonNull StatementContext<T> statementContext,
 																					 @NonNull PreparedStatement preparedStatement,
 																					 @NonNull Integer parameterIndex,
 																					 @Nullable Object parameter,
@@ -398,9 +421,10 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		return trySetObject(preparedStatement, parameterIndex, parameter, sqlType);
 	}
 
-	protected boolean trySetObject(@NonNull PreparedStatement preparedStatement,
-																 @NonNull Integer parameterIndex,
-																 @Nullable Object parameter,
+	@NonNull
+	protected Boolean trySetObject(@NonNull PreparedStatement preparedStatement,
+															 @NonNull Integer parameterIndex,
+															 @Nullable Object parameter,
 																 @NonNull Integer sqlType) throws SQLException {
 		requireNonNull(preparedStatement);
 		requireNonNull(parameterIndex);

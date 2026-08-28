@@ -39,13 +39,15 @@ final class PostgresNotificationSupport implements DatabaseNotificationSupport {
 
 	private PostgresNotificationSupport() {}
 
+	@NonNull
 	@Override
-	public boolean isSendSupported() {
+	public Boolean isSendSupported() {
 		return true;
 	}
 
+	@NonNull
 	@Override
-	public boolean isReceiveRuntimeAvailable() {
+	public Boolean isReceiveRuntimeAvailable() {
 		return PostgresNotificationAdapterLoader.isAvailable();
 	}
 

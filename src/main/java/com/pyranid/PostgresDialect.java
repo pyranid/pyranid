@@ -47,9 +47,10 @@ final class PostgresDialect extends GenericDialect {
 
 	@NonNull
 	@Override
-	public List<String> sqlFragmentsForOperators(boolean hasQuestionMarkOperators,
+	public List<String> sqlFragmentsForOperators(@NonNull Boolean hasQuestionMarkOperators,
 																							 @NonNull List<String> sqlFragments,
 																							 @NonNull List<@NonNull List<@NonNull Integer>> questionMarkOperatorFragmentIndexes) {
+		requireNonNull(hasQuestionMarkOperators);
 		requireNonNull(sqlFragments);
 		requireNonNull(questionMarkOperatorFragmentIndexes);
 
@@ -67,8 +68,9 @@ final class PostgresDialect extends GenericDialect {
 		return List.copyOf(postgresqlSqlFragments);
 	}
 
+	@NonNull
 	@Override
-	public boolean supportsVector() {
+	public Boolean supportsVector() {
 		return true;
 	}
 
@@ -123,8 +125,9 @@ final class PostgresDialect extends GenericDialect {
 	@NonNull
 	@Override
 	public DatabaseStreamState configureStreamingConnection(@NonNull Connection connection,
-																												 boolean transactionPresent) throws SQLException {
+																												 @NonNull Boolean transactionPresent) throws SQLException {
 		requireNonNull(connection);
+		requireNonNull(transactionPresent);
 
 		if (transactionPresent)
 			return DatabaseStreamState.none();
@@ -140,10 +143,12 @@ final class PostgresDialect extends GenericDialect {
 	@Override
 	public void configureStreamingPreparedStatement(@NonNull PreparedStatement preparedStatement,
 																									@NonNull DatabaseStreamState databaseStreamState,
-																									boolean transactionPresent,
-																									boolean queryFetchSizeConfigured) throws SQLException {
+																									@NonNull Boolean transactionPresent,
+																									@NonNull Boolean queryFetchSizeConfigured) throws SQLException {
 		requireNonNull(preparedStatement);
 		requireNonNull(databaseStreamState);
+		requireNonNull(transactionPresent);
+		requireNonNull(queryFetchSizeConfigured);
 
 		if (!databaseStreamState.isManagedTransactionStarted() || transactionPresent || queryFetchSizeConfigured)
 			return;
@@ -156,10 +161,11 @@ final class PostgresDialect extends GenericDialect {
 	@Override
 	public Throwable completeStreamingConnection(@NonNull Connection connection,
 																							 @NonNull DatabaseStreamState databaseStreamState,
-																							 boolean streamSucceeded,
+																							 @NonNull Boolean streamSucceeded,
 																							 @Nullable Throwable cleanupFailure) {
 		requireNonNull(connection);
 		requireNonNull(databaseStreamState);
+		requireNonNull(streamSucceeded);
 
 		if (!databaseStreamState.isManagedTransactionStarted())
 			return cleanupFailure;
@@ -226,24 +232,27 @@ final class PostgresDialect extends GenericDialect {
 		return builder.build();
 	}
 
+	@NonNull
 	@Override
-	public boolean isDeadlock(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isDeadlock(@NonNull DatabaseExceptionMetadata metadata,
 														@Nullable Throwable cause) {
 		requireNonNull(metadata);
 
 		return hasSqlState(metadata, cause, "40P01");
 	}
 
+	@NonNull
 	@Override
-	public boolean isSerializationFailure(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isSerializationFailure(@NonNull DatabaseExceptionMetadata metadata,
 																				@Nullable Throwable cause) {
 		requireNonNull(metadata);
 
 		return hasSqlState(metadata, cause, "40001");
 	}
 
+	@NonNull
 	@Override
-	public boolean isTimeout(@NonNull DatabaseExceptionMetadata metadata,
+	public Boolean isTimeout(@NonNull DatabaseExceptionMetadata metadata,
 													 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 

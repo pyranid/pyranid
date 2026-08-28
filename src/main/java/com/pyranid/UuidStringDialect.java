@@ -26,8 +26,9 @@ import static java.util.Objects.requireNonNull;
  * Behavior for databases where JDBC drivers commonly bind UUID values as text.
  */
 abstract class UuidStringDialect extends GenericDialect {
+	@NonNull
 	@Override
-	public boolean supportsSqlArray() {
+	public Boolean supportsSqlArray() {
 		return false;
 	}
 

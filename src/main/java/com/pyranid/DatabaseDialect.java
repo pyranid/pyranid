@@ -24,6 +24,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.UUID;
 
@@ -35,13 +36,15 @@ interface DatabaseDialect {
 	DatabaseNotificationSupport notificationSupport();
 
 	@NonNull
-	List<String> sqlFragmentsForOperators(boolean hasQuestionMarkOperators,
+	List<String> sqlFragmentsForOperators(@NonNull Boolean hasQuestionMarkOperators,
 																				@NonNull List<String> sqlFragments,
 																				@NonNull List<@NonNull List<@NonNull Integer>> questionMarkOperatorFragmentIndexes);
 
-	boolean supportsSqlArray();
+	@NonNull
+	Boolean supportsSqlArray();
 
-	boolean supportsVector();
+	@NonNull
+	Boolean supportsVector();
 
 	/**
 	 * Whether the driver supports {@link PreparedStatement#setObject(int, Object, int)} with an explicit
@@ -49,14 +52,25 @@ interface DatabaseDialect {
 	 * binds outright (e.g. DuckDB's "Unknown target type") but accept untyped
 	 * {@link PreparedStatement#setObject(int, Object)} should return {@code false}.
 	 */
-	boolean supportsSetObjectWithTargetSqlType();
+	@NonNull
+	Boolean supportsSetObjectWithTargetSqlType();
 
 	/**
 	 * Whether {@link java.time.OffsetTime} parameters must bind as ISO-8601 strings. Some drivers
 	 * (e.g. DuckDB) accept an {@code OffsetTime} at {@code setObject(...)} time but reject it at execute
 	 * time, so try-bind detection cannot fall back; the dialect declares the string form up front.
 	 */
-	boolean bindsOffsetTimeAsString();
+	@NonNull
+	Boolean bindsOffsetTimeAsString();
+
+	/**
+	 * Massages a normalized, non-null SQL ARRAY element into a form accepted by this dialect's JDBC
+	 * driver. The default dialect leaves elements unchanged.
+	 */
+	@NonNull
+	Object normalizeSqlArrayElement(@NonNull String baseTypeName,
+																		@NonNull Object element,
+																		@NonNull ZoneId timeZone);
 
 	@NonNull
 	Object normalizeUuid(@NonNull UUID uuid);
@@ -78,7 +92,7 @@ interface DatabaseDialect {
 
 	@NonNull
 	DatabaseStreamState configureStreamingConnection(@NonNull Connection connection,
-																									 boolean transactionPresent) throws SQLException;
+																									 @NonNull Boolean transactionPresent) throws SQLException;
 
 	@NonNull
 	PreparedStatement prepareStreamingStatement(@NonNull Connection connection,
@@ -91,40 +105,47 @@ interface DatabaseDialect {
 
 	void configureStreamingPreparedStatement(@NonNull PreparedStatement preparedStatement,
 																					 @NonNull DatabaseStreamState databaseStreamState,
-																					 boolean transactionPresent,
-																					 boolean queryFetchSizeConfigured) throws SQLException;
+																					 @NonNull Boolean transactionPresent,
+																					 @NonNull Boolean queryFetchSizeConfigured) throws SQLException;
 
 	@Nullable
 	Throwable completeStreamingConnection(@NonNull Connection connection,
 																				@NonNull DatabaseStreamState databaseStreamState,
-																				boolean streamSucceeded,
+																				@NonNull Boolean streamSucceeded,
 																				@Nullable Throwable cleanupFailure);
 
 	@NonNull
 	DatabaseExceptionMetadata databaseExceptionMetadata(@Nullable Throwable cause);
 
-	boolean isUniqueConstraintViolation(@NonNull DatabaseExceptionMetadata metadata,
+	@NonNull
+	Boolean isUniqueConstraintViolation(@NonNull DatabaseExceptionMetadata metadata,
 																			@Nullable Throwable cause);
 
-	boolean isForeignKeyViolation(@NonNull DatabaseExceptionMetadata metadata,
+	@NonNull
+	Boolean isForeignKeyViolation(@NonNull DatabaseExceptionMetadata metadata,
 																@Nullable Throwable cause);
 
-	boolean isDeadlock(@NonNull DatabaseExceptionMetadata metadata,
+	@NonNull
+	Boolean isDeadlock(@NonNull DatabaseExceptionMetadata metadata,
 										 @Nullable Throwable cause);
 
-	boolean isTransient(@NonNull DatabaseExceptionMetadata metadata,
+	@NonNull
+	Boolean isTransient(@NonNull DatabaseExceptionMetadata metadata,
 											@Nullable Throwable cause);
 
-	boolean isSerializationFailure(@NonNull DatabaseExceptionMetadata metadata,
+	@NonNull
+	Boolean isSerializationFailure(@NonNull DatabaseExceptionMetadata metadata,
 																 @Nullable Throwable cause);
 
-	boolean isTimeout(@NonNull DatabaseExceptionMetadata metadata,
+	@NonNull
+	Boolean isTimeout(@NonNull DatabaseExceptionMetadata metadata,
 										@Nullable Throwable cause);
 
 	@Nullable
 	Object unwrapResultSetValue(@NonNull Object resultSetValue);
 
-	boolean isTimestampWithTimeZone(@NonNull ResultSetMetaData resultSetMetaData,
+	@NonNull
+	Boolean isTimestampWithTimeZone(@NonNull ResultSetMetaData resultSetMetaData,
 																	@NonNull Integer columnIndex) throws SQLException;
 
 	@NonNull

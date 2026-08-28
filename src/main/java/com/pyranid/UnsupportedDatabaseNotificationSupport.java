@@ -32,13 +32,15 @@ final class UnsupportedDatabaseNotificationSupport implements DatabaseNotificati
 
 	private UnsupportedDatabaseNotificationSupport() {}
 
+	@NonNull
 	@Override
-	public boolean isSendSupported() {
+	public Boolean isSendSupported() {
 		return false;
 	}
 
+	@NonNull
 	@Override
-	public boolean isReceiveRuntimeAvailable() {
+	public Boolean isReceiveRuntimeAvailable() {
 		return false;
 	}
 
