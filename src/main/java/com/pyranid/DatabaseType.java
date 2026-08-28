@@ -69,7 +69,13 @@ public enum DatabaseType {
 	 *
 	 * @since 4.3.0
 	 */
-	SQL_SERVER;
+	SQL_SERVER,
+	/**
+	 * A DuckDB database.
+	 *
+	 * @since 4.7.0
+	 */
+	DUCK_DB;
 
 	/**
 	 * Determines the type of database to which the given {@code dataSource} connects.
@@ -132,6 +138,9 @@ public enum DatabaseType {
 			if (databaseProductNameLowercase.contains("sqlite"))
 				return DatabaseType.SQLITE;
 
+			if (databaseProductNameLowercase.contains("duckdb"))
+				return DatabaseType.DUCK_DB;
+
 			if (isSqlServerProductName(databaseProductNameLowercase))
 				return DatabaseType.SQL_SERVER;
 
@@ -150,6 +159,9 @@ public enum DatabaseType {
 
 			if (urlLowercase.startsWith("jdbc:sqlite:") || driverNameLowercase.contains("sqlite"))
 				return DatabaseType.SQLITE;
+
+			if (urlLowercase.startsWith("jdbc:duckdb:") || driverNameLowercase.contains("duckdb"))
+				return DatabaseType.DUCK_DB;
 
 			if (isSqlServerUrl(urlLowercase) || isSqlServerDriverName(driverNameLowercase))
 				return DatabaseType.SQL_SERVER;
@@ -180,6 +192,7 @@ public enum DatabaseType {
 			case MARIA_DB -> MariaDbDialect.INSTANCE;
 			case SQLITE -> SqliteDialect.INSTANCE;
 			case SQL_SERVER -> SqlServerDialect.INSTANCE;
+			case DUCK_DB -> DuckDbDialect.INSTANCE;
 			case GENERIC -> GenericDialect.INSTANCE;
 		};
 	}

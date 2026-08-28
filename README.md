@@ -237,6 +237,8 @@ Pyranid scans SQL before handing it to JDBC so it can translate named parameters
 
 PostgreSQL JSONB/hstore `?`, `?|`, and `?&` operators are supported. When the `Database` is configured or detected as PostgreSQL, Pyranid automatically emits pgjdbc's escaped `??` form for those operators while preserving named-parameter binding.
 
+DuckDB SQL uses `:` inside struct literals (`{'key':expr}`) and list slicing (`list[a:b]`); when the character after `:` can start an identifier, Pyranid parses it as a named parameter. Write a space after the colon (`{'key': expr}` - bound parameters still work, e.g. `{'key': :value}`), or use `struct_pack(key := expr)` / `list_slice(...)`. DuckDB `::` casts and `->`/`->>` JSON operators need no escaping.
+
 Suppose we have a custom `Car` like this:
 
 ```java
@@ -366,9 +368,11 @@ long updateCount = database.query("UPDATE car SET color=:color")
   .execute();
 
 // Return single or multiple objects via database-native DML-returning syntax.
-// PostgreSQL and SQLite use RETURNING for DML. MariaDB supports INSERT ... RETURNING.
+// PostgreSQL, SQLite, and DuckDB use RETURNING for DML. MariaDB supports INSERT ... RETURNING.
 // SQL Server uses OUTPUT.
 // Oracle users should prefer JDBC-generated keys with explicit key column names.
+// DuckDB users must use RETURNING: its JDBC driver has no generated-key support, and
+// executeReturningGeneratedKey(...) fails fast with a clear DatabaseException.
 Optional<BigInteger> insertedCarId = database.query("""
   INSERT INTO car (id, color)
   VALUES (nextval('car_seq'), :color)
@@ -636,7 +640,7 @@ database.transaction(
   });
 ```
 
-`TransactionOptions::withReadOnly(true)` maps to JDBC [`Connection::setReadOnly(true)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html#setReadOnly(boolean)) for the physical transaction connection. Pyranid restores the connection's original read-only setting before returning it to the pool. Read-only behavior is enforced, optimized, routed, or ignored by the JDBC driver and DBMS. SQL Server, Oracle, and SQLite drivers may treat it as advisory or ignore it for normal transactions. Pyranid does not parse SQL to reject writes itself.
+`TransactionOptions::withReadOnly(true)` maps to JDBC [`Connection::setReadOnly(true)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html#setReadOnly(boolean)) for the physical transaction connection. Pyranid restores the connection's original read-only setting before returning it to the pool. Read-only behavior is enforced, optimized, routed, or ignored by the JDBC driver and DBMS. SQL Server, Oracle, and SQLite drivers may treat it as advisory or ignore it for normal transactions; DuckDB's driver rejects per-connection read-only changes outright (read-only mode is a database-open option there). Pyranid does not parse SQL to reject writes itself.
 
 ### Post-Transaction Operations
 
@@ -940,6 +944,44 @@ PostgreSQL `JSON`/`JSONB` values returned by pgjdbc as `PGobject` map to `String
 
 Vector columns (e.g. pgvector), which drivers surface as text such as `[0.1,0.2,0.3]`, map to `float[]` and `double[]` targets - Pyranid parses the vector literal. See the Vector section in Parameter Binding for the bind side.
 
+### SQL STRUCT Results
+
+On databases whose dialects surface SQL STRUCT columns as attribute-name-to-value maps - currently DuckDB - STRUCT values map onto Java records, recursively. Attribute names follow the same matching rules as result columns: `camelCase` components match `snake_case` attributes, and [`@DatabaseColumn`](https://javadoc.pyranid.com/com/pyranid/DatabaseColumn.html) aliases apply.
+
+```sql
+CREATE TABLE employee (
+  employee_id BIGINT PRIMARY KEY,
+  person STRUCT(name VARCHAR, email_address VARCHAR),
+  badges STRUCT(label VARCHAR, level INTEGER)[]
+);
+```
+
+```java
+public record Person(String name, String emailAddress) {}
+public record Badge(String label, Integer level) {}
+public record Employee(Long employeeId, Person person, List<Badge> badges) {}
+
+// STRUCT columns become record components; STRUCT lists become record lists
+List<Employee> employees = database.query("SELECT * FROM employee")
+  .fetchList(Employee.class);
+
+// A single-column STRUCT result maps directly to a record target...
+Optional<Person> person = database.query("SELECT person FROM employee WHERE employee_id=:id")
+  .bind("id", 1L)
+  .fetchObject(Person.class);
+
+// ...including STRUCT projections built in SQL (note the space after ':' - see SQL Parsing Rules)
+Optional<Person> projected = database.query("""
+  SELECT {'name': name, 'email_address': email_address} AS person
+  FROM legacy_employee
+  WHERE employee_id=:id
+  """)
+  .bind("id", 1L)
+  .fetchObject(Person.class);
+```
+
+Nested STRUCTs map to nested records to any depth, and a record component typed `Map<String, Object>` receives the attribute map itself. `Map` row targets surface STRUCT values as plain insertion-ordered maps with no driver-specific types, including elements of top-level STRUCT/JSON list columns. Ordinary by-name row mapping always takes precedence: the single-column direct mapping applies only when no result column matches a record component. A `NULL` STRUCT maps to a `null` component (or an empty `Optional` for single-column fetches). Top-level row records - the single-column direct mapping included - are constructed via the configured [`InstanceProvider`](https://javadoc.pyranid.com/com/pyranid/InstanceProvider.html); nested records are constructed via their canonical constructors, and `CustomColumnMapper`s are not consulted for individual STRUCT attributes.
+
 ### Custom Mapping
 
 Fine-grained control of mapping is supported by registering [`CustomColumnMapper`](https://javadoc.pyranid.com/com/pyranid/CustomColumnMapper.html) instances.  For example, you might want to "inflate" a `JSONB` column into a Java type:
@@ -1122,6 +1164,8 @@ Use [`Database.Builder::queryTimeout(...)`](https://javadoc.pyranid.com/com/pyra
 
 `queryTimeout(...)` maps to JDBC `Statement::setQueryTimeout(...)`. For driver-specific cancellation beyond timeouts, capture the `PreparedStatement` in `Query::customize(...)` and call `Statement::cancel()` from your application's cancellation path.
 
+`maxRows(...)` maps to JDBC `Statement::setMaxRows(...)` and is enforced by the driver. DuckDB's driver accepts but ignores it - use SQL `LIMIT` there.
+
 ### PreparedStatementCustomizer
 
 If you need to tweak the JDBC `PreparedStatement` before execution beyond built-in statement settings, use `Query::customize(...)`.
@@ -1213,7 +1257,7 @@ Special support is provided for secure diagnostics wrappers, IN-list, JSON/JSONB
 
 #### JSON/JSONB
 
-Useful for storing "stringified" JSON data by taking advantage of the DBMS' native JSON storage facilities, if available (for example, PostgreSQL `JSONB`, MySQL/MariaDB `JSON`, SQLite JSON text, SQL Server `nvarchar` + `ISJSON`, or Oracle `JSON`/`CLOB` columns).
+Useful for storing "stringified" JSON data by taking advantage of the DBMS' native JSON storage facilities, if available (for example, PostgreSQL `JSONB`, MySQL/MariaDB `JSON`, DuckDB `JSON`, SQLite JSON text, SQL Server `nvarchar` + `ISJSON`, or Oracle `JSON`/`CLOB` columns).
 
 Supported methods:
 
@@ -1251,7 +1295,7 @@ database.query("INSERT INTO example (data) VALUES (:data)")
 
 #### Vector
 
-Useful for storing [`pgvector`](https://github.com/pgvector/pgvector) data, often used for Artificial Intelligence tasks. Currently only supported for PostgreSQL.
+Useful for storing vector embeddings, often used for Artificial Intelligence tasks - [`pgvector`](https://github.com/pgvector/pgvector) columns on PostgreSQL and fixed-size `FLOAT[n]`/`DOUBLE[n]` ARRAY columns on DuckDB. Currently supported for PostgreSQL and DuckDB.
 
 Supported methods:
 
@@ -1298,9 +1342,30 @@ Optional<Document> document = database.query("""
   .fetchObject(Document.class);
 ```
 
+On DuckDB, vectors bind to fixed-size ARRAY columns and read back as `float[]`/`double[]` targets. `INSERT` needs no cast, but comparison functions like [`array_cosine_distance`](https://duckdb.org/docs/stable/sql/functions/array.html) require an explicit cast of the bound parameter to the fixed-size ARRAY type:
+
+```sql
+CREATE TABLE vector_embedding (
+  vector_embedding_id BIGINT PRIMARY KEY,
+  embedding FLOAT[1536] NOT NULL,
+  content TEXT NOT NULL
+);
+```
+
+```java
+Optional<Document> mostSimilarDocument = database.query("""
+  SELECT *
+  FROM vector_embedding
+  ORDER BY array_cosine_distance(embedding, CAST(:query AS FLOAT[1536]))
+  LIMIT 1
+  """)
+  .bind("query", Parameters.vectorOfFloats(queryEmbedding))
+  .fetchObject(Document.class);
+```
+
 #### SQL ARRAY
 
-Single-dimension SQL ARRAY binding is supported out-of-the-box for databases whose JDBC drivers support `Connection::createArrayOf`, such as PostgreSQL. MySQL, MariaDB, SQLite, SQL Server, and Oracle are guarded as unsupported and fail with a clear `DatabaseException`; use IN-list expansion, JSON, or a database-specific custom binder for those engines.
+Single-dimension SQL ARRAY binding is supported out-of-the-box for databases whose JDBC drivers support `Connection::createArrayOf`, such as PostgreSQL and DuckDB (DuckDB `LIST` and fixed-size `ARRAY` columns both accept bound arrays). MySQL, MariaDB, SQLite, SQL Server, and Oracle are guarded as unsupported and fail with a clear `DatabaseException`; use IN-list expansion, JSON, or a database-specific custom binder for those engines.
 
 Supported methods:
 
@@ -1604,7 +1669,7 @@ It also exposes conservative classification predicates:
 * `isSerializationFailure()`
 * `isTimeout()`
 
-These predicates are intentionally conservative and database-type-aware. They recognize well-known SQLState and vendor error codes for PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, Oracle, and generic JDBC transient/recoverable exception classes; they return `false` when Pyranid cannot reliably classify the failure.
+These predicates are intentionally conservative and database-type-aware. They recognize well-known SQLState and vendor error codes for PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, Oracle, and generic JDBC transient/recoverable exception classes; they return `false` when Pyranid cannot reliably classify the failure. DuckDB's driver reports no SQLStates or vendor codes, so classification there matches DuckDB's stable diagnostic message shapes: `Constraint Error:` duplicate-key and foreign-key messages drive the constraint predicates, and optimistic-concurrency `TransactionContext Error: ... conflict` failures classify as retryable serialization failures (integrating with `RetryPolicy`). DuckDB query timeouts surface as JDBC `SQLTimeoutException` and classify generically.
 The predicates return non-null `Boolean` values.
 
 For PostgreSQL, the following properties are also available:
@@ -1805,9 +1870,9 @@ mvn -q -P integration verify
 mvn -q -P integration,it-mariadb -Dit.test=MariaDbIntegrationIT verify
 ```
 
-The `integration` Maven profile runs JDBC integration tests against PostgreSQL, MySQL, and SQLite. PostgreSQL and MySQL use Testcontainers and require a working local Docker environment; SQLite uses a temporary local database file. Add `it-mariadb`, `it-sqlserver`, or `it-oracle` for the optional MariaDB, SQL Server, and Oracle integration source sets. SQL Server requires the Microsoft container EULA; the test container calls `acceptLicense()`, and CI/local runs should provide `ACCEPT_EULA=Y` when required by the environment. The default Docker image tags are `pgvector/pgvector:pg17`, `mysql:8.4`, `mariadb:11.4`, `mcr.microsoft.com/mssql/server:2022-CU26-ubuntu-22.04`, and `gvenzl/oracle-free:23-slim-faststart`. They can be overridden with `-Dpostgres.integration.image=...`, `-Dmysql.integration.image=...`, `-Dmariadb.integration.image=...`, `-Dsqlserver.integration.image=...`, and `-Doracle.integration.image=...`. PostgreSQL image overrides must include the `vector` extension.
+The `integration` Maven profile runs JDBC integration tests against PostgreSQL, MySQL, SQLite, and DuckDB. PostgreSQL and MySQL use Testcontainers and require a working local Docker environment; SQLite and DuckDB run in-process against temporary local database files. Add `it-mariadb`, `it-sqlserver`, or `it-oracle` for the optional MariaDB, SQL Server, and Oracle integration source sets. SQL Server requires the Microsoft container EULA; the test container calls `acceptLicense()`, and CI/local runs should provide `ACCEPT_EULA=Y` when required by the environment. The default Docker image tags are `pgvector/pgvector:pg17`, `mysql:8.4`, `mariadb:11.4`, `mcr.microsoft.com/mssql/server:2022-CU26-ubuntu-22.04`, and `gvenzl/oracle-free:23-slim-faststart`. They can be overridden with `-Dpostgres.integration.image=...`, `-Dmysql.integration.image=...`, `-Dmariadb.integration.image=...`, `-Dsqlserver.integration.image=...`, and `-Doracle.integration.image=...`. PostgreSQL image overrides must include the `vector` extension.
 
-The portable integration suites cover named binding, repeated parameters, `IN` expansion, null binding/mapping, numeric and temporal conversions, JDBC-generated keys, transaction commit/rollback, transaction options where supported, batch chunking, streaming, guarded raw connection access, statement row limits, health checks, SQL ARRAY guards, and exception wrapping/classification. Vendor suites add coverage for PostgreSQL JSONB, SQL arrays, UUIDs, `RETURNING`, temporal binding/mapping, pgvector binding/read-back, and exception metadata; MySQL/MariaDB JSON, UUID strings, unsigned numerics, streaming, and MariaDB `INSERT ... RETURNING`; SQLite `RETURNING`, UUID text, and decimal text precision; SQL Server `OUTPUT`, trigger-safe `OUTPUT INTO`, `MERGE ... OUTPUT`, `uniqueidentifier`, and `datetimeoffset`; and Oracle explicit generated-key columns, UUID `RAW(16)`, empty-string-as-null, timestamp-with-time-zone, and `NUMBER` mapping.
+The portable integration suites cover named binding, repeated parameters, `IN` expansion, null binding/mapping, numeric and temporal conversions, JDBC-generated keys, transaction commit/rollback, transaction options where supported, batch chunking, streaming, guarded raw connection access, statement row limits, health checks, SQL ARRAY guards, and exception wrapping/classification. Vendor suites add coverage for PostgreSQL JSONB, SQL arrays, UUIDs, `RETURNING`, temporal binding/mapping, pgvector binding/read-back, and exception metadata; MySQL/MariaDB JSON, UUID strings, unsigned numerics, streaming, and MariaDB `INSERT ... RETURNING`; SQLite `RETURNING`, UUID text, and decimal text precision; DuckDB STRUCT-to-record mapping (nested records, record lists, map rows), native UUID, `HUGEINT`, JSON, BLOB, vector binding with `array_cosine_distance`, SQL ARRAY round trips, sequence-backed `RETURNING`, the generated-key guard, and write-write conflict classification; SQL Server `OUTPUT`, trigger-safe `OUTPUT INTO`, `MERGE ... OUTPUT`, `uniqueidentifier`, and `datetimeoffset`; and Oracle explicit generated-key columns, UUID `RAW(16)`, empty-string-as-null, timestamp-with-time-zone, and `NUMBER` mapping.
 
 Cache-sensitive changes should also be checked with the JMH benchmark profile:
 
@@ -1827,7 +1892,7 @@ Artifact signing and Maven Central publishing are isolated in the `release` prof
 
 ## Production Notes
 
-Pyranid is a zero-runtime-dependency library, but applications still need to provide the JDBC driver for their database. PostgreSQL-specific helpers such as JSONB, `text[]`, and pgvector parameters require pgjdbc on the application classpath; pgvector also requires the database extension to be installed. PostgreSQL notification receive requires pgjdbc 42.7.13 or newer, while notification sending remains pure SQL and does not require the receive adapter. SQL Server, Oracle, MySQL, MariaDB, and SQLite driver artifacts are used only for tests in Pyranid itself and are not forced onto application classpaths by the core jar.
+Pyranid is a zero-runtime-dependency library, but applications still need to provide the JDBC driver for their database. PostgreSQL-specific helpers such as JSONB, `text[]`, and pgvector parameters require pgjdbc on the application classpath; pgvector also requires the database extension to be installed. PostgreSQL notification receive requires pgjdbc 42.7.13 or newer, while notification sending remains pure SQL and does not require the receive adapter. SQL Server, Oracle, MySQL, MariaDB, SQLite, and DuckDB driver artifacts are used only for tests in Pyranid itself and are not forced onto application classpaths by the core jar.
 
 ### SQL Injection and Dynamic SQL
 
@@ -1855,7 +1920,7 @@ Pyranid exception messages include bounded SQL and bounded parameter display val
 
 ### Startup and Database Type Detection
 
-[`Database.Builder::build()`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#build()) does not validate connectivity or inspect JDBC metadata. If you do not configure [`Database.Builder::databaseType(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#databaseType(com.pyranid.DatabaseType)), Pyranid detects the database type lazily when code first requests database-type-sensitive behavior. Detection recognizes PostgreSQL, Oracle, MySQL, MariaDB, SQLite, and SQL Server from JDBC product, URL, driver, and MariaDB-version signals, then falls back to `GENERIC`. Calling [`Database::getDatabaseType()`](https://javadoc.pyranid.com/com/pyranid/Database.html#getDatabaseType()) outside an active query may acquire a fresh connection; configure `databaseType(...)` explicitly when using small pools, database proxies, or startup paths that must avoid surprise connection checkouts.
+[`Database.Builder::build()`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#build()) does not validate connectivity or inspect JDBC metadata. If you do not configure [`Database.Builder::databaseType(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#databaseType(com.pyranid.DatabaseType)), Pyranid detects the database type lazily when code first requests database-type-sensitive behavior. Detection recognizes PostgreSQL, Oracle, MySQL, MariaDB, SQLite, SQL Server, and DuckDB from JDBC product, URL, driver, and MariaDB-version signals, then falls back to `GENERIC`. Calling [`Database::getDatabaseType()`](https://javadoc.pyranid.com/com/pyranid/Database.html#getDatabaseType()) outside an active query may acquire a fresh connection; configure `databaseType(...)` explicitly when using small pools, database proxies, or startup paths that must avoid surprise connection checkouts.
 
 Use [`Database::performHealthCheck(Duration)`](https://javadoc.pyranid.com/com/pyranid/Database.html#performHealthCheck(java.time.Duration)) when you want an explicit startup or readiness validation step:
 
@@ -1885,7 +1950,7 @@ Inside a Pyranid transaction, the stream must be closed by the thread that opene
 
 ### Savepoints
 
-Savepoints are stack-like on most drivers. Prefer [`Transaction::withSavepoint(...)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#withSavepoint(com.pyranid.TransactionalOperation)) for nested savepoint workflows, and avoid manual out-of-order [`Transaction::rollback(Savepoint)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#rollback(java.sql.Savepoint)) / [`Transaction::releaseSavepoint(Savepoint)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#releaseSavepoint(java.sql.Savepoint)) calls unless your driver documents the behavior you need.
+DuckDB's JDBC driver does not support savepoints. Savepoints are stack-like on most drivers. Prefer [`Transaction::withSavepoint(...)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#withSavepoint(com.pyranid.TransactionalOperation)) for nested savepoint workflows, and avoid manual out-of-order [`Transaction::rollback(Savepoint)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#rollback(java.sql.Savepoint)) / [`Transaction::releaseSavepoint(Savepoint)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#releaseSavepoint(java.sql.Savepoint)) calls unless your driver documents the behavior you need.
 
 ### Large Update Counts
 

@@ -36,8 +36,8 @@ the current japicmp configuration has no API exclusions:
 
 * **Source/binary baseline:** Java 17 (`<release>17</release>`).
 * **Tested continuously:** JDK 17, 21, and 25 (unit suite); database integration tests run on JDK 21
-  against PostgreSQL, MySQL, MariaDB, SQL Server, and Oracle via Testcontainers, and SQLite in-process.
-  The SQL Server and Oracle legs are advisory (non-gating) in CI.
+  against PostgreSQL, MySQL, MariaDB, SQL Server, and Oracle via Testcontainers, and SQLite and DuckDB
+  in-process. The SQL Server and Oracle legs are advisory (non-gating) in CI.
 * Pyranid uses no `sun.misc.Unsafe`, no `setAccessible`, and reflects over public members only -
   `--add-opens` is never required, and strong-encapsulation tightening in future JDKs is not expected to
   affect it.
@@ -48,6 +48,9 @@ The core `pyranid` artifact declares **zero runtime dependencies** - enforced at
 Maven Enforcer `bannedDependencies` rule and visible in the published POM. Compile-time-only dependencies are
 `provided` scope and never required for ordinary runtime use. The PostgreSQL driver is used for optional rich
 error metadata and notification receive; PostgreSQL notification sending remains pure SQL.
+
+The tested DuckDB JDBC driver baseline is **1.5.5.1**; the DuckDB driver is used only by Pyranid's own
+integration tests and is never required on application classpaths.
 
 The supported and tested pgjdbc baseline for notification receive is **42.7.13**. pgjdbc remains a Maven
 `provided` dependency, so applications that receive PostgreSQL notifications must supply pgjdbc 42.7.13 or newer

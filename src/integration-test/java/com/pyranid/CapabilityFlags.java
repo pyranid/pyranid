@@ -28,6 +28,8 @@ record CapabilityFlags(boolean supportsReadOnlyTransactions,
 											 boolean supportsServerSideStreaming,
 											 boolean supportsSqlArrays,
 											 boolean supportsNativeJson,
+											 boolean supportsJdbcGeneratedKeys,
+											 boolean supportsMaxRows,
 											 boolean supportsReturningClause,
 											 boolean supportsOutputClause,
 											 boolean supportsNativeUuid,
@@ -46,6 +48,8 @@ record CapabilityFlags(boolean supportsReadOnlyTransactions,
 		private boolean supportsServerSideStreaming;
 		private boolean supportsSqlArrays;
 		private boolean supportsNativeJson;
+		private boolean supportsJdbcGeneratedKeys;
+		private boolean supportsMaxRows;
 		private boolean supportsReturningClause;
 		private boolean supportsOutputClause;
 		private boolean supportsNativeUuid;
@@ -59,6 +63,8 @@ record CapabilityFlags(boolean supportsReadOnlyTransactions,
 			this.supportsServerSideStreaming = false;
 			this.supportsSqlArrays = false;
 			this.supportsNativeJson = false;
+			this.supportsJdbcGeneratedKeys = true;
+			this.supportsMaxRows = true;
 			this.supportsReturningClause = false;
 			this.supportsOutputClause = false;
 			this.supportsNativeUuid = false;
@@ -96,6 +102,16 @@ record CapabilityFlags(boolean supportsReadOnlyTransactions,
 			return this;
 		}
 
+		Builder supportsJdbcGeneratedKeys(boolean supportsJdbcGeneratedKeys) {
+			this.supportsJdbcGeneratedKeys = supportsJdbcGeneratedKeys;
+			return this;
+		}
+
+		Builder supportsMaxRows(boolean supportsMaxRows) {
+			this.supportsMaxRows = supportsMaxRows;
+			return this;
+		}
+
 		Builder supportsReturningClause(boolean supportsReturningClause) {
 			this.supportsReturningClause = supportsReturningClause;
 			return this;
@@ -129,6 +145,8 @@ record CapabilityFlags(boolean supportsReadOnlyTransactions,
 					this.supportsServerSideStreaming,
 					this.supportsSqlArrays,
 					this.supportsNativeJson,
+					this.supportsJdbcGeneratedKeys,
+					this.supportsMaxRows,
 					this.supportsReturningClause,
 					this.supportsOutputClause,
 					this.supportsNativeUuid,

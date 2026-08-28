@@ -2,6 +2,59 @@
 
 All notable changes to Pyranid will be documented in this file.
 
+## 4.7.0 (unreleased)
+
+### Added
+
+- DuckDB support: `DatabaseType.DUCK_DB` with automatic detection from JDBC product name (`DuckDB`), URL
+  (`jdbc:duckdb:`), and driver name signals, plus a dedicated internal dialect. DuckDB runs in-process, so
+  integration coverage requires no container support.
+- SQL STRUCT-to-record mapping: dialects that surface STRUCT columns as attribute-name-to-value maps
+  (currently DuckDB) map them onto Java records, recursively - nested STRUCTs map to nested records,
+  STRUCT lists map to `List<RecordType>`/array components, and attribute names follow the same
+  `camelCase`/`snake_case` and `@DatabaseColumn` matching rules as result columns. A single-column STRUCT
+  result maps directly to a record target (`SELECT person FROM ...` with `fetchObject(Person.class)`), with
+  ordinary by-name row mapping always taking precedence. `Map` rows surface STRUCT values as plain
+  insertion-ordered maps with no driver types, including elements of top-level STRUCT/JSON list columns.
+  Top-level row records - the single-column STRUCT fallback included - are constructed via the configured
+  `InstanceProvider`; nested records are constructed via their canonical constructors, and
+  `CustomColumnMapper`s are not consulted for individual STRUCT attributes.
+- `VectorParameter` support on DuckDB: `Parameters.vectorOfFloats(...)`/`vectorOfDoubles(...)` bind to
+  fixed-size `FLOAT[n]`/`DOUBLE[n]` ARRAY columns via the driver's SQL ARRAY support. Similarity
+  comparisons require an explicit cast of the bound parameter, e.g.
+  `array_cosine_distance(embedding, CAST(:probe AS FLOAT[3]))`.
+- DuckDB exception classification: the driver reports no SQLStates or vendor codes, so
+  `isUniqueConstraintViolation()`/`isForeignKeyViolation()` match DuckDB's stable `Constraint Error:`
+  message shapes, and optimistic-concurrency write-write conflicts (`TransactionContext Error: ... conflict`)
+  classify as retryable serialization failures, integrating with `RetryPolicy`. Query timeouts surface as
+  `SQLTimeoutException` and classify via the generic path.
+- DuckDB result-set niceties: `JSON` columns surface as `String`, `BLOB` columns as `byte[]`, `HUGEINT` as
+  `BigInteger`, and `UUID` columns bind and map natively.
+- JDBC generated-key retrieval (`executeReturningGeneratedKey(...)`) is guarded on DuckDB with a clear
+  `DatabaseException` directing callers to `INSERT ... RETURNING`, instead of the driver's unhelpful
+  `SQLFeatureNotSupportedException`.
+
+### Changed
+
+- Temporal parameters (`LocalDate`, `LocalTime`, `LocalDateTime`, `OffsetDateTime`, `Instant`) now bind
+  with untyped `PreparedStatement::setObject` on dialects whose drivers reject explicit target SQL types
+  (currently DuckDB), and `OffsetTime` binds there as its ISO-8601 string form (DuckDB's driver accepts
+  `setObject(OffsetTime)` but rejects it at execute time, so try-bind fallback cannot detect it); other
+  databases continue to bind exactly as before.
+
+### Migration Notes
+
+- `DatabaseType` gained the `DUCK_DB` constant. Exhaustive `switch` expressions over `DatabaseType` in
+  application code must add a `DUCK_DB` (or `default`) arm when recompiling against 4.7.0.
+- `DefaultResultSetMapper::mapResultSetToRecord` may now return `null` (previously it always returned a
+  record or threw) when the row is a single `NULL` SQL STRUCT column. Single-object fetches surface such
+  rows as `Optional.empty()`; list and stream fetches surface a `null` element for each such row,
+  consistent with existing `NULL` standard-type handling.
+- DuckDB SQL that uses `:` in struct literals (`{'key':expr}`) or list slicing (`list[a:b]`) collides with
+  Pyranid's named-parameter syntax when the character after `:` can start an identifier. Write a space
+  after the colon (`{'key': expr}`), or use `struct_pack(key := expr)` / `list_slice(...)` instead.
+  DuckDB's `::` casts and `->`/`->>` JSON operators need no escaping.
+
 ## 4.6.1
 
 ### Fixed

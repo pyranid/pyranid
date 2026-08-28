@@ -185,6 +185,60 @@ public class DatabaseExceptionClassificationTests {
 	}
 
 	@Test
+	public void testDuckDbClassification() {
+		// DuckDB reports no SQLState and no vendor code; classification is message-based
+		DatabaseException primaryKey = databaseException(DatabaseType.DUCK_DB,
+				new SQLException("Constraint Error: Duplicate key \"id: 1\" violates primary key constraint."));
+		Assertions.assertTrue(primaryKey.isUniqueConstraintViolation());
+		Assertions.assertFalse(primaryKey.isForeignKeyViolation());
+		Assertions.assertFalse(primaryKey.isDeadlock());
+		Assertions.assertFalse(primaryKey.isTransient());
+
+		DatabaseException unique = databaseException(DatabaseType.DUCK_DB,
+				new SQLException("Constraint Error: Duplicate key \"uq: u1\" violates unique constraint."));
+		Assertions.assertTrue(unique.isUniqueConstraintViolation());
+		Assertions.assertFalse(unique.isForeignKeyViolation());
+
+		DatabaseException foreignKey = databaseException(DatabaseType.DUCK_DB,
+				new SQLException("Constraint Error: Violates foreign key constraint because key \"id: 999\" does not exist in the referenced table"));
+		Assertions.assertTrue(foreignKey.isForeignKeyViolation());
+		Assertions.assertFalse(foreignKey.isUniqueConstraintViolation());
+
+		// The driver sometimes nests the originating error inside a wrapper message
+		DatabaseException nestedUnique = databaseException(DatabaseType.DUCK_DB,
+				new SQLException("Invalid Input Error: Attempting to execute an unsuccessful or closed pending query result\n"
+						+ "Error: Constraint Error: Duplicate key \"uq: u1\" violates unique constraint."));
+		Assertions.assertTrue(nestedUnique.isUniqueConstraintViolation());
+
+		// Write-write conflicts are DuckDB's snapshot-isolation serialization failures and are retryable
+		DatabaseException updateConflict = databaseException(DatabaseType.DUCK_DB,
+				new SQLException("TransactionContext Error: Conflict on update!"));
+		Assertions.assertTrue(updateConflict.isSerializationFailure());
+		Assertions.assertTrue(updateConflict.isTransient());
+		Assertions.assertFalse(updateConflict.isDeadlock());
+		Assertions.assertFalse(updateConflict.isTimeout());
+
+		DatabaseException catalogConflict = databaseException(DatabaseType.DUCK_DB,
+				new SQLException("TransactionContext Error: Catalog write-write conflict on create with \"Schema\""));
+		Assertions.assertTrue(catalogConflict.isSerializationFailure());
+		Assertions.assertTrue(catalogConflict.isTransient());
+
+		// Timeouts surface as SQLTimeoutException instances and classify via the generic path
+		DatabaseException timeout = databaseException(DatabaseType.DUCK_DB,
+				new SQLTimeoutException("INTERRUPT Error: Interrupted!"));
+		Assertions.assertTrue(timeout.isTimeout());
+		Assertions.assertFalse(timeout.isSerializationFailure());
+
+		// Other DuckDB constraint/diagnostic messages are deliberately unclassified
+		assertUnclassified(databaseException(DatabaseType.DUCK_DB,
+				new SQLException("Constraint Error: NOT NULL constraint failed: pk.nn")));
+		assertUnclassified(databaseException(DatabaseType.DUCK_DB,
+				new SQLException("Parser Error: syntax error at or near \"pk\"")));
+		assertUnclassified(databaseException(DatabaseType.DUCK_DB,
+				new SQLException("Conversion Error: Could not convert string 'abc' to INT32")));
+	}
+
+	@Test
 	public void testClassificationInspectsNextSqlException() {
 		SQLException batch = new SQLException("batch failed");
 		batch.setNextException(new SQLException("duplicate", "23000", 1062));

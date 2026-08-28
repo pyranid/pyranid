@@ -159,14 +159,14 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		Object normalizedParameter = normalizeParameter(statementContext, unwrappedParameter);
 
 		if (normalizedParameter instanceof LocalDate localDate) {
-			if (!trySetObject(preparedStatement, parameterIndex, localDate, Types.DATE))
+			if (!trySetTemporalObject(statementContext, preparedStatement, parameterIndex, localDate, Types.DATE))
 				preparedStatement.setDate(parameterIndex, java.sql.Date.valueOf(localDate)); // fallback
 
 			return;
 		}
 
 		if (normalizedParameter instanceof LocalTime localTime) {
-			if (!trySetObject(preparedStatement, parameterIndex, localTime, Types.TIME)) {
+			if (!trySetTemporalObject(statementContext, preparedStatement, parameterIndex, localTime, Types.TIME)) {
 				if (localTime.getNano() == 0)
 					preparedStatement.setTime(parameterIndex, java.sql.Time.valueOf(localTime));
 				else
@@ -177,7 +177,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		if (normalizedParameter instanceof LocalDateTime localDateTime) {
-			if (!trySetObject(preparedStatement, parameterIndex, localDateTime, Types.TIMESTAMP))
+			if (!trySetTemporalObject(statementContext, preparedStatement, parameterIndex, localDateTime, Types.TIMESTAMP))
 				preparedStatement.setTimestamp(parameterIndex, java.sql.Timestamp.valueOf(localDateTime)); // fallback
 
 			return;
@@ -190,21 +190,21 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			if (sqlType.isTimestampWithoutTimeZone() || shouldBindAsTimestampWithoutTimeZone(statementContext, sqlTypeOptional)) {
 				// Coerce to DB zone and drop the offset.
 				LocalDateTime localDateTime = offsetDateTime.atZoneSameInstant(statementContext.getTimeZone()).toLocalDateTime();
-				if (!trySetObject(preparedStatement, parameterIndex, localDateTime, Types.TIMESTAMP))
+				if (!trySetTemporalObject(statementContext, preparedStatement, parameterIndex, localDateTime, Types.TIMESTAMP))
 					preparedStatement.setTimestamp(parameterIndex, java.sql.Timestamp.valueOf(localDateTime));
 
 				return;
 			}
 
 			if (sqlType.isTimestampWithTimeZone()) {
-				if (!trySetObject(preparedStatement, parameterIndex, offsetDateTime, Types.TIMESTAMP_WITH_TIMEZONE))
+				if (!trySetTemporalObject(statementContext, preparedStatement, parameterIndex, offsetDateTime, Types.TIMESTAMP_WITH_TIMEZONE))
 					preparedStatement.setTimestamp(parameterIndex, java.sql.Timestamp.from(offsetDateTime.toInstant()));
 
 				return;
 			}
 
 			// Ambiguous target: default to TIMESTAMP WITH TIME ZONE.
-			if (!trySetObject(preparedStatement, parameterIndex, offsetDateTime, Types.TIMESTAMP_WITH_TIMEZONE))
+			if (!trySetTemporalObject(statementContext, preparedStatement, parameterIndex, offsetDateTime, Types.TIMESTAMP_WITH_TIMEZONE))
 				preparedStatement.setTimestamp(parameterIndex, java.sql.Timestamp.from(offsetDateTime.toInstant()));
 
 			return;
@@ -217,22 +217,29 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			if (sqlType.isTimestampWithoutTimeZone() || shouldBindAsTimestampWithoutTimeZone(statementContext, sqlTypeOptional)) {
 				LocalDateTime localDateTime = LocalDateTime.ofInstant(instant, statementContext.getTimeZone());
 
-				if (!trySetObject(preparedStatement, parameterIndex, localDateTime, Types.TIMESTAMP))
+				if (!trySetTemporalObject(statementContext, preparedStatement, parameterIndex, localDateTime, Types.TIMESTAMP))
 					preparedStatement.setTimestamp(parameterIndex, java.sql.Timestamp.valueOf(localDateTime));
 
 				return;
 			}
 
 			// Ambiguous target: default to TIMESTAMP WITH TIME ZONE.
-			if (!trySetObject(preparedStatement, parameterIndex, OffsetDateTime.ofInstant(instant, ZoneOffset.UTC), Types.TIMESTAMP_WITH_TIMEZONE))
+			if (!trySetTemporalObject(statementContext, preparedStatement, parameterIndex, OffsetDateTime.ofInstant(instant, ZoneOffset.UTC), Types.TIMESTAMP_WITH_TIMEZONE))
 				preparedStatement.setTimestamp(parameterIndex, java.sql.Timestamp.from(instant));
 
 			return;
 		}
 
 		if (normalizedParameter instanceof java.time.OffsetTime offsetTime) {
+			// Some drivers (e.g. DuckDB) accept setObject(OffsetTime) but reject it at execute time, so
+			// try-bind detection cannot fall back; the dialect declares the string form up front.
+			if (statementContext.getDatabaseDialect().bindsOffsetTimeAsString()) {
+				preparedStatement.setString(parameterIndex, offsetTime.toString());
+				return;
+			}
+
 			// If driver supports TIME WITH TIME ZONE, use it; else fall back to string.
-			if (!trySetObject(preparedStatement, parameterIndex, offsetTime, Types.TIME_WITH_TIMEZONE) && !trySetObject(preparedStatement, parameterIndex, offsetTime))
+			if (!trySetTemporalObject(statementContext, preparedStatement, parameterIndex, offsetTime, Types.TIME_WITH_TIMEZONE) && !trySetObject(preparedStatement, parameterIndex, offsetTime))
 				preparedStatement.setString(parameterIndex, offsetTime.toString());
 
 			return;
@@ -370,6 +377,27 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	}
 
 	@NonNull
+	/**
+	 * Binds a temporal value with an explicit target SQL type when the dialect supports it, or with an
+	 * untyped {@link PreparedStatement#setObject(int, Object)} for drivers (e.g. DuckDB) that reject
+	 * target-typed binds but accept {@code java.time} values natively.
+	 */
+	private <T> boolean trySetTemporalObject(@NonNull StatementContext<T> statementContext,
+																					 @NonNull PreparedStatement preparedStatement,
+																					 @NonNull Integer parameterIndex,
+																					 @Nullable Object parameter,
+																					 @NonNull Integer sqlType) throws SQLException {
+		requireNonNull(statementContext);
+		requireNonNull(preparedStatement);
+		requireNonNull(parameterIndex);
+		requireNonNull(sqlType);
+
+		if (!statementContext.getDatabaseDialect().supportsSetObjectWithTargetSqlType())
+			return trySetObject(preparedStatement, parameterIndex, parameter);
+
+		return trySetObject(preparedStatement, parameterIndex, parameter, sqlType);
+	}
+
 	protected boolean trySetObject(@NonNull PreparedStatement preparedStatement,
 																 @NonNull Integer parameterIndex,
 																 @Nullable Object parameter,

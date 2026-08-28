@@ -79,6 +79,16 @@ class GenericDialect implements DatabaseDialect {
 		return false;
 	}
 
+	@Override
+	public boolean supportsSetObjectWithTargetSqlType() {
+		return true;
+	}
+
+	@Override
+	public boolean bindsOffsetTimeAsString() {
+		return false;
+	}
+
 	@NonNull
 	@Override
 	public Object normalizeUuid(@NonNull UUID uuid) {

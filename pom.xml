@@ -3,7 +3,7 @@
 	<modelVersion>4.0.0</modelVersion>
 	<groupId>com.pyranid</groupId>
 	<artifactId>pyranid</artifactId>
-	<version>4.6.1</version>
+	<version>4.7.0-SNAPSHOT</version>
 	<packaging>jar</packaging>
 	<name>Pyranid</name>
 	<description>Pyranid is a zero-dependency JDBC interface for modern Java applications.</description>
@@ -57,7 +57,7 @@
 		<build.helper.maven.plugin.version>3.6.1</build.helper.maven.plugin.version>
 		<exec.maven.plugin.version>3.6.3</exec.maven.plugin.version>
 		<japicmp.maven.plugin.version>0.26.1</japicmp.maven.plugin.version>
-		<japicmp.baseline.version>4.6.0</japicmp.baseline.version>
+		<japicmp.baseline.version>4.6.1</japicmp.baseline.version>
 		<jacoco.maven.plugin.version>0.8.15</jacoco.maven.plugin.version>
 		<jmh.version>1.37</jmh.version>
 		<jmh.args>com.pyranid.*CacheBenchmark com.pyranid.ConcurrentLruMapBenchmark</jmh.args>
@@ -65,6 +65,7 @@
 		<mysql.connector.j.version>9.7.0</mysql.connector.j.version>
 		<mariadb.java.client.version>3.5.10</mariadb.java.client.version>
 		<sqlite.jdbc.version>3.53.2.1</sqlite.jdbc.version>
+		<duckdb.jdbc.version>1.5.5.1</duckdb.jdbc.version>
 		<mssql.jdbc.version>13.4.0.jre11</mssql.jdbc.version>
 		<ojdbc11.version>23.26.3.0.0</ojdbc11.version>
 		<slf4j.version>2.0.18</slf4j.version>
@@ -348,6 +349,12 @@
 					<groupId>org.xerial</groupId>
 					<artifactId>sqlite-jdbc</artifactId>
 					<version>${sqlite.jdbc.version}</version>
+					<scope>test</scope>
+				</dependency>
+				<dependency>
+					<groupId>org.duckdb</groupId>
+					<artifactId>duckdb_jdbc</artifactId>
+					<version>${duckdb.jdbc.version}</version>
 					<scope>test</scope>
 				</dependency>
 				<dependency>

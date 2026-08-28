@@ -709,8 +709,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			final boolean[] rawLoaded = hasFanOut ? new boolean[plan.columnCount + 1] : null;
 
 			if (plan.isRecord) {
-				if (plan.mappedColumnCount == 0)
+				if (plan.mappedColumnCount == 0) {
+					if (isSingleStructColumn(resultSetMetaData))
+						return Optional.ofNullable(mapStructColumnToRecord(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData));
+
 					throw noRecordColumnMappingsException(resultSetRowType, resultSetMetaData);
+				}
 
 				RecordComponent[] rc = determineRecordComponents(resultSetRowType);
 				Object[] args = new Object[rc.length];
@@ -1195,10 +1199,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	 * @param statementContext current SQL context
 	 * @param resultSet        provides raw row data to pull from
 	 * @param instanceProvider an instance-creation factory, used to instantiate resultset row objects as needed.
-	 * @return the result of the mapping
+	 * @return the result of the mapping, or {@code null} when the row is a single {@code NULL} SQL STRUCT column
 	 * @throws Exception if an error occurs during mapping
 	 */
-	@NonNull
+	@Nullable
 	protected <T extends Record> T mapResultSetToRecord(@NonNull StatementContext<T> statementContext,
 																											@NonNull ResultSet resultSet,
 																											@NonNull InstanceProvider instanceProvider,
@@ -1291,8 +1295,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			}
 		}
 
-		if (mappedColumnCount == 0)
+		if (mappedColumnCount == 0) {
+			if (isSingleStructColumn(resultSetMetaData))
+				return mapStructColumnToRecord(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData);
+
 			throw noRecordColumnMappingsException(resultSetRowType, resultSetMetaData);
+		}
 
 		if (!missingPrimitiveRecordComponents.isEmpty()) {
 			RecordComponent missingPrimitiveRecordComponent = missingPrimitiveRecordComponents.get(0);
@@ -1605,6 +1613,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		if (resultSetValue.getClass().isArray() && (targetType.isArray() || targetType.isList() || targetType.isSet()))
 			return Optional.of(convertArrayResultSetValue(statementContext, resultSetValue, targetType));
+
+		// STRUCT-shaped values: dialects that surface SQL STRUCT columns as insertion-ordered
+		// attribute-name -> value maps (for example DuckDB - see DuckDbDialect#unwrapResultSetValue)
+		// map directly to record targets, recursively converting each attribute to its component type.
+		if (resultSetValue instanceof Map<?, ?> mapValue && propertyType.isRecord())
+			return Optional.of(convertMapResultSetValueToRecord(statementContext, mapValue, propertyType, STRUCT_RECORD_INSTANCE_PROVIDER));
 
 		// Vector read-back: drivers surface vector columns (e.g. pgvector) as text like "[1.5,2.5]" -
 		// unwrapResultSetValue above already converted PGobject to its String form. Parse into
@@ -2028,6 +2042,177 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		return converted;
+	}
+
+	/**
+	 * Used to construct nested record instances during SQL STRUCT mapping via the canonical record constructor
+	 * (the {@link InstanceProvider} default behavior).
+	 */
+	@NonNull
+	private static final InstanceProvider STRUCT_RECORD_INSTANCE_PROVIDER = new InstanceProvider() {};
+
+	private static boolean isSingleStructColumn(@NonNull ResultSetMetaData resultSetMetaData) throws SQLException {
+		requireNonNull(resultSetMetaData);
+
+		return resultSetMetaData.getColumnCount() == 1 && resultSetMetaData.getColumnType(1) == Types.STRUCT;
+	}
+
+	/**
+	 * Maps a single-column SQL STRUCT row directly to a record: {@code SELECT person FROM ...} with a record
+	 * target whose components match the STRUCT's attributes. Only attempted when no result columns map to
+	 * record components by name, so ordinary row mapping always takes precedence.
+	 *
+	 * @return the mapped record, or {@code null} when the STRUCT value is {@code NULL}
+	 * @throws DatabaseException if the dialect does not expose the STRUCT's attributes as a name-to-value map
+	 */
+	@Nullable
+	private <T> T mapStructColumnToRecord(@NonNull StatementContext<T> statementContext,
+																				@NonNull ResultSet resultSet,
+																				@NonNull Class<T> resultSetRowType,
+																				@NonNull InstanceProvider instanceProvider,
+																				@NonNull ResultSetMetaData resultSetMetaData) throws SQLException {
+		requireNonNull(statementContext);
+		requireNonNull(resultSet);
+		requireNonNull(resultSetRowType);
+		requireNonNull(instanceProvider);
+		requireNonNull(resultSetMetaData);
+
+		Object resultSetValue = extractColumnValue(resultSetMetaData, statementContext, resultSet, 1).orElse(null);
+
+		if (resultSetValue != null)
+			resultSetValue = statementContext.getDatabaseDialect().unwrapResultSetValue(resultSetValue);
+
+		if (resultSetValue == null)
+			return null;
+
+		if (!(resultSetValue instanceof Map<?, ?> mapValue))
+			throw noRecordColumnMappingsException(resultSetRowType, resultSetMetaData);
+
+		@SuppressWarnings("unchecked")
+		T record = (T) convertMapResultSetValueToRecord(statementContext, mapValue, resultSetRowType, instanceProvider);
+		return record;
+	}
+
+	/**
+	 * Converts a SQL STRUCT value - surfaced by the dialect as an attribute-name to value map - to an instance
+	 * of {@code recordClass}.
+	 * <p>
+	 * Attribute names are normalized with {@link #normalizeColumnLabel(String)} and matched against record
+	 * components with the same conventions used for result columns ({@code camelCase} components match
+	 * {@code snake_case} attributes, and {@link DatabaseColumn} aliases apply). Attribute values are converted
+	 * recursively, so nested STRUCTs map to nested records and STRUCT lists map to record collections.
+	 * {@link CustomColumnMapper}s are not consulted for individual STRUCT attributes. The record is
+	 * constructed via {@code instanceProvider}: single-column STRUCT fallbacks pass the configured
+	 * {@link InstanceProvider} (so top-level row records honor it, like any other row mapping), while
+	 * nested STRUCT attributes pass {@link #STRUCT_RECORD_INSTANCE_PROVIDER} (canonical constructors).
+	 */
+	@NonNull
+	private <T> Object convertMapResultSetValueToRecord(@NonNull StatementContext<T> statementContext,
+																											@NonNull Map<?, ?> mapValue,
+																											@NonNull Class<?> recordClass,
+																											@NonNull InstanceProvider instanceProvider) {
+		requireNonNull(statementContext);
+		requireNonNull(mapValue);
+		requireNonNull(recordClass);
+		requireNonNull(instanceProvider);
+
+		Map<String, Object> valuesByNormalizedName = new HashMap<>(mapValue.size());
+		Map<String, Integer> attributeIndexesByNormalizedName = new HashMap<>(mapValue.size());
+		Map<String, String> normalizedNamesToRawNames = new HashMap<>(mapValue.size());
+		int attributeIndex = 0;
+
+		for (Map.Entry<?, ?> entry : mapValue.entrySet()) {
+			String rawName = String.valueOf(entry.getKey());
+			String normalizedName = normalizeColumnLabel(rawName);
+			String previousRawName = normalizedNamesToRawNames.putIfAbsent(normalizedName, rawName);
+
+			if (previousRawName != null)
+				throw new DatabaseException(format(
+						"Duplicate STRUCT attribute name '%s' (normalized from '%s' and '%s'); use distinct attribute names.",
+						normalizedName, previousRawName, rawName));
+
+			valuesByNormalizedName.put(normalizedName, entry.getValue());
+			attributeIndexesByNormalizedName.put(normalizedName, attributeIndex++);
+		}
+
+		RecordComponent[] recordComponents = determineRecordComponents(recordClass);
+		Map<String, Set<String>> columnLabelsByRecordComponentName = determineColumnLabelsByRecordComponentName(recordClass);
+		Map<String, TargetType> propertyTargetTypes = determinePropertyTargetTypes(recordClass);
+
+		Object[] args = new Object[recordComponents.length];
+		int mappedAttributeCount = 0;
+		List<RecordComponent> missingPrimitiveRecordComponents = new ArrayList<>();
+
+		for (int i = 0; i < recordComponents.length; ++i) {
+			RecordComponent recordComponent = recordComponents[i];
+			String propertyName = recordComponent.getName();
+
+			// If there are any @DatabaseColumn annotations on this component, respect them
+			Set<String> potentialAttributeNames = columnLabelsByRecordComponentName.get(propertyName);
+
+			// There were no @DatabaseColumn annotations, use the default naming strategy
+			if (potentialAttributeNames == null || potentialAttributeNames.isEmpty())
+				potentialAttributeNames = databaseColumnNamesForPropertyName(propertyName);
+
+			Class<?> recordComponentType = recordComponent.getType();
+
+			// Get the precise TargetType (generic-aware) for this component
+			TargetType targetType = propertyTargetTypes.get(propertyName);
+			if (targetType == null) targetType = TargetType.of(recordComponent.getGenericType());
+
+			// Apply in attribute order for deterministic results
+			List<String> orderedAttributeNames = new ArrayList<>(potentialAttributeNames.size());
+			for (String potentialAttributeName : potentialAttributeNames)
+				if (valuesByNormalizedName.containsKey(potentialAttributeName))
+					orderedAttributeNames.add(potentialAttributeName);
+
+			if (orderedAttributeNames.isEmpty()) {
+				if (recordComponentType.isPrimitive())
+					missingPrimitiveRecordComponents.add(recordComponent);
+				continue;
+			}
+
+			orderedAttributeNames.sort((left, right) ->
+					Integer.compare(attributeIndexesByNormalizedName.get(left), attributeIndexesByNormalizedName.get(right)));
+
+			for (String attributeName : orderedAttributeNames) {
+				++mappedAttributeCount;
+				Object rawValue = valuesByNormalizedName.get(attributeName);
+				Object value = rawValue == null ? null
+						: convertResultSetValueToTargetType(statementContext, rawValue, targetType).orElse(null);
+
+				// It's considered programmer error to have a NULL attribute value and map it to a primitive (which does not support null)
+				if (value == null && recordComponentType.isPrimitive())
+					throw new DatabaseException(format("STRUCT attribute '%s' is NULL but record component '%s' of %s is primitive (%s). Use a non-primitive type or COALESCE/CAST in SQL.",
+							attributeName, recordComponent.getName(), recordClass.getSimpleName(), recordComponentType.getSimpleName()));
+
+				Class<?> checkedType = boxedClass(recordComponentType);
+
+				if (value != null && !checkedType.isInstance(value)) {
+					throw new DatabaseException(format(
+							"STRUCT attribute '%s' for record component '%s' of %s expects type %s, but the STRUCT produced %s",
+							attributeName, recordComponent.getName(), recordClass, recordComponentType, value.getClass()));
+				}
+
+				args[i] = value;
+			}
+		}
+
+		if (mappedAttributeCount == 0)
+			throw new DatabaseException(format(
+					"No STRUCT attributes map to record components of %s. STRUCT attributes: %s. "
+							+ "Ensure the STRUCT's attribute names match record components or provide a custom ResultSetMapper.",
+					recordClass.getName(), String.join(", ", valuesByNormalizedName.keySet())));
+
+		if (!missingPrimitiveRecordComponents.isEmpty()) {
+			RecordComponent missingPrimitiveRecordComponent = missingPrimitiveRecordComponents.get(0);
+			throw new DatabaseException(format(
+					"No STRUCT attribute matches record component '%s' of %s, but the component is primitive (%s). "
+							+ "Ensure the attribute is present or use a non-primitive type.",
+					missingPrimitiveRecordComponent.getName(), recordClass.getSimpleName(), missingPrimitiveRecordComponent.getType().getSimpleName()));
+		}
+
+		return provideRecordVia(instanceProvider, statementContext, recordClass, args);
 	}
 
 	private static byte exactByte(@NonNull Number number) {
@@ -2755,6 +2940,17 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			if (withTz) {
 				OffsetTime ot = tryGet(rs, col, OffsetTime.class);
 				if (ot != null) return ot;
+				// Some drivers (e.g. DuckDB for TIMETZ) return OffsetTime from plain getObject while their
+				// typed accessors are unsupported or broken - prefer the raw value before the LocalTime path
+				Object raw = rs.getObject(col);
+				if (raw == null) return null;
+				if (raw instanceof OffsetTime offsetTime) return offsetTime;
+				if (raw instanceof String s) {
+					try {
+						return OffsetTime.parse(s);
+					} catch (DateTimeParseException ignore) {
+					}
+				}
 			}
 			// If DB has plain TIME, attach DB zone offset at an arbitrary date (offset depends on date!)
 			LocalTime lt = asLocalTime(rs, col);

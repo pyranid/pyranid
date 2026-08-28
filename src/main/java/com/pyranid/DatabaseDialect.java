@@ -43,6 +43,21 @@ interface DatabaseDialect {
 
 	boolean supportsVector();
 
+	/**
+	 * Whether the driver supports {@link PreparedStatement#setObject(int, Object, int)} with an explicit
+	 * target SQL type when binding {@code java.time} temporal values. Drivers that reject target-typed
+	 * binds outright (e.g. DuckDB's "Unknown target type") but accept untyped
+	 * {@link PreparedStatement#setObject(int, Object)} should return {@code false}.
+	 */
+	boolean supportsSetObjectWithTargetSqlType();
+
+	/**
+	 * Whether {@link java.time.OffsetTime} parameters must bind as ISO-8601 strings. Some drivers
+	 * (e.g. DuckDB) accept an {@code OffsetTime} at {@code setObject(...)} time but reject it at execute
+	 * time, so try-bind detection cannot fall back; the dialect declares the string form up front.
+	 */
+	boolean bindsOffsetTimeAsString();
+
 	@NonNull
 	Object normalizeUuid(@NonNull UUID uuid);
 

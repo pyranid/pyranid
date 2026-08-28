@@ -74,6 +74,10 @@ jobs:
             profiles: integration
             test: SqliteIntegrationIT
             experimental: false
+          - name: DuckDB
+            profiles: integration
+            test: DuckDbIntegrationIT
+            experimental: false
           - name: MariaDB
             profiles: integration,it-mariadb
             test: MariaDbIntegrationIT

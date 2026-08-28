@@ -55,6 +55,9 @@ import static java.util.Objects.requireNonNull;
 
 @ExtendWith(AbstractPortableJdbcIntegrationTests.PortableCoverageGuard.class)
 abstract class AbstractPortableJdbcIntegrationTests {
+	// Global floor for legs without a @PortableContractCoverageFloor override. This is a blunt numeric
+	// guard against accidental mass-skips, not a per-flag validation; legs whose databases legitimately
+	// skip more portable tests declare a lower floor explicitly so every other leg keeps this default.
 	private static final int MINIMUM_EXECUTED_PORTABLE_CONTRACT_TESTS = 18;
 	private static final ConcurrentMap<Class<?>, PortableCoverage> PORTABLE_COVERAGE = new ConcurrentHashMap<>();
 
@@ -314,6 +317,8 @@ abstract class AbstractPortableJdbcIntegrationTests {
 
 	@Test
 	public void testGeneratedKeyRoundTrip() {
+		Assumptions.assumeTrue(capabilityFlags().supportsJdbcGeneratedKeys());
+
 		Database db = database();
 		String table = "pyranid_generated_key_items";
 		recreateTable(db, table, dialectProfile().generatedKeyTableSql(table));
@@ -463,6 +468,8 @@ abstract class AbstractPortableJdbcIntegrationTests {
 
 	@Test
 	public void testMaxRowsSettingLimitsResultSet() {
+		Assumptions.assumeTrue(capabilityFlags().supportsMaxRows());
+
 		Database db = database();
 		DialectProfile dialectProfile = dialectProfile();
 		String table = "pyranid_max_rows_items";
@@ -743,9 +750,14 @@ abstract class AbstractPortableJdbcIntegrationTests {
 			int executedPortableTests = portableCoverage == null ? 0 : portableCoverage.executedPortableTests.get();
 			int skippedPortableTests = portableCoverage == null ? 0 : portableCoverage.skippedPortableTests.get();
 
-			Assertions.assertTrue(executedPortableTests >= MINIMUM_EXECUTED_PORTABLE_CONTRACT_TESTS, () ->
+			PortableContractCoverageFloor coverageFloor = testClass.getAnnotation(PortableContractCoverageFloor.class);
+			int minimumExecutedPortableTests = coverageFloor == null
+					? MINIMUM_EXECUTED_PORTABLE_CONTRACT_TESTS
+					: coverageFloor.value();
+
+			Assertions.assertTrue(executedPortableTests >= minimumExecutedPortableTests, () ->
 					"Expected " + testClass.getSimpleName() + " to execute at least "
-							+ MINIMUM_EXECUTED_PORTABLE_CONTRACT_TESTS + " inherited portable contract tests, but executed "
+							+ minimumExecutedPortableTests + " inherited portable contract tests, but executed "
 							+ executedPortableTests + " and skipped " + skippedPortableTests
 							+ ". Check capability flags and assumptions; integration legs should not pass by skipping "
 							+ "the portable contract.");

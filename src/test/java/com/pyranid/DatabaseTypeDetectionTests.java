@@ -107,6 +107,14 @@ public class DatabaseTypeDetectionTests {
 	}
 
 	@Test
+	public void testDatabaseTypeDetectionRecognizesDuckDbSignatures() {
+		assertDetectedDatabaseType(DatabaseType.DUCK_DB, "DuckDB", null, null, null);
+		assertDetectedDatabaseType(DatabaseType.DUCK_DB, "Unknown", null, "jdbc:duckdb:/tmp/pyranid.db", null);
+		assertDetectedDatabaseType(DatabaseType.DUCK_DB, "Unknown", null, "jdbc:duckdb:", null);
+		assertDetectedDatabaseType(DatabaseType.DUCK_DB, "Unknown", null, null, "DuckDBJ");
+	}
+
+	@Test
 	public void testDatabaseTypeDetectionRecognizesSqlServerSignatures() {
 		assertDetectedDatabaseType(DatabaseType.SQL_SERVER, "Microsoft SQL Server", null, null, null);
 		assertDetectedDatabaseType(DatabaseType.SQL_SERVER, "Unknown", null, "jdbc:sqlserver://localhost:1433", null);
