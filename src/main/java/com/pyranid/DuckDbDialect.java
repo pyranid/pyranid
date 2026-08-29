@@ -90,6 +90,12 @@ final class DuckDbDialect extends GenericDialect {
 
 	@NonNull
 	@Override
+	public Boolean supportsSqlStruct() {
+		return true;
+	}
+
+	@NonNull
+	@Override
 	public Boolean supportsSetObjectWithTargetSqlType() {
 		// The driver rejects setObject(int, Object, int targetSqlType) for temporal types with
 		// "Unknown target type"; it binds java.time values natively via untyped setObject
@@ -113,21 +119,51 @@ final class DuckDbDialect extends GenericDialect {
 		requireNonNull(element);
 		requireNonNull(timeZone);
 
+		return normalizeContainerElement(baseTypeName, element, timeZone);
+	}
+
+	@NonNull
+	@Override
+	public Object normalizeSqlStructAttribute(@NonNull String typeName,
+																														@NonNull Integer attributeIndex,
+																														@NonNull Object attribute,
+																														@NonNull ZoneId timeZone) {
+		requireNonNull(typeName);
+		requireNonNull(attributeIndex);
+		requireNonNull(attribute);
+		requireNonNull(timeZone);
+
+		String attributeTypeName = structAttributeTypeName(typeName, attributeIndex);
+		// A named STRUCT alias does not reveal an individual attribute's target type. Do not infer
+		// timestamp semantics from words that happen to occur in the alias itself; the ISO form lets
+		// DuckDB cast an Instant against the actual attribute type.
+		return normalizeContainerElement(attributeTypeName == null ? "" : attributeTypeName,
+				attribute, timeZone);
+	}
+
+	@NonNull
+	private Object normalizeContainerElement(@NonNull String targetTypeName,
+																							 @NonNull Object element,
+																							 @NonNull ZoneId timeZone) {
+		requireNonNull(targetTypeName);
+		requireNonNull(element);
+		requireNonNull(timeZone);
+
 		// DuckDB's driver accepts these values as scalar parameters but rejects them inside
-		// createArrayOf(...) with "Unsupported parameter type". Supply an equivalent form while
-		// preserving Pyranid's scalar timestamp-zone semantics.
+		// createArrayOf(...)/createStruct(...) with "Unsupported parameter type". Supply an equivalent
+		// form while preserving Pyranid's scalar timestamp-zone semantics.
 		if (element instanceof BigInteger || element instanceof OffsetTime)
 			return element.toString();
 
 		if (!(element instanceof Instant instant))
 			return element;
 
-		String normalizedBaseTypeName = baseTypeName.toUpperCase(Locale.ROOT);
-		boolean timestampWithTimeZone = normalizedBaseTypeName.contains("WITH TIME ZONE")
-				|| normalizedBaseTypeName.contains("WITH LOCAL TIME ZONE")
-				|| normalizedBaseTypeName.contains("TIMESTAMPTZ");
+		String normalizedTargetTypeName = targetTypeName.toUpperCase(Locale.ROOT);
+		boolean timestampWithTimeZone = normalizedTargetTypeName.contains("WITH TIME ZONE")
+				|| normalizedTargetTypeName.contains("WITH LOCAL TIME ZONE")
+				|| normalizedTargetTypeName.contains("TIMESTAMPTZ");
 		boolean timestampWithoutTimeZone = !timestampWithTimeZone
-				&& (normalizedBaseTypeName.contains("TIMESTAMP") || normalizedBaseTypeName.contains("DATETIME"));
+				&& (normalizedTargetTypeName.contains("TIMESTAMP") || normalizedTargetTypeName.contains("DATETIME"));
 
 		if (timestampWithoutTimeZone)
 			return LocalDateTime.ofInstant(instant, timeZone);
@@ -135,6 +171,82 @@ final class DuckDbDialect extends GenericDialect {
 			return OffsetDateTime.ofInstant(instant, ZoneOffset.UTC);
 
 		return instant.toString();
+	}
+
+	@Nullable
+	private String structAttributeTypeName(@NonNull String structTypeName,
+																													 @NonNull Integer attributeIndex) {
+		requireNonNull(structTypeName);
+		requireNonNull(attributeIndex);
+
+		String trimmedTypeName = structTypeName.trim();
+		if (!trimmedTypeName.regionMatches(true, 0, "STRUCT", 0, "STRUCT".length()))
+			return null;
+
+		int openParenthesisIndex = trimmedTypeName.indexOf('(');
+		int closeParenthesisIndex = trimmedTypeName.lastIndexOf(')');
+		if (openParenthesisIndex < 0 || closeParenthesisIndex <= openParenthesisIndex)
+			return null;
+
+		List<String> attributeDeclarations = splitTopLevelTypeList(
+				trimmedTypeName.substring(openParenthesisIndex + 1, closeParenthesisIndex));
+		if (attributeIndex < 0 || attributeIndex >= attributeDeclarations.size())
+			return null;
+
+		String declaration = attributeDeclarations.get(attributeIndex).trim();
+		boolean quoted = false;
+		for (int i = 0; i < declaration.length(); i++) {
+			char c = declaration.charAt(i);
+			if (c == '"') {
+				if (quoted && i + 1 < declaration.length() && declaration.charAt(i + 1) == '"') {
+					i++;
+					continue;
+				}
+				quoted = !quoted;
+				continue;
+			}
+			if (!quoted && Character.isWhitespace(c)) {
+				String attributeTypeName = declaration.substring(i).trim();
+				return attributeTypeName.isEmpty() ? null : attributeTypeName;
+			}
+		}
+
+		return null;
+	}
+
+	@NonNull
+	private List<String> splitTopLevelTypeList(@NonNull String typeList) {
+		requireNonNull(typeList);
+
+		List<String> elements = new ArrayList<>();
+		int elementStart = 0;
+		int parenthesisDepth = 0;
+		boolean quoted = false;
+
+		for (int i = 0; i < typeList.length(); i++) {
+			char c = typeList.charAt(i);
+			if (c == '"') {
+				if (quoted && i + 1 < typeList.length() && typeList.charAt(i + 1) == '"') {
+					i++;
+					continue;
+				}
+				quoted = !quoted;
+				continue;
+			}
+			if (quoted)
+				continue;
+			if (c == '(') {
+				parenthesisDepth++;
+			} else if (c == ')') {
+				parenthesisDepth--;
+			} else if (c == ',' && parenthesisDepth == 0) {
+				elements.add(typeList.substring(elementStart, i));
+				elementStart = i + 1;
+			}
+		}
+
+		elements.add(typeList.substring(elementStart));
+		return elements;
 	}
 
 	@Override

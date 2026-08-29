@@ -20,7 +20,9 @@ import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
 import javax.annotation.concurrent.ThreadSafe;
+import java.lang.reflect.Array;
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -127,24 +129,136 @@ final class SecureParameterSupport {
 	}
 
 	private static void collectSecureNeedles(@Nullable Object parameter,
-																					 @NonNull List<NeedleMask> needleMasks,
-																					 @NonNull List<String> needleRenderingFailureDescriptions) {
-		SecureParameter secureParameter;
+																			 @NonNull List<NeedleMask> needleMasks,
+																			 @NonNull List<String> needleRenderingFailureDescriptions) {
+		collectSecureNeedles(parameter, needleMasks, needleRenderingFailureDescriptions, 0,
+				new IdentityHashMap<>(), false);
+	}
+
+	private static void collectSecureNeedles(@Nullable Object parameter,
+																			 @NonNull List<NeedleMask> needleMasks,
+																			 @NonNull List<String> needleRenderingFailureDescriptions,
+																			 int depth,
+																			 @NonNull IdentityHashMap<Object, Boolean> containerPath,
+																			 boolean traverseJavaContainers) {
+		if (depth >= MAX_NESTING_DEPTH)
+			return;
 
 		try {
-			secureParameter = displaySecureParameter(parameter);
-		} catch (Throwable t) {
-			needleRenderingFailureDescriptions.add(t.getClass().getName());
-			return;
-		}
+			SecureParameterUnwrapResult unwrapResult = unwrapSecureAndOptionalParameterWithMetadata(parameter);
+			SecureParameter secureParameter = unwrapResult.secureParameter();
+			Object value = unwrapResult.value();
 
-		if (secureParameter == null)
-			return;
+			if (secureParameter != null) {
+				addNeedlesForValue(value, maskOf(secureParameter), needleMasks,
+						needleRenderingFailureDescriptions, depth, containerPath, traverseJavaContainers);
+				return;
+			}
 
-		try {
-			String mask = maskOf(secureParameter);
-			Object value = unwrapSecureAndOptionalParameter(parameter);
-			addNeedlesForValue(value, mask, needleMasks, needleRenderingFailureDescriptions, 0);
+			if (value instanceof InListParameter inListParameter) {
+				if (!enterContainer(inListParameter, containerPath))
+					return;
+
+				try {
+					for (Object element : inListParameter.getElements())
+						collectSecureNeedles(element, needleMasks, needleRenderingFailureDescriptions,
+								depth + 1, containerPath, false);
+				} finally {
+					containerPath.remove(inListParameter);
+				}
+				return;
+			}
+
+			if (value instanceof SqlArrayParameter<?> sqlArrayParameter) {
+				if (!enterContainer(sqlArrayParameter, containerPath))
+					return;
+
+				try {
+					Object[] elements = sqlArrayParameter.getElements().orElse(null);
+
+					if (elements != null)
+						for (Object element : elements)
+							collectSecureNeedles(element, needleMasks, needleRenderingFailureDescriptions,
+									depth + 1, containerPath, false);
+				} finally {
+					containerPath.remove(sqlArrayParameter);
+				}
+				return;
+			}
+
+			if (value instanceof SqlStructParameter sqlStructParameter) {
+				if (!enterContainer(sqlStructParameter, containerPath))
+					return;
+
+				try {
+					Object[] attributes = sqlStructParameter.getAttributes().orElse(null);
+
+					if (attributes != null)
+						for (Object attribute : attributes)
+							collectSecureNeedles(attribute, needleMasks, needleRenderingFailureDescriptions,
+									depth + 1, containerPath, false);
+				} finally {
+					containerPath.remove(sqlStructParameter);
+				}
+				return;
+			}
+
+			if (value instanceof TypedParameter typedParameter) {
+				if (!enterContainer(typedParameter, containerPath))
+					return;
+
+				try {
+					collectSecureNeedles(typedParameter.getValue().orElse(null), needleMasks,
+							needleRenderingFailureDescriptions, depth + 1, containerPath, true);
+				} finally {
+					containerPath.remove(typedParameter);
+				}
+				return;
+			}
+
+			if (traverseJavaContainers && value instanceof Map<?, ?> map) {
+				if (!enterContainer(map, containerPath))
+					return;
+
+				try {
+					for (Map.Entry<?, ?> entry : map.entrySet()) {
+						collectSecureNeedles(entry.getKey(), needleMasks, needleRenderingFailureDescriptions,
+								depth + 1, containerPath, true);
+						collectSecureNeedles(entry.getValue(), needleMasks, needleRenderingFailureDescriptions,
+								depth + 1, containerPath, true);
+					}
+				} finally {
+					containerPath.remove(map);
+				}
+				return;
+			}
+
+			if (traverseJavaContainers && value instanceof Iterable<?> iterable) {
+				if (!enterContainer(iterable, containerPath))
+					return;
+
+				try {
+					for (Object element : iterable)
+						collectSecureNeedles(element, needleMasks, needleRenderingFailureDescriptions,
+								depth + 1, containerPath, true);
+				} finally {
+					containerPath.remove(iterable);
+				}
+				return;
+			}
+
+			if (traverseJavaContainers && value != null && value.getClass().isArray()) {
+				if (!enterContainer(value, containerPath))
+					return;
+
+				try {
+					for (int i = 0; i < Array.getLength(value); ++i)
+						collectSecureNeedles(Array.get(value, i), needleMasks, needleRenderingFailureDescriptions,
+								depth + 1, containerPath, true);
+				} finally {
+					containerPath.remove(value);
+				}
+			}
 		} catch (Throwable t) {
 			// Never let a user value's toString()/getMask()/getValue() failure escape - and never attach
 			// the raw throwable, whose message may itself embed the value we have no needle to scrub
@@ -153,10 +267,12 @@ final class SecureParameterSupport {
 	}
 
 	private static void addNeedlesForValue(@Nullable Object value,
-																				 @NonNull String mask,
-																				 @NonNull List<NeedleMask> needleMasks,
-																				 @NonNull List<String> needleRenderingFailureDescriptions,
-																				 int depth) {
+																		 @NonNull String mask,
+																		 @NonNull List<NeedleMask> needleMasks,
+																		 @NonNull List<String> needleRenderingFailureDescriptions,
+																		 int depth,
+																		 @NonNull IdentityHashMap<Object, Boolean> containerPath,
+																		 boolean traverseJavaContainers) {
 		if (depth >= MAX_NESTING_DEPTH)
 			return;
 
@@ -165,6 +281,7 @@ final class SecureParameterSupport {
 			// skipped: drivers render vectors as literals (e.g. "[1.0,2.0]") that never match a Java rendering.
 			for (int i = 0; i < MAX_NESTING_DEPTH; ++i) {
 				if (value instanceof TypedParameter typedParameter) {
+					traverseJavaContainers = true;
 					value = unwrapOptionalValue(typedParameter.getValue().orElse(null));
 				} else if (value instanceof JsonParameter jsonParameter) {
 					value = jsonParameter.getJson().orElse(null);
@@ -174,19 +291,95 @@ final class SecureParameterSupport {
 			}
 
 			if (value instanceof InListParameter inListParameter) {
-				for (Object element : inListParameter.getElements())
-					addNeedlesForValue(unwrapSecureAndOptionalParameter(element), mask, needleMasks,
-							needleRenderingFailureDescriptions, depth + 1);
+				if (!enterContainer(inListParameter, containerPath))
+					return;
+
+				try {
+					for (Object element : inListParameter.getElements())
+						addNeedlesForValue(unwrapSecureAndOptionalParameter(element), mask, needleMasks,
+								needleRenderingFailureDescriptions, depth + 1, containerPath, traverseJavaContainers);
+				} finally {
+					containerPath.remove(inListParameter);
+				}
 				return;
 			}
 
 			if (value instanceof SqlArrayParameter<?> sqlArrayParameter) {
-				Object[] elements = sqlArrayParameter.getElements().orElse(null);
+				if (!enterContainer(sqlArrayParameter, containerPath))
+					return;
 
-				if (elements != null)
-					for (Object element : elements)
+				try {
+					Object[] elements = sqlArrayParameter.getElements().orElse(null);
+
+					if (elements != null)
+						for (Object element : elements)
+							addNeedlesForValue(unwrapSecureAndOptionalParameter(element), mask, needleMasks,
+									needleRenderingFailureDescriptions, depth + 1, containerPath, traverseJavaContainers);
+				} finally {
+					containerPath.remove(sqlArrayParameter);
+				}
+				return;
+			}
+
+			if (value instanceof SqlStructParameter sqlStructParameter) {
+				if (!enterContainer(sqlStructParameter, containerPath))
+					return;
+
+				try {
+					Object[] attributes = sqlStructParameter.getAttributes().orElse(null);
+
+					if (attributes != null)
+						for (Object attribute : attributes)
+							addNeedlesForValue(unwrapSecureAndOptionalParameter(attribute), mask, needleMasks,
+									needleRenderingFailureDescriptions, depth + 1, containerPath, traverseJavaContainers);
+				} finally {
+					containerPath.remove(sqlStructParameter);
+				}
+				return;
+			}
+
+			if (traverseJavaContainers && value instanceof Map<?, ?> map) {
+				if (!enterContainer(map, containerPath))
+					return;
+
+				try {
+					for (Map.Entry<?, ?> entry : map.entrySet()) {
+						addNeedlesForValue(unwrapSecureAndOptionalParameter(entry.getKey()), mask, needleMasks,
+								needleRenderingFailureDescriptions, depth + 1, containerPath, true);
+						addNeedlesForValue(unwrapSecureAndOptionalParameter(entry.getValue()), mask, needleMasks,
+								needleRenderingFailureDescriptions, depth + 1, containerPath, true);
+					}
+				} finally {
+					containerPath.remove(map);
+				}
+				return;
+			}
+
+			if (traverseJavaContainers && value instanceof Iterable<?> iterable) {
+				if (!enterContainer(iterable, containerPath))
+					return;
+
+				try {
+					for (Object element : iterable)
 						addNeedlesForValue(unwrapSecureAndOptionalParameter(element), mask, needleMasks,
-								needleRenderingFailureDescriptions, depth + 1);
+								needleRenderingFailureDescriptions, depth + 1, containerPath, true);
+				} finally {
+					containerPath.remove(iterable);
+				}
+				return;
+			}
+
+			if (traverseJavaContainers && value != null && value.getClass().isArray()) {
+				if (!enterContainer(value, containerPath))
+					return;
+
+				try {
+					for (int i = 0; i < Array.getLength(value); ++i)
+						addNeedlesForValue(unwrapSecureAndOptionalParameter(Array.get(value, i)), mask, needleMasks,
+								needleRenderingFailureDescriptions, depth + 1, containerPath, true);
+				} finally {
+					containerPath.remove(value);
+				}
 				return;
 			}
 
@@ -202,6 +395,13 @@ final class SecureParameterSupport {
 		} catch (Throwable t) {
 			needleRenderingFailureDescriptions.add(t.getClass().getName());
 		}
+	}
+
+	private static boolean enterContainer(@NonNull Object container,
+																				@NonNull IdentityHashMap<Object, Boolean> containerPath) {
+		requireNonNull(container);
+		requireNonNull(containerPath);
+		return containerPath.put(container, Boolean.TRUE) == null;
 	}
 
 	/**

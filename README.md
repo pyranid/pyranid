@@ -359,6 +359,27 @@ database.transaction(() -> {
 
 The `Connection` passed to your callback is a Pyranid-managed guarded handle. Do not close it, retain it, perform transaction lifecycle operations on it, or mutate connection-wide state on it. Methods such as `close()`, `commit()`, `rollback()`, `setAutoCommit(...)`, `setTransactionIsolation(...)`, `setCatalog(...)`, `setSchema(...)`, `setClientInfo(...)`, `setNetworkTimeout(...)`, and JDBC savepoint controls throw immediately. `Statement::getConnection()` and `DatabaseMetaData::getConnection()` return the guarded Pyranid handle, and `ResultSet::getStatement()` returns a guarded statement. `Connection::unwrap(...)` may return a guarded, callback-scoped proxy for a vendor interface, but it never exposes a castable physical `Connection`; the proxy blocks lifecycle methods and expires when the callback returns. Guarded statements, resultsets, and metadata refuse driver-specific `unwrap(...)` calls that could expose the driver's underlying connection. Use `Database::transaction(...)`, `Database::participate(...)`, and `Transaction` savepoint APIs for transaction management. Close any `Statement` or `ResultSet` instances you create inside the callback.
 
+When a driver feature requires its concrete connection type, use the typed overload. For example, DuckDB's Appender API is available without a Pyranid-specific wrapper:
+
+```java
+database.useRawConnection(DuckDBConnection.class, connection -> {
+  try (DuckDBAppender appender =
+         connection.createAppender(DuckDBConnection.DEFAULT_SCHEMA, "employee")) {
+    appender.beginRow()
+      .append(1L)
+      .append("Ada")
+      .endRow();
+    appender.flush();
+  }
+
+  return Optional.empty();
+});
+```
+
+The typed overload is deliberately unguarded because concrete driver APIs cannot be safely proxied. Pyranid supplies the active transaction's connection when one exists, but each driver-extension API's own transaction rules still apply. The callback must not close, commit, roll back, retain, or change connection-wide state on the supplied connection. Close every derived Appender, statement, result set, Arrow reader, native result, or other driver resource before returning. The driver-specific types must be on the application's compile classpath.
+
+DuckDB JDBC starts a native transaction lazily when its first ordinary JDBC statement executes; creating an Appender does not trigger that step. If an Appender is the first operation inside `Database::transaction(...)`, first execute an ordinary Pyranid query (a `SELECT 1` is sufficient) so flushed Appender rows participate in commit or rollback. Without that primer, the driver can autocommit the append even though Pyranid supplied the transaction's connection.
+
 ## Statements
 
 ```java
@@ -1253,7 +1274,7 @@ If parameter metadata is unavailable or non-identifying, `Instant` and `OffsetDa
 
 ### Special Parameters
 
-Special support is provided for secure diagnostics wrappers, IN-list, JSON/JSONB, vector, and SQL ARRAY parameters.
+Special support is provided for secure diagnostics wrappers, IN-list, JSON/JSONB, vector, SQL ARRAY, and SQL STRUCT parameters.
 
 #### JSON/JSONB
 
@@ -1405,6 +1426,52 @@ database.query("""
 
 If you need support for multidimensional array binding, database-specific collection types, or table-valued parameters, implement a [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) as outlined below.
 
+#### SQL STRUCT
+
+[`Parameters::sqlStructOf(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#sqlStructOf(java.lang.String,java.util.List)) binds positional attributes through JDBC `Connection::createStruct(...)`. SQL STRUCT binding is currently supported for DuckDB; other dialects fail fast rather than passing a driver-specific wrapper to JDBC.
+
+Supported methods:
+
+* [`Parameters::sqlStructOf(String, List<?>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#sqlStructOf(java.lang.String,java.util.List))
+* [`Parameters::sqlStructOf(String, Object[])`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#sqlStructOf(java.lang.String,java.lang.Object%5B%5D))
+
+The type name is database-specific. DuckDB accepts the complete inline STRUCT declaration, and values must appear in the same order as its attributes:
+
+```sql
+CREATE TABLE person (
+  person_id BIGINT PRIMARY KEY,
+  details STRUCT(name VARCHAR, age INTEGER)
+);
+```
+
+```java
+database.query("""
+  INSERT INTO person (person_id, details)
+  VALUES (:personId, :details)
+  """)
+  .bind("personId", 1L)
+  .bind("details", Parameters.sqlStructOf(
+    "STRUCT(name VARCHAR, age INTEGER)",
+    List.of("Ada", 36)))
+  .execute();
+```
+
+Both overloads defensively copy their attributes. Attributes may be `null` and may include nested [`SqlStructParameter`](https://javadoc.pyranid.com/com/pyranid/SqlStructParameter.html) or [`SqlArrayParameter`](https://javadoc.pyranid.com/com/pyranid/SqlArrayParameter.html) values. Use the array overload when an attribute is null and `List.of(...)` would reject it:
+
+```java
+Parameters.sqlStructOf(
+  "STRUCT(name VARCHAR, nickname VARCHAR)",
+  new Object[] { "Ada", null });
+```
+
+A null attribute array/list means the whole STRUCT is SQL `NULL`; cast the null to select the intended overload:
+
+```java
+Parameters.sqlStructOf(
+  "STRUCT(name VARCHAR, age INTEGER)",
+  (Object[]) null);
+```
+
 #### Secure Parameters
 
 Use [`Parameters::secure(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) for sensitive values that should bind normally but render as a mask in Pyranid diagnostics.
@@ -1451,7 +1518,7 @@ parameters=[acct_123, <redacted>]
 
 [`Parameters::secure(Object)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) renders as `<redacted>`. Use [`Parameters::secure(Object, String)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object,java.lang.String)) for a custom display token.
 This is display-only: the underlying value is still passed to the JDBC [`PreparedStatement`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/PreparedStatement.html) as if it had not been wrapped.
-[`Parameters::secure(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) composes with [`Parameters::inList(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#inList(java.util.Collection)), [`Parameters::json(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#json(java.lang.String)), vector parameters, [`Parameters::sqlArrayOf(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#sqlArrayOf(java.lang.String,java.util.List)), typed parameters, [`Optional`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Optional.html) values, and `null` values.
+[`Parameters::secure(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) composes with [`Parameters::inList(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#inList(java.util.Collection)), [`Parameters::json(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#json(java.lang.String)), vector parameters, [`Parameters::sqlArrayOf(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#sqlArrayOf(java.lang.String,java.util.List)), [`Parameters::sqlStructOf(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#sqlStructOf(java.lang.String,java.util.List)), typed parameters, [`Optional`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Optional.html) values, and `null` values.
 
 For broader policies, configure a database-wide [`ParameterRedactor`](https://javadoc.pyranid.com/com/pyranid/ParameterRedactor.html):
 

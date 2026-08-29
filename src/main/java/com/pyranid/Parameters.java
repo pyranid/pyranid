@@ -118,9 +118,49 @@ public final class Parameters {
 	 */
 	@NonNull
 	public static <E> SqlArrayParameter<E> sqlArrayOf(@NonNull String baseTypeName,
-																										E @Nullable [] array) {
+																		E @Nullable [] array) {
 		requireNonNull(baseTypeName);
 		return new DefaultSqlArrayParameter(baseTypeName, array);
+	}
+
+	/**
+	 * Acquires a SQL STRUCT parameter for a {@link List} of positional attributes.
+	 * <p>
+	 * The {@code typeName} is database-specific and is passed to
+	 * {@link java.sql.Connection#createStruct(String, Object[])}. SQL STRUCT binding is currently
+	 * supported for DuckDB. Attributes may contain {@code null}, nested {@link SqlStructParameter}s,
+	 * or {@link SqlArrayParameter}s.
+	 *
+	 * @param typeName   the database-specific SQL STRUCT type name
+	 * @param attributes the positional attributes, or {@code null} to bind a SQL {@code NULL} STRUCT
+	 * @return a SQL STRUCT parameter for the given attributes
+	 * @since 4.7.0
+	 */
+	@NonNull
+	public static SqlStructParameter sqlStructOf(@NonNull String typeName,
+																					@Nullable List<?> attributes) {
+		requireNonNull(typeName);
+		return new DefaultSqlStructParameter(typeName, attributes == null ? null : attributes.toArray());
+	}
+
+	/**
+	 * Acquires a SQL STRUCT parameter for an array of positional attributes.
+	 * <p>
+	 * The {@code typeName} is database-specific and is passed to
+	 * {@link java.sql.Connection#createStruct(String, Object[])}. SQL STRUCT binding is currently
+	 * supported for DuckDB. Attributes may contain {@code null}, nested {@link SqlStructParameter}s,
+	 * or {@link SqlArrayParameter}s.
+	 *
+	 * @param typeName   the database-specific SQL STRUCT type name
+	 * @param attributes the positional attributes, or {@code null} to bind a SQL {@code NULL} STRUCT
+	 * @return a SQL STRUCT parameter for the given attributes
+	 * @since 4.7.0
+	 */
+	@NonNull
+	public static SqlStructParameter sqlStructOf(@NonNull String typeName,
+																					Object @Nullable [] attributes) {
+		requireNonNull(typeName);
+		return new DefaultSqlStructParameter(typeName, attributes);
 	}
 
 	/**
@@ -166,6 +206,38 @@ public final class Parameters {
 		public Optional<Object[]> getElements() {
 			// Defensive copy
 			return this.elements == null ? Optional.empty() : Optional.of(this.elements.clone());
+		}
+	}
+
+	/**
+	 * Default package-private implementation of {@link SqlStructParameter}.
+	 *
+	 * @author <a href="https://www.revetkn.com">Mark Allen</a>
+	 * @since 4.7.0
+	 */
+	@ThreadSafe
+	static class DefaultSqlStructParameter implements SqlStructParameter {
+		@NonNull
+		private final String typeName;
+		@Nullable
+		private final Object @Nullable [] attributes;
+
+		DefaultSqlStructParameter(@NonNull String typeName,
+																	Object @Nullable [] attributes) {
+			this.typeName = requireNonNull(typeName);
+			this.attributes = attributes == null ? null : attributes.clone();
+		}
+
+		@NonNull
+		@Override
+		public String getTypeName() {
+			return this.typeName;
+		}
+
+		@NonNull
+		@Override
+		public Optional<Object[]> getAttributes() {
+			return this.attributes == null ? Optional.empty() : Optional.of(this.attributes.clone());
 		}
 	}
 

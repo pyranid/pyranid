@@ -30,7 +30,9 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.UnaryOperator;
 import java.util.logging.Logger;
@@ -132,6 +134,71 @@ public class SecureParameterDiagnosticScrubTests {
 		Assertions.assertNotNull(scrub.redactor());
 		Assertions.assertEquals("values <array> and <array>",
 				scrub.redactor().apply("values array-secret-one and array-secret-two"));
+	}
+
+	@Test
+	public void testPlainPyranidContainersDiscoverNestedSecureWrappersWithIndividualMasks() {
+		InListParameter inList = Parameters.inList(List.of(
+				Parameters.secure("in-list-secret", "<in-list>")));
+		SqlStructParameter nestedStruct = Parameters.sqlStructOf("STRUCT(value VARCHAR)", List.of(
+				Parameters.secure("nested-struct-secret", "<nested-struct>")));
+		SqlStructParameter struct = Parameters.sqlStructOf(
+				"STRUCT(value VARCHAR, values VARCHAR[], nested STRUCT(value VARCHAR))",
+				List.of(
+						Parameters.secure("struct-secret", "<struct>"),
+						Parameters.sqlArrayOf("VARCHAR", List.of(
+								Parameters.secure("array-secret", "<array>"))),
+						nestedStruct));
+
+		SecureParameterSupport.DiagnosticScrub scrub = SecureParameterSupport.diagnosticScrubForParameters(
+				List.of(inList, struct));
+
+		Assertions.assertNotNull(scrub.redactor());
+		Assertions.assertEquals("<in-list> <struct> <array> <nested-struct>", scrub.redactor().apply(
+				"in-list-secret struct-secret array-secret nested-struct-secret"));
+	}
+
+	@Test
+	public void testOuterSecureContainerMaskOverridesNestedMasks() {
+		SqlStructParameter struct = Parameters.sqlStructOf("STRUCT(value VARCHAR)", List.of(
+				Parameters.secure("nested-secret", "<inner>")));
+		SecureParameterSupport.DiagnosticScrub scrub = SecureParameterSupport.diagnosticScrubForParameters(
+				List.of(Parameters.secure(struct, "<outer>")));
+
+		Assertions.assertNotNull(scrub.redactor());
+		Assertions.assertEquals("value <outer>", scrub.redactor().apply("value nested-secret"));
+	}
+
+	@Test
+	public void testTypedContainersDiscoverNestedSecureWrappersWithIndividualMasks() {
+		TypedParameter typedList = Parameters.listOf(Object.class, List.of(List.of(
+				Parameters.secure("typed-list-secret", "<typed-list>"))));
+		TypedParameter typedSet = Parameters.setOf(Object.class, Set.of(
+				Parameters.secure("typed-set-secret", "<typed-set>")));
+		TypedParameter typedMap = Parameters.mapOf(Object.class, Object.class, Map.of(
+				Parameters.secure("typed-map-key-secret", "<typed-map-key>"),
+				Parameters.secure("typed-map-value-secret", "<typed-map-value>")));
+		TypedParameter typedArray = Parameters.arrayOf(Object.class, new Object[]{
+				Parameters.secure("typed-array-secret", "<typed-array>")});
+
+		SecureParameterSupport.DiagnosticScrub scrub = SecureParameterSupport.diagnosticScrubForParameters(
+				List.of(typedList, typedSet, typedMap, typedArray));
+
+		Assertions.assertNotNull(scrub.redactor());
+		Assertions.assertEquals("<typed-list> <typed-set> <typed-map-key> <typed-map-value> <typed-array>",
+				scrub.redactor().apply(
+						"typed-list-secret typed-set-secret typed-map-key-secret typed-map-value-secret typed-array-secret"));
+	}
+
+	@Test
+	public void testSecureWrapperInsideTypedContainerTraversesItsNestedJavaContainer() {
+		TypedParameter typedList = Parameters.listOf(Object.class, List.of(
+				Parameters.secure(List.of("deep-secret"), "<deep>")));
+		SecureParameterSupport.DiagnosticScrub scrub = SecureParameterSupport.diagnosticScrubForParameters(
+				List.of(typedList));
+
+		Assertions.assertNotNull(scrub.redactor());
+		Assertions.assertEquals("driver echoed <deep>", scrub.redactor().apply("driver echoed deep-secret"));
 	}
 
 	@Test
@@ -275,6 +342,28 @@ public class SecureParameterDiagnosticScrubTests {
 		Assertions.assertTrue(ex.getMessage().contains("<redacted>"), "Expected the mask present in the message");
 		Assertions.assertTrue(ex.getCause().getMessage().contains(secret),
 				"Expected the raw driver exception preserved as the cause");
+	}
+
+	@Test
+	public void testDriverEchoedSecureStructChildrenScrubbedEndToEnd() {
+		String structSecret = "driver-struct-secret";
+		String arraySecret = "driver-array-secret";
+		SqlStructParameter payload = Parameters.sqlStructOf("STRUCT(value VARCHAR, values VARCHAR[])", List.of(
+				Parameters.secure(structSecret, "<driver-struct>"),
+				Parameters.sqlArrayOf("VARCHAR", List.of(
+						Parameters.secure(arraySecret, "<driver-array>")))));
+		Database db = Database.withDataSource(createThrowingDataSource(
+				format("driver rejected %s and %s", structSecret, arraySecret))).build();
+
+		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("INSERT INTO t (payload) VALUES (:payload)").bind("payload", payload).execute());
+
+		Assertions.assertFalse(ex.getMessage().contains(structSecret));
+		Assertions.assertFalse(ex.getMessage().contains(arraySecret));
+		Assertions.assertTrue(ex.getMessage().contains("<driver-struct>"));
+		Assertions.assertTrue(ex.getMessage().contains("<driver-array>"));
+		Assertions.assertTrue(ex.getCause().getMessage().contains(structSecret));
+		Assertions.assertTrue(ex.getCause().getMessage().contains(arraySecret));
 	}
 
 	@Test

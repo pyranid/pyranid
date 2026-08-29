@@ -19,6 +19,18 @@ All notable changes to Pyranid will be documented in this file.
   Top-level row records - the single-column STRUCT fallback included - are constructed via the configured
   `InstanceProvider`; nested records are constructed via their canonical constructors, and
   `CustomColumnMapper`s are not consulted for individual STRUCT attributes.
+- SQL STRUCT parameter binding through `Parameters::sqlStructOf(...)`, backed by JDBC
+  `Connection::createStruct(...)` on supported dialects (currently DuckDB). STRUCT parameters support
+  typed `NULL`, defensive attribute copies, nested STRUCTs, SQL ARRAYs nested inside STRUCTs, and STRUCTs
+  nested inside SQL ARRAYs while preserving Pyranid's normal parameter normalization and secure-diagnostic
+  scrubbing.
+- A typed `Database::useRawConnection(Class<C>, RawConnectionOperation<? super C, R>)` overload for callback-scoped
+  access to concrete driver connection APIs such as DuckDB Appender, Arrow, chunked results, profiling,
+  progress, and Java UDF registration. Unlike the existing one-argument overload's guarded JDBC handle,
+  this advanced overload exposes the unwrapped driver connection and therefore cannot enforce Pyranid's
+  lifecycle protections; the connection and every resource derived from it must remain inside the callback.
+  Driver-extension transaction rules still apply: in particular, a DuckDB Appender used as the first operation
+  in a transaction requires an ordinary JDBC statement to start DuckDB's lazy native transaction before append.
 - `VectorParameter` support on DuckDB: `Parameters.vectorOfFloats(...)`/`vectorOfDoubles(...)` bind to
   fixed-size `FLOAT[n]`/`DOUBLE[n]` ARRAY columns via the driver's SQL ARRAY support. Similarity
   comparisons require an explicit cast of the bound parameter, e.g.
@@ -52,8 +64,12 @@ All notable changes to Pyranid will be documented in this file.
   `ParameterRedactor::redactParameter`'s `parameterIndex` parameter (`int` -> `@NonNull Integer`, matching
   every sibling SPI, all of which already took `Integer`) and `ResultSetMapper::DEFAULT_PLAN_CACHE_CAPACITY`
   (`int` -> `Integer`). `ResultSetMapper::DEFAULT_PREFERRED_COLUMN_MAPPER_CACHE_CAPACITY` is deliberately
-  left alone - it is already deprecated for removal in 5.0.0 and has no effect. See "Intentional break in
+  left alone - it is already deprecated for removal in 5.0.0 and has no effect. See "Intentional breaks in
   4.7.0" in COMPATIBILITY.md.
+- `RawConnectionOperation` now takes the callback connection type as well as the result type
+  (`RawConnectionOperation<C extends Connection, R>`). Inline `useRawConnection(...)` lambdas are unchanged,
+  and the erased functional-method descriptor remains `(Connection) -> Optional`, but source that names the
+  functional-interface type explicitly must add `Connection` as its first type argument.
 - Temporal parameters (`LocalDate`, `LocalTime`, `LocalDateTime`, `OffsetDateTime`, `Instant`) now bind
   with untyped `PreparedStatement::setObject` on dialects whose drivers reject explicit target SQL types
   (currently DuckDB), and `OffsetTime` binds there as its ISO-8601 string form (DuckDB's driver accepts
@@ -62,11 +78,17 @@ All notable changes to Pyranid will be documented in this file.
 
 ### Migration Notes
 
-- The two public members boxed in this release (see "Changed") are binary-incompatible. Source that calls
-  or implements them keeps compiling via autoboxing - including lambda implementations of
-  `ParameterRedactor` - but code compiled against 4.6.x must be recompiled against 4.7.0. An explicit
-  `int`-typed lambda parameter (`(context, int index, parameter) -> ...`) must drop the explicit type or
-  change it to `Integer`.
+- The two public members boxed in this release (see "Changed") are binary-incompatible, so code compiled
+  against 4.6.x must be recompiled against 4.7.0. Ordinary calls to `ParameterRedactor::redactParameter(...)`
+  continue to compile via autoboxing, and inferred lambda parameters need no source change. Named or anonymous
+  implementations must change the overriding parameter from `int` to `Integer`; an explicitly typed lambda
+  parameter (`(context, int index, parameter) -> ...`) must likewise use `Integer` or become inferred.
+  `ResultSetMapper::DEFAULT_PLAN_CACHE_CAPACITY` is no longer a constant variable, so it cannot be used in
+  annotation values, `case` labels, or other compile-time constant-expression contexts.
+- Source that explicitly names `RawConnectionOperation<R>` must change to
+  `RawConnectionOperation<Connection, R>`. Inline one-argument `useRawConnection(...)` lambdas do not change,
+  and existing compiled callbacks remain binary-compatible because the new connection type parameter erases
+  to `Connection`.
 - `DatabaseType` gained the `DUCK_DB` constant. Exhaustive `switch` expressions over `DatabaseType` in
   application code must add a `DUCK_DB` (or `default`) arm when recompiling against 4.7.0.
 - A single `NULL` SQL STRUCT fetched directly as a record produces `Optional.empty()` from single-object

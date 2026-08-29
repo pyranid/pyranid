@@ -210,15 +210,19 @@
 						<accessModifier>public</accessModifier>
 						<onlyModified>true</onlyModified>
 						<!--
-							4.7.0 intentionally boxes two public members from primitives to their wrapper types so the
-							whole public API expresses nullness uniformly (see COMPATIBILITY.md "Historical compatibility
-							notes"). These are binary-incompatible by nature, so they are excluded from the comparison;
-							every other member remains gated. Remove these exclusions once the 4.7.0 baseline is in place.
+							4.7.0 intentionally boxes two public members from primitives to their wrapper types and
+							generalizes RawConnectionOperation with a connection-type parameter (see COMPATIBILITY.md
+							"Intentional breaks in 4.7.0"). The boxed members are binary-incompatible; the functional
+							interface remains binary-compatible but its generic arity is source-incompatible. Exclude
+							only those deliberate changes so every other public member remains gated. Remove these
+							exclusions once the 4.7.0 baseline is in place.
 						-->
 						<excludes>
 							<exclude>com.pyranid.ParameterRedactor#redactParameter(com.pyranid.StatementContext,int,java.lang.Object)</exclude>
 							<exclude>com.pyranid.ParameterRedactor#redactParameter(com.pyranid.StatementContext,java.lang.Integer,java.lang.Object)</exclude>
 							<exclude>com.pyranid.ResultSetMapper#DEFAULT_PLAN_CACHE_CAPACITY</exclude>
+							<exclude>com.pyranid.RawConnectionOperation</exclude>
+							<exclude>com.pyranid.Database#useRawConnection(com.pyranid.RawConnectionOperation)</exclude>
 						</excludes>
 					</parameter>
 					<breakBuildBasedOnSemanticVersioning>true</breakBuildBasedOnSemanticVersioning>

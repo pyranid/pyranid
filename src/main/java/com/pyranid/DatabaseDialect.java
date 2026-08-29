@@ -44,6 +44,9 @@ interface DatabaseDialect {
 	Boolean supportsSqlArray();
 
 	@NonNull
+	Boolean supportsSqlStruct();
+
+	@NonNull
 	Boolean supportsVector();
 
 	/**
@@ -69,8 +72,18 @@ interface DatabaseDialect {
 	 */
 	@NonNull
 	Object normalizeSqlArrayElement(@NonNull String baseTypeName,
-																		@NonNull Object element,
-																		@NonNull ZoneId timeZone);
+																						@NonNull Object element,
+																						@NonNull ZoneId timeZone);
+
+	/**
+	 * Massages a normalized, non-null SQL STRUCT attribute into a form accepted by this dialect's JDBC
+	 * driver. The default dialect leaves attributes unchanged.
+	 */
+	@NonNull
+	Object normalizeSqlStructAttribute(@NonNull String typeName,
+																							 @NonNull Integer attributeIndex,
+																							 @NonNull Object attribute,
+																							 @NonNull ZoneId timeZone);
 
 	@NonNull
 	Object normalizeUuid(@NonNull UUID uuid);

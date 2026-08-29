@@ -16,6 +16,8 @@
 
 package com.pyranid;
 
+import org.duckdb.DuckDBAppender;
+import org.duckdb.DuckDBConnection;
 import org.jspecify.annotations.NonNull;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -35,6 +37,7 @@ import java.time.ZoneOffset;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -66,6 +69,8 @@ public class DuckDbIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 
 	public record MapPayload(Map<String, Object> values) {}
 
+	public record StructPayload(Shape shape, List<Person> people, List<String> tags) {}
+
 	@TempDir
 	private Path tempDir;
 
@@ -86,6 +91,160 @@ public class DuckDbIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 				.orElseThrow();
 
 		Assertions.assertEquals(new Person("Ada", 36, "ada@example.com"), person);
+	}
+
+	@Test
+	public void testDuckDbSqlStructParameterAndTypedNullRoundTrip() {
+		Database db = database();
+		String table = "pyranid_duckdb_struct_parameter_people";
+		String personType = "STRUCT(name VARCHAR, age INTEGER, email_address VARCHAR)";
+		recreateTable(db, table, "CREATE TABLE " + table + " ("
+				+ "id BIGINT PRIMARY KEY, "
+				+ "person " + personType
+				+ ")");
+
+		db.query("INSERT INTO " + table + " VALUES (:id, :person)")
+				.bind("id", 1L)
+				.bind("person", Parameters.sqlStructOf(personType,
+						List.of("Ada", 36, "ada@example.com")))
+				.execute();
+		db.query("INSERT INTO " + table + " VALUES (:id, :person)")
+				.bind("id", 2L)
+				.bind("person", Parameters.sqlStructOf(personType, (Object[]) null))
+				.execute();
+		db.query("INSERT INTO " + table + " VALUES (:id, :person)")
+				.bind("id", 3L)
+				.bind("person", Parameters.sqlStructOf(personType,
+						new Object[]{"Grace", null, null}))
+				.execute();
+
+		Assertions.assertEquals(new Person("Ada", 36, "ada@example.com"),
+				db.query("SELECT person FROM " + table + " WHERE id = 1")
+						.fetchObject(Person.class)
+						.orElseThrow());
+		Assertions.assertTrue(db.query("SELECT person FROM " + table + " WHERE id = 2")
+				.fetchObject(Person.class)
+				.isEmpty());
+		Assertions.assertEquals(new Person("Grace", null, null),
+				db.query("SELECT person FROM " + table + " WHERE id = 3")
+						.fetchObject(Person.class)
+						.orElseThrow());
+	}
+
+	@Test
+	public void testDuckDbSqlStructParameterComposesNestedStructsAndArrays() {
+		Database db = database();
+		String table = "pyranid_duckdb_nested_struct_parameter_payloads";
+		String pointType = "STRUCT(x INTEGER, y INTEGER)";
+		String shapeType = "STRUCT(origin " + pointType + ", label VARCHAR)";
+		String personType = "STRUCT(name VARCHAR, age INTEGER, email_address VARCHAR)";
+		String payloadType = "STRUCT(shape " + shapeType + ", people " + personType + "[], tags VARCHAR[])";
+		recreateTable(db, table, "CREATE TABLE " + table + " (id BIGINT PRIMARY KEY, payload " + payloadType + ")");
+
+		SqlStructParameter shape = Parameters.sqlStructOf(shapeType, List.of(
+				Parameters.sqlStructOf(pointType, List.of(3, 4)),
+				"pt"));
+		List<SqlStructParameter> people = List.of(
+				Parameters.sqlStructOf(personType, List.of("Ada", 36, "ada@example.com")),
+				Parameters.sqlStructOf(personType, List.of("Grace", 45, "grace@example.com")));
+		SqlStructParameter payload = Parameters.sqlStructOf(payloadType, List.of(
+				shape,
+				Parameters.sqlArrayOf(personType, people),
+				Parameters.sqlArrayOf("VARCHAR", List.of("engineer", "mathematician"))));
+
+		db.query("INSERT INTO " + table + " VALUES (:id, :payload)")
+				.bind("id", 1L)
+				.bind("payload", payload)
+				.execute();
+
+		StructPayload fetched = db.query("SELECT payload FROM " + table)
+				.fetchObject(StructPayload.class)
+				.orElseThrow();
+		Assertions.assertEquals(new Shape(new Point(3, 4), "pt"), fetched.shape());
+		Assertions.assertEquals(List.of(
+				new Person("Ada", 36, "ada@example.com"),
+				new Person("Grace", 45, "grace@example.com")), fetched.people());
+		Assertions.assertEquals(List.of("engineer", "mathematician"), fetched.tags());
+	}
+
+	@Test
+	public void testDuckDbSqlStructParameterNormalizesTemporalAndHugeintAttributes() {
+		ZoneId databaseTimeZone = ZoneId.of("America/New_York");
+		Database db = Database.withDataSource(dataSource())
+				.databaseType(DatabaseType.DUCK_DB)
+				.timeZone(databaseTimeZone)
+				.build();
+		String table = "pyranid_duckdb_struct_parameter_normalization";
+		String payloadType = "STRUCT(local_ts TIMESTAMP, amount DECIMAL(10,2), instant_ts TIMESTAMPTZ, "
+				+ "huge HUGEINT, clock TIMETZ, token UUID)";
+		recreateTable(db, table, "CREATE TABLE " + table + " (id BIGINT PRIMARY KEY, payload " + payloadType + ")");
+		Instant instant = Instant.parse("2026-08-29T14:30:15.123456Z");
+		BigInteger hugeint = new BigInteger("170141183460469231731687303715884105727");
+		OffsetTime clock = OffsetTime.of(10, 30, 15, 0, ZoneOffset.ofHours(-4));
+		UUID token = UUID.fromString("123e4567-e89b-12d3-a456-426614174000");
+
+		db.query("INSERT INTO " + table + " VALUES (:id, :payload)")
+				.bind("id", 1L)
+				.bind("payload", Parameters.sqlStructOf(payloadType,
+						List.of(instant, new java.math.BigDecimal("12.34"), instant, hugeint, clock, token)))
+				.execute();
+
+		Assertions.assertEquals(LocalDateTime.ofInstant(instant, databaseTimeZone),
+				db.query("SELECT payload.local_ts FROM " + table)
+						.fetchObject(LocalDateTime.class)
+						.orElseThrow());
+		Assertions.assertEquals(instant, db.query("SELECT payload.instant_ts FROM " + table)
+				.fetchObject(Instant.class)
+				.orElseThrow());
+		Assertions.assertEquals(hugeint, db.query("SELECT payload.huge FROM " + table)
+				.fetchObject(BigInteger.class)
+				.orElseThrow());
+		OffsetTime fetchedClock = db.query("SELECT payload.clock FROM " + table)
+				.fetchObject(OffsetTime.class)
+				.orElseThrow();
+		Assertions.assertTrue(clock.isEqual(fetchedClock));
+		Assertions.assertEquals(token, db.query("SELECT payload.token FROM " + table)
+				.fetchObject(UUID.class)
+				.orElseThrow());
+	}
+
+	@Test
+	public void testDuckDbAppenderRoundTripAndTransactionRollback() {
+		Database db = database();
+		String table = "pyranid_duckdb_appender_items";
+		recreateTable(db, table, "CREATE TABLE " + table + " (id BIGINT PRIMARY KEY, name VARCHAR NOT NULL)");
+
+		Optional<Integer> appendedRows = db.useRawConnection(DuckDBConnection.class, connection -> {
+			try (DuckDBAppender appender = connection.createAppender(table)) {
+				appender.beginRow().append(1L).append("Ada").endRow();
+				appender.beginRow().append(2L).append("Grace").endRow();
+				appender.flush();
+			}
+			return Optional.of(2);
+		});
+
+		Assertions.assertEquals(Optional.of(2), appendedRows);
+		Assertions.assertEquals(List.of("Ada", "Grace"), db.query("SELECT name FROM " + table + " ORDER BY id")
+				.fetchList(String.class));
+
+		Assertions.assertThrows(IllegalStateException.class, () -> db.transaction(() -> {
+			// DuckDB JDBC starts the native transaction lazily on its first JDBC statement. Appender is a
+			// native extension API and does not itself trigger that JDBC begin path, so establish the
+			// transaction context before creating the Appender.
+			db.query("SELECT 1").fetchObject(Integer.class).orElseThrow();
+			db.useRawConnection(DuckDBConnection.class, connection -> {
+				try (DuckDBAppender appender = connection.createAppender(table)) {
+					appender.beginRow().append(3L).append("rolled back").endRow();
+					appender.flush();
+				}
+				return Optional.empty();
+			});
+
+			throw new IllegalStateException("roll back Appender write");
+		}));
+		Assertions.assertEquals(0L, db.query("SELECT COUNT(*) FROM " + table + " WHERE id = 3")
+				.fetchObject(Long.class)
+				.orElseThrow());
 	}
 
 	@Test

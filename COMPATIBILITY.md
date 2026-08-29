@@ -21,7 +21,7 @@ binary- or source-incompatible changes and to validate the version number agains
 (`breakBuildBasedOnSemanticVersioning`). The comparison baseline is pinned via the `japicmp.baseline.version`
 property.
 
-### Intentional break in 4.7.0
+### Intentional breaks in 4.7.0
 
 4.7.0 changes two public members from primitives to their boxed wrapper types so the whole public API
 expresses nullness uniformly with JSpecify annotations, which cannot be applied to primitives:
@@ -35,11 +35,23 @@ expresses nullness uniformly with JSpecify annotations, which cannot be applied 
   `ResultSetMapper#DEFAULT_PREFERRED_COLUMN_MAPPER_CACHE_CAPACITY` deliberately stays `int`: it is already
   deprecated for removal in 5.0.0 and has no effect, so neither argument for boxing applies to it.
 
-These are binary-incompatible. Ordinary source that calls or implements these members continues to compile
-via autoboxing, but code compiled against 4.6.x must be recompiled. Because the changes are deliberate, the
-three affected member signatures are the japicmp configuration's only exclusions (see the `<excludes>` block
-in `pom.xml`, which names them individually so every other member stays gated); the exclusions should be
-removed once the 4.7.0 baseline is in place.
+These are binary-incompatible, so code compiled against 4.6.x must be recompiled. Ordinary method calls
+continue to compile via autoboxing, and inferred lambda parameters need no source change. Named or anonymous
+`ParameterRedactor` implementations must change the overriding parameter from `int` to `Integer`; explicitly
+typed lambda parameters must do the same. The boxed `DEFAULT_PLAN_CACHE_CAPACITY` is no longer a constant
+variable, so source that used it in an annotation value, `case` label, or another compile-time constant
+expression must replace that use with a primitive constant.
+
+4.7.0 also generalizes `RawConnectionOperation<R>` to
+`RawConnectionOperation<C extends Connection, R>` so the typed `useRawConnection(Class<C>, ...)` overload can
+expose concrete driver connection APIs without a second callback abstraction. The functional method still
+erases to `(Connection) -> Optional`, so existing binaries and inline one-argument lambdas remain compatible.
+Source that explicitly names the interface must add `Connection` as its first type argument.
+
+Because these changes are deliberate, japicmp narrowly excludes the boxed member signatures plus the
+`RawConnectionOperation` interface and the established one-argument `Database#useRawConnection(...)`
+signature whose generic metadata changed. The new typed overload and every other public member remain gated.
+Remove the exclusions once the 4.7.0 baseline is in place.
 
 ### Historical compatibility notes
 

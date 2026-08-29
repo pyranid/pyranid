@@ -3582,7 +3582,7 @@ public final class Database {
 	 * @since 4.2.0
 	 */
 	@NonNull
-	public <T> Optional<T> useRawConnection(@NonNull RawConnectionOperation<T> rawConnectionOperation) {
+	public <T> Optional<T> useRawConnection(@NonNull RawConnectionOperation<Connection, T> rawConnectionOperation) {
 		requireNonNull(rawConnectionOperation);
 
 		return performRawConnectionOperation(connection -> {
@@ -3594,6 +3594,54 @@ public final class Database {
 			} finally {
 				rawConnection.release();
 			}
+		}, true);
+	}
+
+	/**
+	 * Performs driver-specific raw JDBC work with a Pyranid-managed connection of the requested type.
+	 * <p>
+	 * If called inside a Pyranid transaction, this operation uses the transaction's connection. Standard JDBC work
+	 * participates in that transaction; driver-extension APIs may impose additional transaction-start or lifecycle rules.
+	 * Otherwise, Pyranid borrows a connection for the duration of the callback and closes it afterwards.
+	 * <p>
+	 * If the managed connection is already an instance of {@code connectionType}, it is passed directly to
+	 * {@code rawConnectionOperation}. Otherwise, Pyranid obtains the requested driver connection through
+	 * {@link Connection#unwrap(Class)}. Failure to obtain the requested type results in a {@link DatabaseException}.
+	 * <p>
+	 * <strong>Unlike {@link #useRawConnection(RawConnectionOperation)}, the connection supplied by this overload is
+	 * unguarded.</strong> This is necessary for concrete driver APIs, but it also means Pyranid cannot prevent operations
+	 * that interfere with its connection and transaction management. Do not close the connection, retain it, call
+	 * {@link Connection#commit()}, {@link Connection#rollback()}, or {@link Connection#setAutoCommit(boolean)}, or mutate
+	 * connection-wide state such as schema, catalog, client info, holdability, type map, or network timeout.
+	 * <p>
+	 * The connection and every object obtained from it are valid only for the duration of the callback. Statements, result
+	 * sets, appenders, readers, and other derived resources must be closed before this method returns. Retaining or using any
+	 * of these objects after the callback returns has undefined behavior.
+	 *
+	 * @param connectionType         driver connection class or interface to expose
+	 * @param rawConnectionOperation the driver-specific raw JDBC operation to perform
+	 * @param <C>                    the requested connection type
+	 * @param <T>                    the type to be returned
+	 * @return the operation result
+	 * @throws DatabaseException if connection acquisition, unwrapping, callback execution, or cleanup fails
+	 * @since 4.7.0
+	 */
+	@NonNull
+	public <C extends Connection, T> Optional<T> useRawConnection(@NonNull Class<C> connectionType,
+																											@NonNull RawConnectionOperation<? super C, T> rawConnectionOperation) {
+		requireNonNull(connectionType);
+		requireNonNull(rawConnectionOperation);
+
+		return performRawConnectionOperation(connection -> {
+			C rawConnection = connectionType.isInstance(connection)
+					? connectionType.cast(connection)
+					: connection.unwrap(connectionType);
+
+			if (rawConnection == null)
+				throw new SQLException(format("Connection.unwrap(%s) returned null", connectionType.getName()));
+
+			Optional<T> result = rawConnectionOperation.perform(rawConnection);
+			return result == null ? Optional.empty() : result;
 		}, true);
 	}
 

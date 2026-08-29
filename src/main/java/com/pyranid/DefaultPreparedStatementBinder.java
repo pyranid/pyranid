@@ -22,10 +22,12 @@ import org.jspecify.annotations.Nullable;
 
 import javax.annotation.concurrent.ThreadSafe;
 import java.sql.Array;
+import java.sql.Connection;
 import java.sql.ParameterMetaData;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
+import java.sql.Struct;
 import java.sql.Types;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -37,6 +39,7 @@ import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Currency;
 import java.util.Date;
@@ -61,6 +64,7 @@ import static java.util.Objects.requireNonNull;
  */
 @ThreadSafe
 class DefaultPreparedStatementBinder implements PreparedStatementBinder {
+	private static final int MAX_SQL_CONTAINER_NESTING_DEPTH = 64;
 	@NonNull
 	private final List<CustomParameterBinder> customParameterBinders;
 
@@ -249,9 +253,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			DatabaseDialect databaseDialect = statementContext.getDatabaseDialect();
 
 			if (!databaseDialect.supportsSqlArray())
-				throw new IllegalArgumentException(format("%s is not supported for %s.%s; use %s.inList(...) for expanded IN-list parameters",
-						SqlArrayParameter.class.getSimpleName(), DatabaseType.class.getSimpleName(),
-						statementContext.getDatabaseType().name(), Parameters.class.getSimpleName()));
+				throw unsupportedSqlArrayParameter(statementContext);
 
 			Object[] elements = sqlArrayParameter.getElements().orElse(null);
 
@@ -260,18 +262,42 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 				setNullWithFallback(preparedStatement, parameterIndex, Types.ARRAY, sqlArrayParameter.getBaseTypeName(),
 						sqlTypeOptional.map(ParameterSqlType::getSqlType).orElse(null));
 			} else {
-				Object[] normalizedElements = normalizedSqlArrayElements(statementContext,
-						sqlArrayParameter.getBaseTypeName(), elements);
-				Array array = preparedStatement.getConnection().createArrayOf(sqlArrayParameter.getBaseTypeName(), normalizedElements);
+				List<Array> createdArrays = new ArrayList<>();
 				try {
+					Array array = createSqlArray(statementContext, preparedStatement.getConnection(),
+							sqlArrayParameter, createdArrays, 0);
 					preparedStatement.setArray(parameterIndex, array);
-					statementContext.addCleanupOperation(array::free);
-				} catch (SQLException e) {
-					try {
-						array.free();
-					} catch (SQLException freeException) {
-						e.addSuppressed(freeException);
-					}
+					registerSqlArrayCleanupOperations(statementContext, createdArrays);
+				} catch (SQLException | RuntimeException | Error e) {
+					freeSqlArraysAfterFailure(createdArrays, e);
+					throw e;
+				}
+			}
+
+			return;
+		}
+
+		if (normalizedParameter instanceof SqlStructParameter sqlStructParameter) {
+			DatabaseDialect databaseDialect = statementContext.getDatabaseDialect();
+
+			if (!databaseDialect.supportsSqlStruct())
+				throw unsupportedSqlStructParameter(statementContext);
+
+			Object[] attributes = sqlStructParameter.getAttributes().orElse(null);
+
+			if (attributes == null) {
+				Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(parameterSqlTypeResolver, parameterIndex);
+				setNullWithFallback(preparedStatement, parameterIndex, Types.STRUCT, sqlStructParameter.getTypeName(),
+						sqlTypeOptional.map(ParameterSqlType::getSqlType).orElse(null));
+			} else {
+				List<Array> createdArrays = new ArrayList<>();
+				try {
+					Struct struct = createSqlStruct(statementContext, preparedStatement.getConnection(),
+							sqlStructParameter, createdArrays, 0);
+					preparedStatement.setObject(parameterIndex, struct);
+					registerSqlArrayCleanupOperations(statementContext, createdArrays);
+				} catch (SQLException | RuntimeException | Error e) {
+					freeSqlArraysAfterFailure(createdArrays, e);
 					throw e;
 				}
 			}
@@ -335,26 +361,129 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		return normalizedElements;
 	}
 
-	@NonNull
-	private <T> Object[] normalizedSqlArrayElements(@NonNull StatementContext<T> statementContext,
-																	 @NonNull String baseTypeName,
-																	 Object @NonNull [] elements) {
+	@Nullable
+	private <T> Array createSqlArray(@NonNull StatementContext<T> statementContext,
+																					@NonNull Connection connection,
+																					@NonNull SqlArrayParameter<?> sqlArrayParameter,
+																					@NonNull List<Array> createdArrays,
+																					int nestingDepth) throws SQLException {
 		requireNonNull(statementContext);
-		requireNonNull(baseTypeName);
-		requireNonNull(elements);
+		requireNonNull(connection);
+		requireNonNull(sqlArrayParameter);
+		requireNonNull(createdArrays);
+		ensureSqlContainerNestingDepth(nestingDepth);
 
-		Object[] normalizedElements = normalizedArrayElements(statementContext, elements);
-		DatabaseDialect databaseDialect = statementContext.getDatabaseDialect();
+		if (!statementContext.getDatabaseDialect().supportsSqlArray())
+			throw unsupportedSqlArrayParameter(statementContext);
 
-		for (int i = 0; i < normalizedElements.length; i++) {
-			Object element = normalizedElements[i];
+		Object[] elements = sqlArrayParameter.getElements().orElse(null);
+		if (elements == null)
+			return null;
 
-			if (element != null)
-				normalizedElements[i] = databaseDialect.normalizeSqlArrayElement(
-						baseTypeName, element, statementContext.getTimeZone());
+		Object[] normalizedElements = new Object[elements.length];
+		for (int i = 0; i < elements.length; i++) {
+			Object element = SecureParameterSupport.unwrapSecureAndOptionalParameter(elements[i]);
+			if (element instanceof SqlStructParameter nestedSqlStructParameter) {
+				normalizedElements[i] = createSqlStruct(statementContext, connection,
+						nestedSqlStructParameter, createdArrays, nestingDepth + 1);
+			} else if (element instanceof SqlArrayParameter<?> nestedSqlArrayParameter) {
+				normalizedElements[i] = createSqlArray(statementContext, connection,
+						nestedSqlArrayParameter, createdArrays, nestingDepth + 1);
+			} else if (element != null) {
+				Object normalizedElement = normalizeParameter(statementContext, element);
+				normalizedElements[i] = statementContext.getDatabaseDialect().normalizeSqlArrayElement(
+						sqlArrayParameter.getBaseTypeName(), normalizedElement, statementContext.getTimeZone());
+			}
 		}
 
-		return normalizedElements;
+		Array array = connection.createArrayOf(sqlArrayParameter.getBaseTypeName(), normalizedElements);
+		createdArrays.add(array);
+		return array;
+	}
+
+	@Nullable
+	private <T> Struct createSqlStruct(@NonNull StatementContext<T> statementContext,
+																					 @NonNull Connection connection,
+																					 @NonNull SqlStructParameter sqlStructParameter,
+																					 @NonNull List<Array> createdArrays,
+																					 int nestingDepth) throws SQLException {
+		requireNonNull(statementContext);
+		requireNonNull(connection);
+		requireNonNull(sqlStructParameter);
+		requireNonNull(createdArrays);
+		ensureSqlContainerNestingDepth(nestingDepth);
+
+		if (!statementContext.getDatabaseDialect().supportsSqlStruct())
+			throw unsupportedSqlStructParameter(statementContext);
+
+		Object[] attributes = sqlStructParameter.getAttributes().orElse(null);
+		if (attributes == null)
+			return null;
+
+		Object[] normalizedAttributes = new Object[attributes.length];
+		for (int i = 0; i < attributes.length; i++) {
+			Object attribute = SecureParameterSupport.unwrapSecureAndOptionalParameter(attributes[i]);
+			if (attribute instanceof SqlStructParameter nestedSqlStructParameter) {
+				normalizedAttributes[i] = createSqlStruct(statementContext, connection,
+						nestedSqlStructParameter, createdArrays, nestingDepth + 1);
+			} else if (attribute instanceof SqlArrayParameter<?> nestedSqlArrayParameter) {
+				normalizedAttributes[i] = createSqlArray(statementContext, connection,
+						nestedSqlArrayParameter, createdArrays, nestingDepth + 1);
+			} else if (attribute != null) {
+				Object normalizedAttribute = normalizeParameter(statementContext, attribute);
+				normalizedAttributes[i] = statementContext.getDatabaseDialect().normalizeSqlStructAttribute(
+						sqlStructParameter.getTypeName(), i, normalizedAttribute, statementContext.getTimeZone());
+			}
+		}
+
+		return connection.createStruct(sqlStructParameter.getTypeName(), normalizedAttributes);
+	}
+
+	private void ensureSqlContainerNestingDepth(int nestingDepth) {
+		if (nestingDepth >= MAX_SQL_CONTAINER_NESTING_DEPTH)
+			throw new IllegalArgumentException(format(
+					"SQL STRUCT/ARRAY parameter nesting exceeds the maximum depth of %s",
+					MAX_SQL_CONTAINER_NESTING_DEPTH));
+	}
+
+	@NonNull
+	private IllegalArgumentException unsupportedSqlArrayParameter(@NonNull StatementContext<?> statementContext) {
+		requireNonNull(statementContext);
+		return new IllegalArgumentException(format(
+				"%s is not supported for %s.%s; use %s.inList(...) for expanded IN-list parameters",
+				SqlArrayParameter.class.getSimpleName(), DatabaseType.class.getSimpleName(),
+				statementContext.getDatabaseType().name(), Parameters.class.getSimpleName()));
+	}
+
+	@NonNull
+	private IllegalArgumentException unsupportedSqlStructParameter(@NonNull StatementContext<?> statementContext) {
+		requireNonNull(statementContext);
+		return new IllegalArgumentException(format(
+				"%s is not supported for %s.%s; construct the value in SQL or use a CustomParameterBinder",
+				SqlStructParameter.class.getSimpleName(), DatabaseType.class.getSimpleName(),
+				statementContext.getDatabaseType().name()));
+	}
+
+	private void registerSqlArrayCleanupOperations(@NonNull StatementContext<?> statementContext,
+																	 @NonNull List<Array> arrays) {
+		requireNonNull(statementContext);
+		requireNonNull(arrays);
+		for (int i = arrays.size() - 1; i >= 0; i--)
+			statementContext.addCleanupOperation(arrays.get(i)::free);
+	}
+
+	private void freeSqlArraysAfterFailure(@NonNull List<Array> arrays,
+																					 @NonNull Throwable failure) {
+		requireNonNull(arrays);
+		requireNonNull(failure);
+		for (int i = arrays.size() - 1; i >= 0; i--) {
+			try {
+				arrays.get(i).free();
+			} catch (Throwable cleanupFailure) {
+				if (cleanupFailure != failure)
+					failure.addSuppressed(cleanupFailure);
+			}
+		}
 	}
 
 	@NonNull

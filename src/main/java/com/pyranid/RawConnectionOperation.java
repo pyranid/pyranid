@@ -22,20 +22,24 @@ import java.sql.Connection;
 import java.util.Optional;
 
 /**
- * Performs raw JDBC work with a {@link Connection} managed by {@link Database#useRawConnection(RawConnectionOperation)}.
+ * Performs raw JDBC work with a callback-scoped {@link Connection} managed by {@link Database}.
  * <p>
- * The connection is valid only for the duration of the callback. Do not close it, retain it, manage transaction lifecycle
- * directly from it, or mutate connection-wide state such as schema, catalog, client info, holdability, type map, or network
- * timeout. Pyranid guards those operations and routes {@link java.sql.Statement#getConnection()} and
- * {@link java.sql.DatabaseMetaData#getConnection()} back to the managed handle. {@link java.sql.ResultSet#getStatement()}
- * returns a guarded statement, and guarded JDBC objects refuse driver-specific {@code unwrap(...)} calls that could expose
- * the driver's underlying connection.
+ * The connection type and safeguards depend on the {@code useRawConnection(...)} overload. The overload that accepts only
+ * this operation supplies a guarded standard JDBC connection. The overload that also accepts a connection class supplies
+ * an unguarded driver connection of the requested type so driver-specific APIs can be used.
+ * <p>
+ * In either case, the connection is valid only for the duration of the callback. Do not close it, retain it, manage
+ * transaction lifecycle directly from it, or mutate connection-wide state such as schema, catalog, client info,
+ * holdability, type map, or network timeout. All statements, result sets, appenders, readers, and other objects obtained
+ * from the connection must be closed before the callback returns.
  *
+ * @param <C> the connection type made available to the operation
+ * @param <R> the operation result type
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 4.2.0
  */
 @FunctionalInterface
-public interface RawConnectionOperation<T> {
+public interface RawConnectionOperation<C extends Connection, R> {
 	/**
 	 * Performs raw JDBC work with the provided connection.
 	 *
@@ -44,5 +48,5 @@ public interface RawConnectionOperation<T> {
 	 * @throws Exception if the operation fails
 	 */
 	@NonNull
-	Optional<T> perform(@NonNull Connection connection) throws Exception;
+	Optional<R> perform(@NonNull C connection) throws Exception;
 }

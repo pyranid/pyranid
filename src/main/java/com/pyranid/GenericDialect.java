@@ -79,6 +79,12 @@ class GenericDialect implements DatabaseDialect {
 
 	@NonNull
 	@Override
+	public Boolean supportsSqlStruct() {
+		return false;
+	}
+
+	@NonNull
+	@Override
 	public Boolean supportsVector() {
 		return false;
 	}
@@ -104,6 +110,19 @@ class GenericDialect implements DatabaseDialect {
 		requireNonNull(element);
 		requireNonNull(timeZone);
 		return element;
+	}
+
+	@NonNull
+	@Override
+	public Object normalizeSqlStructAttribute(@NonNull String typeName,
+																														@NonNull Integer attributeIndex,
+																														@NonNull Object attribute,
+																														@NonNull ZoneId timeZone) {
+		requireNonNull(typeName);
+		requireNonNull(attributeIndex);
+		requireNonNull(attribute);
+		requireNonNull(timeZone);
+		return attribute;
 	}
 
 	@NonNull
