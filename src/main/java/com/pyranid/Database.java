@@ -3610,7 +3610,9 @@ public final class Database {
 	 * <p>
 	 * <strong>Unlike {@link #useRawConnection(RawConnectionOperation)}, the connection supplied by this overload is
 	 * unguarded.</strong> This is necessary for concrete driver APIs, but it also means Pyranid cannot prevent operations
-	 * that interfere with its connection and transaction management. Do not close the connection, retain it, call
+	 * that interfere with its connection and transaction management. Guarding is selected by the overload, so the
+	 * connection remains unguarded when {@code connectionType} is {@code Connection.class}. Do not close the connection,
+	 * retain it, call
 	 * {@link Connection#commit()}, {@link Connection#rollback()}, or {@link Connection#setAutoCommit(boolean)}, or mutate
 	 * connection-wide state such as schema, catalog, client info, holdability, type map, or network timeout.
 	 * <p>

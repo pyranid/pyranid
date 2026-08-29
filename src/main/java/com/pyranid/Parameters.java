@@ -84,6 +84,15 @@ public final class Parameters {
 	 * <p>
 	 * SQL ARRAY binding requires JDBC driver support for {@link java.sql.Connection#createArrayOf(String, Object[])}.
 	 * Unsupported dialects, including MySQL, MariaDB, SQLite, SQL Server, and Oracle, fail with a clear {@link DatabaseException}.
+	 * Elements may themselves be {@link SqlArrayParameter}s, in which case Pyranid materializes the nested arrays
+	 * recursively. Multidimensional support remains driver-specific and is integration-verified on DuckDB. Each
+	 * containing array's {@code baseTypeName} must name its element type, for example {@code "VARCHAR[]"} for an
+	 * outer array whose elements are {@code VARCHAR} arrays.
+	 * <p>
+	 * For DuckDB elements that represent an instant, use an explicit {@code TIMESTAMP} or {@code TIMESTAMPTZ}
+	 * base type so Pyranid can apply the intended timestamp and configured-time-zone semantics. A named DuckDB
+	 * type alias does not expose its underlying timestamp semantics through this binding path, so Pyranid fails
+	 * fast for these values rather than guessing.
 	 * <p>
 	 * For non-SQL array binding where you need to preserve the Java element type for custom binders,
 	 * use {@link #arrayOf(Class, Object)} instead.
@@ -107,6 +116,15 @@ public final class Parameters {
 	 * <p>
 	 * SQL ARRAY binding requires JDBC driver support for {@link java.sql.Connection#createArrayOf(String, Object[])}.
 	 * Unsupported dialects, including MySQL, MariaDB, SQLite, SQL Server, and Oracle, fail with a clear {@link DatabaseException}.
+	 * Elements may themselves be {@link SqlArrayParameter}s, in which case Pyranid materializes the nested arrays
+	 * recursively. Multidimensional support remains driver-specific and is integration-verified on DuckDB. Each
+	 * containing array's {@code baseTypeName} must name its element type, for example {@code "VARCHAR[]"} for an
+	 * outer array whose elements are {@code VARCHAR} arrays.
+	 * <p>
+	 * For DuckDB elements that represent an instant, use an explicit {@code TIMESTAMP} or {@code TIMESTAMPTZ}
+	 * base type so Pyranid can apply the intended timestamp and configured-time-zone semantics. A named DuckDB
+	 * type alias does not expose its underlying timestamp semantics through this binding path, so Pyranid fails
+	 * fast for these values rather than guessing.
 	 * <p>
 	 * For non-SQL array binding where you need to preserve the Java element type for custom binders,
 	 * use {@link #arrayOf(Class, Object)} instead.
@@ -130,6 +148,14 @@ public final class Parameters {
 	 * {@link java.sql.Connection#createStruct(String, Object[])}. SQL STRUCT binding is currently
 	 * supported for DuckDB. Attributes may contain {@code null}, nested {@link SqlStructParameter}s,
 	 * or {@link SqlArrayParameter}s.
+	 * <p>
+	 * For DuckDB attributes that represent an instant ({@link java.time.Instant},
+	 * {@link java.time.OffsetDateTime}, {@link java.time.ZonedDateTime}, {@link java.sql.Timestamp}, or
+	 * {@link java.util.Date}), use a complete inline STRUCT declaration so Pyranid can distinguish
+	 * {@code TIMESTAMP} from {@code TIMESTAMPTZ} and apply the configured
+	 * {@link Database.Builder#timeZone(java.time.ZoneId)}. A named DuckDB {@code CREATE TYPE} alias does not
+	 * expose its attribute types through this binding path, so Pyranid fails fast for these values rather
+	 * than guessing their timestamp semantics.
 	 *
 	 * @param typeName   the database-specific SQL STRUCT type name
 	 * @param attributes the positional attributes, or {@code null} to bind a SQL {@code NULL} STRUCT
@@ -150,6 +176,14 @@ public final class Parameters {
 	 * {@link java.sql.Connection#createStruct(String, Object[])}. SQL STRUCT binding is currently
 	 * supported for DuckDB. Attributes may contain {@code null}, nested {@link SqlStructParameter}s,
 	 * or {@link SqlArrayParameter}s.
+	 * <p>
+	 * For DuckDB attributes that represent an instant ({@link java.time.Instant},
+	 * {@link java.time.OffsetDateTime}, {@link java.time.ZonedDateTime}, {@link java.sql.Timestamp}, or
+	 * {@link java.util.Date}), use a complete inline STRUCT declaration so Pyranid can distinguish
+	 * {@code TIMESTAMP} from {@code TIMESTAMPTZ} and apply the configured
+	 * {@link Database.Builder#timeZone(java.time.ZoneId)}. A named DuckDB {@code CREATE TYPE} alias does not
+	 * expose its attribute types through this binding path, so Pyranid fails fast for these values rather
+	 * than guessing their timestamp semantics.
 	 *
 	 * @param typeName   the database-specific SQL STRUCT type name
 	 * @param attributes the positional attributes, or {@code null} to bind a SQL {@code NULL} STRUCT

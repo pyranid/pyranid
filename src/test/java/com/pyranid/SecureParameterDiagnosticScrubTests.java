@@ -202,6 +202,55 @@ public class SecureParameterDiagnosticScrubTests {
 	}
 
 	@Test
+	public void testSecureScalarInsideMaximumBindableSqlContainerDepthIsScrubbed() {
+		String secret = "maximum-depth-secret";
+		Object nestedParameter = Parameters.secure(secret, "<maximum-depth>");
+
+		for (int i = 0; i < SecureParameterSupport.MAX_NESTING_DEPTH; ++i)
+			nestedParameter = Parameters.sqlStructOf("STRUCT(value VARCHAR)", List.of(nestedParameter));
+
+		SecureParameterSupport.DiagnosticScrub scrub = SecureParameterSupport.diagnosticScrubForParameters(
+				List.of(nestedParameter));
+
+		Assertions.assertNotNull(scrub.redactor(),
+				"A scalar inside the 64th container is bindable and must contribute a scrub needle");
+		Assertions.assertEquals("driver echoed <maximum-depth>",
+				scrub.redactor().apply("driver echoed " + secret));
+	}
+
+	@Test
+	public void testOuterSecureContainerScrubsScalarAtMaximumBindableDepth() {
+		String secret = "maximum-depth-outer-secret";
+		Object nestedParameter = secret;
+
+		for (int i = 0; i < SecureParameterSupport.MAX_NESTING_DEPTH; ++i)
+			nestedParameter = Parameters.sqlStructOf("STRUCT(value VARCHAR)", List.of(nestedParameter));
+
+		SecureParameterSupport.DiagnosticScrub scrub = SecureParameterSupport.diagnosticScrubForParameters(
+				List.of(Parameters.secure(nestedParameter, "<outer>")));
+
+		Assertions.assertNotNull(scrub.redactor(),
+				"The outer secure mask must reach a scalar inside the 64th container");
+		Assertions.assertEquals("driver echoed <outer>", scrub.redactor().apply("driver echoed " + secret));
+	}
+
+	@Test
+	public void testSecureScalarBeyondMaximumBindableSqlContainerDepthIsNotTraversed() {
+		Object nestedParameter = Parameters.secure("unbound-depth-secret");
+
+		for (int i = 0; i <= SecureParameterSupport.MAX_NESTING_DEPTH; ++i)
+			nestedParameter = Parameters.sqlStructOf("STRUCT(value VARCHAR)", List.of(nestedParameter));
+
+		SecureParameterSupport.DiagnosticScrub scrub = SecureParameterSupport.diagnosticScrubForParameters(
+				List.of(nestedParameter));
+
+		// The binder rejects the 65th container before inspecting its attributes. Matching
+		// that boundary keeps scrub traversal bounded without dropping any bindable scalar.
+		Assertions.assertNull(scrub.redactor());
+		Assertions.assertTrue(scrub.needleRenderingFailureDescriptions().isEmpty());
+	}
+
+	@Test
 	public void testBatchParameterGroupsWalked() {
 		List<Object> group1 = List.of("plain", Parameters.secure("batch-secret-1"));
 		List<Object> group2 = List.of("plain", Parameters.secure("batch-secret-2"));

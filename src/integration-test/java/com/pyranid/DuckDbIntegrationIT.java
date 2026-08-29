@@ -34,6 +34,7 @@ import java.time.OffsetDateTime;
 import java.time.OffsetTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
@@ -169,42 +170,110 @@ public class DuckDbIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 
 	@Test
 	public void testDuckDbSqlStructParameterNormalizesTemporalAndHugeintAttributes() {
-		ZoneId databaseTimeZone = ZoneId.of("America/New_York");
+		ZoneId databaseTimeZone = ZoneId.of("Asia/Tokyo");
 		Database db = Database.withDataSource(dataSource())
 				.databaseType(DatabaseType.DUCK_DB)
 				.timeZone(databaseTimeZone)
 				.build();
 		String table = "pyranid_duckdb_struct_parameter_normalization";
-		String payloadType = "STRUCT(local_ts TIMESTAMP, amount DECIMAL(10,2), instant_ts TIMESTAMPTZ, "
-				+ "huge HUGEINT, clock TIMETZ, token UUID)";
+		String payloadType = "STRUCT(instant_local TIMESTAMP, offset_local TIMESTAMP, zoned_local TIMESTAMP, "
+				+ "instant_zoned TIMESTAMPTZ, offset_zoned TIMESTAMPTZ, zoned_zoned TIMESTAMPTZ, "
+				+ "amount DECIMAL(10,2), huge HUGEINT, clock TIMETZ, token UUID)";
 		recreateTable(db, table, "CREATE TABLE " + table + " (id BIGINT PRIMARY KEY, payload " + payloadType + ")");
 		Instant instant = Instant.parse("2026-08-29T14:30:15.123456Z");
+		OffsetDateTime offsetDateTime = instant.atOffset(ZoneOffset.ofHours(2));
+		ZonedDateTime zonedDateTime = instant.atZone(ZoneId.of("Pacific/Auckland"));
 		BigInteger hugeint = new BigInteger("170141183460469231731687303715884105727");
 		OffsetTime clock = OffsetTime.of(10, 30, 15, 0, ZoneOffset.ofHours(-4));
 		UUID token = UUID.fromString("123e4567-e89b-12d3-a456-426614174000");
 
-		db.query("INSERT INTO " + table + " VALUES (:id, :payload)")
-				.bind("id", 1L)
-				.bind("payload", Parameters.sqlStructOf(payloadType,
-						List.of(instant, new java.math.BigDecimal("12.34"), instant, hugeint, clock, token)))
-				.execute();
+		db.transaction(() -> {
+			// The configured Pyranid zone must control unzoned timestamp conversion, independently of
+			// DuckDB's connection/session zone.
+			db.query("SET TimeZone = 'UTC'").execute();
+			Assertions.assertEquals("UTC", db.query("SELECT current_setting('TimeZone')")
+					.fetchObject(String.class)
+					.orElseThrow());
 
-		Assertions.assertEquals(LocalDateTime.ofInstant(instant, databaseTimeZone),
-				db.query("SELECT payload.local_ts FROM " + table)
+			db.query("INSERT INTO " + table + " VALUES (:id, :payload)")
+					.bind("id", 1L)
+					.bind("payload", Parameters.sqlStructOf(payloadType,
+							List.of(instant, offsetDateTime, zonedDateTime, instant, offsetDateTime, zonedDateTime,
+									new java.math.BigDecimal("12.34"), hugeint, clock, token)))
+					.execute();
+
+			LocalDateTime expectedLocalDateTime = LocalDateTime.ofInstant(instant, databaseTimeZone);
+			Assertions.assertEquals(expectedLocalDateTime,
+				db.query("SELECT payload.instant_local FROM " + table)
 						.fetchObject(LocalDateTime.class)
 						.orElseThrow());
-		Assertions.assertEquals(instant, db.query("SELECT payload.instant_ts FROM " + table)
-				.fetchObject(Instant.class)
+			Assertions.assertEquals(expectedLocalDateTime,
+				db.query("SELECT payload.offset_local FROM " + table)
+						.fetchObject(LocalDateTime.class)
+						.orElseThrow());
+			Assertions.assertEquals(expectedLocalDateTime,
+				db.query("SELECT payload.zoned_local FROM " + table)
+						.fetchObject(LocalDateTime.class)
+						.orElseThrow());
+			for (String attribute : List.of("instant_zoned", "offset_zoned", "zoned_zoned"))
+				Assertions.assertEquals(instant, db.query("SELECT payload." + attribute + " FROM " + table)
+						.fetchObject(Instant.class)
+						.orElseThrow());
+			Assertions.assertEquals(hugeint, db.query("SELECT payload.huge FROM " + table)
+					.fetchObject(BigInteger.class)
+					.orElseThrow());
+			OffsetTime fetchedClock = db.query("SELECT payload.clock FROM " + table)
+					.fetchObject(OffsetTime.class)
+					.orElseThrow();
+			Assertions.assertTrue(clock.isEqual(fetchedClock));
+			Assertions.assertEquals(token, db.query("SELECT payload.token FROM " + table)
+					.fetchObject(UUID.class)
+					.orElseThrow());
+		});
+	}
+
+	@Test
+	public void testDuckDbNamedStructAliasFailsClosedForInstantBearingAttribute() {
+		Database db = database();
+		String type = "pyranid_duckdb_event_payload_type";
+		String table = "pyranid_duckdb_named_struct_parameter_payloads";
+		db.query("CREATE TYPE " + type + " AS STRUCT(local_ts TIMESTAMP)").execute();
+		recreateTable(db, table, "CREATE TABLE " + table + " (id BIGINT PRIMARY KEY, payload " + type + ")");
+
+		DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("INSERT INTO " + table + " VALUES (:id, :payload)")
+						.bind("id", 1L)
+						.bind("payload", Parameters.sqlStructOf(type,
+								List.of(Instant.parse("2026-08-29T14:30:15.123456Z"))))
+						.execute());
+
+		Assertions.assertInstanceOf(IllegalArgumentException.class, exception.getCause());
+		Assertions.assertTrue(exception.getMessage().contains("timestamp semantics are unknown"));
+		Assertions.assertEquals(0L, db.query("SELECT COUNT(*) FROM " + table)
+				.fetchObject(Long.class)
 				.orElseThrow());
-		Assertions.assertEquals(hugeint, db.query("SELECT payload.huge FROM " + table)
-				.fetchObject(BigInteger.class)
-				.orElseThrow());
-		OffsetTime fetchedClock = db.query("SELECT payload.clock FROM " + table)
-				.fetchObject(OffsetTime.class)
-				.orElseThrow();
-		Assertions.assertTrue(clock.isEqual(fetchedClock));
-		Assertions.assertEquals(token, db.query("SELECT payload.token FROM " + table)
-				.fetchObject(UUID.class)
+	}
+
+	@Test
+	public void testDuckDbTimestampLookingTypeAliasFailsClosedForInstantBearingAttribute() {
+		Database db = database();
+		String timestampAlias = "TIMESTAMP_M";
+		String table = "pyranid_duckdb_timestamp_alias_struct_payloads";
+		db.query("CREATE TYPE " + timestampAlias + " AS TIMESTAMPTZ").execute();
+		recreateTable(db, table, "CREATE TABLE " + table + " (id BIGINT PRIMARY KEY, "
+				+ "payload STRUCT(ts " + timestampAlias + "))");
+
+		DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("INSERT INTO " + table + " VALUES (:id, :payload)")
+						.bind("id", 1L)
+						.bind("payload", Parameters.sqlStructOf("STRUCT(ts " + timestampAlias + ")",
+								List.of(Instant.parse("2026-08-29T14:30:15.123456Z"))))
+						.execute());
+
+		Assertions.assertInstanceOf(IllegalArgumentException.class, exception.getCause());
+		Assertions.assertTrue(exception.getMessage().contains("timestamp semantics are unknown"));
+		Assertions.assertEquals(0L, db.query("SELECT COUNT(*) FROM " + table)
+				.fetchObject(Long.class)
 				.orElseThrow());
 	}
 
@@ -517,8 +586,35 @@ public class DuckDbIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 	}
 
 	@Test
+	public void testDuckDbMultidimensionalSqlArrayParameterRoundTrip() {
+		Database db = database();
+		String table = "pyranid_duckdb_multidimensional_array_items";
+		recreateTable(db, table, "CREATE TABLE " + table + " (id BIGINT PRIMARY KEY, vals VARCHAR[][])");
+
+		db.query("INSERT INTO " + table + " (id, vals) VALUES (:id, :vals)")
+				.bind("id", 1L)
+				.bind("vals", Parameters.sqlArrayOf("VARCHAR[]", List.of(
+						Parameters.sqlArrayOf("VARCHAR", List.of("Ada", "Grace")),
+						Parameters.sqlArrayOf("VARCHAR", List.of("Edsger", "Barbara")))))
+				.execute();
+
+		Assertions.assertEquals("Ada", db.query("SELECT vals[1][1] FROM " + table)
+				.fetchObject(String.class)
+				.orElseThrow());
+		Assertions.assertEquals("Grace", db.query("SELECT vals[1][2] FROM " + table)
+				.fetchObject(String.class)
+				.orElseThrow());
+		Assertions.assertEquals("Edsger", db.query("SELECT vals[2][1] FROM " + table)
+				.fetchObject(String.class)
+				.orElseThrow());
+		Assertions.assertEquals("Barbara", db.query("SELECT vals[2][2] FROM " + table)
+				.fetchObject(String.class)
+				.orElseThrow());
+	}
+
+	@Test
 	public void testDuckDbSqlArrayElementsNormalizeDriverUnsupportedTypes() {
-		ZoneId databaseTimeZone = ZoneId.of("America/New_York");
+		ZoneId databaseTimeZone = ZoneId.of("Asia/Tokyo");
 		Database db = Database.withDataSource(dataSource())
 				.databaseType(DatabaseType.DUCK_DB)
 				.timeZone(databaseTimeZone)
@@ -528,6 +624,10 @@ public class DuckDbIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 				+ "offset_times TIMETZ[], "
 				+ "instants_with_time_zone TIMESTAMPTZ[], "
 				+ "instants_without_time_zone TIMESTAMP[], "
+				+ "offsets_with_time_zone TIMESTAMPTZ[], "
+				+ "offsets_without_time_zone TIMESTAMP[], "
+				+ "zoned_with_time_zone TIMESTAMPTZ[], "
+				+ "zoned_without_time_zone TIMESTAMP[], "
 				+ "sql_timestamps TIMESTAMPTZ[], "
 				+ "util_dates TIMESTAMPTZ[], "
 				+ "hugeints HUGEINT[]"
@@ -535,42 +635,62 @@ public class DuckDbIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 
 		OffsetTime offsetTime = OffsetTime.of(10, 30, 15, 123456000, ZoneOffset.ofHours(-4));
 		Instant instant = Instant.parse("2026-08-27T14:30:15.123456Z");
+		OffsetDateTime offsetDateTime = instant.atOffset(ZoneOffset.ofHours(2));
+		ZonedDateTime zonedDateTime = instant.atZone(ZoneId.of("Pacific/Auckland"));
 		Timestamp sqlTimestamp = Timestamp.from(Instant.parse("2026-08-27T15:30:15.654321Z"));
 		Date utilDate = Date.from(Instant.parse("2026-08-27T16:30:15.123Z"));
 		BigInteger hugeint = new BigInteger("170141183460469231731687303715884105727");
 
-		db.query("INSERT INTO " + table + " VALUES ("
-						+ ":offsetTimes, :instantsWithTimeZone, :instantsWithoutTimeZone, "
-						+ ":sqlTimestamps, :utilDates, :hugeints)")
-				.bind("offsetTimes", Parameters.sqlArrayOf("TIMETZ", List.of(offsetTime)))
-				.bind("instantsWithTimeZone", Parameters.sqlArrayOf("TIMESTAMPTZ", List.of(instant)))
-				.bind("instantsWithoutTimeZone", Parameters.sqlArrayOf("TIMESTAMP", List.of(instant)))
-				.bind("sqlTimestamps", Parameters.sqlArrayOf("TIMESTAMPTZ", List.of(sqlTimestamp)))
-				.bind("utilDates", Parameters.sqlArrayOf("TIMESTAMPTZ", List.of(utilDate)))
-				.bind("hugeints", Parameters.sqlArrayOf("HUGEINT", List.of(hugeint)))
-				.execute();
+		db.transaction(() -> {
+			// Pin the DuckDB session to a zone different from Database.timeZone() so this catches
+			// accidental delegation of unzoned conversion to the driver.
+			db.query("SET TimeZone = 'UTC'").execute();
+			Assertions.assertEquals("UTC", db.query("SELECT current_setting('TimeZone')")
+					.fetchObject(String.class)
+					.orElseThrow());
 
-		OffsetTime fetchedOffsetTime = db.query("SELECT offset_times[1] FROM " + table)
-				.fetchObject(OffsetTime.class)
-				.orElseThrow();
-		Assertions.assertTrue(offsetTime.isEqual(fetchedOffsetTime),
-				"Expected " + offsetTime + " but fetched " + fetchedOffsetTime);
-		Assertions.assertEquals(instant, db.query("SELECT instants_with_time_zone[1] FROM " + table)
-				.fetchObject(Instant.class)
-				.orElseThrow());
-		Assertions.assertEquals(LocalDateTime.ofInstant(instant, databaseTimeZone),
-				db.query("SELECT instants_without_time_zone[1] FROM " + table)
+			db.query("INSERT INTO " + table + " VALUES ("
+						+ ":offsetTimes, :instantsWithTimeZone, :instantsWithoutTimeZone, "
+						+ ":offsetsWithTimeZone, :offsetsWithoutTimeZone, "
+						+ ":zonedWithTimeZone, :zonedWithoutTimeZone, "
+						+ ":sqlTimestamps, :utilDates, :hugeints)")
+					.bind("offsetTimes", Parameters.sqlArrayOf("TIMETZ", List.of(offsetTime)))
+					.bind("instantsWithTimeZone", Parameters.sqlArrayOf("TIMESTAMPTZ", List.of(instant)))
+					.bind("instantsWithoutTimeZone", Parameters.sqlArrayOf("TIMESTAMP", List.of(instant)))
+					.bind("offsetsWithTimeZone", Parameters.sqlArrayOf("TIMESTAMPTZ", List.of(offsetDateTime)))
+					.bind("offsetsWithoutTimeZone", Parameters.sqlArrayOf("TIMESTAMP", List.of(offsetDateTime)))
+					.bind("zonedWithTimeZone", Parameters.sqlArrayOf("TIMESTAMPTZ", List.of(zonedDateTime)))
+					.bind("zonedWithoutTimeZone", Parameters.sqlArrayOf("TIMESTAMP", List.of(zonedDateTime)))
+					.bind("sqlTimestamps", Parameters.sqlArrayOf("TIMESTAMPTZ", List.of(sqlTimestamp)))
+					.bind("utilDates", Parameters.sqlArrayOf("TIMESTAMPTZ", List.of(utilDate)))
+					.bind("hugeints", Parameters.sqlArrayOf("HUGEINT", List.of(hugeint)))
+					.execute();
+
+			OffsetTime fetchedOffsetTime = db.query("SELECT offset_times[1] FROM " + table)
+					.fetchObject(OffsetTime.class)
+					.orElseThrow();
+			Assertions.assertTrue(offsetTime.isEqual(fetchedOffsetTime),
+					"Expected " + offsetTime + " but fetched " + fetchedOffsetTime);
+			for (String column : List.of("instants_with_time_zone", "offsets_with_time_zone", "zoned_with_time_zone"))
+				Assertions.assertEquals(instant, db.query("SELECT " + column + "[1] FROM " + table)
+						.fetchObject(Instant.class)
+						.orElseThrow());
+			LocalDateTime expectedLocalDateTime = LocalDateTime.ofInstant(instant, databaseTimeZone);
+			for (String column : List.of("instants_without_time_zone", "offsets_without_time_zone",
+					"zoned_without_time_zone"))
+				Assertions.assertEquals(expectedLocalDateTime, db.query("SELECT " + column + "[1] FROM " + table)
 						.fetchObject(LocalDateTime.class)
 						.orElseThrow());
-		Assertions.assertEquals(sqlTimestamp.toInstant(), db.query("SELECT sql_timestamps[1] FROM " + table)
-				.fetchObject(Instant.class)
-				.orElseThrow());
-		Assertions.assertEquals(utilDate.toInstant(), db.query("SELECT util_dates[1] FROM " + table)
-				.fetchObject(Instant.class)
-				.orElseThrow());
-		Assertions.assertEquals(hugeint, db.query("SELECT hugeints[1] FROM " + table)
-				.fetchObject(BigInteger.class)
-				.orElseThrow());
+			Assertions.assertEquals(sqlTimestamp.toInstant(), db.query("SELECT sql_timestamps[1] FROM " + table)
+					.fetchObject(Instant.class)
+					.orElseThrow());
+			Assertions.assertEquals(utilDate.toInstant(), db.query("SELECT util_dates[1] FROM " + table)
+					.fetchObject(Instant.class)
+					.orElseThrow());
+			Assertions.assertEquals(hugeint, db.query("SELECT hugeints[1] FROM " + table)
+					.fetchObject(BigInteger.class)
+					.orElseThrow());
+		});
 	}
 
 	@Test

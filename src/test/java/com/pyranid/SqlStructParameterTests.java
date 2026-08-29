@@ -38,6 +38,7 @@ import java.time.OffsetDateTime;
 import java.time.OffsetTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -280,33 +281,112 @@ public class SqlStructParameterTests {
 		ZoneId timeZone = ZoneId.of("America/New_York");
 		StatementContext<?> statementContext = statementContext(DatabaseType.DUCK_DB, timeZone);
 		Instant instant = Instant.parse("2026-08-29T14:30:15.123456Z");
+		OffsetDateTime offsetDateTime = instant.atOffset(ZoneOffset.ofHours(2));
+		ZonedDateTime zonedDateTime = instant.atZone(ZoneId.of("Pacific/Auckland"));
 		BigInteger hugeint = new BigInteger("170141183460469231731687303715884105727");
 		OffsetTime offsetTime = OffsetTime.of(10, 30, 15, 0, ZoneOffset.ofHours(-4));
 
 		new DefaultPreparedStatementBinder().bindParameter(statementContext, preparedStatement, 1,
 				Parameters.sqlStructOf(
-						"STRUCT(local_ts TIMESTAMP, amount DECIMAL(10,2), instant_ts TIMESTAMPTZ, huge HUGEINT, clock TIMETZ)",
-						List.of(instant, new BigDecimal("12.34"), instant, hugeint, offsetTime)));
+						"STRUCT(instant_local TIMESTAMP, offset_local TIMESTAMP WITHOUT TIME ZONE, zoned_local TIMESTAMP, "
+								+ "instant_zoned TIMESTAMPTZ, offset_zoned TIMESTAMP WITH TIME ZONE, "
+								+ "zoned_zoned TIMESTAMPTZ, amount DECIMAL(10,2), huge HUGEINT, clock TIMETZ)",
+						List.of(instant, offsetDateTime, zonedDateTime, instant, offsetDateTime, zonedDateTime,
+								new BigDecimal("12.34"), hugeint, offsetTime)));
 
 		Object[] normalized = capture.structCalls.get(0).attributes();
 		Assertions.assertEquals(LocalDateTime.ofInstant(instant, timeZone), normalized[0]);
-		Assertions.assertEquals(new BigDecimal("12.34"), normalized[1]);
-		Assertions.assertEquals(OffsetDateTime.ofInstant(instant, ZoneOffset.UTC), normalized[2]);
-		Assertions.assertEquals(hugeint.toString(), normalized[3]);
-		Assertions.assertEquals(offsetTime.toString(), normalized[4]);
+		Assertions.assertEquals(LocalDateTime.ofInstant(instant, timeZone), normalized[1]);
+		Assertions.assertEquals(LocalDateTime.ofInstant(instant, timeZone), normalized[2]);
+		Assertions.assertEquals(OffsetDateTime.ofInstant(instant, ZoneOffset.UTC), normalized[3]);
+		Assertions.assertEquals(OffsetDateTime.ofInstant(instant, ZoneOffset.UTC), normalized[4]);
+		Assertions.assertEquals(OffsetDateTime.ofInstant(instant, ZoneOffset.UTC), normalized[5]);
+		Assertions.assertEquals(new BigDecimal("12.34"), normalized[6]);
+		Assertions.assertEquals(hugeint.toString(), normalized[7]);
+		Assertions.assertEquals(offsetTime.toString(), normalized[8]);
 	}
 
 	@Test
-	public void testNamedStructAliasDoesNotInferTimestampSemanticsFromAliasName() throws Exception {
-		JdbcCapture capture = new JdbcCapture();
-		PreparedStatement preparedStatement = capture.preparedStatement(false);
+	public void testDuckDbArrayElementsNormalizeInstantBearingValuesByTargetType() throws Exception {
+		ZoneId timeZone = ZoneId.of("America/New_York");
+		StatementContext<?> statementContext = statementContext(DatabaseType.DUCK_DB, ZoneId.of("America/New_York"));
+		Instant instant = Instant.parse("2026-08-29T14:30:15.123456Z");
+		OffsetDateTime offsetDateTime = instant.atOffset(ZoneOffset.ofHours(2));
+		ZonedDateTime zonedDateTime = instant.atZone(ZoneId.of("Pacific/Auckland"));
+
+		JdbcCapture localCapture = new JdbcCapture();
+		new DefaultPreparedStatementBinder().bindParameter(statementContext, localCapture.preparedStatement(false), 1,
+				Parameters.sqlArrayOf("TIMESTAMP", List.of(instant, offsetDateTime, zonedDateTime)));
+		Assertions.assertArrayEquals(new Object[]{
+				LocalDateTime.ofInstant(instant, timeZone),
+				LocalDateTime.ofInstant(instant, timeZone),
+				LocalDateTime.ofInstant(instant, timeZone)},
+				(Object[]) localCapture.arrays.get(0).proxy.getArray());
+
+		JdbcCapture zonedCapture = new JdbcCapture();
+		new DefaultPreparedStatementBinder().bindParameter(statementContext, zonedCapture.preparedStatement(false), 1,
+				Parameters.sqlArrayOf("TIMESTAMPTZ", List.of(instant, offsetDateTime, zonedDateTime)));
+		Assertions.assertArrayEquals(new Object[]{
+				OffsetDateTime.ofInstant(instant, ZoneOffset.UTC),
+				OffsetDateTime.ofInstant(instant, ZoneOffset.UTC),
+				OffsetDateTime.ofInstant(instant, ZoneOffset.UTC)},
+				(Object[]) zonedCapture.arrays.get(0).proxy.getArray());
+	}
+
+	@Test
+	public void testNamedStructAliasFailsClosedForInstantBearingAttributes() {
 		StatementContext<?> statementContext = statementContext(DatabaseType.DUCK_DB, ZoneId.of("America/New_York"));
 		Instant instant = Instant.parse("2026-08-29T14:30:15.123456Z");
 
-		new DefaultPreparedStatementBinder().bindParameter(statementContext, preparedStatement, 1,
-				Parameters.sqlStructOf("event_timestamp_payload", List.of(instant)));
+		for (Object value : List.of(instant, instant.atOffset(ZoneOffset.ofHours(2)),
+				instant.atZone(ZoneId.of("Pacific/Auckland")))) {
+			JdbcCapture capture = new JdbcCapture();
+			PreparedStatement preparedStatement = capture.preparedStatement(false);
+			IllegalArgumentException exception = Assertions.assertThrows(IllegalArgumentException.class, () ->
+					new DefaultPreparedStatementBinder().bindParameter(statementContext, preparedStatement, 1,
+							Parameters.sqlStructOf("event_timestamp_payload", List.of(value))));
 
-		Assertions.assertEquals(instant.toString(), capture.structCalls.get(0).attributes()[0]);
+			Assertions.assertTrue(exception.getMessage().contains("timestamp semantics are unknown"));
+			Assertions.assertTrue(exception.getMessage().contains("event_timestamp_payload"));
+			Assertions.assertTrue(capture.structCalls.isEmpty());
+		}
+	}
+
+	@Test
+	public void testNamedArrayElementAliasFailsClosedForInstantBearingElements() {
+		JdbcCapture capture = new JdbcCapture();
+		StatementContext<?> statementContext = statementContext(DatabaseType.DUCK_DB, ZoneId.of("America/New_York"));
+		Instant instant = Instant.parse("2026-08-29T14:30:15.123456Z");
+
+		IllegalArgumentException exception = Assertions.assertThrows(IllegalArgumentException.class, () ->
+				new DefaultPreparedStatementBinder().bindParameter(statementContext, capture.preparedStatement(false), 1,
+						Parameters.sqlArrayOf("event_timestamp", List.of(instant))));
+
+		Assertions.assertTrue(exception.getMessage().contains("timestamp semantics are unknown"));
+		Assertions.assertTrue(exception.getMessage().contains("event_timestamp"));
+		Assertions.assertTrue(capture.arrays.isEmpty());
+	}
+
+	@Test
+	public void testTimestampLookingAliasFailsClosedForInstantBearingElements() {
+		StatementContext<?> statementContext = statementContext(DatabaseType.DUCK_DB, ZoneId.of("America/New_York"));
+		Instant instant = Instant.parse("2026-08-29T14:30:15.123456Z");
+
+		JdbcCapture structCapture = new JdbcCapture();
+		IllegalArgumentException structException = Assertions.assertThrows(IllegalArgumentException.class, () ->
+				new DefaultPreparedStatementBinder().bindParameter(statementContext,
+						structCapture.preparedStatement(false), 1,
+						Parameters.sqlStructOf("STRUCT(ts TIMESTAMP_M)", List.of(instant))));
+		Assertions.assertTrue(structException.getMessage().contains("timestamp semantics are unknown"));
+		Assertions.assertTrue(structCapture.structCalls.isEmpty());
+
+		JdbcCapture arrayCapture = new JdbcCapture();
+		IllegalArgumentException arrayException = Assertions.assertThrows(IllegalArgumentException.class, () ->
+				new DefaultPreparedStatementBinder().bindParameter(statementContext,
+						arrayCapture.preparedStatement(false), 1,
+						Parameters.sqlArrayOf("TIMESTAMP_M", List.of(instant))));
+		Assertions.assertTrue(arrayException.getMessage().contains("timestamp semantics are unknown"));
+		Assertions.assertTrue(arrayCapture.arrays.isEmpty());
 	}
 
 	@Test

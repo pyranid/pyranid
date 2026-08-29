@@ -31,6 +31,11 @@ import java.util.Optional;
  * type such as {@code STRUCT(name VARCHAR, age INTEGER)}. Attributes are positional and may contain
  * {@code null}, nested {@code SqlStructParameter}s, or {@link SqlArrayParameter}s.
  * <p>
+ * DuckDB attributes that represent an instant require a complete inline STRUCT declaration so Pyranid
+ * can distinguish {@code TIMESTAMP} from {@code TIMESTAMPTZ}. A named {@code CREATE TYPE} alias does not
+ * expose its attribute types through this binding path, so binding an instant-bearing value through one
+ * fails fast rather than guessing its timestamp semantics.
+ * <p>
  * Standard instances may be constructed via {@link Parameters#sqlStructOf(String, Object[])} and
  * {@link Parameters#sqlStructOf(String, List)}.
  * <p>

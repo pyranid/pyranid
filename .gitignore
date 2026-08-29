@@ -1,3 +1,4 @@
 /.apt_generated/
 /target/
 .idea
+derby.log

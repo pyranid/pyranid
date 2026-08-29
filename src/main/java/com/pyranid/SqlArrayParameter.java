@@ -32,6 +32,14 @@ import java.util.Optional;
  * <p>
  * Standard instances may be constructed via {@link Parameters#sqlArrayOf(String, Object[])} and {@link Parameters#sqlArrayOf(String, List)}.
  * <p>
+ * Elements may themselves be {@code SqlArrayParameter}s. Pyranid materializes nested arrays recursively, but
+ * multidimensional support and type-name syntax remain driver-specific; this shape is integration-verified on
+ * DuckDB. Each containing array's {@code baseTypeName} must name its element type.
+ * <p>
+ * DuckDB elements that represent an instant require an explicit {@code TIMESTAMP} or {@code TIMESTAMPTZ}
+ * base type. A named type alias does not expose its underlying timestamp semantics through this binding path,
+ * so binding an instant-bearing value through one fails fast rather than guessing.
+ * <p>
  * Implementations should be threadsafe.
  *
  * @param <E> the Java element type of the array; each element must be bindable to the SQL element type named by {@link #getBaseTypeName()} by the active {@link PreparedStatementBinder}.

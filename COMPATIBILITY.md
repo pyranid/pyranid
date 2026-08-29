@@ -45,8 +45,11 @@ expression must replace that use with a primitive constant.
 4.7.0 also generalizes `RawConnectionOperation<R>` to
 `RawConnectionOperation<C extends Connection, R>` so the typed `useRawConnection(Class<C>, ...)` overload can
 expose concrete driver connection APIs without a second callback abstraction. The functional method still
-erases to `(Connection) -> Optional`, so existing binaries and inline one-argument lambdas remain compatible.
-Source that explicitly names the interface must add `Connection` as its first type argument.
+erases to `(Connection) -> Optional`, so ordinary previously compiled call sites retain JVM linkage and inline
+one-argument lambdas remain source-compatible. This is not a blanket guarantee for reflective consumers:
+inspecting the generic interfaces of a callback implementation compiled against the old one-argument form can
+fail on the new two-argument declaration. Recompile such implementations. Source that explicitly names the
+interface must add `Connection` as its first type argument.
 
 Because these changes are deliberate, japicmp narrowly excludes the boxed member signatures plus the
 `RawConnectionOperation` interface and the established one-argument `Database#useRawConnection(...)`

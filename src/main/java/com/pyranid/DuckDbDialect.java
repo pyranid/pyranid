@@ -38,6 +38,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
@@ -79,6 +80,14 @@ final class DuckDbDialect extends GenericDialect {
 	private static final String FOREIGN_KEY_VIOLATION_FRAGMENT = "violates foreign key constraint";
 	@NonNull
 	private static final String CONFLICT_FRAGMENT = "conflict";
+	@NonNull
+	private static final Set<String> NON_TEMPORAL_CONTAINER_TYPE_NAMES = Set.of(
+			"ANY", "BIGINT", "BIGNUM", "BINARY", "BIT", "BITSTRING", "BLOB", "BOOL", "BOOLEAN",
+			"BPCHAR", "BYTEA", "CHAR", "DATE", "DEC", "DECIMAL", "DOUBLE", "ENUM", "FLOAT", "FLOAT4",
+			"FLOAT8", "HUGEINT", "INT", "INT1", "INT2", "INT4", "INT8", "INTEGER", "INTERVAL", "JSON",
+			"LIST", "LOGICAL", "LONG", "MAP", "NUMERIC", "REAL", "SHORT", "SIGNED", "SMALLINT", "STRING",
+			"STRUCT", "TEXT", "TIME", "TIMETZ", "TINYINT", "UBIGINT", "UHUGEINT", "UINT16", "UINT32",
+			"UINT64", "UINT8", "UINTEGER", "UNION", "USMALLINT", "UTINYINT", "UUID", "VARBINARY", "VARCHAR");
 
 	private DuckDbDialect() {}
 
@@ -134,18 +143,27 @@ final class DuckDbDialect extends GenericDialect {
 		requireNonNull(timeZone);
 
 		String attributeTypeName = structAttributeTypeName(typeName, attributeIndex);
-		// A named STRUCT alias does not reveal an individual attribute's target type. Do not infer
-		// timestamp semantics from words that happen to occur in the alias itself; the ISO form lets
-		// DuckDB cast an Instant against the actual attribute type.
-		return normalizeContainerElement(attributeTypeName == null ? "" : attributeTypeName,
-				attribute, timeZone);
+		String targetDescription = attributeTypeName == null
+				? format("attribute %s of STRUCT type '%s'", attributeIndex + 1, typeName)
+				: format("STRUCT attribute type '%s'", attributeTypeName);
+		return normalizeContainerElement(attributeTypeName, targetDescription, attribute, timeZone);
 	}
 
 	@NonNull
 	private Object normalizeContainerElement(@NonNull String targetTypeName,
-																							 @NonNull Object element,
-																							 @NonNull ZoneId timeZone) {
+																 @NonNull Object element,
+																 @NonNull ZoneId timeZone) {
 		requireNonNull(targetTypeName);
+		return normalizeContainerElement(targetTypeName, format("ARRAY element type '%s'", targetTypeName),
+				element, timeZone);
+	}
+
+	@NonNull
+	private Object normalizeContainerElement(@Nullable String targetTypeName,
+																 @NonNull String targetDescription,
+																 @NonNull Object element,
+																 @NonNull ZoneId timeZone) {
+		requireNonNull(targetDescription);
 		requireNonNull(element);
 		requireNonNull(timeZone);
 
@@ -155,22 +173,59 @@ final class DuckDbDialect extends GenericDialect {
 		if (element instanceof BigInteger || element instanceof OffsetTime)
 			return element.toString();
 
-		if (!(element instanceof Instant instant))
+		Instant instant;
+		if (element instanceof Instant instantValue) {
+			instant = instantValue;
+		} else if (element instanceof OffsetDateTime offsetDateTime) {
+			instant = offsetDateTime.toInstant();
+		} else {
 			return element;
+		}
 
-		String normalizedTargetTypeName = targetTypeName.toUpperCase(Locale.ROOT);
-		boolean timestampWithTimeZone = normalizedTargetTypeName.contains("WITH TIME ZONE")
-				|| normalizedTargetTypeName.contains("WITH LOCAL TIME ZONE")
-				|| normalizedTargetTypeName.contains("TIMESTAMPTZ");
-		boolean timestampWithoutTimeZone = !timestampWithTimeZone
-				&& (normalizedTargetTypeName.contains("TIMESTAMP") || normalizedTargetTypeName.contains("DATETIME"));
+		return switch (classifyContainerTargetType(targetTypeName)) {
+			case TIMESTAMP_WITHOUT_TIME_ZONE -> LocalDateTime.ofInstant(instant, timeZone);
+			case TIMESTAMP_WITH_TIME_ZONE -> OffsetDateTime.ofInstant(instant, ZoneOffset.UTC);
+			case NON_TEMPORAL -> element.toString();
+			case UNKNOWN -> throw new IllegalArgumentException(format(
+					"Cannot safely bind %s to DuckDB %s because its timestamp semantics are unknown; "
+							+ "use an explicit TIMESTAMP or TIMESTAMPTZ type declaration",
+					element.getClass().getSimpleName(), targetDescription));
+		};
+	}
 
-		if (timestampWithoutTimeZone)
-			return LocalDateTime.ofInstant(instant, timeZone);
-		if (timestampWithTimeZone)
-			return OffsetDateTime.ofInstant(instant, ZoneOffset.UTC);
+	@NonNull
+	private ContainerTargetType classifyContainerTargetType(@Nullable String targetTypeName) {
+		if (targetTypeName == null || targetTypeName.isBlank())
+			return ContainerTargetType.UNKNOWN;
 
-		return instant.toString();
+		String normalizedTypeName = targetTypeName.trim().toUpperCase(Locale.ROOT)
+				.replaceAll("\\s+", " ");
+		if (normalizedTypeName.equals("TIMESTAMPTZ")
+				|| normalizedTypeName.matches("TIMESTAMP(?:\\(\\d+\\))? WITH (?:LOCAL )?TIME ZONE"))
+			return ContainerTargetType.TIMESTAMP_WITH_TIME_ZONE;
+		if (normalizedTypeName.equals("DATETIME")
+				|| normalizedTypeName.matches("TIMESTAMP(?:_S|_MS|_NS|\\(\\d+\\))?(?: WITHOUT TIME ZONE)?"))
+			return ContainerTargetType.TIMESTAMP_WITHOUT_TIME_ZONE;
+
+		int typeNameEnd = normalizedTypeName.length();
+		for (int i = 0; i < normalizedTypeName.length(); i++) {
+			char c = normalizedTypeName.charAt(i);
+			if (c == '(' || c == '[' || Character.isWhitespace(c)) {
+				typeNameEnd = i;
+				break;
+			}
+		}
+		String rootTypeName = normalizedTypeName.substring(0, typeNameEnd);
+		return NON_TEMPORAL_CONTAINER_TYPE_NAMES.contains(rootTypeName)
+				? ContainerTargetType.NON_TEMPORAL
+				: ContainerTargetType.UNKNOWN;
+	}
+
+	private enum ContainerTargetType {
+		TIMESTAMP_WITH_TIME_ZONE,
+		TIMESTAMP_WITHOUT_TIME_ZONE,
+		NON_TEMPORAL,
+		UNKNOWN
 	}
 
 	@Nullable

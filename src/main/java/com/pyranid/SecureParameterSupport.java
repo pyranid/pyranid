@@ -141,7 +141,9 @@ final class SecureParameterSupport {
 																			 int depth,
 																			 @NonNull IdentityHashMap<Object, Boolean> containerPath,
 																			 boolean traverseJavaContainers) {
-		if (depth >= MAX_NESTING_DEPTH)
+		// depth is the number of enclosing containers. The binder accepts 64 containers
+		// (at depths 0-63), so a scalar reached at depth 64 must still contribute a needle.
+		if (depth > MAX_NESTING_DEPTH)
 			return;
 
 		try {
@@ -156,7 +158,7 @@ final class SecureParameterSupport {
 			}
 
 			if (value instanceof InListParameter inListParameter) {
-				if (!enterContainer(inListParameter, containerPath))
+				if (!enterContainer(inListParameter, depth, containerPath))
 					return;
 
 				try {
@@ -170,7 +172,7 @@ final class SecureParameterSupport {
 			}
 
 			if (value instanceof SqlArrayParameter<?> sqlArrayParameter) {
-				if (!enterContainer(sqlArrayParameter, containerPath))
+				if (!enterContainer(sqlArrayParameter, depth, containerPath))
 					return;
 
 				try {
@@ -187,7 +189,7 @@ final class SecureParameterSupport {
 			}
 
 			if (value instanceof SqlStructParameter sqlStructParameter) {
-				if (!enterContainer(sqlStructParameter, containerPath))
+				if (!enterContainer(sqlStructParameter, depth, containerPath))
 					return;
 
 				try {
@@ -204,7 +206,7 @@ final class SecureParameterSupport {
 			}
 
 			if (value instanceof TypedParameter typedParameter) {
-				if (!enterContainer(typedParameter, containerPath))
+				if (!enterContainer(typedParameter, depth, containerPath))
 					return;
 
 				try {
@@ -217,7 +219,7 @@ final class SecureParameterSupport {
 			}
 
 			if (traverseJavaContainers && value instanceof Map<?, ?> map) {
-				if (!enterContainer(map, containerPath))
+				if (!enterContainer(map, depth, containerPath))
 					return;
 
 				try {
@@ -234,7 +236,7 @@ final class SecureParameterSupport {
 			}
 
 			if (traverseJavaContainers && value instanceof Iterable<?> iterable) {
-				if (!enterContainer(iterable, containerPath))
+				if (!enterContainer(iterable, depth, containerPath))
 					return;
 
 				try {
@@ -248,7 +250,7 @@ final class SecureParameterSupport {
 			}
 
 			if (traverseJavaContainers && value != null && value.getClass().isArray()) {
-				if (!enterContainer(value, containerPath))
+				if (!enterContainer(value, depth, containerPath))
 					return;
 
 				try {
@@ -273,7 +275,9 @@ final class SecureParameterSupport {
 																		 int depth,
 																		 @NonNull IdentityHashMap<Object, Boolean> containerPath,
 																		 boolean traverseJavaContainers) {
-		if (depth >= MAX_NESTING_DEPTH)
+		// As above, allow the scalar immediately inside the 64th accepted container,
+		// while enterContainer prevents traversal into an unbindable 65th container.
+		if (depth > MAX_NESTING_DEPTH)
 			return;
 
 		try {
@@ -291,7 +295,7 @@ final class SecureParameterSupport {
 			}
 
 			if (value instanceof InListParameter inListParameter) {
-				if (!enterContainer(inListParameter, containerPath))
+				if (!enterContainer(inListParameter, depth, containerPath))
 					return;
 
 				try {
@@ -305,7 +309,7 @@ final class SecureParameterSupport {
 			}
 
 			if (value instanceof SqlArrayParameter<?> sqlArrayParameter) {
-				if (!enterContainer(sqlArrayParameter, containerPath))
+				if (!enterContainer(sqlArrayParameter, depth, containerPath))
 					return;
 
 				try {
@@ -322,7 +326,7 @@ final class SecureParameterSupport {
 			}
 
 			if (value instanceof SqlStructParameter sqlStructParameter) {
-				if (!enterContainer(sqlStructParameter, containerPath))
+				if (!enterContainer(sqlStructParameter, depth, containerPath))
 					return;
 
 				try {
@@ -339,7 +343,7 @@ final class SecureParameterSupport {
 			}
 
 			if (traverseJavaContainers && value instanceof Map<?, ?> map) {
-				if (!enterContainer(map, containerPath))
+				if (!enterContainer(map, depth, containerPath))
 					return;
 
 				try {
@@ -356,7 +360,7 @@ final class SecureParameterSupport {
 			}
 
 			if (traverseJavaContainers && value instanceof Iterable<?> iterable) {
-				if (!enterContainer(iterable, containerPath))
+				if (!enterContainer(iterable, depth, containerPath))
 					return;
 
 				try {
@@ -370,7 +374,7 @@ final class SecureParameterSupport {
 			}
 
 			if (traverseJavaContainers && value != null && value.getClass().isArray()) {
-				if (!enterContainer(value, containerPath))
+				if (!enterContainer(value, depth, containerPath))
 					return;
 
 				try {
@@ -398,9 +402,16 @@ final class SecureParameterSupport {
 	}
 
 	private static boolean enterContainer(@NonNull Object container,
-																				@NonNull IdentityHashMap<Object, Boolean> containerPath) {
+																int depth,
+																@NonNull IdentityHashMap<Object, Boolean> containerPath) {
 		requireNonNull(container);
 		requireNonNull(containerPath);
+
+		// A container at this depth would be the 65th container. The binder rejects it
+		// before inspecting its contents, so the scrubber must stop here as well.
+		if (depth >= MAX_NESTING_DEPTH)
+			return false;
+
 		return containerPath.put(container, Boolean.TRUE) == null;
 	}
 

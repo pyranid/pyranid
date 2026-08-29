@@ -23,7 +23,16 @@ All notable changes to Pyranid will be documented in this file.
   `Connection::createStruct(...)` on supported dialects (currently DuckDB). STRUCT parameters support
   typed `NULL`, defensive attribute copies, nested STRUCTs, SQL ARRAYs nested inside STRUCTs, and STRUCTs
   nested inside SQL ARRAYs while preserving Pyranid's normal parameter normalization and secure-diagnostic
-  scrubbing.
+  scrubbing. DuckDB instant-bearing attributes require a complete inline STRUCT declaration so Pyranid can
+  distinguish `TIMESTAMP` from `TIMESTAMPTZ` and apply the configured database time zone. Named `CREATE TYPE`
+  aliases do not expose their attribute types through this binding path and therefore fail fast for those
+  values rather than risking a silent timezone-dependent conversion.
+- Nested SQL ARRAY parameters: `Parameters::sqlArrayOf(...)` recursively materializes nested
+  `SqlArrayParameter` values. Multidimensional binding is integration-verified on DuckDB when every
+  dimension is represented by its own parameter and each containing level's base type names its element
+  type (for example, outer `VARCHAR[]` and inner `VARCHAR`). DuckDB instant-bearing elements require an
+  explicit `TIMESTAMP` or `TIMESTAMPTZ` base type; named aliases fail fast because their underlying timestamp
+  semantics are unavailable to this binding path. Other drivers may impose different rules.
 - A typed `Database::useRawConnection(Class<C>, RawConnectionOperation<? super C, R>)` overload for callback-scoped
   access to concrete driver connection APIs such as DuckDB Appender, Arrow, chunked results, profiling,
   progress, and Java UDF registration. Unlike the existing one-argument overload's guarded JDBC handle,
@@ -87,8 +96,9 @@ All notable changes to Pyranid will be documented in this file.
   annotation values, `case` labels, or other compile-time constant-expression contexts.
 - Source that explicitly names `RawConnectionOperation<R>` must change to
   `RawConnectionOperation<Connection, R>`. Inline one-argument `useRawConnection(...)` lambdas do not change,
-  and existing compiled callbacks remain binary-compatible because the new connection type parameter erases
-  to `Connection`.
+  and ordinary previously compiled call sites remain JVM-linkage-compatible because the callback method's
+  erased descriptor is unchanged. Code or frameworks that reflect on a callback implementation's generic
+  interfaces may reject the old one-argument generic signature; recompile those callback implementations.
 - `DatabaseType` gained the `DUCK_DB` constant. Exhaustive `switch` expressions over `DatabaseType` in
   application code must add a `DUCK_DB` (or `default`) arm when recompiling against 4.7.0.
 - A single `NULL` SQL STRUCT fetched directly as a record produces `Optional.empty()` from single-object

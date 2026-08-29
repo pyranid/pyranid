@@ -376,7 +376,7 @@ database.useRawConnection(DuckDBConnection.class, connection -> {
 });
 ```
 
-The typed overload is deliberately unguarded because concrete driver APIs cannot be safely proxied. Pyranid supplies the active transaction's connection when one exists, but each driver-extension API's own transaction rules still apply. The callback must not close, commit, roll back, retain, or change connection-wide state on the supplied connection. Close every derived Appender, statement, result set, Arrow reader, native result, or other driver resource before returning. The driver-specific types must be on the application's compile classpath.
+The typed overload is deliberately unguarded because concrete driver APIs cannot be safely proxied. Guarding is selected by the overload, not the requested class, so `useRawConnection(Connection.class, ...)` also supplies an unguarded connection. Pyranid supplies the active transaction's connection when one exists, but each driver-extension API's own transaction rules still apply. The callback must not close, commit, roll back, retain, or change connection-wide state on the supplied connection. Close every derived Appender, statement, result set, Arrow reader, native result, or other driver resource before returning. The driver-specific types must be on the application's compile classpath.
 
 DuckDB JDBC starts a native transaction lazily when its first ordinary JDBC statement executes; creating an Appender does not trigger that step. If an Appender is the first operation inside `Database::transaction(...)`, first execute an ordinary Pyranid query (a `SELECT 1` is sufficient) so flushed Appender rows participate in commit or rollback. Without that primer, the driver can autocommit the append even though Pyranid supplied the transaction's connection.
 
@@ -1386,7 +1386,7 @@ Optional<Document> mostSimilarDocument = database.query("""
 
 #### SQL ARRAY
 
-Single-dimension SQL ARRAY binding is supported out-of-the-box for databases whose JDBC drivers support `Connection::createArrayOf`, such as PostgreSQL and DuckDB (DuckDB `LIST` and fixed-size `ARRAY` columns both accept bound arrays). MySQL, MariaDB, SQLite, SQL Server, and Oracle are guarded as unsupported and fail with a clear `DatabaseException`; use IN-list expansion, JSON, or a database-specific custom binder for those engines.
+SQL ARRAY binding is supported out-of-the-box for databases whose JDBC drivers support `Connection::createArrayOf`. Pyranid's integration suites verify ordinary one-dimensional arrays on PostgreSQL and DuckDB; DuckDB `LIST` and fixed-size `ARRAY` columns both accept bound arrays. MySQL, MariaDB, SQLite, SQL Server, and Oracle are guarded as unsupported and fail with a clear `DatabaseException`; use IN-list expansion, JSON, or a database-specific custom binder for those engines.
 
 Supported methods:
 
@@ -1424,7 +1424,19 @@ database.query("""
   .execute();
 ```
 
-If you need support for multidimensional array binding, database-specific collection types, or table-valued parameters, implement a [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) as outlined below.
+Pyranid recursively materializes nested `SqlArrayParameter` values. Multidimensional binding is integration-verified on DuckDB; other JDBC drivers may impose different element-type or nesting rules. Represent each dimension with its own `sqlArrayOf(...)`, and make each containing level's `baseTypeName` name its element type. For example, the outer array below has `VARCHAR[]` elements and each inner array has `VARCHAR` elements:
+
+```java
+SqlArrayParameter<SqlArrayParameter<String>> matrix = Parameters.sqlArrayOf(
+  "VARCHAR[]",
+  List.of(
+    Parameters.sqlArrayOf("VARCHAR", List.of("a", "b")),
+    Parameters.sqlArrayOf("VARCHAR", List.of("c", "d"))));
+```
+
+For DuckDB elements represented by `Instant`, `OffsetDateTime`, `ZonedDateTime`, `java.sql.Timestamp`, or `java.util.Date`, use an explicit `TIMESTAMP` or `TIMESTAMPTZ` base type. Pyranid uses it to apply the intended timestamp and configured `Database` time-zone semantics. A named DuckDB type alias does not expose its underlying timestamp type through this binding path, so Pyranid fails fast for these instant-bearing values instead of guessing.
+
+Use a [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) for database-specific collection types, table-valued parameters, or a driver whose multidimensional representation differs.
 
 #### SQL STRUCT
 
@@ -1455,6 +1467,8 @@ database.query("""
     List.of("Ada", 36)))
   .execute();
 ```
+
+For DuckDB attributes represented by `Instant`, `OffsetDateTime`, `ZonedDateTime`, `java.sql.Timestamp`, or `java.util.Date`, always provide the complete inline STRUCT declaration. Pyranid uses it to distinguish `TIMESTAMP` from `TIMESTAMPTZ` and to apply the `Database` time zone for zone-less timestamps. A named DuckDB `CREATE TYPE` alias does not expose its attribute types through this binding path, so Pyranid fails fast for these instant-bearing values instead of guessing. Named aliases remain usable for attributes that do not require instant-to-timestamp normalization.
 
 Both overloads defensively copy their attributes. Attributes may be `null` and may include nested [`SqlStructParameter`](https://javadoc.pyranid.com/com/pyranid/SqlStructParameter.html) or [`SqlArrayParameter`](https://javadoc.pyranid.com/com/pyranid/SqlArrayParameter.html) values. Use the array overload when an attribute is null and `List.of(...)` would reject it:
 
