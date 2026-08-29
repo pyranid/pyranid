@@ -209,6 +209,17 @@
 					<parameter>
 						<accessModifier>public</accessModifier>
 						<onlyModified>true</onlyModified>
+						<!--
+							4.7.0 intentionally boxes two public members from primitives to their wrapper types so the
+							whole public API expresses nullness uniformly (see COMPATIBILITY.md "Historical compatibility
+							notes"). These are binary-incompatible by nature, so they are excluded from the comparison;
+							every other member remains gated. Remove these exclusions once the 4.7.0 baseline is in place.
+						-->
+						<excludes>
+							<exclude>com.pyranid.ParameterRedactor#redactParameter(com.pyranid.StatementContext,int,java.lang.Object)</exclude>
+							<exclude>com.pyranid.ParameterRedactor#redactParameter(com.pyranid.StatementContext,java.lang.Integer,java.lang.Object)</exclude>
+							<exclude>com.pyranid.ResultSetMapper#DEFAULT_PLAN_CACHE_CAPACITY</exclude>
+						</excludes>
 					</parameter>
 					<breakBuildBasedOnSemanticVersioning>true</breakBuildBasedOnSemanticVersioning>
 					<breakBuildOnBinaryIncompatibleModifications>true</breakBuildOnBinaryIncompatibleModifications>

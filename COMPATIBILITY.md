@@ -21,10 +21,29 @@ binary- or source-incompatible changes and to validate the version number agains
 (`breakBuildBasedOnSemanticVersioning`). The comparison baseline is pinned via the `japicmp.baseline.version`
 property.
 
+### Intentional break in 4.7.0
+
+4.7.0 changes two public members from primitives to their boxed wrapper types so the whole public API
+expresses nullness uniformly with JSpecify annotations, which cannot be applied to primitives:
+
+* `ParameterRedactor#redactParameter(...)` - the `parameterIndex` parameter changed from `int` to
+  `@NonNull Integer`, matching every sibling SPI (`PreparedStatementBinder#bindParameter(...)`,
+  `CustomColumnMapper#map(...)`, `CustomParameterBinder#bind(...)`), each of which already took `Integer`.
+* `ResultSetMapper#DEFAULT_PLAN_CACHE_CAPACITY` - changed from `int` to `Integer`. Beyond consistency,
+  this removes a compile-time-constant hazard: a `static final int` is inlined into callers, so retuning
+  the default would silently not reach an application until it was recompiled.
+  `ResultSetMapper#DEFAULT_PREFERRED_COLUMN_MAPPER_CACHE_CAPACITY` deliberately stays `int`: it is already
+  deprecated for removal in 5.0.0 and has no effect, so neither argument for boxing applies to it.
+
+These are binary-incompatible. Ordinary source that calls or implements these members continues to compile
+via autoboxing, but code compiled against 4.6.x must be recompiled. Because the changes are deliberate, the
+three affected member signatures are the japicmp configuration's only exclusions (see the `<excludes>` block
+in `pom.xml`, which names them individually so every other member stays gated); the exclusions should be
+removed once the 4.7.0 baseline is in place.
+
 ### Historical compatibility notes
 
-The following intentional changes predate the current 4.6.0 japicmp baseline. They are kept here for the record;
-the current japicmp configuration has no API exclusions:
+The following intentional changes predate the current japicmp baseline and are kept here for the record:
 
 * `Database#transaction(TransactionIsolation, ...)` (two overloads) - replaced by
   `TransactionOptions`-based overloads.

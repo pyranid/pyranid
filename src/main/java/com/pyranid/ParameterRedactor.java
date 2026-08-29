@@ -55,7 +55,7 @@ public interface ParameterRedactor {
 	 */
 	@Nullable
 	Object redactParameter(@NonNull StatementContext<?> statementContext,
-												 int parameterIndex,
+												 @NonNull Integer parameterIndex,
 												 @Nullable Object parameter);
 
 	/**

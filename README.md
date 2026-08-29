@@ -98,7 +98,7 @@ InstanceProvider instanceProvider = new InstanceProvider() {
                                             Object @Nullable ... initargs) {
     // If you use Record types, customize their instantiation here.
     // Default implementation will use the canonical constructor
-    return super.provideRecord(statementContext, recordType, initargs);
+    return InstanceProvider.super.provideRecord(statementContext, recordType, initargs);
   }
 };
 

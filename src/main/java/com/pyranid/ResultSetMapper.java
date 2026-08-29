@@ -85,7 +85,8 @@ public interface ResultSetMapper {
 	/**
 	 * Default maximum number of cached row-mapping plans per result class.
 	 */
-	int DEFAULT_PLAN_CACHE_CAPACITY = 1024;
+	@NonNull
+	Integer DEFAULT_PLAN_CACHE_CAPACITY = 1024;
 
 	/**
 	 * Retained for source and binary compatibility. Preferred custom column mappers are not cached.

@@ -37,8 +37,23 @@ All notable changes to Pyranid will be documented in this file.
   `DatabaseException` directing callers to `INSERT ... RETURNING`, instead of the driver's unhelpful
   `SQLFeatureNotSupportedException`.
 
+### Fixed
+
+- Bracket-quoted identifiers following `SET` are now recognized as identifiers rather than subscripts, so
+  named-parameter parsing no longer looks inside them. `UPDATE t SET [a:b] = :id` previously parsed `:b` as
+  a named parameter and demanded a binding for it; it now binds only `:id`. This affects every database
+  whose SQL uses bracket-quoted identifiers (primarily SQL Server); subscript expressions such as
+  `arr[a:b]` are unchanged and still parse `:b`.
+
 ### Changed
 
+- Two public members changed from primitives to boxed wrapper types so the public API expresses nullness
+  uniformly with JSpecify annotations, which cannot be applied to primitives:
+  `ParameterRedactor::redactParameter`'s `parameterIndex` parameter (`int` -> `@NonNull Integer`, matching
+  every sibling SPI, all of which already took `Integer`) and `ResultSetMapper::DEFAULT_PLAN_CACHE_CAPACITY`
+  (`int` -> `Integer`). `ResultSetMapper::DEFAULT_PREFERRED_COLUMN_MAPPER_CACHE_CAPACITY` is deliberately
+  left alone - it is already deprecated for removal in 5.0.0 and has no effect. See "Intentional break in
+  4.7.0" in COMPATIBILITY.md.
 - Temporal parameters (`LocalDate`, `LocalTime`, `LocalDateTime`, `OffsetDateTime`, `Instant`) now bind
   with untyped `PreparedStatement::setObject` on dialects whose drivers reject explicit target SQL types
   (currently DuckDB), and `OffsetTime` binds there as its ISO-8601 string form (DuckDB's driver accepts
@@ -47,6 +62,11 @@ All notable changes to Pyranid will be documented in this file.
 
 ### Migration Notes
 
+- The two public members boxed in this release (see "Changed") are binary-incompatible. Source that calls
+  or implements them keeps compiling via autoboxing - including lambda implementations of
+  `ParameterRedactor` - but code compiled against 4.6.x must be recompiled against 4.7.0. An explicit
+  `int`-typed lambda parameter (`(context, int index, parameter) -> ...`) must drop the explicit type or
+  change it to `Integer`.
 - `DatabaseType` gained the `DUCK_DB` constant. Exhaustive `switch` expressions over `DatabaseType` in
   application code must add a `DUCK_DB` (or `default`) arm when recompiling against 4.7.0.
 - A single `NULL` SQL STRUCT fetched directly as a record produces `Optional.empty()` from single-object
