@@ -66,6 +66,73 @@ The following intentional changes predate the current japicmp baseline and are k
   `#isTransient()` - return types changed from primitive `boolean` to boxed `Boolean` in 4.4.0, shortly
   after their 4.3.0 introduction and before meaningful adoption.
 
+## Database compatibility
+
+Pyranid has a first-class [`DatabaseType`](https://javadoc.pyranid.com/com/pyranid/DatabaseType.html) for the
+databases below. Everything else falls back to `GENERIC`, which still provides named parameters, result
+mapping, transactions, and batching, but classifies exceptions only by standard SQLState.
+
+| Database | `DatabaseType` | Integration leg |
+| --- | --- | --- |
+| PostgreSQL | `POSTGRESQL` | Testcontainers, gating |
+| MySQL | `MYSQL` | Testcontainers, gating |
+| MariaDB | `MARIA_DB` | Testcontainers, gating |
+| SQLite | `SQLITE` | in-process, gating |
+| DuckDB | `DUCK_DB` | in-process, gating |
+| SQL Server | `SQL_SERVER` | Testcontainers, advisory |
+| Oracle | `ORACLE` | Testcontainers, advisory |
+
+### Wire-compatible databases
+
+Several databases speak another database's wire protocol and are therefore detected as that database.
+Pyranid does not test these and makes no compatibility promise about them, but because detection is driven
+by JDBC metadata they work to the extent that the detected dialect's assumptions hold. The table records
+what was observed when each was last examined; treat it as a starting point for your own verification
+rather than a support statement.
+
+| Database | Detected as | Observed behavior |
+| --- | --- | --- |
+| CockroachDB | `POSTGRESQL` | Constraint, timeout, generated-key, JSONB, and streaming behavior match PostgreSQL. Two divergences below. |
+| YugabyteDB | `POSTGRESQL` | Matches PostgreSQL with stock pgjdbc. The YugabyteDB "smart driver" fork is a hazard - see below. |
+| Amazon Aurora DSQL, Neon, Supabase, AlloyDB, TimescaleDB | `POSTGRESQL` | Genuine PostgreSQL wire and engine; no known divergence. Not examined directly. |
+| TiDB | `MYSQL` | MySQL vendor error codes come through; deadlock, lock-wait timeout, duplicate key, and foreign key all classify. One retry gap below. |
+| PlanetScale / Vitess | `MYSQL` | Classification matches MySQL. `queryTimeout(...)` does not work - see below. |
+| StarRocks | `MYSQL` | **Unsafe. See the warning below.** |
+| H2, HSQLDB, Apache Derby | `GENERIC` | Standard SQLStates; constraint and retry classification work. |
+
+#### StarRocks is not safe to use with Pyranid
+
+StarRocks reports itself as MySQL in every field Pyranid inspects, so it is detected as `MYSQL` and receives
+MySQL dialect behavior - but it does not honor the guarantees that implies. Observed: `Connection::rollback()`
+is a no-op (the row survives a rolled-back transaction), and inserting a duplicate primary key raises no error
+at all (the row is silently upserted). Pyranid's closure-based transaction contract - the body throws, Pyranid
+rolls back, your data is untouched - therefore does not hold, and no exception is raised to warn you. Do not
+use StarRocks as a transactional database through Pyranid. The same caution applies to other analytics engines
+that adopt the MySQL wire protocol without MySQL's transactional semantics.
+
+#### Divergences worth knowing
+
+* **CockroachDB has no `LISTEN`/`NOTIFY`.** `PostgresDialect` advertises notification support unconditionally,
+  so [`Database::withNotificationSession(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html) will
+  appear available and then fail at runtime.
+* **CockroachDB never reports a deadlock.** Lock-cycle aborts arrive as SQLState `40001`, not `40P01`, so
+  [`DatabaseException::isDeadlock()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#isDeadlock())
+  never returns `true`. Key retry logic on `isSerializationFailure()` or `isTransient()`, both of which do fire.
+  The same applies to any optimistic-concurrency engine, including Amazon Aurora DSQL.
+* **TiDB optimistic write conflicts are unclassified.** They arrive as SQLState `HY000` with vendor code
+  `9007` ("try again later"), which matches none of Pyranid's predicates - `isTransient()` included - so a
+  `RetryPolicy` will not retry them. Supply a custom `RetryPolicy` that inspects the vendor code if you run
+  TiDB in optimistic transaction mode.
+* **The YugabyteDB smart driver breaks PostgreSQL-specific parameters.** `PostgresDialect` refers to
+  `org.postgresql.util.PGobject` and `PSQLException` by name, so on the `com.yugabyte` driver fork
+  `Parameters.json(...)` and `Parameters.vectorOfDoubles(...)` fail - with `NoClassDefFoundError` when pgjdbc
+  is absent, or a type-inference error when both drivers are on the classpath. Use stock pgjdbc with Pyranid.
+* **`queryTimeout(...)` does not work on Vitess/PlanetScale.** Connector/J implements it with `KILL QUERY`,
+  which vtgate rejects (`VT07001`). Express timeouts in the proxy or the query instead.
+* **H2 and HSQLDB report referential integrity in both directions.** Each uses SQLState `23503` for one
+  direction of a foreign-key violation and a sibling code for the other (H2 `23506`, HSQLDB `23504`). As of
+  4.7.0 `GENERIC` recognizes all three, so `isForeignKeyViolation()` is correct on both engines.
+
 ## Supported JDKs
 
 * **Source/binary baseline:** Java 17 (`<release>17</release>`).

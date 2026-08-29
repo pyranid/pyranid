@@ -185,6 +185,35 @@ public class DatabaseExceptionClassificationTests {
 	}
 
 	@Test
+	public void testGenericForeignKeyClassificationCoversDirectionalSqlStates() {
+		// Engines that distinguish the two directions of a referential-integrity violation use 23503 for
+		// only one of them. Verified empirically: H2 2.4.240 reports 23506 when a child row points at a
+		// missing parent (23503 for the reverse), and HSQLDB 2.7.4 reports 23504 when a parent row that
+		// still has children is deleted (23503 for the reverse).
+		for (String sqlState : List.of("23503", "23504", "23506")) {
+			DatabaseException foreignKey = databaseException(DatabaseType.GENERIC,
+					new SQLException("referential integrity", sqlState, 0));
+			Assertions.assertTrue(foreignKey.isForeignKeyViolation(),
+					"SQLState " + sqlState + " should classify as a foreign-key violation");
+			Assertions.assertFalse(foreignKey.isUniqueConstraintViolation(),
+					"SQLState " + sqlState + " should not classify as a unique-constraint violation");
+		}
+
+		// PostgreSQL inherits the generic implementation and must pick up the same widening
+		DatabaseException postgresForeignKey = databaseException(DatabaseType.POSTGRESQL,
+				new SQLException("referential integrity", "23506", 0));
+		Assertions.assertTrue(postgresForeignKey.isForeignKeyViolation());
+
+		// Neighboring class-23 SQLStates must not be swept in
+		for (String sqlState : List.of("23502", "23514")) {
+			DatabaseException other = databaseException(DatabaseType.GENERIC,
+					new SQLException("other integrity violation", sqlState, 0));
+			Assertions.assertFalse(other.isForeignKeyViolation(),
+					"SQLState " + sqlState + " must not classify as a foreign-key violation");
+		}
+	}
+
+	@Test
 	public void testDuckDbClassification() {
 		// DuckDB reports no SQLState and no vendor code; classification is message-based
 		DatabaseException primaryKey = databaseException(DatabaseType.DUCK_DB,

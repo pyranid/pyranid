@@ -248,7 +248,14 @@ class GenericDialect implements DatabaseDialect {
 																			 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
-		return hasSqlState(metadata, cause, "23503");
+		// 23503 is the SQL-standard foreign-key violation, but referential integrity is reported under
+		// sibling SQLStates by engines that distinguish the two directions of the violation, and each of
+		// those engines uses 23503 for only one direction:
+		//   H2      23506 inserting/updating a child row whose parent is missing (23503 for the reverse)
+		//   HSQLDB  23504 deleting/updating a parent row that still has children (23503 for the reverse)
+		// PostgreSQL, MySQL-family, Oracle, SQL Server, and SQLite never emit 23504 or 23506, so matching
+		// all three is additive for them.
+		return hasSqlState(metadata, cause, "23503", "23504", "23506");
 	}
 
 	@NonNull

@@ -6,6 +6,10 @@ All notable changes to Pyranid will be documented in this file.
 
 ### Added
 
+- COMPATIBILITY.md documents which databases are detected as which `DatabaseType`, including wire-compatible
+  databases that Pyranid does not test (CockroachDB, YugabyteDB, TiDB, Vitess/PlanetScale, H2, HSQLDB and
+  others), the divergences worth knowing about each, and a warning that StarRocks is not safe to use as a
+  transactional database through Pyranid despite being detected as MySQL.
 - DuckDB support: `DatabaseType.DUCK_DB` with automatic detection from JDBC product name (`DuckDB`), URL
   (`jdbc:duckdb:`), and driver name signals, plus a dedicated internal dialect. DuckDB runs in-process, so
   integration coverage requires no container support.
@@ -60,6 +64,12 @@ All notable changes to Pyranid will be documented in this file.
 
 ### Fixed
 
+- `DatabaseException::isForeignKeyViolation()` now recognizes SQLStates `23504` and `23506` in addition to the
+  SQL-standard `23503`, so referential-integrity violations classify correctly on engines that report the two
+  directions of the violation under different codes. H2 uses `23506` when a child row points at a missing
+  parent and HSQLDB uses `23504` when a parent row that still has children is deleted; each previously
+  classified as "not a foreign-key violation" for that direction. PostgreSQL, MySQL-family, Oracle, SQL Server,
+  and SQLite are unaffected, as none of them emit `23504` or `23506`.
 - Bracket-quoted identifiers following `SET` are now recognized as identifiers rather than subscripts, so
   named-parameter parsing no longer looks inside them. `UPDATE t SET [a:b] = :id` previously parsed `:b` as
   a named parameter and demanded a binding for it; it now binds only `:id`. This affects every database
