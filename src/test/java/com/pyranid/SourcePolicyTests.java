@@ -92,10 +92,10 @@ public class SourcePolicyTests {
 	}
 
 	/**
-	 * Keeps optional pgjdbc notification types behind the one lazily loaded adapter.
+	 * Keeps optional PostgreSQL-driver notification types out of the core jar's static linkage.
 	 */
 	@Test
-	public void testPostgresNotificationDriverTypesAreIsolatedToAdapter() throws IOException {
+	public void testMainSourceHasNoStaticPostgresNotificationDriverTypes() throws IOException {
 		Path mainSourceRoot = Path.of("src", "main", "java");
 		Assertions.assertTrue(Files.isDirectory(mainSourceRoot),
 				"Main source root not found; test must run from the module root");
@@ -104,7 +104,6 @@ public class SourcePolicyTests {
 
 		try (Stream<Path> paths = Files.walk(mainSourceRoot)) {
 			paths.filter(path -> path.toString().endsWith(".java"))
-					.filter(path -> !"PostgresNotificationTransport.java".equals(path.getFileName().toString()))
 					.forEach(path -> {
 						String source;
 						try {
@@ -122,8 +121,8 @@ public class SourcePolicyTests {
 		}
 
 		Assertions.assertTrue(violations.isEmpty(), () -> format(
-				"Direct pgjdbc notification type references must remain isolated to "
-						+ "PostgresNotificationTransport.java. Violations: %s", violations));
+				"Direct PostgreSQL-driver notification type references are forbidden; use the reflective adapter. "
+						+ "Violations: %s", violations));
 	}
 
 	/**

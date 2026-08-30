@@ -83,6 +83,10 @@ jobs:
             profiles: integration,it-mariadb
             test: MariaDbIntegrationIT
             experimental: false
+          - name: YugabyteDB
+            profiles: integration,it-yugabyte
+            test: YugabyteNotificationIT
+            experimental: true
           - name: SQL Server
             profiles: integration,it-sqlserver
             test: SqlServerIntegrationIT

@@ -64,21 +64,25 @@ All notable changes to Pyranid will be documented in this file.
 
 ### Fixed
 
-- PostgreSQL-specific parameters and exception metadata now work on repackaged forks of the PostgreSQL JDBC
-  driver. `PostgresDialect` resolved `PGobject` and `PSQLException` by their pgjdbc names, so on YugabyteDB's
+- PostgreSQL-specific parameters, exception metadata, and notification receive now work with pgjdbc and the
+  explicitly supported YugabyteDB smart driver. `PostgresDialect` resolved `PGobject` and `PSQLException` by
+  their pgjdbc names, so on YugabyteDB's
   "smart driver" - which ships the same classes under `com.yugabyte.util` - `Parameters.json(...)` and
   `Parameters.vectorOfDoubles(...)` failed with `NoClassDefFoundError` when pgjdbc was absent, or bound an
   object the driver did not recognize when both drivers were on the classpath. Notification receive was
   affected too: `PostgresNotificationTransport` statically linked `PGConnection`/`PGNotification`, so
   `Database::isNotificationListeningSupported()` reported `false` on a fork even though the driver was
-  present and capable. Pyranid now resolves all four types at runtime from whichever driver is actually in
-  use - always through `Connection::unwrap`, so pooled and proxied connections keep working - and the core
-  jar no longer references any driver type by name.
-- Notification sends and listener sessions against a PostgreSQL-compatible server that does not implement
-  `LISTEN`/`NOTIFY` now fail with the documented `UnsupportedOperationException` and an explanatory message
-  instead of an opaque syntax error. CockroachDB is the motivating case: it is detected as `POSTGRESQL` and
-  accepts `UNLISTEN` as a no-op before rejecting `LISTEN` and `pg_notify`. Pyranid generates that SQL itself
-  and validates channels first, so a `42601`/`42883` failure there is treated as a missing server capability.
+  present and capable. Pyranid now resolves the supported driver types at runtime without static
+  driver-type linkage, using `Connection::unwrap` when a pool or proxy exposes the underlying driver API.
+  This release explicitly supports pgjdbc and the `com.yugabyte` smart driver; arbitrary repackaged forks are
+  not part of the compatibility contract. An advisory integration leg covers JSONB binding plus enabled
+  notification send/receive on YugabyteDB 2026.1.1.1 with smart driver 42.7.3-yb-4.
+- Notification sends and listener sessions against a PostgreSQL-compatible server where `LISTEN`/`NOTIFY` is
+  unavailable in the current version or configuration now fail with the documented
+  `UnsupportedOperationException` and an explanatory message instead of an opaque syntax or feature error.
+  CockroachDB does not implement the feature and rejects Pyranid's generated SQL with `42601`/`42883`.
+  YugabyteDB offers it as an Early Access feature in v2025.2.3 and later, disabled by default behind
+  `ysql_yb_enable_listen_notify` on Masters and TServers; the disabled configuration reports `0A000`.
 - `DatabaseException::isForeignKeyViolation()` now recognizes SQLStates `23504` and `23506` in addition to the
   SQL-standard `23503`, so referential-integrity violations classify correctly on engines that report the two
   directions of the violation under different codes. H2 uses `23506` when a child row points at a missing

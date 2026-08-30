@@ -33,6 +33,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 import static java.util.Objects.requireNonNull;
 
@@ -552,7 +553,8 @@ public class NotificationSessionTests {
 		}
 
 		@Override
-		public void listen(@NonNull Set<@NonNull String> channels) {
+		public void listen(@NonNull Set<@NonNull String> channels,
+				@NonNull Consumer<? super SQLException> statementFailureObserver) {
 			// Not used by NotificationSession.
 		}
 

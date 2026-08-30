@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
- * Verifies optional pgjdbc behavior in a genuinely isolated child-JVM classpath.
+ * Verifies optional PostgreSQL-driver behavior in a genuinely isolated child-JVM classpath.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 4.6.0
@@ -39,7 +39,7 @@ public class OptionalPostgresNotificationTests {
 	public void coreAndPureSqlSendLoadWithoutPostgresDriver() throws Exception {
 		String isolatedClasspath = Arrays.stream(
 						System.getProperty("java.class.path").split(File.pathSeparator))
-				.filter(classpathEntry -> !isPostgresDriverJar(classpathEntry))
+				.filter(classpathEntry -> !isSupportedPostgresDriverJar(classpathEntry))
 				.collect(Collectors.joining(File.pathSeparator));
 		Path javaExecutable = Path.of(
 				System.getProperty("java.home"), "bin", isWindows() ? "java.exe" : "java");
@@ -61,9 +61,10 @@ public class OptionalPostgresNotificationTests {
 				"Isolated child JVM failed. Output:\n" + output);
 	}
 
-	private static boolean isPostgresDriverJar(String classpathEntry) {
-		String filename = Path.of(classpathEntry).getFileName().toString();
-		return filename.startsWith("postgresql-") && filename.endsWith(".jar");
+	private static boolean isSupportedPostgresDriverJar(String classpathEntry) {
+		String filename = Path.of(classpathEntry).getFileName().toString().toLowerCase();
+		return filename.startsWith("postgresql-") && filename.endsWith(".jar")
+				|| filename.startsWith("jdbc-yugabytedb-") && filename.endsWith(".jar");
 	}
 
 	private static boolean isWindows() {

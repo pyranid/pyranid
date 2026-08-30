@@ -85,17 +85,19 @@ mapping, transactions, and batching, but classifies exceptions only by standard 
 ### Wire-compatible databases
 
 Several databases speak another database's wire protocol and are therefore detected as that database.
-Pyranid does not test these and makes no compatibility promise about them, but because detection is driven
-by JDBC metadata they work to the extent that the detected dialect's assumptions hold. Treat the table as a
-starting point for your own verification rather than a support statement.
+Except for the scoped YugabyteDB smart-driver and notification coverage described below, Pyranid does not test
+these and makes no compatibility promise about them. Because detection is driven by JDBC metadata, they work to
+the extent that the detected dialect's assumptions hold. Treat the table as a starting point for your own
+verification rather than a support statement beyond those explicit YugabyteDB claims.
 
-Every observation below was measured on **2026-08-29** against these versions. Nothing re-verifies them
-automatically, so an entry is only as current as that date - check your own versions before relying on it.
+The manual observations below were measured on **2026-08-29** against these versions. Except for the pinned
+YugabyteDB advisory leg, nothing re-verifies them automatically, so an entry is only as current as that date -
+check your own versions before relying on it.
 
 | Engine | Version observed | Driver |
 | --- | --- | --- |
 | CockroachDB | v26.2.6 (CCL) | pgjdbc 42.7.13 |
-| YugabyteDB | 15.12-YB-2026.1.1.1-b0 | pgjdbc 42.7.13, and the `com.yugabyte` smart driver |
+| YugabyteDB | 15.12-YB-2026.1.1.1-b0 observed manually; 2026.1.1.1-b2 in advisory CI | pgjdbc 42.7.13, and `com.yugabyte` smart driver 42.7.3-yb-4 |
 | TiDB | v7.5.1 and v8.5.3 | MySQL Connector/J |
 | Vitess / PlanetScale | 8.0.43-Vitess | MySQL Connector/J |
 | StarRocks | reports MySQL 8.0.33 | MySQL Connector/J |
@@ -106,7 +108,7 @@ automatically, so an entry is only as current as that date - check your own vers
 | Database | Detected as | Observed behavior |
 | --- | --- | --- |
 | CockroachDB | `POSTGRESQL` | Constraint, timeout, generated-key, JSONB, and streaming behavior match PostgreSQL. Two divergences below. |
-| YugabyteDB | `POSTGRESQL` | Matches PostgreSQL with either stock pgjdbc or the "smart driver" fork. No `LISTEN`/`NOTIFY` - see below. |
+| YugabyteDB | `POSTGRESQL` | Matches PostgreSQL for the behavior examined with either stock pgjdbc or the explicitly supported `com.yugabyte` smart driver. Notification availability depends on server version and configuration - see below. |
 | Amazon Aurora DSQL, Neon, Supabase, AlloyDB, TimescaleDB | `POSTGRESQL` | Genuine PostgreSQL wire and engine; no known divergence. Not examined directly. |
 | TiDB | `MYSQL` | MySQL vendor error codes come through; deadlock, lock-wait timeout, duplicate key, and foreign key all classify. One retry gap below. |
 | PlanetScale / Vitess | `MYSQL` | Classification matches MySQL. `queryTimeout(...)` does not work - see below. |
@@ -125,9 +127,12 @@ that adopt the MySQL wire protocol without MySQL's transactional semantics.
 
 #### Divergences worth knowing
 
-* **CockroachDB has no `LISTEN`/`NOTIFY`.** `PostgresDialect` advertises notification support unconditionally,
-  so [`Database::withNotificationSession(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html) will
-  appear available and then fail at runtime.
+* **CockroachDB has no `LISTEN`/`NOTIFY`.** `PostgresDialect` advertises notification support because the
+  database is detected as `POSTGRESQL`, so
+  [`Database::isNotificationListeningSupported()`](https://javadoc.pyranid.com/com/pyranid/Database.html#isNotificationListeningSupported())
+  can report that the dialect and driver adapter are available. Registration and sending fail at runtime.
+  As of 4.7.0 Pyranid translates CockroachDB's `42601`/`42883` failures on its own generated notification SQL
+  to `UnsupportedOperationException` with an explanatory message.
 * **CockroachDB never reports a deadlock.** Lock-cycle aborts arrive as SQLState `40001`, not `40P01`, so
   [`DatabaseException::isDeadlock()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#isDeadlock())
   never returns `true`. Key retry logic on `isSerializationFailure()` or `isTransient()`, both of which do fire.
@@ -136,16 +141,20 @@ that adopt the MySQL wire protocol without MySQL's transactional semantics.
   `9007` ("try again later"), which matches none of Pyranid's predicates - `isTransient()` included - so a
   `RetryPolicy` will not retry them. Supply a custom `RetryPolicy` that inspects the vendor code if you run
   TiDB in optimistic transaction mode.
-* **Neither CockroachDB nor YugabyteDB implements `LISTEN`/`NOTIFY`.** Both are detected as `POSTGRESQL`, so
-  the dialect offers notifications, and both accept `UNLISTEN *` as a no-op before rejecting the statements
-  that matter - CockroachDB with SQLState `42601`/`42883`, YugabyteDB with `0A000` ("LISTEN/NOTIFY is
-  disabled"). As of 4.7.0 Pyranid recognizes those failures on its own generated notification SQL and reports
-  them as `UnsupportedOperationException` with an explanatory message rather than an opaque syntax error.
-* **The YugabyteDB smart driver works as of 4.7.0.** Earlier releases referred to
+* **YugabyteDB `LISTEN`/`NOTIFY` is Early Access and configuration-gated.** It is available in YugabyteDB
+  v2025.2.3 and later, disabled by default, and requires `ysql_yb_enable_listen_notify=true` on both Masters
+  and TServers. The observed 2026.1 default configuration returned SQLState `0A000` ("LISTEN/NOTIFY is
+  disabled"). Pyranid reports that failure on its own generated notification SQL as
+  `UnsupportedOperationException`; the message describes the feature as unavailable in the current server
+  version or configuration rather than unimplemented. `isNotificationListeningSupported()` checks only the
+  configured/detected dialect and loadable driver adapter, not the YugabyteDB flag. See YugabyteDB's
+  [`LISTEN`/`NOTIFY` documentation](https://docs.yugabyte.com/stable/api/ysql/the-sql-language/statements/cmd_listen_notify/).
+* **The YugabyteDB smart driver is explicitly supported as of 4.7.0.** Earlier releases referred to
   `org.postgresql.util.PGobject`, `PSQLException`, `PGConnection` and `PGNotification` by name, so on the
   `com.yugabyte` fork `Parameters.json(...)` and `Parameters.vectorOfDoubles(...)` failed and notification
-  support reported itself unavailable. Those types are now resolved at runtime from whichever driver is
-  actually in use, so either driver works.
+  support reported itself unavailable. The supported pgjdbc and `com.yugabyte` types are now resolved at
+  runtime without static driver-type linkage; connection wrappers are unwrapped when they expose the driver's
+  API. Pyranid does not make a compatibility promise for arbitrary repackaged pgjdbc forks.
 * **`queryTimeout(...)` does not work on Vitess/PlanetScale.** Connector/J implements it with `KILL QUERY`,
   which vtgate rejects (`VT07001`). Express timeouts in the proxy or the query instead.
 * **H2 and HSQLDB report referential integrity in both directions.** Each uses SQLState `23503` for one
@@ -173,8 +182,9 @@ The tested DuckDB JDBC driver baseline is **1.5.5.1**. Pyranid uses it only in t
 it onto application classpaths; applications that connect to DuckDB must provide the driver themselves.
 
 The supported and tested pgjdbc baseline for notification receive is **42.7.13**. pgjdbc remains a Maven
-`provided` dependency, so applications that receive PostgreSQL notifications must supply pgjdbc 42.7.13 or newer
-at runtime. Ordinary Pyranid use and PostgreSQL notification sending do not require the receive adapter.
+`provided` dependency. Applications that receive PostgreSQL-family notifications must supply pgjdbc 42.7.13 or
+newer, or the explicitly supported YugabyteDB smart driver, at runtime. Ordinary Pyranid use and PostgreSQL
+notification sending do not require the receive adapter. Other repackaged pgjdbc forks are not supported.
 
 ## Notification integration topology
 
@@ -191,4 +201,7 @@ Notification integration CI runs on JDK 21 and covers these PostgreSQL topologie
 
 CI does not use PgBouncer transaction or statement pooling as a listener source and does not claim deterministic
 rejection of those unsupported modes. It also does not currently provision a PostgreSQL recovery standby or the
-optional half-open Toxiproxy topology.
+optional half-open Toxiproxy topology. A separate advisory integration leg runs a send/receive smoke test against
+YugabyteDB 2026.1.1.1 with `ysql_yb_enable_listen_notify=true` on Masters and TServers, using smart driver
+42.7.3-yb-4. Isolated unit coverage additionally exercises context-class-loader discovery, pooled-wrapper
+unwrapping, notification mapping, and reflected failure identity for the `com.yugabyte` API.

@@ -22,8 +22,10 @@ import com.pyranid.testdriver.util.PSQLException;
 import com.pyranid.testdriver.util.ServerErrorMessage;
 import org.jspecify.annotations.NonNull;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.lang.reflect.Proxy;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -35,8 +37,8 @@ import static java.util.Objects.requireNonNull;
 
 /**
  * Verifies that PostgreSQL-specific behavior resolves the driver's own {@code PGobject} and
- * {@code PSQLException} types rather than pgjdbc's by name, so repackaged forks of pgjdbc work.
- * YugabyteDB's "smart driver" is the motivating case: it ships {@code com.yugabyte.util.PGobject}, and
+ * {@code PSQLException} types rather than statically linking pgjdbc's classes, so the explicitly supported
+ * YugabyteDB smart driver works. It ships {@code com.yugabyte.util.PGobject}, and
  * hard-coding {@code org.postgresql.util.PGobject} failed with {@code NoClassDefFoundError} when pgjdbc was
  * absent, or bound an unrecognized object when both drivers were present.
  * <p>
@@ -58,6 +60,27 @@ public class PostgresDriverForkTests {
 
 		// PostgresDialect must unwrap it to its text form, exactly as it does for pgjdbc's PGobject
 		Assertions.assertEquals("{\"a\":1}", PostgresDialect.INSTANCE.unwrapResultSetValue(forkObject));
+	}
+
+	@Test
+	public void testPgObjectValueReaderDoesNotTurnFailuresIntoNull() {
+		RuntimeException runtimeFailure = new IllegalStateException("reader failed");
+		RuntimeException thrownRuntimeFailure = Assertions.assertThrows(RuntimeException.class,
+				() -> PostgresDialect.INSTANCE.unwrapResultSetValue(new PGobject(runtimeFailure)));
+		Assertions.assertSame(runtimeFailure, thrownRuntimeFailure);
+
+		AssertionError errorFailure = new AssertionError("reader failed fatally");
+		AssertionError thrownErrorFailure = Assertions.assertThrows(AssertionError.class,
+				() -> PostgresDriverSupport.pgObjectValue(new PGobject(errorFailure)));
+		Assertions.assertSame(errorFailure, thrownErrorFailure);
+
+		IOException checkedFailure = new IOException("reader failed reflectively");
+		DatabaseException wrappedFailure = Assertions.assertThrows(DatabaseException.class,
+				() -> PostgresDialect.INSTANCE.unwrapResultSetValue(new PGobject(checkedFailure)));
+		Assertions.assertSame(checkedFailure, wrappedFailure.getCause());
+
+		Assertions.assertNull(PostgresDriverSupport.pgObjectValue(new PGobject()),
+				"A legitimate SQL NULL returned by PGobject.getValue() must remain null");
 	}
 
 	@Test
@@ -127,9 +150,12 @@ public class PostgresDriverForkTests {
 	}
 
 	@Test
-	public void testBindingFallsBackWhenAWrapperRefusesToUnwrap() throws Exception {
+	public void testBindingFallsBackWhenAWrapperRefusesToUnwrapAndOnlyOneDriverIsVisible() throws Exception {
+		Assumptions.assumeFalse(isClassAvailable("com.yugabyte.util.PGobject"),
+				"The Yugabyte profile intentionally exercises the ambiguous-driver test instead");
+
 		// Some wrappers refuse to unwrap at all. Rather than fail a bind that used to work, fall back to a
-		// known driver on the classpath - which is what Pyranid did unconditionally before it supported forks.
+		// known driver when it is the only usable candidate on the classpath.
 		List<Object> boundValues = new ArrayList<>();
 		Connection opaque = (Connection) Proxy.newProxyInstance(Connection.class.getClassLoader(),
 				new Class<?>[]{Connection.class},
@@ -139,9 +165,52 @@ public class PostgresDriverForkTests {
 		PostgresDialect.INSTANCE.bindJson(preparedStatement, 1, "{}", JsonParameter.BindingPreference.BINARY);
 
 		Assertions.assertEquals(1, boundValues.size());
-		Assertions.assertNotNull(boundValues.get(0));
-		Assertions.assertEquals("PGobject", boundValues.get(0).getClass().getSimpleName(),
-				"Expected a fallback to a known driver's PGobject, got " + boundValues.get(0).getClass().getName());
+		Assertions.assertEquals("org.postgresql.util.PGobject", boundValues.get(0).getClass().getName());
+	}
+
+	@Test
+	public void testBindingFailsClosedWhenAnOpaqueWrapperHasMultipleDriversVisible() {
+		Assumptions.assumeTrue(isClassAvailable("com.yugabyte.util.PGobject"),
+				"Run with -Pit-yugabyte to put both pgjdbc and the Yugabyte smart driver on the classpath");
+
+		List<Object> boundValues = new ArrayList<>();
+		Connection opaque = (Connection) Proxy.newProxyInstance(Connection.class.getClassLoader(),
+				new Class<?>[]{Connection.class},
+				(proxy, method, args) -> "isWrapperFor".equals(method.getName()) ? Boolean.FALSE : null);
+		PreparedStatement preparedStatement = preparedStatementOn(opaque, boundValues);
+
+		SQLException exception = Assertions.assertThrows(SQLException.class,
+				() -> PostgresDialect.INSTANCE.bindJson(
+						preparedStatement, 1, "{}", JsonParameter.BindingPreference.BINARY));
+
+		Assertions.assertTrue(exception.getMessage().contains("unambiguously select"));
+		Assertions.assertTrue(boundValues.isEmpty(),
+				"An opaque connection must not receive a PGobject selected from the wrong driver");
+	}
+
+	@Test
+	public void testPgObjectConstructionPreservesDriverFailures() {
+		try {
+			RuntimeException runtimeFailure = new IllegalStateException("constructor failed");
+			PGobject.failNextConstructionWith(runtimeFailure);
+			RuntimeException thrownRuntimeFailure = Assertions.assertThrows(RuntimeException.class,
+					() -> PostgresDriverSupport.newPgObject(new ForkConnection(), "jsonb", "{}"));
+			Assertions.assertSame(runtimeFailure, thrownRuntimeFailure);
+
+			AssertionError errorFailure = new AssertionError("type setter failed fatally");
+			PGobject.failNextTypeSetWith(errorFailure);
+			AssertionError thrownErrorFailure = Assertions.assertThrows(AssertionError.class,
+					() -> PostgresDriverSupport.newPgObject(new ForkConnection(), "jsonb", "{}"));
+			Assertions.assertSame(errorFailure, thrownErrorFailure);
+
+			SQLException sqlFailure = new SQLException("value setter failed", "22023");
+			PGobject.failNextValueSetWith(sqlFailure);
+			SQLException thrownSqlFailure = Assertions.assertThrows(SQLException.class,
+					() -> PostgresDriverSupport.newPgObject(new ForkConnection(), "jsonb", "{}"));
+			Assertions.assertSame(sqlFailure, thrownSqlFailure);
+		} finally {
+			PGobject.clearInjectedFailures();
+		}
 	}
 
 	/**
@@ -241,5 +310,16 @@ public class PostgresDriverForkTests {
 
 					return null;
 				});
+	}
+
+	private boolean isClassAvailable(@NonNull String className) {
+		requireNonNull(className);
+
+		try {
+			Class.forName(className, false, getClass().getClassLoader());
+			return true;
+		} catch (ClassNotFoundException | LinkageError e) {
+			return false;
+		}
 	}
 }

@@ -26,22 +26,73 @@ package com.pyranid.testdriver.util;
  * @since 4.7.0
  */
 public class PGobject {
+	private static final ThreadLocal<Throwable> NEXT_CONSTRUCTION_FAILURE = new ThreadLocal<>();
+	private static final ThreadLocal<Throwable> NEXT_TYPE_SETTER_FAILURE = new ThreadLocal<>();
+	private static final ThreadLocal<Throwable> NEXT_VALUE_SETTER_FAILURE = new ThreadLocal<>();
+
 	private String type;
 	private String value;
+	private final Throwable valueReaderFailure;
+
+	public PGobject() {
+		this.valueReaderFailure = null;
+		throwIfPresent(take(NEXT_CONSTRUCTION_FAILURE));
+	}
+
+	public PGobject(Throwable valueReaderFailure) {
+		this.valueReaderFailure = valueReaderFailure;
+	}
+
+	public static void failNextConstructionWith(Throwable failure) {
+		NEXT_CONSTRUCTION_FAILURE.set(failure);
+	}
+
+	public static void failNextTypeSetWith(Throwable failure) {
+		NEXT_TYPE_SETTER_FAILURE.set(failure);
+	}
+
+	public static void failNextValueSetWith(Throwable failure) {
+		NEXT_VALUE_SETTER_FAILURE.set(failure);
+	}
+
+	public static void clearInjectedFailures() {
+		NEXT_CONSTRUCTION_FAILURE.remove();
+		NEXT_TYPE_SETTER_FAILURE.remove();
+		NEXT_VALUE_SETTER_FAILURE.remove();
+	}
 
 	public String getType() {
 		return this.type;
 	}
 
 	public void setType(String type) {
+		throwIfPresent(take(NEXT_TYPE_SETTER_FAILURE));
 		this.type = type;
 	}
 
 	public String getValue() {
+		throwIfPresent(this.valueReaderFailure);
 		return this.value;
 	}
 
 	public void setValue(String value) {
+		throwIfPresent(take(NEXT_VALUE_SETTER_FAILURE));
 		this.value = value;
+	}
+
+	private static Throwable take(ThreadLocal<Throwable> failureHolder) {
+		Throwable failure = failureHolder.get();
+		failureHolder.remove();
+		return failure;
+	}
+
+	private static void throwIfPresent(Throwable failure) {
+		if (failure != null)
+			PGobject.<RuntimeException>throwUnchecked(failure);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static <T extends Throwable> void throwUnchecked(Throwable failure) throws T {
+		throw (T) failure;
 	}
 }

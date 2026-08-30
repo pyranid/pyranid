@@ -31,8 +31,8 @@ import static java.util.Objects.requireNonNull;
 /**
  * Reflective access to a PostgreSQL JDBC driver's {@code PGConnection} notification API.
  * <p>
- * The driver's types are resolved by name at runtime rather than linked statically, so a repackaged fork of
- * pgjdbc works on its own terms - YugabyteDB's "smart driver", for example, ships
+ * The supported driver's types are resolved by name at runtime rather than linked statically. Pyranid
+ * explicitly recognizes pgjdbc and YugabyteDB's "smart driver", which ships
  * {@code com.yugabyte.PGConnection} and {@code com.yugabyte.PGNotification}. Candidate interfaces are always
  * reached through {@link Connection#isWrapperFor(Class)} and {@link Connection#unwrap(Class)}, never by
  * inspecting the connection's own class, because pooled connections are wrappers whose package says nothing
@@ -46,8 +46,9 @@ import static java.util.Objects.requireNonNull;
  */
 final class PostgresNotificationAdapter {
 	/**
-	 * Well-known driver roots tried before falling back to the connection's own package. pgjdbc and
-	 * YugabyteDB's "smart driver" ship the same API under their respective roots.
+	 * Supported driver roots tried before the best-effort connection-package fallback. pgjdbc and
+	 * YugabyteDB's "smart driver" ship the same API under their respective roots. The fallback is defensive
+	 * compatibility behavior, not a support promise for arbitrary repackaged forks.
 	 */
 	@NonNull
 	private static final List<@NonNull String> CANDIDATE_DRIVER_ROOT_PACKAGES = List.of(
@@ -128,9 +129,8 @@ final class PostgresNotificationAdapter {
 	}
 
 	/**
-	 * Driver notification interfaces to try, in order: the well-known roots first, then - for an unwrapped
-	 * connection belonging to a fork this build has never heard of - a sibling of the connection's own
-	 * package. Missing classes are simply skipped.
+	 * Driver notification interfaces to try, in order: the explicitly supported roots first, then a
+	 * best-effort sibling of the connection's own package. Missing classes are simply skipped.
 	 */
 	@NonNull
 	private static List<@NonNull Class<?>> candidateConnectionApis(@NonNull Connection connection) {
@@ -147,8 +147,8 @@ final class PostgresNotificationAdapter {
 					candidates.add(candidate);
 			}
 
-		// Last resort for a fork this build has never heard of, and only meaningful for an unwrapped
-		// connection: a sibling of the connection's own package.
+		// Last-resort compatibility path, and only meaningful for an unwrapped connection: a sibling of the
+		// connection's own package. Public compatibility remains limited to the roots above.
 		Class<?> resolvedFromConnection = resolveDriverClass(connection.getClass(), CONNECTION_SIMPLE_CLASS_NAME);
 
 		if (resolvedFromConnection != null && !candidates.contains(resolvedFromConnection))

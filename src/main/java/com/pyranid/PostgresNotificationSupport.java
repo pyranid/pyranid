@@ -27,7 +27,7 @@ import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
 /**
- * PostgreSQL notification behavior whose send path does not require pgjdbc notification types.
+ * PostgreSQL notification behavior whose send path does not require supported-driver notification types.
  */
 final class PostgresNotificationSupport implements DatabaseNotificationSupport {
 	@NonNull

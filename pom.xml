@@ -71,6 +71,8 @@
 		<slf4j.version>2.0.18</slf4j.version>
 		<postgres.integration.image>pgvector/pgvector:pg17</postgres.integration.image>
 		<pgbouncer.notification.topology.image>edoburu/pgbouncer:v1.25.2-p0</pgbouncer.notification.topology.image>
+		<yugabyte.integration.image>yugabytedb/yugabyte:2026.1.1.1-b2</yugabyte.integration.image>
+		<yugabyte.jdbc.version>42.7.3-yb-4</yugabyte.jdbc.version>
 		<mysql.integration.image>mysql:8.4</mysql.integration.image>
 		<mariadb.integration.image>mariadb:11.4</mariadb.integration.image>
 		<sqlserver.integration.image>mcr.microsoft.com/mssql/server:2022-CU26-ubuntu-22.04</sqlserver.integration.image>
@@ -548,6 +550,56 @@
 								</configuration>
 							</execution>
 						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+		<profile>
+			<id>it-yugabyte</id>
+			<dependencies>
+				<dependency>
+					<groupId>org.testcontainers</groupId>
+					<artifactId>testcontainers-yugabytedb</artifactId>
+					<version>${testcontainers.version}</version>
+					<scope>test</scope>
+				</dependency>
+				<dependency>
+					<groupId>com.yugabyte</groupId>
+					<artifactId>jdbc-yugabytedb</artifactId>
+					<version>${yugabyte.jdbc.version}</version>
+					<scope>test</scope>
+				</dependency>
+			</dependencies>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.codehaus.mojo</groupId>
+						<artifactId>build-helper-maven-plugin</artifactId>
+						<version>${build.helper.maven.plugin.version}</version>
+						<executions>
+							<execution>
+								<id>add-yugabyte-integration-test-source</id>
+								<phase>generate-test-sources</phase>
+								<goals>
+									<goal>add-test-source</goal>
+								</goals>
+								<configuration>
+									<sources>
+										<source>src/integration-test-yugabyte/java</source>
+									</sources>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-failsafe-plugin</artifactId>
+						<version>${maven.failsafe.plugin.version}</version>
+						<configuration>
+							<systemPropertyVariables>
+								<yugabyte.integration.image>${yugabyte.integration.image}</yugabyte.integration.image>
+							</systemPropertyVariables>
+						</configuration>
 					</plugin>
 				</plugins>
 			</build>

@@ -32,6 +32,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Tests for the package-private PostgreSQL notification support and transport.
@@ -86,12 +87,42 @@ public class PostgresNotificationTransportTests {
 		channels.add("Mixed Case");
 		channels.add("car\"; NOTIFY hacked; --");
 
-		transport.listen(channels);
+		transport.listen(channels, failure -> Assertions.fail(
+				"Successful registration unexpectedly reported a statement failure", failure));
 
 		Assertions.assertEquals(List.of(
 				"LISTEN \"Mixed Case\"",
 				"LISTEN \"car\"\"; NOTIFY hacked; --\""), fixture.executedSql);
 		Assertions.assertTrue(fixture.statementClosed);
+	}
+
+	@Test
+	public void testListenReportsOnlyServerExecutionFailuresToObserver() throws Exception {
+		SQLException executeFailure = new SQLException("LISTEN execute failed", "0A000");
+		TransportFixture executeFixture = new TransportFixture();
+		executeFixture.statementExecutionFailure = executeFailure;
+		NotificationTransport executeTransport = executeFixture.openTransport();
+		AtomicReference<SQLException> observedExecuteFailure = new AtomicReference<>();
+
+		SQLException executeThrown = Assertions.assertThrows(SQLException.class,
+				() -> executeTransport.listen(Set.of("car_changed"), observedExecuteFailure::set));
+
+		Assertions.assertSame(executeFailure, executeThrown);
+		Assertions.assertSame(executeFailure, observedExecuteFailure.get());
+
+		SQLException closeFailure = new SQLException("LISTEN close failed", "0A000");
+		TransportFixture closeFixture = new TransportFixture();
+		closeFixture.statementCloseFailure = closeFailure;
+		NotificationTransport closeTransport = closeFixture.openTransport();
+		AtomicReference<SQLException> observedCloseFailure = new AtomicReference<>();
+
+		SQLException closeThrown = Assertions.assertThrows(SQLException.class,
+				() -> closeTransport.listen(Set.of("car_changed"), observedCloseFailure::set));
+
+		Assertions.assertSame(closeFailure, closeThrown);
+		Assertions.assertNull(observedCloseFailure.get(),
+				"Statement.close() failures must not be reported as server execution failures");
+		Assertions.assertEquals(List.of("LISTEN \"car_changed\""), closeFixture.executedSql);
 	}
 
 	@Test

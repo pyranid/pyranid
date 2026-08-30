@@ -27,11 +27,13 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Consumer;
 
 import static java.util.Objects.requireNonNull;
 
 /**
- * pgjdbc-facing transport for one physical PostgreSQL notification session.
+ * Reflective transport for one physical PostgreSQL-family notification session using pgjdbc or the
+ * explicitly supported YugabyteDB smart driver.
  */
 final class PostgresNotificationTransport implements NotificationTransport {
 	private static final int CLEANUP_NETWORK_TIMEOUT_MILLISECONDS = 30_000;
@@ -71,8 +73,10 @@ final class PostgresNotificationTransport implements NotificationTransport {
 	}
 
 	@Override
-	public void listen(@NonNull Set<@NonNull String> channels) throws SQLException {
+	public void listen(@NonNull Set<@NonNull String> channels,
+			@NonNull Consumer<? super SQLException> statementFailureObserver) throws SQLException {
 		requireNonNull(channels);
+		requireNonNull(statementFailureObserver);
 
 		if (channels.isEmpty())
 			throw new IllegalArgumentException("channels must not be empty");
@@ -81,8 +85,16 @@ final class PostgresNotificationTransport implements NotificationTransport {
 			PostgresNotificationSupport.INSTANCE.validateChannel(requireNonNull(channel));
 
 		try (Statement statement = this.connection.createStatement()) {
-			for (String channel : channels)
-				statement.execute("LISTEN " + quotedIdentifier(channel));
+			for (String channel : channels) {
+				try {
+					statement.execute("LISTEN " + quotedIdentifier(channel));
+				} catch (SQLException failure) {
+					// Keep capability classification scoped to the server execution. In particular, a failure
+					// from Statement.close() must remain an ordinary JDBC cleanup failure.
+					statementFailureObserver.accept(failure);
+					throw failure;
+				}
+			}
 		}
 	}
 
@@ -253,8 +265,8 @@ final class PostgresNotificationTransport implements NotificationTransport {
 	@NonNull
 	private List<@NonNull Notification> mapNotifications(Object[] pgNotifications) {
 		/*
-		 * Conversion intentionally occurs after guardedReceive returns. pgjdbc has already decoded and dequeued the
-		 * protocol batch, and the original network timeout has been restored. A mapping Error therefore does not imply
+		 * Conversion intentionally occurs after guardedReceive returns. The driver has already decoded and dequeued
+		 * the protocol batch, and the original network timeout has been restored. A mapping Error therefore does not imply
 		 * physical-connection uncertainty and must not trigger connection-loss metrics or abort an otherwise healthy
 		 * connection.
 		 */

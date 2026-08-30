@@ -29,18 +29,14 @@ import java.util.List;
 import java.util.logging.Logger;
 
 /**
- * Child-process probe whose constant pool deliberately contains no pgjdbc notification type.
+ * Child-process probe whose constant pool deliberately contains no supported PostgreSQL-driver notification type.
  */
 public final class OptionalPostgresNotificationClasspathProbe {
 	private OptionalPostgresNotificationClasspathProbe() {}
 
 	public static void main(String[] arguments) throws Exception {
-		try {
-			Class.forName("org.postgresql.PGConnection");
-			throw new AssertionError("pgjdbc unexpectedly remained on the isolated classpath");
-		} catch (ClassNotFoundException expected) {
-			// Expected.
-		}
+		assertDriverApiIsAbsent("org.postgresql.PGConnection");
+		assertDriverApiIsAbsent("com.yugabyte.PGConnection");
 
 		List<String> boundValues = new ArrayList<>();
 		Database database = Database.withDataSource(dataSource(boundValues))
@@ -48,12 +44,21 @@ public final class OptionalPostgresNotificationClasspathProbe {
 				.build();
 
 		if (database.isNotificationListeningSupported())
-			throw new AssertionError("Receive support must be false without pgjdbc");
+			throw new AssertionError("Receive support must be false without a supported PostgreSQL driver");
 
 		database.sendNotification("classpath_probe", "payload");
 
 		if (!boundValues.equals(List.of("classpath_probe", "payload")))
 			throw new AssertionError("Pure-SQL notification send did not bind expected values: " + boundValues);
+	}
+
+	private static void assertDriverApiIsAbsent(String className) throws Exception {
+		try {
+			Class.forName(className);
+			throw new AssertionError(className + " unexpectedly remained on the isolated classpath");
+		} catch (ClassNotFoundException expected) {
+			// Expected.
+		}
 	}
 
 	private static DataSource dataSource(List<String> boundValues) {

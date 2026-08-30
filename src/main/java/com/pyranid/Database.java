@@ -35,8 +35,10 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -3679,7 +3681,8 @@ public final class Database {
 	 * @throws IllegalArgumentException if the set is empty or a channel violates common or backend-specific limits
 	 * @throws IllegalStateException if any Pyranid transaction is active on the calling thread
 	 * @throws InterruptedException if cooperative interruption wins after any required cleanup
-	 * @throws UnsupportedOperationException if the database dialect or runtime driver cannot receive notifications
+	 * @throws UnsupportedOperationException if notification listening is unavailable through the database dialect or
+	 * runtime driver, or is unsupported or disabled for the current server version or configuration
 	 * @throws DatabaseException if connection acquisition, setup, receive, callback execution, or cleanup fails
 	 * @since 4.6.0
 	 */
@@ -3737,7 +3740,8 @@ public final class Database {
 	 * @throws IllegalArgumentException if the channel violates common or backend-specific limits
 	 * @throws IllegalStateException if any Pyranid transaction is active on the calling thread
 	 * @throws InterruptedException if cooperative interruption wins after any required cleanup
-	 * @throws UnsupportedOperationException if the database dialect or runtime driver cannot receive notifications
+	 * @throws UnsupportedOperationException if notification listening is unavailable through the database dialect or
+	 * runtime driver, or is unsupported or disabled for the current server version or configuration
 	 * @throws DatabaseException if connection acquisition, setup, receive, callback execution, or cleanup fails
 	 * @since 4.6.0
 	 */
@@ -3759,7 +3763,8 @@ public final class Database {
 	 * @param channel nonblank notification channel
 	 * @throws NullPointerException if {@code channel} is null
 	 * @throws IllegalArgumentException if the channel violates common or backend-specific limits
-	 * @throws UnsupportedOperationException if the database dialect does not support notification sends
+	 * @throws UnsupportedOperationException if notification sending is unavailable through the database dialect, or is
+	 * unsupported or disabled for the current server version or configuration
 	 * @throws DatabaseException if the send fails
 	 * @since 4.6.0
 	 */
@@ -3782,7 +3787,8 @@ public final class Database {
 	 * @param payload notification payload, possibly null or empty
 	 * @throws NullPointerException if {@code channel} is null
 	 * @throws IllegalArgumentException if the channel or payload violates common or backend-specific limits
-	 * @throws UnsupportedOperationException if the database dialect does not support notification sends
+	 * @throws UnsupportedOperationException if notification sending is unavailable through the database dialect, or is
+	 * unsupported or disabled for the current server version or configuration
 	 * @throws DatabaseException if the send fails
 	 * @since 4.6.0
 	 */
@@ -3807,9 +3813,8 @@ public final class Database {
 				? (context, preparedStatement) -> applyDefaultPreparedStatementSettings(preparedStatement)
 				: null;
 
-		// Scoped deliberately to the send statement itself. Connection acquisition, JDBC capability
-		// negotiation and cleanup can all raise these same SQLStates for unrelated reasons, and reporting
-		// those as "the server has no LISTEN/NOTIFY" would be wrong.
+		// Scoped deliberately to PreparedStatement.execute(). Connection acquisition, result draining and
+		// JDBC cleanup can all raise these same SQLStates for unrelated reasons.
 		AtomicReference<SQLException> sendStatementFailure = new AtomicReference<>();
 
 		try {
@@ -3817,8 +3822,10 @@ public final class Database {
 					defaultPreparedStatementCustomizer, preparedStatement -> {
 				long startTime = nanoTime();
 
+				boolean resultAvailable;
+
 				try {
-					executeAndDrain(preparedStatement);
+					resultAvailable = preparedStatement.execute();
 				} catch (SQLException e) {
 					if (isNotificationStatementUnsupported(e))
 						sendStatementFailure.set(e);
@@ -3826,17 +3833,17 @@ public final class Database {
 					throw e;
 				}
 
+				drainStatementResults(preparedStatement, resultAvailable);
+
 				return new DatabaseOperationResult(
 						Duration.ofNanos(nanoTime() - startTime), null, StatementResult.empty());
 			});
 		} catch (DatabaseException e) {
-			// The send statement is Pyranid's own, so the server rejecting it as unknown syntax or an unknown
-			// function means this PostgreSQL-compatible server does not implement NOTIFY - not a caller error.
+			// The send statement is Pyranid's own, so the server rejecting it as unsupported syntax or an
+			// unavailable function is a server-capability issue rather than malformed caller SQL.
 			if (sendStatementFailure.get() != null)
-				throw new UnsupportedOperationException(format(
-						"Database type %s is configured or detected, but this server does not implement LISTEN/NOTIFY. "
-								+ "Some PostgreSQL-compatible databases (CockroachDB and YugabyteDB among them) accept "
-								+ "PostgreSQL's wire protocol without implementing notifications.", getDatabaseType()), e);
+				throw new UnsupportedOperationException(
+						notificationServerCapabilityUnavailableMessage(getDatabaseType()), e);
 
 			throw e;
 		}
@@ -3847,9 +3854,10 @@ public final class Database {
 	 * to attempt a notification-listening session.
 	 * <p>
 	 * This method resolves the full database type. If it has not been configured or cached, resolution may acquire a
-	 * metadata connection and may throw {@link DatabaseException}. It does not acquire a listener session, inspect pool
-	 * or proxy mode, prove backend-session affinity, unwrap a physical listener connection, or emit notification-session
-	 * lifecycle metrics.
+	 * metadata connection and may throw {@link DatabaseException}. It does not verify whether notifications are enabled
+	 * or supported by the current server version or configuration, acquire a listener session, inspect pool or proxy mode,
+	 * prove backend-session affinity, unwrap a physical listener connection, or emit notification-session lifecycle
+	 * metrics.
 	 *
 	 * @return true if notification listening can be attempted with the current dialect and runtime
 	 * @throws DatabaseException if automatic database-type detection fails
@@ -3860,10 +3868,9 @@ public final class Database {
 		return getDatabaseDialect().notificationSupport().isReceiveRuntimeAvailable();
 	}
 
-	private void executeAndDrain(@NonNull PreparedStatement preparedStatement) throws SQLException {
+	private void drainStatementResults(@NonNull PreparedStatement preparedStatement,
+			boolean resultAvailable) throws SQLException {
 		requireNonNull(preparedStatement);
-
-		boolean resultAvailable = preparedStatement.execute();
 
 		for (;;) {
 			if (resultAvailable) {
@@ -3905,6 +3912,7 @@ public final class Database {
 		Boolean initialAutoCommit = null;
 		NotificationSetupPhase setupPhase = NotificationSetupPhase.CAPABILITY;
 		UnsupportedOperationException frameworkUnsupportedFailure = null;
+		AtomicReference<SQLException> registrationStatementFailure = new AtomicReference<>();
 		boolean initialSanitationComplete = false;
 
 		try {
@@ -3941,7 +3949,7 @@ public final class Database {
 
 			initialSanitationComplete = true;
 			setupPhase = NotificationSetupPhase.REGISTER;
-			transport.listen(channels);
+			transport.listen(channels, registrationStatementFailure::set);
 
 			if (transport.isConnectionUncertain())
 				throw new SQLException("Notification transport became uncertain during registration");
@@ -3951,7 +3959,8 @@ public final class Database {
 		} catch (Throwable setupCause) {
 			boolean connectionFailure = isNotificationConnectionFailure(connection, setupCause);
 			Throwable setupFailure = normalizeNotificationSetupFailure(
-					setupCause, frameworkUnsupportedFailure, setupPhase, connectionFailure, databaseType);
+					setupCause, frameworkUnsupportedFailure, registrationStatementFailure.get(),
+					setupPhase, connectionFailure, databaseType);
 
 			if (notificationSessionId != null) {
 				metricsCollectorDispatcher.didFailToOpenNotificationSession(
@@ -4074,8 +4083,9 @@ public final class Database {
 
 	@NonNull
 	private Throwable normalizeNotificationSetupFailure(@NonNull Throwable setupCause,
-																											 @Nullable UnsupportedOperationException frameworkUnsupportedFailure,
-																											 @NonNull NotificationSetupPhase setupPhase,
+																					 @Nullable UnsupportedOperationException frameworkUnsupportedFailure,
+																					 @Nullable SQLException registrationStatementFailure,
+																					 @NonNull NotificationSetupPhase setupPhase,
 																											 boolean connectionFailure,
 																											 @NonNull DatabaseType databaseType) {
 		requireNonNull(setupCause);
@@ -4099,17 +4109,14 @@ public final class Database {
 					"Notification listening is not supported by the current database driver connection", setupCause);
 		}
 
-		// Pyranid generates the registration SQL itself and validates every channel first, so a syntax or
-		// undefined-function error here is the server rejecting LISTEN rather than malformed input. That is
-		// what a PostgreSQL-compatible engine without LISTEN/NOTIFY looks like - CockroachDB, for example,
-		// is detected as POSTGRESQL and accepts UNLISTEN as a no-op before rejecting LISTEN.
+		// Pyranid generates the registration SQL itself and validates every channel first. Classify only the
+		// exact SQLException raised by Statement.execute(); statement creation and close failures remain JDBC errors.
 		if (setupPhase == NotificationSetupPhase.REGISTER
 				&& !connectionFailure
+				&& setupCause == registrationStatementFailure
 				&& isNotificationStatementUnsupported(setupCause)) {
-			return new UnsupportedOperationException(format(
-					"Database type %s is configured or detected, but this server does not implement LISTEN/NOTIFY. "
-							+ "Some PostgreSQL-compatible databases (CockroachDB and YugabyteDB among them) accept "
-							+ "PostgreSQL's wire protocol without implementing notifications.", databaseType), setupCause);
+			return new UnsupportedOperationException(
+					notificationServerCapabilityUnavailableMessage(databaseType), setupCause);
 		}
 
 		return normalizeNotificationFailure("Unable to open notification session", setupCause, databaseType);
@@ -4122,20 +4129,27 @@ public final class Database {
 	 * {@code 42601} (syntax error - CockroachDB does not parse LISTEN or NOTIFY at all), and
 	 * {@code 42883} (undefined function, which is how a missing {@code pg_notify} surfaces).
 	 */
-	private boolean isNotificationStatementUnsupported(@Nullable Throwable throwable) {
-		for (Throwable current = throwable; current != null; current = current.getCause()) {
+	static boolean isNotificationStatementUnsupported(@Nullable Throwable throwable) {
+		Set<Throwable> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+
+		for (Throwable current = throwable; current != null && visited.add(current); current = current.getCause()) {
 			if (current instanceof SQLException sqlException) {
 				String sqlState = sqlException.getSQLState();
 
 				if ("0A000".equals(sqlState) || "42601".equals(sqlState) || "42883".equals(sqlState))
 					return true;
 			}
-
-			if (current.getCause() == current)
-				break;
 		}
 
 		return false;
+	}
+
+	@NonNull
+	private String notificationServerCapabilityUnavailableMessage(@NonNull DatabaseType databaseType) {
+		requireNonNull(databaseType);
+		return format("Database type %s is configured or detected, but LISTEN/NOTIFY is unavailable. "
+				+ "It may be unsupported by the current server version or disabled in its current configuration.",
+				databaseType);
 	}
 
 	private boolean isNotificationConnectionFailure(@Nullable Connection connection,

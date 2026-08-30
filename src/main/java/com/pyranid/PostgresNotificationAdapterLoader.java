@@ -33,13 +33,12 @@ import static java.util.Objects.requireNonNull;
  */
 final class PostgresNotificationAdapterLoader {
 	/**
-	 * Root packages checked when reporting receive availability before any connection exists. pgjdbc and its
-	 * repackaged forks ship the same API under their own root; YugabyteDB's "smart driver" is the fork in
-	 * practice.
+	 * Supported root packages checked when reporting receive availability before any connection exists:
+	 * pgjdbc and YugabyteDB's "smart driver".
 	 * <p>
 	 * This check gates listening: {@code Database} refuses to acquire a listener connection when it fails, so
-	 * a driver whose root is absent from this list is unreachable even though {@link #open(Connection)} could
-	 * resolve it from a connection. Adding a fork here is what makes it usable.
+	 * a driver whose root is absent from this list is unreachable even though {@link #open(Connection)} might
+	 * resolve it from a connection. Adding a root here is an explicit support decision.
 	 */
 	@NonNull
 	private static final List<@NonNull String> CANDIDATE_DRIVER_ROOT_PACKAGES = List.of(

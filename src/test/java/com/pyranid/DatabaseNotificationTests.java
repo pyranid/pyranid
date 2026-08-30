@@ -30,6 +30,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
@@ -455,10 +456,9 @@ public class DatabaseNotificationTests {
 
 	@Test
 	public void sendNotificationReportsUnsupportedWhenServerRejectsTheStatement() {
-		// A PostgreSQL-compatible server without LISTEN/NOTIFY (CockroachDB, for example) is detected as
-		// POSTGRESQL and then rejects Pyranid's own generated send statement. Because Pyranid authored that
-		// SQL, a syntax or undefined-function SQLState means the server lacks the feature, not that the
-		// caller passed something bad - so it must surface as the documented UnsupportedOperationException.
+		// A PostgreSQL-compatible server can be detected as POSTGRESQL while LISTEN/NOTIFY is unavailable
+		// in its current version or configuration. Because Pyranid authored this SQL, these SQLStates report
+		// a server capability issue rather than malformed caller input.
 		for (String sqlState : List.of("0A000", "42601", "42883")) {
 			ConnectionHarness harness = new ConnectionHarness(true);
 			harness.setExecuteFailure(new SQLException("ERROR: unknown function: pg_notify()", sqlState));
@@ -468,13 +468,57 @@ public class DatabaseNotificationTests {
 
 			UnsupportedOperationException exception = Assertions.assertThrows(UnsupportedOperationException.class,
 					() -> database.sendNotification("car_changed", "42"),
-					"SQLState " + sqlState + " should report the server as lacking LISTEN/NOTIFY");
+					"SQLState " + sqlState + " should report LISTEN/NOTIFY as unavailable");
 
-			Assertions.assertTrue(exception.getMessage().contains("does not implement LISTEN/NOTIFY"),
+			Assertions.assertTrue(exception.getMessage().contains("LISTEN/NOTIFY is unavailable"),
+					"Unexpected message: " + exception.getMessage());
+			Assertions.assertTrue(exception.getMessage().contains("disabled in its current configuration"),
 					"Unexpected message: " + exception.getMessage());
 			Assertions.assertInstanceOf(DatabaseException.class, exception.getCause(),
 					"The originating database failure should be retained as the cause");
 		}
+	}
+
+	@Test
+	public void sendNotificationDoesNotReclassifyPostExecutionFailures() {
+		for (String failurePoint : List.of(
+				"getUpdateCount",
+				"getMoreResults",
+				"getResultSet",
+				"nextResultSet",
+				"closeResultSet",
+				"closePreparedStatement")) {
+			SQLException failure = new SQLException("post-execute failure at " + failurePoint, "0A000");
+			ConnectionHarness harness = new ConnectionHarness(true)
+					.failPreparedStatementAfterExecute(failurePoint, failure);
+			Database database = postgresDatabase(harness, null);
+
+			DatabaseException thrown = Assertions.assertThrows(DatabaseException.class,
+					() -> database.sendNotification("car_changed", "42"), failurePoint);
+
+			Assertions.assertSame(failure, thrown.getCause(), failurePoint);
+			Assertions.assertTrue(harness.events().contains("executePreparedStatement"), failurePoint);
+		}
+	}
+
+	@Test
+	public void notificationUnsupportedStateTraversalUsesIdentityAndStopsAtIndirectCycles() {
+		CyclicSQLException first = new CyclicSQLException("first", "HY000");
+		CyclicSQLException second = new CyclicSQLException("second", "HY001");
+		first.linkCause(second);
+		second.linkCause(first);
+
+		Assertions.assertFalse(Database.isNotificationStatementUnsupported(first));
+		Assertions.assertEquals(1, first.causeReads());
+		Assertions.assertEquals(1, second.causeReads());
+
+		CyclicSQLException equalFirst = new CyclicSQLException("equal first", "HY000");
+		CyclicSQLException equalUnsupported = new CyclicSQLException("equal unsupported", "0A000");
+		equalFirst.linkCause(equalUnsupported);
+		equalUnsupported.linkCause(equalFirst);
+
+		Assertions.assertTrue(Database.isNotificationStatementUnsupported(equalFirst),
+				"Equal-but-distinct throwables must both be inspected");
 	}
 
 	@Test
@@ -600,6 +644,41 @@ public class DatabaseNotificationTests {
 				"UNLISTEN *",
 				"abort",
 				"close"), harness.events());
+	}
+
+	@Test
+	public void registrationReportsUnavailableForEveryUnsupportedStatementState() {
+		for (String sqlState : List.of("0A000", "42601", "42883")) {
+			SQLException registrationFailure = new SQLException("LISTEN unavailable", sqlState);
+			ConnectionHarness harness = new ConnectionHarness(true).failListenOn(1, registrationFailure);
+			Database database = postgresDatabase(harness, null);
+			AtomicBoolean callbackInvoked = new AtomicBoolean();
+
+			UnsupportedOperationException thrown = Assertions.assertThrows(UnsupportedOperationException.class,
+					() -> database.withNotificationSession(
+							"car_changed", session -> callbackInvoked.set(true)), sqlState);
+
+			Assertions.assertSame(registrationFailure, thrown.getCause(), sqlState);
+			Assertions.assertTrue(thrown.getMessage().contains("LISTEN/NOTIFY is unavailable"), sqlState);
+			Assertions.assertTrue(thrown.getMessage().contains("disabled in its current configuration"), sqlState);
+			Assertions.assertFalse(callbackInvoked.get(), sqlState);
+		}
+	}
+
+	@Test
+	public void registrationStatementCloseFailureIsNotReclassifiedAsUnavailable() {
+		SQLException closeFailure = new SQLException("LISTEN statement close failed", "0A000");
+		ConnectionHarness harness = new ConnectionHarness(true).failStatementCloseOn(2, closeFailure);
+		Database database = postgresDatabase(harness, null);
+		AtomicBoolean callbackInvoked = new AtomicBoolean();
+
+		DatabaseException thrown = Assertions.assertThrows(DatabaseException.class,
+				() -> database.withNotificationSession(
+						"car_changed", session -> callbackInvoked.set(true)));
+
+		Assertions.assertSame(closeFailure, thrown.getCause());
+		Assertions.assertFalse(callbackInvoked.get());
+		Assertions.assertTrue(harness.events().contains("LISTEN \"car_changed\""));
 	}
 
 	@Test
@@ -1015,6 +1094,43 @@ public class DatabaseNotificationTests {
 		}
 	}
 
+	private static final class CyclicSQLException extends SQLException {
+		@Nullable
+		private Throwable linkedCause;
+		private int causeReads;
+
+		private CyclicSQLException(@NonNull String message,
+				@NonNull String sqlState) {
+			super(requireNonNull(message), requireNonNull(sqlState));
+		}
+
+		private void linkCause(@NonNull Throwable linkedCause) {
+			this.linkedCause = requireNonNull(linkedCause);
+		}
+
+		private int causeReads() {
+			return this.causeReads;
+		}
+
+		@Override
+		public synchronized Throwable getCause() {
+			if (++this.causeReads > 2)
+				throw new AssertionError("Throwable cause cycle was not detected by identity");
+
+			return this.linkedCause;
+		}
+
+		@Override
+		public boolean equals(Object object) {
+			return object instanceof CyclicSQLException;
+		}
+
+		@Override
+		public int hashCode() {
+			return 1;
+		}
+	}
+
 	private static final class RecordingNotificationMetricsCollector implements MetricsCollector {
 		private int connectionLossCount;
 		@NonNull
@@ -1063,8 +1179,13 @@ public class DatabaseNotificationTests {
 		private int failSetAutoCommitCall;
 		private int networkTimeoutSetCalls;
 		private int failNetworkTimeoutSetCall;
+		private int statementCloseCalls;
+		private int failStatementCloseCall;
 		private Throwable getAutoCommitFailure;
 		private SQLException executeFailure;
+		private SQLException preparedStatementPostExecuteFailure;
+		@Nullable
+		private String preparedStatementPostExecuteFailurePoint;
 		private Throwable setAutoCommitFailure;
 		private Throwable unlistenFailure;
 		private Throwable listenFailure;
@@ -1073,6 +1194,7 @@ public class DatabaseNotificationTests {
 		private Throwable closeFailure;
 		private Throwable networkTimeoutInspectionFailure;
 		private Throwable networkTimeoutSetFailure;
+		private Throwable statementCloseFailure;
 		private Throwable closedCheckFailure;
 		private boolean interruptWithDrainFailure;
 
@@ -1085,6 +1207,7 @@ public class DatabaseNotificationTests {
 			this.failDrainCall = -1;
 			this.failSetAutoCommitCall = -1;
 			this.failNetworkTimeoutSetCall = -1;
+			this.failStatementCloseCall = -1;
 			this.connection = (Connection) Proxy.newProxyInstance(
 					DatabaseNotificationTests.class.getClassLoader(),
 					new Class<?>[]{Connection.class, PGConnection.class},
@@ -1101,6 +1224,14 @@ public class DatabaseNotificationTests {
 		@NonNull
 		private ConnectionHarness setExecuteFailure(@NonNull SQLException failure) {
 			this.executeFailure = requireNonNull(failure);
+			return this;
+		}
+
+		@NonNull
+		private ConnectionHarness failPreparedStatementAfterExecute(@NonNull String failurePoint,
+				@NonNull SQLException failure) {
+			this.preparedStatementPostExecuteFailurePoint = requireNonNull(failurePoint);
+			this.preparedStatementPostExecuteFailure = requireNonNull(failure);
 			return this;
 		}
 
@@ -1171,6 +1302,14 @@ public class DatabaseNotificationTests {
 				@NonNull Throwable failure) {
 			this.failNetworkTimeoutSetCall = call;
 			this.networkTimeoutSetFailure = requireNonNull(failure);
+			return this;
+		}
+
+		@NonNull
+		private ConnectionHarness failStatementCloseOn(int call,
+				@NonNull Throwable failure) {
+			this.failStatementCloseCall = call;
+			this.statementCloseFailure = requireNonNull(failure);
 			return this;
 		}
 
@@ -1302,16 +1441,61 @@ public class DatabaseNotificationTests {
 					if (this.executeFailure != null)
 						throw this.executeFailure;
 
+					yield isPreparedStatementFailurePoint("getResultSet")
+							|| isPreparedStatementFailurePoint("nextResultSet")
+							|| isPreparedStatementFailurePoint("closeResultSet");
+				}
+				case "getUpdateCount" -> {
+					throwPreparedStatementPostExecuteFailure("getUpdateCount");
+					yield isPreparedStatementFailurePoint("getMoreResults") ? 0 : -1;
+				}
+				case "getMoreResults" -> {
+					throwPreparedStatementPostExecuteFailure("getMoreResults");
 					yield false;
 				}
-				case "getUpdateCount" -> -1;
+				case "getResultSet" -> {
+					throwPreparedStatementPostExecuteFailure("getResultSet");
+					yield resultSetProxy();
+				}
 				case "close" -> {
 					this.events.add("closePreparedStatement");
+					throwPreparedStatementPostExecuteFailure("closePreparedStatement");
 					yield null;
 				}
 				case "getConnection" -> this.connection;
 				default -> defaultValue(method.getReturnType());
 			};
+		}
+
+		private boolean isPreparedStatementFailurePoint(@NonNull String failurePoint) {
+			return failurePoint.equals(this.preparedStatementPostExecuteFailurePoint);
+		}
+
+		private void throwPreparedStatementPostExecuteFailure(@NonNull String failurePoint) throws SQLException {
+			if (isPreparedStatementFailurePoint(failurePoint))
+				throw requireNonNull(this.preparedStatementPostExecuteFailure);
+		}
+
+		@NonNull
+		private ResultSet resultSetProxy() {
+			return (ResultSet) Proxy.newProxyInstance(
+					DatabaseNotificationTests.class.getClassLoader(),
+					new Class<?>[]{ResultSet.class}, (proxy, method, args) -> {
+						if (method.getDeclaringClass() == Object.class)
+							return objectMethod(proxy, method, args, "notificationResultSet");
+
+						return switch (method.getName()) {
+							case "next" -> {
+								throwPreparedStatementPostExecuteFailure("nextResultSet");
+								yield false;
+							}
+							case "close" -> {
+								throwPreparedStatementPostExecuteFailure("closeResultSet");
+								yield null;
+							}
+							default -> defaultValue(method.getReturnType());
+						};
+					});
 		}
 
 		private boolean getAutoCommit() throws Throwable {
@@ -1357,6 +1541,15 @@ public class DatabaseNotificationTests {
 				}
 
 				return false;
+			}
+
+			if ("close".equals(method.getName())) {
+				this.statementCloseCalls++;
+
+				if (this.statementCloseCalls == this.failStatementCloseCall)
+					throw requireNonNull(this.statementCloseFailure);
+
+				return null;
 			}
 
 			return defaultValue(method.getReturnType());

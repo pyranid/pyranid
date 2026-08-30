@@ -22,12 +22,18 @@ import java.sql.SQLException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * Internal transport for one physical database notification session.
  */
 interface NotificationTransport {
-	void listen(@NonNull Set<@NonNull String> channels) throws SQLException;
+	/**
+	 * Registers notification channels, reporting only failures raised by the server-side registration statement.
+	 * Failures from statement creation or cleanup are deliberately excluded from {@code statementFailureObserver}.
+	 */
+	void listen(@NonNull Set<@NonNull String> channels,
+			@NonNull Consumer<? super SQLException> statementFailureObserver) throws SQLException;
 
 	void unlistenAll() throws SQLException;
 

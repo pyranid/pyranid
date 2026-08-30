@@ -33,8 +33,8 @@ import static java.util.Objects.requireNonNull;
 /**
  * Reflective bridge to the PostgreSQL JDBC driver's {@code PGobject} and {@code PSQLException} types.
  * <p>
- * Pyranid does not depend on pgjdbc at runtime, and PostgreSQL-compatible databases are commonly reached
- * through a repackaged fork of it - YugabyteDB's "smart driver" ships the same classes under
+ * Pyranid does not depend on pgjdbc at runtime and explicitly supports both pgjdbc and YugabyteDB's smart
+ * driver, which ships the same classes under
  * {@code com.yugabyte.util} rather than {@code org.postgresql.util}. Referring to those classes by their
  * pgjdbc names would fail on such a driver with {@link NoClassDefFoundError} when pgjdbc is absent, or bind
  * a {@code PGobject} the driver does not recognize when both are on the classpath.
@@ -123,9 +123,9 @@ final class PostgresDriverSupport {
 
 		if (factory == null)
 			throw new SQLException(format(
-					"Unable to locate a PGobject class for the PostgreSQL driver in use (%s). "
-							+ "Binding JSON and vector parameters requires the PostgreSQL JDBC driver or a fork of it "
-							+ "that exposes PGobject.", connection.getClass().getName()));
+					"Unable to locate or unambiguously select a PGobject class for the PostgreSQL driver in use (%s). "
+							+ "Binding JSON and vector parameters requires pgjdbc or the supported YugabyteDB smart driver "
+							+ "with a usable PGobject implementation.", connection.getClass().getName()));
 
 		try {
 			Object pgObject = factory.constructor().newInstance();
@@ -137,6 +137,12 @@ final class PostgresDriverSupport {
 
 			if (targetException instanceof SQLException sqlException)
 				throw sqlException;
+
+			if (targetException instanceof RuntimeException runtimeException)
+				throw runtimeException;
+
+			if (targetException instanceof Error error)
+				throw error;
 
 			throw new SQLException(format("Unable to construct a %s parameter", typeName), targetException);
 		} catch (ReflectiveOperationException | RuntimeException e) {
@@ -184,18 +190,22 @@ final class PostgresDriverSupport {
 		if (resolvedFromPackage != null)
 			return resolvedFromPackage;
 
-		// 3. A wrapper that refuses to unwrap. Fall back to whichever known driver is on the classpath, which
-		// is what Pyranid did unconditionally before it supported forks at all.
+		// 3. A wrapper that refuses to unwrap. Preserve the legacy single-driver fallback, but do not guess
+		// when multiple usable drivers are visible: binding one driver's PGobject through another driver is
+		// worse than rejecting the bind explicitly.
+		List<Class<?>> visiblePgObjectClasses = new ArrayList<>();
+
 		for (ClassLoader classLoader : classLoaders)
 			for (String driverRootPackage : CANDIDATE_DRIVER_ROOT_PACKAGES) {
 				Class<?> pgObjectClass = loadClass(
 						driverRootPackage + "." + UTIL_PACKAGE_SEGMENT + "." + PG_OBJECT_SIMPLE_CLASS_NAME, classLoader);
 
-				if (pgObjectClass != null)
-					return pgObjectClass;
+				if (pgObjectClass != null && PG_OBJECT_FACTORIES.get(pgObjectClass) != null
+						&& !visiblePgObjectClasses.contains(pgObjectClass))
+					visiblePgObjectClasses.add(pgObjectClass);
 			}
 
-		return null;
+		return visiblePgObjectClasses.size() == 1 ? visiblePgObjectClasses.get(0) : null;
 	}
 
 	private static boolean isWrapperFor(@NonNull Connection connection,
@@ -240,7 +250,8 @@ final class PostgresDriverSupport {
 	}
 
 	/**
-	 * Extracts the text of a driver {@code PGobject}, or returns {@code null} when {@code value} is not one.
+	 * Extracts the text of a driver {@code PGobject}, or returns {@code null} when {@code value} is not one or its
+	 * SQL value is {@code null}.
 	 */
 	@Nullable
 	static String pgObjectValue(@NonNull Object value) {
@@ -253,8 +264,18 @@ final class PostgresDriverSupport {
 
 		try {
 			return (String) valueReader.invoke(value);
-		} catch (ReflectiveOperationException | RuntimeException e) {
-			return null;
+		} catch (InvocationTargetException e) {
+			Throwable targetException = e.getTargetException();
+
+			if (targetException instanceof RuntimeException runtimeException)
+				throw runtimeException;
+
+			if (targetException instanceof Error error)
+				throw error;
+
+			throw new DatabaseException("Unable to extract PostgreSQL PGobject value", targetException);
+		} catch (IllegalAccessException | IllegalArgumentException e) {
+			throw new DatabaseException("Unable to extract PostgreSQL PGobject value", e);
 		}
 	}
 
@@ -352,8 +373,8 @@ final class PostgresDriverSupport {
 	}
 
 	/**
-	 * Whether {@code type} is the named driver class in some {@code ...util} package - the shape both pgjdbc and its
-	 * forks use. Matching on package shape rather than a fixed name is what lets a fork work on its own terms.
+	 * Whether {@code type} has the PostgreSQL-driver utility-class shape used by pgjdbc and the explicitly
+	 * supported YugabyteDB smart driver.
 	 */
 	private static boolean isDriverClass(@NonNull Class<?> type,
 																			 @NonNull String simpleClassName) {
