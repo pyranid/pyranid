@@ -23,6 +23,8 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
 
 import static java.util.Objects.requireNonNull;
 
@@ -30,10 +32,22 @@ import static java.util.Objects.requireNonNull;
  * Loads the optional PostgreSQL receive adapter without statically linking its driver-specific types.
  */
 final class PostgresNotificationAdapterLoader {
+	/**
+	 * Root packages checked when reporting receive availability before any connection exists. pgjdbc and its
+	 * repackaged forks ship the same API under their own root; YugabyteDB's "smart driver" is the fork in
+	 * practice.
+	 * <p>
+	 * This check gates listening: {@code Database} refuses to acquire a listener connection when it fails, so
+	 * a driver whose root is absent from this list is unreachable even though {@link #open(Connection)} could
+	 * resolve it from a connection. Adding a fork here is what makes it usable.
+	 */
 	@NonNull
-	private static final String CONNECTION_CLASS_NAME = "org.postgresql.PGConnection";
+	private static final List<@NonNull String> CANDIDATE_DRIVER_ROOT_PACKAGES = List.of(
+			"org.postgresql", "com.yugabyte");
 	@NonNull
-	private static final String NOTIFICATION_CLASS_NAME = "org.postgresql.PGNotification";
+	private static final String CONNECTION_SIMPLE_CLASS_NAME = "PGConnection";
+	@NonNull
+	private static final String NOTIFICATION_SIMPLE_CLASS_NAME = "PGNotification";
 	@NonNull
 	private static final String ADAPTER_CLASS_NAME = "com.pyranid.PostgresNotificationTransport";
 	@NonNull
@@ -42,11 +56,59 @@ final class PostgresNotificationAdapterLoader {
 	private PostgresNotificationAdapterLoader() {}
 
 	static boolean isAvailable() {
+		for (String driverRootPackage : CANDIDATE_DRIVER_ROOT_PACKAGES)
+			if (isDriverApiAvailable(driverRootPackage))
+				return true;
+
+		return false;
+	}
+
+	private static boolean isDriverApiAvailable(@NonNull String driverRootPackage) {
+		requireNonNull(driverRootPackage);
+
+		for (ClassLoader classLoader : candidateClassLoaders())
+			try {
+				Class<?> connectionClass = Class.forName(
+						driverRootPackage + "." + CONNECTION_SIMPLE_CLASS_NAME, false, classLoader);
+				Class<?> notificationClass = Class.forName(
+						driverRootPackage + "." + NOTIFICATION_SIMPLE_CLASS_NAME, false, classLoader);
+
+				requireNotificationArrayReturnType(connectionClass.getMethod("getNotifications"), notificationClass);
+				requireNotificationArrayReturnType(
+						connectionClass.getMethod("getNotifications", int.class), notificationClass);
+				requireReturnType(notificationClass.getMethod("getName"), String.class);
+				requireReturnType(notificationClass.getMethod("getParameter"), String.class);
+
+				return true;
+			} catch (ReflectiveOperationException | LinkageError | SecurityException ignored) {
+				// Try the next loader.
+			}
+
+		return false;
+	}
+
+	/**
+	 * Pyranid's own loader plus the thread context loader, so a container that isolates the driver from
+	 * Pyranid's classpath still reports availability correctly.
+	 */
+	@NonNull
+	private static List<@NonNull ClassLoader> candidateClassLoaders() {
+		List<ClassLoader> classLoaders = new ArrayList<>(2);
+
+		for (ClassLoader classLoader : new ClassLoader[]{
+				PostgresNotificationAdapterLoader.class.getClassLoader(), contextClassLoader()})
+			if (classLoader != null && !classLoaders.contains(classLoader))
+				classLoaders.add(classLoader);
+
+		return classLoaders;
+	}
+
+	@Nullable
+	private static ClassLoader contextClassLoader() {
 		try {
-			loadAdapterClass(false);
-			return true;
-		} catch (ReflectiveOperationException | LinkageError | SecurityException ignored) {
-			return false;
+			return Thread.currentThread().getContextClassLoader();
+		} catch (SecurityException e) {
+			return null;
 		}
 	}
 
@@ -56,7 +118,7 @@ final class PostgresNotificationAdapterLoader {
 		requireNonNull(connection);
 
 		try {
-			Class<?> adapterClass = loadAdapterClass(true);
+			Class<?> adapterClass = loadAdapterClass();
 			Method openMethod = adapterClass.getDeclaredMethod(OPEN_METHOD_NAME, Connection.class);
 			Object transport = openMethod.invoke(null, connection);
 
@@ -89,21 +151,14 @@ final class PostgresNotificationAdapterLoader {
 		}
 	}
 
+	/**
+	 * The transport no longer statically links any driver type, so loading it needs no driver present. It
+	 * resolves the driver's notification API from the connection handed to it.
+	 */
 	@NonNull
-	private static Class<?> loadAdapterClass(boolean initializeAdapter)
-			throws ClassNotFoundException, NoSuchMethodException {
-		ClassLoader classLoader = PostgresNotificationAdapterLoader.class.getClassLoader();
-		Class<?> connectionClass = Class.forName(CONNECTION_CLASS_NAME, false, classLoader);
-		Class<?> notificationClass = Class.forName(NOTIFICATION_CLASS_NAME, false, classLoader);
-
-		requireNotificationArrayReturnType(
-				connectionClass.getMethod("getNotifications"), notificationClass);
-		requireNotificationArrayReturnType(
-				connectionClass.getMethod("getNotifications", int.class), notificationClass);
-		requireReturnType(notificationClass.getMethod("getName"), String.class);
-		requireReturnType(notificationClass.getMethod("getParameter"), String.class);
-
-		return Class.forName(ADAPTER_CLASS_NAME, initializeAdapter, classLoader);
+	private static Class<?> loadAdapterClass() throws ClassNotFoundException {
+		return Class.forName(
+				ADAPTER_CLASS_NAME, true, PostgresNotificationAdapterLoader.class.getClassLoader());
 	}
 
 	private static void requireNotificationArrayReturnType(@NonNull Method method,

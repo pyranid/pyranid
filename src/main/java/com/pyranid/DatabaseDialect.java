@@ -163,7 +163,7 @@ interface DatabaseDialect {
 
 	@NonNull
 	static DatabaseDialect forExceptionCause(@Nullable Throwable cause) {
-		if (cause != null && "org.postgresql.util.PSQLException".equals(cause.getClass().getName()))
+		if (PostgresDriverSupport.isPsqlException(cause))
 			return PostgresDialect.INSTANCE;
 
 		return GenericDialect.INSTANCE;

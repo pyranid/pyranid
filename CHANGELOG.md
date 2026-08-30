@@ -64,6 +64,21 @@ All notable changes to Pyranid will be documented in this file.
 
 ### Fixed
 
+- PostgreSQL-specific parameters and exception metadata now work on repackaged forks of the PostgreSQL JDBC
+  driver. `PostgresDialect` resolved `PGobject` and `PSQLException` by their pgjdbc names, so on YugabyteDB's
+  "smart driver" - which ships the same classes under `com.yugabyte.util` - `Parameters.json(...)` and
+  `Parameters.vectorOfDoubles(...)` failed with `NoClassDefFoundError` when pgjdbc was absent, or bound an
+  object the driver did not recognize when both drivers were on the classpath. Notification receive was
+  affected too: `PostgresNotificationTransport` statically linked `PGConnection`/`PGNotification`, so
+  `Database::isNotificationListeningSupported()` reported `false` on a fork even though the driver was
+  present and capable. Pyranid now resolves all four types at runtime from whichever driver is actually in
+  use - always through `Connection::unwrap`, so pooled and proxied connections keep working - and the core
+  jar no longer references any driver type by name.
+- Notification sends and listener sessions against a PostgreSQL-compatible server that does not implement
+  `LISTEN`/`NOTIFY` now fail with the documented `UnsupportedOperationException` and an explanatory message
+  instead of an opaque syntax error. CockroachDB is the motivating case: it is detected as `POSTGRESQL` and
+  accepts `UNLISTEN` as a no-op before rejecting `LISTEN` and `pg_notify`. Pyranid generates that SQL itself
+  and validates channels first, so a `42601`/`42883` failure there is treated as a missing server capability.
 - `DatabaseException::isForeignKeyViolation()` now recognizes SQLStates `23504` and `23506` in addition to the
   SQL-standard `23503`, so referential-integrity violations classify correctly on engines that report the two
   directions of the violation under different codes. H2 uses `23506` when a child row points at a missing

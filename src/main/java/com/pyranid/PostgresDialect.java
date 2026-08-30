@@ -84,10 +84,8 @@ final class PostgresDialect extends GenericDialect {
 		requireNonNull(json);
 		requireNonNull(bindingPreference);
 
-		org.postgresql.util.PGobject pg = new org.postgresql.util.PGobject();
-		pg.setType(bindingPreference == BindingPreference.TEXT ? "json" : "jsonb");
-		pg.setValue(json);
-		preparedStatement.setObject(parameterIndex, pg);
+		preparedStatement.setObject(parameterIndex, PostgresDriverSupport.newPgObject(
+				preparedStatement.getConnection(), bindingPreference == BindingPreference.TEXT ? "json" : "jsonb", json));
 	}
 
 	@Override
@@ -116,10 +114,8 @@ final class PostgresDialect extends GenericDialect {
 			return;
 		}
 
-		org.postgresql.util.PGobject pg = new org.postgresql.util.PGobject();
-		pg.setType("vector");
-		pg.setValue(postgresVectorLiteralValue(elements));
-		preparedStatement.setObject(parameterIndex, pg);
+		preparedStatement.setObject(parameterIndex, PostgresDriverSupport.newPgObject(
+				preparedStatement.getConnection(), "vector", postgresVectorLiteralValue(elements)));
 	}
 
 	@NonNull
@@ -202,30 +198,31 @@ final class PostgresDialect extends GenericDialect {
 	public DatabaseExceptionMetadata databaseExceptionMetadata(@Nullable Throwable cause) {
 		DatabaseExceptionMetadata.Builder builder = DatabaseExceptionMetadata.builder(cause);
 
-		if (cause != null && "org.postgresql.util.PSQLException".equals(cause.getClass().getName())) {
-			org.postgresql.util.PSQLException psqlException = (org.postgresql.util.PSQLException) cause;
-			org.postgresql.util.ServerErrorMessage serverErrorMessage = psqlException.getServerErrorMessage();
+		if (PostgresDriverSupport.isPsqlException(cause)) {
+			Object serverErrorMessage = PostgresDriverSupport.serverErrorMessage(requireNonNull(cause));
 
 			if (serverErrorMessage != null) {
-				builder.column(serverErrorMessage.getColumn())
-						.constraint(serverErrorMessage.getConstraint())
-						.datatype(serverErrorMessage.getDatatype())
-						.detail(serverErrorMessage.getDetail())
-						.file(serverErrorMessage.getFile())
-						.hint(serverErrorMessage.getHint())
-						.internalQuery(serverErrorMessage.getInternalQuery())
-						.dbmsMessage(serverErrorMessage.getMessage())
-						.routine(serverErrorMessage.getRoutine())
-						.schema(serverErrorMessage.getSchema())
-						.severity(serverErrorMessage.getSeverity())
-						.table(serverErrorMessage.getTable())
-						.where(serverErrorMessage.getWhere())
-						.internalPosition(serverErrorMessage.getInternalPosition())
-						.line(serverErrorMessage.getLine())
-						.position(serverErrorMessage.getPosition());
+				builder.column(serverErrorMessageText(serverErrorMessage, "getColumn"))
+						.constraint(serverErrorMessageText(serverErrorMessage, "getConstraint"))
+						.datatype(serverErrorMessageText(serverErrorMessage, "getDatatype"))
+						.detail(serverErrorMessageText(serverErrorMessage, "getDetail"))
+						.file(serverErrorMessageText(serverErrorMessage, "getFile"))
+						.hint(serverErrorMessageText(serverErrorMessage, "getHint"))
+						.internalQuery(serverErrorMessageText(serverErrorMessage, "getInternalQuery"))
+						.dbmsMessage(serverErrorMessageText(serverErrorMessage, "getMessage"))
+						.routine(serverErrorMessageText(serverErrorMessage, "getRoutine"))
+						.schema(serverErrorMessageText(serverErrorMessage, "getSchema"))
+						.severity(serverErrorMessageText(serverErrorMessage, "getSeverity"))
+						.table(serverErrorMessageText(serverErrorMessage, "getTable"))
+						.where(serverErrorMessageText(serverErrorMessage, "getWhere"))
+						.internalPosition(serverErrorMessageNumber(serverErrorMessage, "getInternalPosition"))
+						.line(serverErrorMessageNumber(serverErrorMessage, "getLine"))
+						.position(serverErrorMessageNumber(serverErrorMessage, "getPosition"));
 
-				if (serverErrorMessage.getSQLState() != null)
-					builder.sqlState(serverErrorMessage.getSQLState());
+				String sqlState = serverErrorMessageText(serverErrorMessage, "getSQLState");
+
+				if (sqlState != null)
+					builder.sqlState(sqlState);
 			}
 		}
 
@@ -264,10 +261,8 @@ final class PostgresDialect extends GenericDialect {
 	public Object unwrapResultSetValue(@NonNull Object resultSetValue) {
 		requireNonNull(resultSetValue);
 
-		if ("org.postgresql.util.PGobject".equals(resultSetValue.getClass().getName())) {
-			org.postgresql.util.PGobject pgObject = (org.postgresql.util.PGobject) resultSetValue;
-			return pgObject.getValue();
-		}
+		if (PostgresDriverSupport.isPgObject(resultSetValue))
+			return PostgresDriverSupport.pgObjectValue(resultSetValue);
 
 		return resultSetValue;
 	}
@@ -322,6 +317,25 @@ final class PostgresDialect extends GenericDialect {
 
 		postgresqlSqlFragment.append(sqlFragment, previousIndex, sqlFragment.length());
 		return postgresqlSqlFragment.toString();
+	}
+
+	@Nullable
+	private String serverErrorMessageText(@NonNull Object serverErrorMessage,
+																				@NonNull String accessorName) {
+		requireNonNull(serverErrorMessage);
+		requireNonNull(accessorName);
+
+		return PostgresDriverSupport.serverErrorMessageAttribute(serverErrorMessage, accessorName, String.class);
+	}
+
+	private int serverErrorMessageNumber(@NonNull Object serverErrorMessage,
+																			 @NonNull String accessorName) {
+		requireNonNull(serverErrorMessage);
+		requireNonNull(accessorName);
+
+		Integer value = PostgresDriverSupport.serverErrorMessageAttribute(
+				serverErrorMessage, accessorName, Integer.class);
+		return value == null ? 0 : value;
 	}
 
 	@NonNull

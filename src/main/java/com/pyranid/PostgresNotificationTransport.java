@@ -18,8 +18,6 @@ package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
-import org.postgresql.PGConnection;
-import org.postgresql.PGNotification;
 
 import java.sql.Connection;
 import java.sql.SQLFeatureNotSupportedException;
@@ -43,13 +41,13 @@ final class PostgresNotificationTransport implements NotificationTransport {
 	@NonNull
 	private final Connection connection;
 	@NonNull
-	private final PGConnection pgConnection;
+	private final PostgresNotificationAdapter adapter;
 	private boolean connectionUncertain;
 
 	private PostgresNotificationTransport(@NonNull Connection connection,
-																				@NonNull PGConnection pgConnection) {
+																				@NonNull PostgresNotificationAdapter adapter) {
 		this.connection = requireNonNull(connection);
-		this.pgConnection = requireNonNull(pgConnection);
+		this.adapter = requireNonNull(adapter);
 	}
 
 	@NonNull
@@ -58,15 +56,8 @@ final class PostgresNotificationTransport implements NotificationTransport {
 		requireNonNull(connection);
 
 		try {
-			if (!connection.isWrapperFor(PGConnection.class))
-				throw unsupported("JDBC connection does not expose PostgreSQL notification receive support", null);
-
-			PGConnection pgConnection = connection.unwrap(PGConnection.class);
-
-			if (pgConnection == null)
-				throw unsupported("JDBC connection returned a null PostgreSQL notification receive adapter", null);
-
-			return new PostgresNotificationTransport(connection, pgConnection);
+			return new PostgresNotificationTransport(
+					connection, PostgresNotificationAdapter.forConnection(connection));
 		} catch (SQLFeatureNotSupportedException exception) {
 			throw unsupported("JDBC connection does not support PostgreSQL notification receive unwrapping", exception);
 		} catch (SQLException exception) {
@@ -158,13 +149,13 @@ final class PostgresNotificationTransport implements NotificationTransport {
 		int waitMilliseconds = (int) Math.max(1L,
 				(waitNanos + NANOS_PER_MILLISECOND - 1L) / NANOS_PER_MILLISECOND);
 
-		return mapNotifications(guardedReceive(() -> this.pgConnection.getNotifications(waitMilliseconds)));
+		return mapNotifications(guardedReceive(() -> this.adapter.receive(waitMilliseconds)));
 	}
 
 	@NonNull
 	@Override
 	public List<@NonNull Notification> drain() throws SQLException {
-		return mapNotifications(guardedReceive(this.pgConnection::getNotifications));
+		return mapNotifications(guardedReceive(this.adapter::receive));
 	}
 
 	@Override
@@ -173,7 +164,7 @@ final class PostgresNotificationTransport implements NotificationTransport {
 	}
 
 	@NonNull
-	private PGNotification[] guardedReceive(@NonNull DriverReceive driverReceive) throws SQLException {
+	private Object[] guardedReceive(@NonNull DriverReceive driverReceive) throws SQLException {
 		requireNonNull(driverReceive);
 
 		Integer originalTimeout = null;
@@ -260,7 +251,7 @@ final class PostgresNotificationTransport implements NotificationTransport {
 	}
 
 	@NonNull
-	private static List<@NonNull Notification> mapNotifications(PGNotification[] pgNotifications) {
+	private List<@NonNull Notification> mapNotifications(Object[] pgNotifications) {
 		/*
 		 * Conversion intentionally occurs after guardedReceive returns. pgjdbc has already decoded and dequeued the
 		 * protocol batch, and the original network timeout has been restored. A mapping Error therefore does not imply
@@ -272,11 +263,12 @@ final class PostgresNotificationTransport implements NotificationTransport {
 
 		List<Notification> notifications = new ArrayList<>(pgNotifications.length);
 
-		for (PGNotification pgNotification : pgNotifications) {
+		for (Object pgNotification : pgNotifications) {
 			requireNonNull(pgNotification);
-			String payload = pgNotification.getParameter();
+			String payload = this.adapter.notificationPayload(pgNotification);
 			// PostgreSQL's notification payload is never null; defensively preserve that backend-specific contract.
-			notifications.add(Notification.of(pgNotification.getName(), payload == null ? "" : payload));
+			notifications.add(Notification.of(
+					this.adapter.notificationName(pgNotification), payload == null ? "" : payload));
 		}
 
 		return List.copyOf(notifications);
@@ -320,6 +312,6 @@ final class PostgresNotificationTransport implements NotificationTransport {
 
 	@FunctionalInterface
 	private interface DriverReceive {
-		PGNotification[] receive() throws SQLException;
+		Object[] receive() throws SQLException;
 	}
 }

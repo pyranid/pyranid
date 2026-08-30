@@ -86,14 +86,27 @@ mapping, transactions, and batching, but classifies exceptions only by standard 
 
 Several databases speak another database's wire protocol and are therefore detected as that database.
 Pyranid does not test these and makes no compatibility promise about them, but because detection is driven
-by JDBC metadata they work to the extent that the detected dialect's assumptions hold. The table records
-what was observed when each was last examined; treat it as a starting point for your own verification
-rather than a support statement.
+by JDBC metadata they work to the extent that the detected dialect's assumptions hold. Treat the table as a
+starting point for your own verification rather than a support statement.
+
+Every observation below was measured on **2026-08-29** against these versions. Nothing re-verifies them
+automatically, so an entry is only as current as that date - check your own versions before relying on it.
+
+| Engine | Version observed | Driver |
+| --- | --- | --- |
+| CockroachDB | v26.2.6 (CCL) | pgjdbc 42.7.13 |
+| YugabyteDB | 15.12-YB-2026.1.1.1-b0 | pgjdbc 42.7.13, and the `com.yugabyte` smart driver |
+| TiDB | v7.5.1 and v8.5.3 | MySQL Connector/J |
+| Vitess / PlanetScale | 8.0.43-Vitess | MySQL Connector/J |
+| StarRocks | reports MySQL 8.0.33 | MySQL Connector/J |
+| H2 | 2.4.240 | bundled |
+| HSQLDB | 2.7.4 | bundled |
+| Apache Derby | 10.17.1.0 | bundled |
 
 | Database | Detected as | Observed behavior |
 | --- | --- | --- |
 | CockroachDB | `POSTGRESQL` | Constraint, timeout, generated-key, JSONB, and streaming behavior match PostgreSQL. Two divergences below. |
-| YugabyteDB | `POSTGRESQL` | Matches PostgreSQL with stock pgjdbc. The YugabyteDB "smart driver" fork is a hazard - see below. |
+| YugabyteDB | `POSTGRESQL` | Matches PostgreSQL with either stock pgjdbc or the "smart driver" fork. No `LISTEN`/`NOTIFY` - see below. |
 | Amazon Aurora DSQL, Neon, Supabase, AlloyDB, TimescaleDB | `POSTGRESQL` | Genuine PostgreSQL wire and engine; no known divergence. Not examined directly. |
 | TiDB | `MYSQL` | MySQL vendor error codes come through; deadlock, lock-wait timeout, duplicate key, and foreign key all classify. One retry gap below. |
 | PlanetScale / Vitess | `MYSQL` | Classification matches MySQL. `queryTimeout(...)` does not work - see below. |
@@ -123,10 +136,16 @@ that adopt the MySQL wire protocol without MySQL's transactional semantics.
   `9007` ("try again later"), which matches none of Pyranid's predicates - `isTransient()` included - so a
   `RetryPolicy` will not retry them. Supply a custom `RetryPolicy` that inspects the vendor code if you run
   TiDB in optimistic transaction mode.
-* **The YugabyteDB smart driver breaks PostgreSQL-specific parameters.** `PostgresDialect` refers to
-  `org.postgresql.util.PGobject` and `PSQLException` by name, so on the `com.yugabyte` driver fork
-  `Parameters.json(...)` and `Parameters.vectorOfDoubles(...)` fail - with `NoClassDefFoundError` when pgjdbc
-  is absent, or a type-inference error when both drivers are on the classpath. Use stock pgjdbc with Pyranid.
+* **Neither CockroachDB nor YugabyteDB implements `LISTEN`/`NOTIFY`.** Both are detected as `POSTGRESQL`, so
+  the dialect offers notifications, and both accept `UNLISTEN *` as a no-op before rejecting the statements
+  that matter - CockroachDB with SQLState `42601`/`42883`, YugabyteDB with `0A000` ("LISTEN/NOTIFY is
+  disabled"). As of 4.7.0 Pyranid recognizes those failures on its own generated notification SQL and reports
+  them as `UnsupportedOperationException` with an explanatory message rather than an opaque syntax error.
+* **The YugabyteDB smart driver works as of 4.7.0.** Earlier releases referred to
+  `org.postgresql.util.PGobject`, `PSQLException`, `PGConnection` and `PGNotification` by name, so on the
+  `com.yugabyte` fork `Parameters.json(...)` and `Parameters.vectorOfDoubles(...)` failed and notification
+  support reported itself unavailable. Those types are now resolved at runtime from whichever driver is
+  actually in use, so either driver works.
 * **`queryTimeout(...)` does not work on Vitess/PlanetScale.** Connector/J implements it with `KILL QUERY`,
   which vtgate rejects (`VT07001`). Express timeouts in the proxy or the query instead.
 * **H2 and HSQLDB report referential integrity in both directions.** Each uses SQLState `23503` for one

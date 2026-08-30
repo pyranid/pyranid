@@ -454,6 +454,43 @@ public class DatabaseNotificationTests {
 	}
 
 	@Test
+	public void sendNotificationReportsUnsupportedWhenServerRejectsTheStatement() {
+		// A PostgreSQL-compatible server without LISTEN/NOTIFY (CockroachDB, for example) is detected as
+		// POSTGRESQL and then rejects Pyranid's own generated send statement. Because Pyranid authored that
+		// SQL, a syntax or undefined-function SQLState means the server lacks the feature, not that the
+		// caller passed something bad - so it must surface as the documented UnsupportedOperationException.
+		for (String sqlState : List.of("0A000", "42601", "42883")) {
+			ConnectionHarness harness = new ConnectionHarness(true);
+			harness.setExecuteFailure(new SQLException("ERROR: unknown function: pg_notify()", sqlState));
+			Database database = Database.withDataSource(harness.dataSource())
+					.databaseType(DatabaseType.POSTGRESQL)
+					.build();
+
+			UnsupportedOperationException exception = Assertions.assertThrows(UnsupportedOperationException.class,
+					() -> database.sendNotification("car_changed", "42"),
+					"SQLState " + sqlState + " should report the server as lacking LISTEN/NOTIFY");
+
+			Assertions.assertTrue(exception.getMessage().contains("does not implement LISTEN/NOTIFY"),
+					"Unexpected message: " + exception.getMessage());
+			Assertions.assertInstanceOf(DatabaseException.class, exception.getCause(),
+					"The originating database failure should be retained as the cause");
+		}
+	}
+
+	@Test
+	public void sendNotificationPropagatesOrdinaryDatabaseFailures() {
+		// An unrelated failure must NOT be reinterpreted as a missing-feature report
+		ConnectionHarness harness = new ConnectionHarness(true);
+		harness.setExecuteFailure(new SQLException("connection reset", "08006"));
+		Database database = Database.withDataSource(harness.dataSource())
+				.databaseType(DatabaseType.POSTGRESQL)
+				.build();
+
+		Assertions.assertThrows(DatabaseException.class,
+				() -> database.sendNotification("car_changed", "42"));
+	}
+
+	@Test
 	public void sendNotificationAppliesDatabaseDefaultPreparedStatementSettings() {
 		ConnectionHarness harness = new ConnectionHarness(true);
 		Database database = Database.withDataSource(harness.dataSource())
@@ -1027,6 +1064,7 @@ public class DatabaseNotificationTests {
 		private int networkTimeoutSetCalls;
 		private int failNetworkTimeoutSetCall;
 		private Throwable getAutoCommitFailure;
+		private SQLException executeFailure;
 		private Throwable setAutoCommitFailure;
 		private Throwable unlistenFailure;
 		private Throwable listenFailure;
@@ -1057,6 +1095,12 @@ public class DatabaseNotificationTests {
 		@NonNull
 		private ConnectionHarness interruptAfterListen(int call) {
 			this.interruptAfterListenCall = call;
+			return this;
+		}
+
+		@NonNull
+		private ConnectionHarness setExecuteFailure(@NonNull SQLException failure) {
+			this.executeFailure = requireNonNull(failure);
 			return this;
 		}
 
@@ -1227,7 +1271,7 @@ public class DatabaseNotificationTests {
 
 		private Object invokePreparedStatement(Object proxy,
 				@NonNull Method method,
-				Object[] args) {
+				Object[] args) throws SQLException {
 			if (method.getDeclaringClass() == Object.class)
 				return objectMethod(proxy, method, args, "notificationPreparedStatement");
 
@@ -1254,6 +1298,10 @@ public class DatabaseNotificationTests {
 				}
 				case "execute" -> {
 					this.events.add("executePreparedStatement");
+
+					if (this.executeFailure != null)
+						throw this.executeFailure;
+
 					yield false;
 				}
 				case "getUpdateCount" -> -1;

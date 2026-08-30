@@ -3807,13 +3807,39 @@ public final class Database {
 				? (context, preparedStatement) -> applyDefaultPreparedStatementSettings(preparedStatement)
 				: null;
 
-		performDatabaseOperation(statementContext, Arrays.asList(channel, payload),
-				defaultPreparedStatementCustomizer, preparedStatement -> {
-			long startTime = nanoTime();
-			executeAndDrain(preparedStatement);
-			return new DatabaseOperationResult(
-					Duration.ofNanos(nanoTime() - startTime), null, StatementResult.empty());
-		});
+		// Scoped deliberately to the send statement itself. Connection acquisition, JDBC capability
+		// negotiation and cleanup can all raise these same SQLStates for unrelated reasons, and reporting
+		// those as "the server has no LISTEN/NOTIFY" would be wrong.
+		AtomicReference<SQLException> sendStatementFailure = new AtomicReference<>();
+
+		try {
+			performDatabaseOperation(statementContext, Arrays.asList(channel, payload),
+					defaultPreparedStatementCustomizer, preparedStatement -> {
+				long startTime = nanoTime();
+
+				try {
+					executeAndDrain(preparedStatement);
+				} catch (SQLException e) {
+					if (isNotificationStatementUnsupported(e))
+						sendStatementFailure.set(e);
+
+					throw e;
+				}
+
+				return new DatabaseOperationResult(
+						Duration.ofNanos(nanoTime() - startTime), null, StatementResult.empty());
+			});
+		} catch (DatabaseException e) {
+			// The send statement is Pyranid's own, so the server rejecting it as unknown syntax or an unknown
+			// function means this PostgreSQL-compatible server does not implement NOTIFY - not a caller error.
+			if (sendStatementFailure.get() != null)
+				throw new UnsupportedOperationException(format(
+						"Database type %s is configured or detected, but this server does not implement LISTEN/NOTIFY. "
+								+ "Some PostgreSQL-compatible databases (CockroachDB and YugabyteDB among them) accept "
+								+ "PostgreSQL's wire protocol without implementing notifications.", getDatabaseType()), e);
+
+			throw e;
+		}
 	}
 
 	/**
@@ -4073,7 +4099,43 @@ public final class Database {
 					"Notification listening is not supported by the current database driver connection", setupCause);
 		}
 
+		// Pyranid generates the registration SQL itself and validates every channel first, so a syntax or
+		// undefined-function error here is the server rejecting LISTEN rather than malformed input. That is
+		// what a PostgreSQL-compatible engine without LISTEN/NOTIFY looks like - CockroachDB, for example,
+		// is detected as POSTGRESQL and accepts UNLISTEN as a no-op before rejecting LISTEN.
+		if (setupPhase == NotificationSetupPhase.REGISTER
+				&& !connectionFailure
+				&& isNotificationStatementUnsupported(setupCause)) {
+			return new UnsupportedOperationException(format(
+					"Database type %s is configured or detected, but this server does not implement LISTEN/NOTIFY. "
+							+ "Some PostgreSQL-compatible databases (CockroachDB and YugabyteDB among them) accept "
+							+ "PostgreSQL's wire protocol without implementing notifications.", databaseType), setupCause);
+		}
+
 		return normalizeNotificationFailure("Unable to open notification session", setupCause, databaseType);
+	}
+
+	/**
+	 * Whether {@code throwable} carries a SQLState indicating the server cannot run a notification
+	 * statement Pyranid generated. Observed across PostgreSQL-compatible engines that omit the feature:
+	 * {@code 0A000} (feature not supported - YugabyteDB reports "LISTEN/NOTIFY is disabled"),
+	 * {@code 42601} (syntax error - CockroachDB does not parse LISTEN or NOTIFY at all), and
+	 * {@code 42883} (undefined function, which is how a missing {@code pg_notify} surfaces).
+	 */
+	private boolean isNotificationStatementUnsupported(@Nullable Throwable throwable) {
+		for (Throwable current = throwable; current != null; current = current.getCause()) {
+			if (current instanceof SQLException sqlException) {
+				String sqlState = sqlException.getSQLState();
+
+				if ("0A000".equals(sqlState) || "42601".equals(sqlState) || "42883".equals(sqlState))
+					return true;
+			}
+
+			if (current.getCause() == current)
+				break;
+		}
+
+		return false;
 	}
 
 	private boolean isNotificationConnectionFailure(@Nullable Connection connection,
