@@ -2,7 +2,7 @@
 
 All notable changes to Pyranid will be documented in this file.
 
-## 4.7.0 (unreleased)
+## 4.7.0
 
 ### Added
 
@@ -37,7 +37,7 @@ All notable changes to Pyranid will be documented in this file.
   type (for example, outer `VARCHAR[]` and inner `VARCHAR`). DuckDB instant-bearing elements require an
   explicit `TIMESTAMP` or `TIMESTAMPTZ` base type; named aliases fail fast because their underlying timestamp
   semantics are unavailable to this binding path. Other drivers may impose different rules.
-- A typed `Database::useRawConnection(Class<C>, RawConnectionOperation<? super C, R>)` overload for callback-scoped
+- A typed `Database::useRawConnection(Class<C>, RawConnectionOperation<? super C, T>)` overload for callback-scoped
   access to concrete driver connection APIs such as DuckDB Appender, Arrow, chunked results, profiling,
   progress, and Java UDF registration. Unlike the existing one-argument overload's guarded JDBC handle,
   this advanced overload exposes the unwrapped driver connection and therefore cannot enforce Pyranid's

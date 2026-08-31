@@ -48,7 +48,7 @@ Java 17+
   <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid</artifactId>
-  <version>4.6.1</version>
+  <version>4.7.0</version>
 </dependency>
 ```
 
@@ -64,7 +64,7 @@ Java 8+ (legacy; only critical fixes will be applied)
 
 ### Direct Download
 
-For released builds, you can download the Pyranid jar directly from [Maven Central](https://repo1.maven.org/maven2/com/pyranid/pyranid/4.6.1/pyranid-4.6.1.jar).  No other dependencies are required.
+For released builds, you can download the Pyranid jar directly from [Maven Central](https://repo1.maven.org/maven2/com/pyranid/pyranid/4.7.0/pyranid-4.7.0.jar).  No other dependencies are required.
 
 ## Configuration
 
@@ -233,9 +233,9 @@ Pyranid supports named parameters (e.g. `:id`) only; positional `?` parameters a
 
 ### SQL Parsing Rules
 
-Pyranid scans SQL before handing it to JDBC so it can translate named parameters into `PreparedStatement` placeholders. It ignores parameter-looking text inside string literals, quoted identifiers, comments, PostgreSQL dollar-quoted strings, and SQL Server-style bracket-quoted identifiers. For a configured or detected DuckDB database, brackets are treated as list/subscript syntax instead, so list literals such as `[:first, :second]` can contain named parameters. Unterminated quotes, dollar-quoted strings, and block comments fail fast with an `IllegalArgumentException`.
+Pyranid scans SQL before handing it to JDBC so it can translate named parameters into [`PreparedStatement`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/PreparedStatement.html) placeholders. It ignores parameter-looking text inside string literals, quoted identifiers, comments, PostgreSQL dollar-quoted strings, and SQL Server-style bracket-quoted identifiers. For a configured or detected DuckDB database, brackets are treated as list/subscript syntax instead, so list literals such as `[:first, :second]` can contain named parameters. Unterminated quotes, dollar-quoted strings, and block comments fail fast with an [`IllegalArgumentException`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/IllegalArgumentException.html).
 
-PostgreSQL JSONB/hstore `?`, `?|`, and `?&` operators are supported. When the `Database` is configured or detected as PostgreSQL, Pyranid automatically emits pgjdbc's escaped `??` form for those operators while preserving named-parameter binding.
+PostgreSQL JSONB/hstore `?`, `?|`, and `?&` operators are supported. When the [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) is configured or detected as PostgreSQL, Pyranid automatically emits pgjdbc's escaped `??` form for those operators while preserving named-parameter binding.
 
 DuckDB SQL uses `:` inside struct literals (`{'key':expr}`) and list slicing (`list[a:b]`); when the character after `:` can start an identifier, Pyranid parses it as a named parameter. Write a space after the colon (`{'key': expr}` - bound parameters still work, e.g. `{'key': :value}`), or use `struct_pack(key := expr)` / `list_slice(...)`. DuckDB `::` casts and `->`/`->>` JSON operators need no escaping.
 
@@ -280,7 +280,7 @@ Optional<UUID> id = database.query("SELECT id FROM widget LIMIT 1").fetchObject(
 List<BigDecimal> balances = database.query("SELECT balance FROM account").fetchList(BigDecimal.class);
 ```
 
-[`Record`](https://openjdk.org/jeps/395) types are also supported:
+[`Record`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Record.html) types are also supported:
 
 ```java
 public record Employee(String name, @DatabaseColumn("email") String emailAddress) {}
@@ -294,11 +294,11 @@ Optional<Employee> employee = database.query("""
   .fetchObject(Employee.class);
 ```
 
-By default, Pyranid will invoke the canonical constructor for `Record` types. 
+By default, Pyranid will invoke the canonical constructor for [`Record`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Record.html) types.
 
 ### Streaming Results
 
-If you'd like to process large resultsets without loading everything into memory, use `Query::fetchStream(Class<T>, Function<Stream<T>, R>)`. The `Stream<T>` passed to your callback is backed by the underlying `ResultSet`, and Pyranid closes JDBC resources automatically when the callback returns (or throws).
+If you'd like to process large resultsets without loading everything into memory, use [`Query::fetchStream(Class<T>, Function<Stream<T>, R>)`](https://javadoc.pyranid.com/com/pyranid/Query.html#fetchStream(java.lang.Class,java.util.function.Function)). The [`Stream<T>`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/stream/Stream.html) passed to your callback is backed by the underlying [`ResultSet`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/ResultSet.html), and Pyranid closes JDBC resources automatically when the callback returns (or throws).
 
 ```java
 List<Employee> employees = database.query("""
@@ -329,7 +329,7 @@ List<Employee> employees = database.query("""
 
 ### Raw JDBC Connection Access
 
-If you need a JDBC escape hatch for driver-specific features, stored procedures, `CallableStatement`, or other operations that do not fit Pyranid's query API, use [`Database::useRawConnection(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#useRawConnection(com.pyranid.RawConnectionOperation)).
+If you need a JDBC escape hatch for driver-specific features, stored procedures, [`CallableStatement`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/CallableStatement.html), or other operations that do not fit Pyranid's query API, use [`Database::useRawConnection(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#useRawConnection(com.pyranid.RawConnectionOperation)).
 
 ```java
 Optional<Integer> result = database.useRawConnection(connection -> {
@@ -342,7 +342,7 @@ Optional<Integer> result = database.useRawConnection(connection -> {
 });
 ```
 
-`useRawConnection(...)` automatically participates in an active Pyranid transaction. Outside a transaction, Pyranid borrows a connection for the raw connection callback and closes it when the callback returns.
+[`Database::useRawConnection(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#useRawConnection(com.pyranid.RawConnectionOperation)) automatically participates in an active Pyranid transaction. Outside a transaction, Pyranid borrows a connection for the raw connection callback and closes it when the callback returns.
 
 ```java
 database.transaction(() -> {
@@ -357,9 +357,9 @@ database.transaction(() -> {
 });
 ```
 
-The `Connection` passed to your callback is a Pyranid-managed guarded handle. Do not close it, retain it, perform transaction lifecycle operations on it, or mutate connection-wide state on it. Methods such as `close()`, `commit()`, `rollback()`, `setAutoCommit(...)`, `setTransactionIsolation(...)`, `setCatalog(...)`, `setSchema(...)`, `setClientInfo(...)`, `setNetworkTimeout(...)`, and JDBC savepoint controls throw immediately. `Statement::getConnection()` and `DatabaseMetaData::getConnection()` return the guarded Pyranid handle, and `ResultSet::getStatement()` returns a guarded statement. `Connection::unwrap(...)` may return a guarded, callback-scoped proxy for a vendor interface, but it never exposes a castable physical `Connection`; the proxy blocks lifecycle methods and expires when the callback returns. Guarded statements, resultsets, and metadata refuse driver-specific `unwrap(...)` calls that could expose the driver's underlying connection. Use `Database::transaction(...)`, `Database::participate(...)`, and `Transaction` savepoint APIs for transaction management. Close any `Statement` or `ResultSet` instances you create inside the callback.
+The [`Connection`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html) passed to your callback is a Pyranid-managed guarded handle. Do not close it, retain it, perform transaction lifecycle operations on it, or mutate connection-wide state on it. Methods such as [`close()`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html#close()), [`commit()`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html#commit()), [`rollback()`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html#rollback()), [`setAutoCommit(...)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html#setAutoCommit(boolean)), [`setTransactionIsolation(...)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html#setTransactionIsolation(int)), [`setCatalog(...)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html#setCatalog(java.lang.String)), [`setSchema(...)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html#setSchema(java.lang.String)), [`setClientInfo(...)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html#setClientInfo(java.lang.String,java.lang.String)), [`setNetworkTimeout(...)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html#setNetworkTimeout(java.util.concurrent.Executor,int)), and JDBC [`Savepoint`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Savepoint.html) controls throw immediately. [`Statement::getConnection()`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Statement.html#getConnection()) and [`DatabaseMetaData::getConnection()`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/DatabaseMetaData.html#getConnection()) return the guarded Pyranid handle, and [`ResultSet::getStatement()`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/ResultSet.html#getStatement()) returns a guarded statement. [`Connection::unwrap(...)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Wrapper.html#unwrap(java.lang.Class)) may return a guarded, callback-scoped proxy for a vendor interface, but it never exposes a castable physical [`Connection`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html); the proxy blocks lifecycle methods and expires when the callback returns. Guarded statements, resultsets, and metadata refuse driver-specific [`unwrap(...)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Wrapper.html#unwrap(java.lang.Class)) calls that could expose the driver's underlying connection. Use [`Database::transaction(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transaction(com.pyranid.TransactionalOperation)), [`Database::participate(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#participate(com.pyranid.Transaction,com.pyranid.TransactionalOperation)), and [`Transaction`](https://javadoc.pyranid.com/com/pyranid/Transaction.html) savepoint APIs for transaction management. Close any [`Statement`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Statement.html) or [`ResultSet`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/ResultSet.html) instances you create inside the callback.
 
-When a driver feature requires its concrete connection type, use the typed overload. For example, DuckDB's Appender API is available without a Pyranid-specific wrapper:
+When a driver feature requires its concrete connection type, use [`Database::useRawConnection(Class<C>, RawConnectionOperation<? super C, T>)`](https://javadoc.pyranid.com/com/pyranid/Database.html#useRawConnection(java.lang.Class,com.pyranid.RawConnectionOperation)). For example, DuckDB's [Appender API](https://duckdb.org/docs/current/clients/java/data_import#appender) is available without a Pyranid-specific wrapper:
 
 ```java
 database.useRawConnection(DuckDBConnection.class, connection -> {
@@ -376,9 +376,9 @@ database.useRawConnection(DuckDBConnection.class, connection -> {
 });
 ```
 
-The typed overload is deliberately unguarded because concrete driver APIs cannot be safely proxied. Guarding is selected by the overload, not the requested class, so `useRawConnection(Connection.class, ...)` also supplies an unguarded connection. Pyranid supplies the active transaction's connection when one exists, but each driver-extension API's own transaction rules still apply. The callback must not close, commit, roll back, retain, or change connection-wide state on the supplied connection. Close every derived Appender, statement, result set, Arrow reader, native result, or other driver resource before returning. The driver-specific types must be on the application's compile classpath.
+The typed overload is deliberately unguarded because concrete driver APIs cannot be safely proxied. Guarding is selected by the overload, not the requested class, so [`useRawConnection(Connection.class, ...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#useRawConnection(java.lang.Class,com.pyranid.RawConnectionOperation)) also supplies an unguarded connection. Pyranid supplies the active transaction's connection when one exists, but each driver-extension API's own transaction rules still apply. The callback must not close, commit, roll back, retain, or change connection-wide state on the supplied connection. Close every derived Appender, statement, result set, Arrow reader, native result, or other driver resource before returning. The driver-specific types must be on the application's compile classpath.
 
-DuckDB JDBC starts a native transaction lazily when its first ordinary JDBC statement executes; creating an Appender does not trigger that step. If an Appender is the first operation inside `Database::transaction(...)`, first execute an ordinary Pyranid query (a `SELECT 1` is sufficient) so flushed Appender rows participate in commit or rollback. Without that primer, the driver can autocommit the append even though Pyranid supplied the transaction's connection.
+DuckDB JDBC starts a native transaction lazily when its first ordinary JDBC statement executes; creating an [Appender](https://duckdb.org/docs/current/clients/java/data_import#appender) does not trigger that step. If an [Appender](https://duckdb.org/docs/current/clients/java/data_import#appender) is the first operation inside [`Database::transaction(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transaction(com.pyranid.TransactionalOperation)), first execute an ordinary Pyranid query (a `SELECT 1` is sufficient) so flushed Appender rows participate in commit or rollback. Without that primer, the driver can autocommit the append even though Pyranid supplied the transaction's connection.
 
 ## Statements
 
@@ -451,7 +451,7 @@ List<Long> updateCounts = database.query("INSERT INTO car VALUES (:id, :color)")
   .executeBatch(parameterGroups);
 ```
 
-Chunking is performed by Pyranid; each chunk is still executed by the JDBC driver as a normal batch. If unset, Pyranid preserves the default behavior of sending all parameter groups in one JDBC batch. `batchChunkSize(...)` applies only to `executeBatch(...)`; using it with a non-batch terminal operation throws `IllegalStateException`. For all-or-nothing behavior when a later chunk fails, wrap chunked batches in [`Database::transaction(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transaction(com.pyranid.TransactionalOperation)); outside an explicit transaction, earlier chunks may already be committed depending on autocommit and driver behavior.
+Chunking is performed by Pyranid; each chunk is still executed by the JDBC driver as a normal batch. If unset, Pyranid preserves the default behavior of sending all parameter groups in one JDBC batch. [`Query::batchChunkSize(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#batchChunkSize(java.lang.Integer)) applies only to [`Query::executeBatch(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#executeBatch(java.util.List)); using it with a non-batch terminal operation throws [`IllegalStateException`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/IllegalStateException.html). For all-or-nothing behavior when a later chunk fails, wrap chunked batches in [`Database::transaction(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transaction(com.pyranid.TransactionalOperation)); outside an explicit transaction, earlier chunks may already be committed depending on autocommit and driver behavior.
 
 Pyranid will automatically determine if your JDBC driver supports "large" updates and batch operations
 and uses them if available.
@@ -467,7 +467,7 @@ and uses them if available.
 
 ### Basics
 
-Outside a Pyranid transaction, each operation borrows a connection and leaves transaction control to the configured [`DataSource`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/javax/sql/DataSource.html) and JDBC driver. Pyranid does not force `autocommit=true` or call `commit()` for standalone operations. Production pools normally return connections with autocommit enabled; configure that explicitly if your `DataSource` does not.
+Outside a Pyranid transaction, each operation borrows a connection and leaves transaction control to the configured [`DataSource`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/javax/sql/DataSource.html) and JDBC driver. Pyranid does not force `autocommit=true` or call [`Connection::commit()`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html#commit()) for standalone operations. Production pools normally return connections with autocommit enabled; configure that explicitly if your [`DataSource`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/javax/sql/DataSource.html) does not.
 
 ```java
 // Any code that runs inside of the closure operates within the context of a transaction.
@@ -531,17 +531,17 @@ database.transaction(() -> {
 });
 ```
 
-Transaction handles are scoped to the transaction closure. After the closure completes, mutating or JDBC-touching methods on a captured `Transaction` handle throw `IllegalStateException`.
+Transaction handles are scoped to the transaction closure. After the closure completes, mutating or JDBC-touching methods on a captured [`Transaction`](https://javadoc.pyranid.com/com/pyranid/Transaction.html) handle throw [`IllegalStateException`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/IllegalStateException.html).
 
 ### Multi-threaded Transactions
 
-Internally, Database manages a threadlocal stack of [`Transaction`](https://javadoc.pyranid.com/com/pyranid/Transaction.html) instances to simplify single-threaded usage.  Should you need to share the same transaction across multiple threads, use the [`Database::participate`](https://javadoc.pyranid.com/com/pyranid/Database.html#participate(com.pyranid.Transaction,com.pyranid.TransactionalOperation)) API.
+Internally, [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) manages a thread-local stack of [`Transaction`](https://javadoc.pyranid.com/com/pyranid/Transaction.html) instances to simplify single-threaded usage. Should you need to share the same transaction across multiple threads, use the [`Database::participate`](https://javadoc.pyranid.com/com/pyranid/Database.html#participate(com.pyranid.Transaction,com.pyranid.TransactionalOperation)) API.
 
-Transactions are scoped to the `DataSource` instance that created them. A second `Database` built with the same `DataSource` instance can participate in the transaction; a `Database` built with a different `DataSource` fails fast instead of silently joining the wrong connection.
+Transactions are scoped to the [`DataSource`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/javax/sql/DataSource.html) instance that created them. A second [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) built with the same [`DataSource`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/javax/sql/DataSource.html) instance can participate in the transaction; a [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) built with a different [`DataSource`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/javax/sql/DataSource.html) fails fast instead of silently joining the wrong connection.
 
-Transaction context follows the current Java thread. Async frameworks that suspend work and resume it on another thread do not automatically carry the transaction context with them; this includes Kotlin coroutines when a suspension point resumes on a different dispatcher thread. Keep transactional database access on the transaction thread, or capture the current `Transaction` and call `Database::participate(...)` on the thread that performs the database work. All participating work must complete before the owning transaction closure returns.
+Transaction context follows the current Java thread. Async frameworks that suspend work and resume it on another thread do not automatically carry the transaction context with them; this includes Kotlin coroutines when a suspension point resumes on a different dispatcher thread. Keep transactional database access on the transaction thread, or capture the current [`Transaction`](https://javadoc.pyranid.com/com/pyranid/Transaction.html) and call [`Database::participate(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#participate(com.pyranid.Transaction,com.pyranid.TransactionalOperation)) on the thread that performs the database work. All participating work must complete before the owning transaction closure returns.
 
-If a participating thread is interrupted while waiting for another participant to release the transaction connection, Pyranid restores the interrupt flag and throws `DatabaseException`. This makes blocked participants cancellable; the thread currently executing a JDBC call still relies on driver behavior, `Query::queryTimeout(...)`, or application-managed [`Statement::cancel()`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Statement.html#cancel()).
+If a participating thread is interrupted while waiting for another participant to release the transaction connection, Pyranid restores the interrupt flag and throws [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html). This makes blocked participants cancellable; the thread currently executing a JDBC call still relies on driver behavior, [`Query::queryTimeout(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#queryTimeout(java.time.Duration)), or application-managed [`Statement::cancel()`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Statement.html#cancel()).
 
 On Java 21+, a clean way to do this is with a virtual-thread executor:
 
@@ -606,7 +606,7 @@ database.transaction(() -> {
 });
 ```
 
-The lower-level `createSavepoint()`, `rollback(Savepoint)`, and `releaseSavepoint(Savepoint)` methods remain available for callers that need manual control. Prefer `withSavepoint(...)` for common partial-rollback workflows because it handles rollback, release, and suppressed cleanup failures consistently.
+The lower-level [`Transaction::createSavepoint()`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#createSavepoint()), [`Transaction::rollback(Savepoint)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#rollback(java.sql.Savepoint)), and [`Transaction::releaseSavepoint(Savepoint)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#releaseSavepoint(java.sql.Savepoint)) methods remain available for callers that need manual control. Prefer [`Transaction::withSavepoint(...)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#withSavepoint(com.pyranid.TransactionalOperation)) for common partial-rollback workflows because it handles rollback, release, and suppressed cleanup failures consistently.
 
 ### Nesting
 
@@ -627,7 +627,7 @@ database.transaction(() -> {
 });
 ```
 
-Nested transactions borrow separate physical connections and can pressure small connection pools. If your intent is to join work to an existing transaction, pass the current `Transaction` handle to `Database::participate(...)` instead of calling `transaction(...)` again.
+Nested transactions borrow separate physical connections and can pressure small connection pools. If your intent is to join work to an existing transaction, pass the current [`Transaction`](https://javadoc.pyranid.com/com/pyranid/Transaction.html) handle to [`Database::participate(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#participate(com.pyranid.Transaction,com.pyranid.TransactionalOperation)) instead of calling [`Database::transaction(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transaction(com.pyranid.TransactionalOperation)) again.
 
 ### Isolation
 
@@ -661,7 +661,7 @@ database.transaction(
   });
 ```
 
-`TransactionOptions::withReadOnly(true)` maps to JDBC [`Connection::setReadOnly(true)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html#setReadOnly(boolean)) for the physical transaction connection. Pyranid restores the connection's original read-only setting before returning it to the pool. Read-only behavior is enforced, optimized, routed, or ignored by the JDBC driver and DBMS. SQL Server, Oracle, and SQLite drivers may treat it as advisory or ignore it for normal transactions; DuckDB's driver rejects per-connection read-only changes outright (read-only mode is a database-open option there). Pyranid does not parse SQL to reject writes itself.
+[`TransactionOptions::withReadOnly(true)`](https://javadoc.pyranid.com/com/pyranid/TransactionOptions.html#withReadOnly(java.lang.Boolean)) maps to JDBC [`Connection::setReadOnly(true)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html#setReadOnly(boolean)) for the physical transaction connection. Pyranid restores the connection's original read-only setting before returning it to the pool. Read-only behavior is enforced, optimized, routed, or ignored by the JDBC driver and DBMS. SQL Server, Oracle, and SQLite drivers may treat it as advisory or ignore it for normal transactions; DuckDB's driver rejects per-connection read-only changes outright (read-only mode is a database-open option there). Pyranid does not parse SQL to reject writes itself.
 
 ### Post-Transaction Operations
 
@@ -726,12 +726,12 @@ class DatabaseTransactionFilter implements Filter {
 Post-transaction callbacks receive a [`TransactionResult`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html) value:
 
 * [`COMMITTED`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#COMMITTED) if commit completed successfully
-* [`ROLLED_BACK`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#ROLLED_BACK) if Pyranid can prove that no application transaction work committed. This includes a successful rollback before commit, a commit-phase serialization failure followed by a successful rollback, and a failed physical-transaction begin whose candidate connection Pyranid discarded before application transaction work could execute. The failed-begin case does not require a completed JDBC `rollback()` call.
+* [`ROLLED_BACK`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#ROLLED_BACK) if Pyranid can prove that no application transaction work committed. This includes a successful rollback before commit, a commit-phase serialization failure followed by a successful rollback, and a failed physical-transaction begin whose candidate connection Pyranid discarded before application transaction work could execute. The failed-begin case does not require a completed JDBC [`Connection::rollback()`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html#rollback()) call.
 * [`IN_DOUBT`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#IN_DOUBT) if Pyranid cannot prove the final database outcome because commit failed outside the definite serialization-failure case above, or because rollback failed after application transaction work could have executed
 
 Post-transaction callbacks are fail-fast. If a callback throws, Pyranid wraps the failure in a [`PostTransactionOperationException`](https://javadoc.pyranid.com/com/pyranid/PostTransactionOperationException.html). When there is no other transaction or cleanup failure, [`Database::transaction(TransactionalOperation)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transaction(com.pyranid.TransactionalOperation)) throws this exception as the primary failure. When the transaction operation, commit, rollback, or cleanup already failed, Pyranid suppresses it onto the primary exception. Check [`PostTransactionOperationException::getTransactionResult()`](https://javadoc.pyranid.com/com/pyranid/PostTransactionOperationException.html#getTransactionResult()) to distinguish a successful commit followed by callback failure from a failed or in-doubt transaction.
 
-Connection reuse is conservative and separate from the transaction result. When the final database outcome is unknown, Pyranid skips mutable-state restoration and attempts to abort and close the connection. Pyranid also discards a failed physical-begin candidate even when it reports `ROLLED_BACK`, because the candidate connection state may still be uncertain. If transaction-isolation, read-only, or auto-commit restoration fails after an otherwise definite commit or rollback, Pyranid stops further restoration and discards that connection as well rather than returning it to the pool with uncertain state.
+Connection reuse is conservative and separate from the transaction result. When the final database outcome is unknown, Pyranid skips mutable-state restoration and attempts to abort and close the connection. Pyranid also discards a failed physical-begin candidate even when it reports [`ROLLED_BACK`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#ROLLED_BACK), because the candidate connection state may still be uncertain. If transaction-isolation, read-only, or auto-commit restoration fails after an otherwise definite commit or rollback, Pyranid stops further restoration and discards that connection as well rather than returning it to the pool with uncertain state.
 
 ### Retrying Serialization Failures
 
@@ -759,7 +759,7 @@ TransactionRetryResult<Void> retryResult = database.transactionWithRetry(retryPo
 
 [`RetryPolicy::ofMaxAttempts(Integer, RetryPolicy.Backoff, RetryPolicy.Condition)`](https://javadoc.pyranid.com/com/pyranid/RetryPolicy.html#ofMaxAttempts(java.lang.Integer,com.pyranid.RetryPolicy.Backoff,com.pyranid.RetryPolicy.Condition)) means three total attempts in this example: the initial transaction plus up to two retries. Pyranid starts a fresh physical transaction for each attempt. The whole closure may run more than once, so keep non-idempotent external side effects outside the retried closure.
 
-`transactionWithRetry(...)` must own the complete transaction boundary and fails fast when called inside an active transaction for the same `Database`. Pyranid consults the configured retry condition only when replay is known to be safe. This includes a failure before a physical transaction becomes available to application work, even if no JDBC rollback completed or best-effort rollback of that begin candidate failed, because Pyranid discards the candidate. Body-level serialization failures and deadlocks remain eligible after a successful rollback; a commit-phase serialization failure is eligible only when Pyranid's follow-up rollback succeeds. Other commit failures, rollback failures after application work could execute, and failures that occur after a successful commit—including connection cleanup and post-transaction callback failures—are returned to the caller and are never replayed.
+[`Database::transactionWithRetry(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transactionWithRetry(com.pyranid.RetryPolicy,com.pyranid.TransactionalOperation)) must own the complete transaction boundary and fails fast when called inside an active transaction for the same [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html). Pyranid consults the configured retry condition only when replay is known to be safe. This includes a failure before a physical transaction becomes available to application work, even if no JDBC rollback completed or best-effort rollback of that begin candidate failed, because Pyranid discards the candidate. Body-level serialization failures and deadlocks remain eligible after a successful rollback; a commit-phase serialization failure is eligible only when Pyranid's follow-up rollback succeeds. Other commit failures, rollback failures after application work could execute, and failures that occur after a successful commit—including connection cleanup and post-transaction callback failures—are returned to the caller and are never replayed.
 
 Unlike [`Database::transaction(ReturningTransactionalOperation<T>)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transaction(com.pyranid.ReturningTransactionalOperation)), [`Database::transactionWithRetry(RetryPolicy, TransactionalOperation)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transactionWithRetry(com.pyranid.RetryPolicy,com.pyranid.TransactionalOperation)) returns a [`TransactionRetryResult`](https://javadoc.pyranid.com/com/pyranid/TransactionRetryResult.html) so callers can inspect failures recovered before success. [`TransactionRetryResult::getValue()`](https://javadoc.pyranid.com/com/pyranid/TransactionRetryResult.html#getValue()) contains the successful transaction value, and [`TransactionRetryResult::getFailures()`](https://javadoc.pyranid.com/com/pyranid/TransactionRetryResult.html#getFailures()) contains failed attempts that Pyranid retried before the transaction eventually succeeded.
 
@@ -807,17 +807,17 @@ RetryPolicy exponentialRetryPolicy = RetryPolicy.ofMaxAttempts(
 
 Timeouts can be classified with [`DatabaseException::isTimeout()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#isTimeout()) and opted into with [`RetryPolicy.Condition::timeout()`](https://javadoc.pyranid.com/com/pyranid/RetryPolicy.Condition.html#timeout()), but Pyranid does not treat them as automatically safe to retry. A timeout may surface after the database has already performed part or all of the work.
 
-Post-transaction operations registered with [`Transaction::addPostTransactionOperation(Consumer<TransactionResult>)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#addPostTransactionOperation(java.util.function.Consumer)) remain per-attempt hooks. A failed attempt whose rollback completes—including a commit-phase serialization failure followed by successful rollback—runs its hook with [`ROLLED_BACK`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#ROLLED_BACK) and may be retried if the policy permits. A failed physical-begin attempt also runs its hook with `ROLLED_BACK` and may be policy-retried even when no JDBC rollback completed or best-effort candidate rollback failed, because no application transaction work could execute and Pyranid discards the candidate connection. An attempt with an indeterminate outcome, including a rollback failure after application work could execute, runs its hook with [`IN_DOUBT`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#IN_DOUBT) and terminates without replay; the successful attempt runs its hook with [`COMMITTED`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#COMMITTED).
+Post-transaction operations registered with [`Transaction::addPostTransactionOperation(Consumer<TransactionResult>)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#addPostTransactionOperation(java.util.function.Consumer)) remain per-attempt hooks. A failed attempt whose rollback completes—including a commit-phase serialization failure followed by successful rollback—runs its hook with [`ROLLED_BACK`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#ROLLED_BACK) and may be retried if the policy permits. A failed physical-begin attempt also runs its hook with [`ROLLED_BACK`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#ROLLED_BACK) and may be policy-retried even when no JDBC rollback completed or best-effort candidate rollback failed, because no application transaction work could execute and Pyranid discards the candidate connection. An attempt with an indeterminate outcome, including a rollback failure after application work could execute, runs its hook with [`IN_DOUBT`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#IN_DOUBT) and terminates without replay; the successful attempt runs its hook with [`COMMITTED`](https://javadoc.pyranid.com/com/pyranid/TransactionResult.html#COMMITTED).
 
 ## ResultSet Mapping
 
 The out-of-the-box [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) implementation supports user-defined types that follow the JavaBean getter/setter conventions, primitives, and some additional common JDK types.
 
-[`Record`](https://openjdk.org/jeps/395) types are also supported.
+[`Record`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Record.html) types are also supported.
 
 ### Standard Types
 
-When querying for a single column, e.g. a SQL `COUNT`, it's often useful to map to a standard type like `String` or `Integer` or `Boolean`.
+When querying for a single column, e.g. a SQL `COUNT`, it's often useful to map to a standard type like [`String`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/String.html), [`Integer`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Integer.html), or [`Boolean`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Boolean.html).
 
 There's no need to create a custom "row" type to hold the result.
 
@@ -845,7 +845,7 @@ After that one-match minimum, matching is otherwise partial: Pyranid does not re
 
 An omitted column differs from a selected column containing SQL `NULL`. A selected `NULL` is mapped as `null` for reference targets - including invoking a JavaBean setter with `null` - and raises a [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) for a primitive target. Prefer a projection type whose members match the selected columns, or provide a custom [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html), when the application requires every target member to be populated.
 
-The default [`InstanceProvider`](https://javadoc.pyranid.com/com/pyranid/InstanceProvider.html) uses public constructors and the standard mapper uses public JavaBean accessors. Define mapped beans, records, constructors, getters, and setters as public. An application-owned `InstanceProvider` can instantiate an intentionally non-public record. Mapping a non-public JavaBean generally requires a custom [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html), because the standard mapper invokes the bean's setters itself.
+The default [`InstanceProvider`](https://javadoc.pyranid.com/com/pyranid/InstanceProvider.html) uses public constructors and the standard mapper uses public JavaBean accessors. Define mapped beans, records, constructors, getters, and setters as public. An application-owned [`InstanceProvider`](https://javadoc.pyranid.com/com/pyranid/InstanceProvider.html) can instantiate an intentionally non-public record. Mapping a non-public JavaBean generally requires a custom [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html), because the standard mapper invokes the bean's setters itself.
 
 By default, column names are assumed to be separated by `_` characters and are mapped to their camel-case equivalent.  For example:
 
@@ -911,7 +911,7 @@ The raw [`Map`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/jav
 List<Map> rows = database.query("SELECT * FROM car").fetchList(Map.class);
 ```
 
-The well-known JDK map tokens (`HashMap.class`, `TreeMap.class`, `Hashtable.class`, `ConcurrentHashMap.class`, and the `SortedMap`/`NavigableMap`/`ConcurrentMap` interfaces) are rejected with a clear error; other classes that happen to implement [`Map`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Map.html) continue to map via the JavaBean path.
+The well-known JDK map tokens ([`HashMap.class`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/HashMap.html), [`TreeMap.class`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/TreeMap.html), [`Hashtable.class`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Hashtable.html), [`ConcurrentHashMap.class`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/ConcurrentHashMap.html), and the [`SortedMap`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/SortedMap.html)/[`NavigableMap`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/NavigableMap.html)/[`ConcurrentMap`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/ConcurrentMap.html) interfaces) are rejected with a clear error; other classes that happen to implement [`Map`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Map.html) continue to map via the JavaBean path.
 
 The special case lives in the default [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) implementation only - a custom database-wide or per-query [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html) receiving the token decides for itself how to handle it.
 
@@ -951,17 +951,17 @@ The special case lives in the default [`ResultSetMapper`](https://javadoc.pyrani
 * [`Locale`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Locale.html) (IETF BCP 47 "language tag" format)
 * [`Currency`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Currency.html)
 
-Temporal result-set mapping uses JDBC `ResultSetMetaData` for the returned column. Zone-less `TIMESTAMP` values are wall-clock values; when mapping them to `Instant`, `OffsetDateTime`, `ZonedDateTime`, or `Date`, Pyranid interprets that wall clock in `Database.Builder::timeZone(...)`. Mapping a zone-less `TIMESTAMP` to `LocalDateTime` keeps the wall clock unchanged. `TIMESTAMP WITH TIME ZONE` values already identify an instant; mapping to `Instant` preserves that instant, and mapping to `ZonedDateTime` represents it in the configured `timeZone(...)`.
+Temporal result-set mapping uses JDBC [`ResultSetMetaData`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/ResultSetMetaData.html) for the returned column. Zone-less `TIMESTAMP` values are wall-clock values; when mapping them to [`Instant`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/Instant.html), [`OffsetDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/OffsetDateTime.html), [`ZonedDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/ZonedDateTime.html), or [`Date`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Date.html), Pyranid interprets that wall clock using [`Database.Builder::timeZone(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#timeZone(java.time.ZoneId)). Mapping a zone-less `TIMESTAMP` to [`LocalDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/LocalDateTime.html) keeps the wall clock unchanged. `TIMESTAMP WITH TIME ZONE` values already identify an instant; mapping to [`Instant`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/Instant.html) preserves that instant, and mapping to [`ZonedDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/ZonedDateTime.html) represents it in the configured [`timeZone(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#timeZone(java.time.ZoneId)).
 
-Some JDBC drivers expose temporal columns as strings instead of JDBC temporal objects. For JavaBean and record mapping, Pyranid parses ISO-8601 strings and common JDBC timestamp strings such as `2020-01-02 03:04:05` when the target property or component is `LocalDate`, `LocalTime`, `LocalDateTime`, `Instant`, `OffsetDateTime`, or `ZonedDateTime`.
+Some JDBC drivers expose temporal columns as strings instead of JDBC temporal objects. For JavaBean and record mapping, Pyranid parses ISO-8601 strings and common JDBC timestamp strings such as `2020-01-02 03:04:05` when the target property or component is [`LocalDate`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/LocalDate.html), [`LocalTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/LocalTime.html), [`LocalDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/LocalDateTime.html), [`Instant`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/Instant.html), [`OffsetDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/OffsetDateTime.html), or [`ZonedDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/ZonedDateTime.html).
 
-Pyranid preserves the fractional-second precision returned by your JDBC driver; it does not round or truncate `Instant`, `OffsetDateTime`, or `ZonedDateTime` values to milliseconds. The maximum precision is still determined by the database column and driver (for example, PostgreSQL timestamps are stored at microsecond precision).
+Pyranid preserves the fractional-second precision returned by your JDBC driver; it does not round or truncate [`Instant`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/Instant.html), [`OffsetDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/OffsetDateTime.html), or [`ZonedDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/ZonedDateTime.html) values to milliseconds. The maximum precision is still determined by the database column and driver (for example, PostgreSQL timestamps are stored at microsecond precision).
 
 ### SQL ARRAY and JSON Results
 
-SQL ARRAY columns can be mapped to Java array targets such as `String[]` or `UUID[]`. They can also be mapped to `List<T>` or `Set<T>` when Pyranid can see the generic element type from a Record component or JavaBean setter, for example `record Row(List<String> tags, Set<String> labels) {}` or `void setTags(Set<String> tags)`. Raw scalar `List.class` and `Set.class` targets are supported too, but the element type is whatever the JDBC driver returns because Java's `Class<List>` and `Class<Set>` tokens carry no generic type argument. Set targets use insertion order from the SQL ARRAY and apply normal Set semantics, so duplicates collapse and multiple SQL `NULL` elements become one `null`.
+SQL ARRAY columns can be mapped to Java array targets such as [`String[]`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/String.html) or [`UUID[]`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/UUID.html). They can also be mapped to [`List<T>`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/List.html) or [`Set<T>`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Set.html) when Pyranid can see the generic element type from a Record component or JavaBean setter, for example `record Row(List<String> tags, Set<String> labels) {}` or `void setTags(Set<String> tags)`. Raw scalar [`List.class`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/List.html) and [`Set.class`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Set.html) targets are supported too, but the element type is whatever the JDBC driver returns because Java's [`Class<List>`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Class.html) and [`Class<Set>`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Class.html) tokens carry no generic type argument. [`Set`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Set.html) targets use insertion order from the SQL ARRAY and apply normal Set semantics, so duplicates collapse and multiple SQL `NULL` elements become one `null`.
 
-PostgreSQL `JSON`/`JSONB` values returned by supported PostgreSQL JDBC drivers as `PGobject`, and DuckDB `JSON` values returned as driver nodes, map to `String` by default. Pyranid does not parse JSON into application objects; register a [`CustomColumnMapper`](https://javadoc.pyranid.com/com/pyranid/CustomColumnMapper.html) when you want to inflate JSON into your own type.
+PostgreSQL `JSON`/`JSONB` values returned by supported PostgreSQL JDBC drivers as [`PGobject`](https://jdbc.postgresql.org/documentation/publicapi/org/postgresql/util/PGobject.html), and DuckDB `JSON` values returned as driver nodes, map to [`String`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/String.html) by default. Pyranid does not parse JSON into application objects; register a [`CustomColumnMapper`](https://javadoc.pyranid.com/com/pyranid/CustomColumnMapper.html) when you want to inflate JSON into your own type.
 
 Text-backed vector columns such as pgvector, which supported PostgreSQL JDBC drivers surface as literals like `[0.1,0.2,0.3]`, map to `float[]` and `double[]` targets by parsing that literal. DuckDB fixed-size vector ARRAYs use Pyranid's SQL ARRAY conversion path. See the Vector section in Parameter Binding for the bind side.
 
@@ -1001,7 +1001,7 @@ Optional<Person> projected = database.query("""
   .fetchObject(Person.class);
 ```
 
-Nested STRUCTs map to nested records to any depth, and a record component typed `Map<String, Object>` receives the attribute map itself. `Map` row targets surface STRUCT values as plain insertion-ordered maps with no driver-specific types, including elements of top-level STRUCT/JSON list columns. Ordinary by-name row mapping always takes precedence: the single-column direct mapping applies only when no result column matches a record component. A `NULL` STRUCT maps to a `null` component (or an empty `Optional` for single-column fetches). Top-level row records - the single-column direct mapping included - are constructed via the configured [`InstanceProvider`](https://javadoc.pyranid.com/com/pyranid/InstanceProvider.html); nested records are constructed via their canonical constructors, and `CustomColumnMapper`s are not consulted for individual STRUCT attributes.
+Nested STRUCTs map to nested records to any depth, and a record component typed [`Map<String, Object>`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Map.html) receives the attribute map itself. [`Map`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Map.html) row targets surface STRUCT values as plain insertion-ordered maps with no driver-specific types, including elements of top-level STRUCT/JSON list columns. Ordinary by-name row mapping always takes precedence: the single-column direct mapping applies only when no result column matches a record component. A `NULL` STRUCT maps to a `null` component (or an empty [`Optional`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Optional.html) for single-column fetches). Top-level row records - the single-column direct mapping included - are constructed via the configured [`InstanceProvider`](https://javadoc.pyranid.com/com/pyranid/InstanceProvider.html); nested records are constructed via their canonical constructors, and [`CustomColumnMapper`](https://javadoc.pyranid.com/com/pyranid/CustomColumnMapper.html) instances are not consulted for individual STRUCT attributes.
 
 ### Custom Mapping
 
@@ -1181,15 +1181,15 @@ List<Employee> employees = database.query("""
   .fetchList(Employee.class);
 ```
 
-Use [`Database.Builder::queryTimeout(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#queryTimeout(java.time.Duration)), [`Database.Builder::fetchSize(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#fetchSize(java.lang.Integer)), and [`Database.Builder::maxRows(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#maxRows(java.lang.Integer)) to configure database-wide defaults. Per-query settings override database defaults. `Query::customize(...)` runs after those settings, so it can override them, and before Pyranid binds parameters.
+Use [`Database.Builder::queryTimeout(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#queryTimeout(java.time.Duration)), [`Database.Builder::fetchSize(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#fetchSize(java.lang.Integer)), and [`Database.Builder::maxRows(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#maxRows(java.lang.Integer)) to configure database-wide defaults. Per-query settings override database defaults. [`Query::customize(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#customize(com.pyranid.PreparedStatementCustomizer)) runs after those settings, so it can override them, and before Pyranid binds parameters.
 
-`queryTimeout(...)` maps to JDBC `Statement::setQueryTimeout(...)`. For driver-specific cancellation beyond timeouts, capture the `PreparedStatement` in `Query::customize(...)` and call `Statement::cancel()` from your application's cancellation path.
+[`Query::queryTimeout(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#queryTimeout(java.time.Duration)) maps to JDBC [`Statement::setQueryTimeout(...)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Statement.html#setQueryTimeout(int)). For driver-specific cancellation beyond timeouts, capture the [`PreparedStatement`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/PreparedStatement.html) in [`Query::customize(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#customize(com.pyranid.PreparedStatementCustomizer)) and call [`Statement::cancel()`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Statement.html#cancel()) from your application's cancellation path.
 
-`maxRows(...)` maps to JDBC `Statement::setMaxRows(...)` and is enforced by the driver. DuckDB's driver accepts but ignores it - use SQL `LIMIT` there.
+[`Query::maxRows(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#maxRows(java.lang.Integer)) maps to JDBC [`Statement::setMaxRows(...)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Statement.html#setMaxRows(int)) and is enforced by the driver. DuckDB's driver accepts but ignores it - use SQL `LIMIT` there.
 
-### PreparedStatementCustomizer
+### [`PreparedStatementCustomizer`](https://javadoc.pyranid.com/com/pyranid/PreparedStatementCustomizer.html)
 
-If you need to tweak the JDBC `PreparedStatement` before execution beyond built-in statement settings, use `Query::customize(...)`.
+If you need to tweak the JDBC [`PreparedStatement`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/PreparedStatement.html) before execution beyond built-in statement settings, use [`Query::customize(...)`](https://javadoc.pyranid.com/com/pyranid/Query.html#customize(com.pyranid.PreparedStatementCustomizer)).
 
 ```java
 List<Employee> employees = database.query("""
@@ -1222,10 +1222,10 @@ List<Employee> employees = database.query("""
 ```
 
 Notes:
-* Empty collections/arrays throw `IllegalArgumentException`.
-* `null` elements and empty `Optional` elements throw `IllegalArgumentException`. SQL `IN` does not match `NULL`; use an explicit `IS NULL` predicate when null matching is required.
+* Empty collections/arrays throw [`IllegalArgumentException`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/IllegalArgumentException.html).
+* `null` elements and empty [`Optional`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Optional.html) elements throw [`IllegalArgumentException`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/IllegalArgumentException.html). SQL `IN` does not match `NULL`; use an explicit `IS NULL` predicate when null matching is required.
 * Expansion is context-agnostic; using it outside of `IN (...)` is allowed but may produce invalid SQL.
-* Raw `Collection`/array values are rejected; use [`Parameters::inList(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#inList(java.util.Collection)).
+* Raw [`Collection`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Collection.html)/array values are rejected; use [`Parameters::inList(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#inList(java.util.Collection)).
 * Primitive arrays are supported via overloads (e.g. `int[]`, `long[]`).
 * If you want SQL ARRAY binding, use [`Parameters::sqlArrayOf(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#sqlArrayOf(java.lang.String,java.util.List)).
 * If you want to bind a typed collection via a custom binder, use [`Parameters::listOf(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#listOf(java.lang.Class,java.util.List)) / [`Parameters::setOf(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#setOf(java.lang.Class,java.util.Set)).
@@ -1268,9 +1268,9 @@ Notes:
 * [`Locale`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Locale.html) (IETF BCP 47 "language tag" format)
 * [`Currency`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Currency.html)
 
-Temporal binding uses JDBC `ParameterMetaData` when available to distinguish `TIMESTAMP` from `TIMESTAMP WITH TIME ZONE` targets. For known zone-less `TIMESTAMP` targets, Pyranid converts `Instant` and `OffsetDateTime` parameters through `Database.Builder::timeZone(...)` and binds the resulting local timestamp. For known `TIMESTAMP WITH TIME ZONE` targets, Pyranid binds them as time-zone-aware timestamps. `ZonedDateTime` parameters are normalized to `OffsetDateTime` first and follow the same rules.
+Temporal binding uses JDBC [`ParameterMetaData`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/ParameterMetaData.html) when available to distinguish `TIMESTAMP` from `TIMESTAMP WITH TIME ZONE` targets. For known zone-less `TIMESTAMP` targets, Pyranid converts [`Instant`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/Instant.html) and [`OffsetDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/OffsetDateTime.html) parameters through [`Database.Builder::timeZone(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#timeZone(java.time.ZoneId)) and binds the resulting local timestamp. For known `TIMESTAMP WITH TIME ZONE` targets, Pyranid binds them as time-zone-aware timestamps. [`ZonedDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/ZonedDateTime.html) parameters are normalized to [`OffsetDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/OffsetDateTime.html) first and follow the same rules.
 
-If parameter metadata is unavailable or non-identifying, `Instant` and `OffsetDateTime` default to `TIMESTAMP_WITH_TIME_ZONE`. For drivers or proxies that cannot provide identifying parameter metadata when your target columns are zone-less `TIMESTAMP` values, configure `ambiguousTimestampBindingStrategy(TIMESTAMP_WITHOUT_TIME_ZONE)`.
+If parameter metadata is unavailable or non-identifying, [`Instant`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/Instant.html) and [`OffsetDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/OffsetDateTime.html) default to [`TIMESTAMP_WITH_TIME_ZONE`](https://javadoc.pyranid.com/com/pyranid/AmbiguousTimestampBindingStrategy.html#TIMESTAMP_WITH_TIME_ZONE). For drivers or proxies that cannot provide identifying parameter metadata when your target columns are zone-less `TIMESTAMP` values, configure [`Database.Builder::ambiguousTimestampBindingStrategy(TIMESTAMP_WITHOUT_TIME_ZONE)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#ambiguousTimestampBindingStrategy(com.pyranid.AmbiguousTimestampBindingStrategy)) with [`TIMESTAMP_WITHOUT_TIME_ZONE`](https://javadoc.pyranid.com/com/pyranid/AmbiguousTimestampBindingStrategy.html#TIMESTAMP_WITHOUT_TIME_ZONE).
 
 ### Special Parameters
 
@@ -1386,7 +1386,7 @@ Optional<Document> mostSimilarDocument = database.query("""
 
 #### SQL ARRAY
 
-SQL ARRAY binding is supported out-of-the-box for databases whose JDBC drivers support `Connection::createArrayOf`. Pyranid's integration suites verify ordinary one-dimensional arrays on PostgreSQL and DuckDB; DuckDB `LIST` and fixed-size `ARRAY` columns both accept bound arrays. MySQL, MariaDB, SQLite, SQL Server, and Oracle are guarded as unsupported and fail with a clear `DatabaseException`; use IN-list expansion, JSON, or a database-specific custom binder for those engines.
+SQL ARRAY binding is supported out-of-the-box for databases whose JDBC drivers support [`Connection::createArrayOf(...)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html#createArrayOf(java.lang.String,java.lang.Object%5B%5D)). Pyranid's integration suites verify ordinary one-dimensional arrays on PostgreSQL and DuckDB; DuckDB `LIST` and fixed-size `ARRAY` columns both accept bound arrays. MySQL, MariaDB, SQLite, SQL Server, and Oracle are guarded as unsupported and fail with a clear [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html); use IN-list expansion, JSON, or a database-specific custom binder for those engines.
 
 Supported methods:
 
@@ -1424,7 +1424,7 @@ database.query("""
   .execute();
 ```
 
-Pyranid recursively materializes nested `SqlArrayParameter` values. Multidimensional binding is integration-verified on DuckDB; other JDBC drivers may impose different element-type or nesting rules. Represent each dimension with its own `sqlArrayOf(...)`, and make each containing level's `baseTypeName` name its element type. For example, the outer array below has `VARCHAR[]` elements and each inner array has `VARCHAR` elements:
+Pyranid recursively materializes nested [`SqlArrayParameter`](https://javadoc.pyranid.com/com/pyranid/SqlArrayParameter.html) values. Multidimensional binding is integration-verified on DuckDB; other JDBC drivers may impose different element-type or nesting rules. Represent each dimension with its own [`Parameters::sqlArrayOf(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#sqlArrayOf(java.lang.String,java.util.List)), and make each containing level's [`SqlArrayParameter::getBaseTypeName()`](https://javadoc.pyranid.com/com/pyranid/SqlArrayParameter.html#getBaseTypeName()) name its element type. For example, the outer array below has `VARCHAR[]` elements and each inner array has `VARCHAR` elements:
 
 ```java
 SqlArrayParameter<SqlArrayParameter<String>> matrix = Parameters.sqlArrayOf(
@@ -1434,13 +1434,13 @@ SqlArrayParameter<SqlArrayParameter<String>> matrix = Parameters.sqlArrayOf(
     Parameters.sqlArrayOf("VARCHAR", List.of("c", "d"))));
 ```
 
-For DuckDB elements represented by `Instant`, `OffsetDateTime`, `ZonedDateTime`, `java.sql.Timestamp`, or `java.util.Date`, use an explicit `TIMESTAMP` or `TIMESTAMPTZ` base type. Pyranid uses it to apply the intended timestamp and configured `Database` time-zone semantics. A named DuckDB type alias does not expose its underlying timestamp type through this binding path, so Pyranid fails fast for these instant-bearing values instead of guessing.
+For DuckDB elements represented by [`Instant`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/Instant.html), [`OffsetDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/OffsetDateTime.html), [`ZonedDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/ZonedDateTime.html), [`java.sql.Timestamp`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Timestamp.html), or [`java.util.Date`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Date.html), use an explicit `TIMESTAMP` or `TIMESTAMPTZ` base type. Pyranid uses it to apply the intended timestamp and configured [`Database.Builder::timeZone(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#timeZone(java.time.ZoneId)) semantics. A named DuckDB type alias does not expose its underlying timestamp type through this binding path, so Pyranid fails fast for these instant-bearing values instead of guessing.
 
 Use a [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) for database-specific collection types, table-valued parameters, or a driver whose multidimensional representation differs.
 
 #### SQL STRUCT
 
-[`Parameters::sqlStructOf(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#sqlStructOf(java.lang.String,java.util.List)) binds positional attributes through JDBC `Connection::createStruct(...)`. SQL STRUCT binding is currently supported for DuckDB; other dialects fail fast rather than passing a driver-specific wrapper to JDBC.
+[`Parameters::sqlStructOf(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#sqlStructOf(java.lang.String,java.util.List)) binds positional attributes through JDBC [`Connection::createStruct(...)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html#createStruct(java.lang.String,java.lang.Object%5B%5D)). SQL STRUCT binding is currently supported for DuckDB; other dialects fail fast rather than passing a driver-specific wrapper to JDBC.
 
 Supported methods:
 
@@ -1468,9 +1468,9 @@ database.query("""
   .execute();
 ```
 
-For DuckDB attributes represented by `Instant`, `OffsetDateTime`, `ZonedDateTime`, `java.sql.Timestamp`, or `java.util.Date`, always provide the complete inline STRUCT declaration. Pyranid uses it to distinguish `TIMESTAMP` from `TIMESTAMPTZ` and to apply the `Database` time zone for zone-less timestamps. A named DuckDB `CREATE TYPE` alias does not expose its attribute types through this binding path, so Pyranid fails fast for these instant-bearing values instead of guessing. Named aliases remain usable for attributes that do not require instant-to-timestamp normalization.
+For DuckDB attributes represented by [`Instant`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/Instant.html), [`OffsetDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/OffsetDateTime.html), [`ZonedDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/ZonedDateTime.html), [`java.sql.Timestamp`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Timestamp.html), or [`java.util.Date`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Date.html), always provide the complete inline STRUCT declaration. Pyranid uses it to distinguish `TIMESTAMP` from `TIMESTAMPTZ` and to apply the configured [`Database.Builder::timeZone(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#timeZone(java.time.ZoneId)) for zone-less timestamps. A named DuckDB `CREATE TYPE` alias does not expose its attribute types through this binding path, so Pyranid fails fast for these instant-bearing values instead of guessing. Named aliases remain usable for attributes that do not require instant-to-timestamp normalization.
 
-Both overloads defensively copy their attributes. Attributes may be `null` and may include nested [`SqlStructParameter`](https://javadoc.pyranid.com/com/pyranid/SqlStructParameter.html) or [`SqlArrayParameter`](https://javadoc.pyranid.com/com/pyranid/SqlArrayParameter.html) values. Use the array overload when an attribute is null and `List.of(...)` would reject it:
+Both overloads defensively copy their attributes. Attributes may be `null` and may include nested [`SqlStructParameter`](https://javadoc.pyranid.com/com/pyranid/SqlStructParameter.html) or [`SqlArrayParameter`](https://javadoc.pyranid.com/com/pyranid/SqlArrayParameter.html) values. Use the array overload when an attribute is null and [`List::of(...)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/List.html#of(E...)) would reject it:
 
 ```java
 Parameters.sqlStructOf(
@@ -1553,9 +1553,9 @@ Because the real value is bound to the [`PreparedStatement`](https://docs.oracle
 | Surface | Covered? |
 | --- | --- |
 | Pyranid's `parameters=[...]` rendering ([`StatementContext`](https://javadoc.pyranid.com/com/pyranid/StatementContext.html)/[`StatementLog`](https://javadoc.pyranid.com/com/pyranid/StatementLog.html) diagnostics) | Yes - masks/redactor always apply |
-| [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) messages, `toString()`, and DBMS metadata fields ([`getDetail()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getDetail()), [`getDbmsMessage()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getDbmsMessage()), ...) | Best-effort - verbatim occurrences of [`Parameters::secure(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) values are scrubbed and replaced with the mask |
+| [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) messages, [`toString()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#toString()), and DBMS metadata fields ([`getDetail()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getDetail()), [`getDbmsMessage()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getDbmsMessage()), ...) | Best-effort - verbatim occurrences of [`Parameters::secure(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) values are scrubbed and replaced with the mask |
 | The raw driver exception ([`getCause()`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Throwable.html#getCause())), stack traces, and anything that renders them (log appenders, Sentry, OpenTelemetry exception events) | **No - deliberately preserved unsanitized. Treat the cause chain as sensitive.** |
-| Driver-transformed echoes (re-formatted numbers/temporals, truncated strings, encoded bytes), vector parameters; `null`/`Boolean`/very short secure values | No - the scrub is verbatim-only and skips values that would corrupt unrelated diagnostics |
+| Driver-transformed echoes (re-formatted numbers/temporals, truncated strings, encoded bytes), vector parameters; `null`/[`Boolean`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Boolean.html)/very short secure values | No - the scrub is verbatim-only and skips values that would corrupt unrelated diagnostics |
 | Pyranid's own mapping-error messages (e.g. `Cannot map value '...'` when a value round-trips into a [`ResultSet`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/ResultSet.html)) | No |
 | Exceptions raised outside statement execution - commit/rollback time (e.g. deferred constraint violations), connection acquisition, raw-connection operations | No - no statement context exists at those points |
 
@@ -1569,7 +1569,7 @@ This allows you to use your objects as-is with Pyranid instead of sprinkling "co
 
 When multiple custom parameter binders apply, Pyranid tries them in the order supplied. Returning [`BindingResult::fallback()`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.BindingResult.html#fallback()) lets the next applicable binder run; if none handles the value, Pyranid's normal binding rules apply.
 
-Because a binder can be asked speculatively before falling back, only mutate the `PreparedStatement` or other externally-visible state after you have decided to handle the value.
+Because a binder can be asked speculatively before falling back, only mutate the [`PreparedStatement`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/PreparedStatement.html) or other externally-visible state after you have decided to handle the value.
 
 #### Arbitrary Types
 
@@ -1652,7 +1652,7 @@ database.query("""
 
 #### Standard Collections
 
-Runtime binding of generic types is made difficult by type erasure.  For convenience, Pyranid offers special parameters that perform type capture for standard [`List<E>`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/List.html), [`Set<E>)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Set.html), and [`Map<K,V>)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Map.html) types:
+Runtime binding of generic types is made difficult by type erasure.  For convenience, Pyranid offers special parameters that perform type capture for standard [`List<E>`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/List.html), [`Set<E>`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Set.html), and [`Map<K,V>`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Map.html) types:
 
 * [`Parameters::listOf(Class<E>, List<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#listOf(java.lang.Class,java.util.List))
 * [`Parameters::setOf(Class<E>, Set<E>)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#setOf(java.lang.Class,java.util.Set))
@@ -1673,7 +1673,7 @@ database.query("INSERT INTO t(v) VALUES (:v)")
   .execute();
 ```
 
-...would be handled by this custom binder, because `targetType.matchesParameterizedType(List.class, UUID.class)` returns `true` thanks to runtime type capturing:
+...would be handled by this custom binder, because [`targetType.matchesParameterizedType(List.class, UUID.class)`](https://javadoc.pyranid.com/com/pyranid/TargetType.html#matchesParameterizedType(java.lang.Class,java.lang.Class...)) returns `true` thanks to runtime type capturing:
 
 ```java
 PreparedStatementBinder preparedStatementBinder = PreparedStatementBinder.withCustomParameterBinders(List.of(
@@ -1738,39 +1738,39 @@ In general, a runtime [`DatabaseException`](https://javadoc.pyranid.com/com/pyra
 
 For convenience, [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) exposes additional properties, which are populated if provided by the underlying [`java.sql.SQLException`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/SQLException.html):
 
-* `errorCode` (optional)
-* `sqlState` (optional)
+* [`getErrorCode()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getErrorCode()) (optional)
+* [`getSqlState()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getSqlState()) (optional)
 
 It also exposes conservative classification predicates:
 
-* `isUniqueConstraintViolation()`
-* `isForeignKeyViolation()`
-* `isDeadlock()`
-* `isTransient()`
-* `isSerializationFailure()`
-* `isTimeout()`
+* [`isUniqueConstraintViolation()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#isUniqueConstraintViolation())
+* [`isForeignKeyViolation()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#isForeignKeyViolation())
+* [`isDeadlock()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#isDeadlock())
+* [`isTransient()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#isTransient())
+* [`isSerializationFailure()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#isSerializationFailure())
+* [`isTimeout()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#isTimeout())
 
-These predicates are intentionally conservative and database-type-aware. They recognize well-known SQLState and vendor error codes for PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, Oracle, and generic JDBC transient/recoverable exception classes; they return `false` when Pyranid cannot reliably classify the failure. DuckDB's driver reports no SQLStates or vendor codes, so classification there matches DuckDB's stable diagnostic message shapes: `Constraint Error:` duplicate-key and foreign-key messages drive the constraint predicates, and optimistic-concurrency `TransactionContext Error: ... conflict` failures classify as retryable serialization failures (integrating with `RetryPolicy`). DuckDB query timeouts surface as JDBC `SQLTimeoutException` and classify generically.
-The predicates return non-null `Boolean` values.
+These predicates are intentionally conservative and database-type-aware. They recognize well-known SQLState and vendor error codes for PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, Oracle, and generic JDBC transient/recoverable exception classes; they return `false` when Pyranid cannot reliably classify the failure. DuckDB's driver reports no SQLStates or vendor codes, so classification there matches DuckDB's stable diagnostic message shapes: `Constraint Error:` duplicate-key and foreign-key messages drive the constraint predicates, and optimistic-concurrency `TransactionContext Error: ... conflict` failures classify as retryable serialization failures (integrating with [`RetryPolicy`](https://javadoc.pyranid.com/com/pyranid/RetryPolicy.html)). DuckDB query timeouts surface as JDBC [`SQLTimeoutException`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/SQLTimeoutException.html) and classify generically.
+The predicates return non-null [`Boolean`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Boolean.html) values.
 
 For PostgreSQL, the following properties are also available:
 
-* `column` (optional)
-* `constraint` (optional)
-* `datatype` (optional)
-* `detail` (optional)
-* `file` (optional)
-* `hint` (optional)
-* `internalPosition` (optional)
-* `internalQuery` (optional)
-* `line` (optional)
-* `dbmsMessage` (optional)
-* `position` (optional)
-* `routine` (optional)
-* `schema` (optional)
-* `severity` (optional)
-* `table` (optional)
-* `where` (optional)
+* [`getColumn()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getColumn()) (optional)
+* [`getConstraint()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getConstraint()) (optional)
+* [`getDatatype()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getDatatype()) (optional)
+* [`getDetail()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getDetail()) (optional)
+* [`getFile()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getFile()) (optional)
+* [`getHint()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getHint()) (optional)
+* [`getInternalPosition()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getInternalPosition()) (optional)
+* [`getInternalQuery()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getInternalQuery()) (optional)
+* [`getLine()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getLine()) (optional)
+* [`getDbmsMessage()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getDbmsMessage()) (optional)
+* [`getPosition()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getPosition()) (optional)
+* [`getRoutine()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getRoutine()) (optional)
+* [`getSchema()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getSchema()) (optional)
+* [`getSeverity()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getSeverity()) (optional)
+* [`getTable()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getTable()) (optional)
+* [`getWhere()`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html#getWhere()) (optional)
 
 ### Practical Application
 
@@ -1829,11 +1829,11 @@ Database database = Database.withDataSource(dataSource)
   }).build();
 ```
 
-`StatementLogger` failures are intentionally fail-fast. If your logger throws after a statement otherwise succeeds, that exception propagates to the caller. Inside a Pyranid transaction, logger failures participate in normal transaction failure handling and cause rollback. If the statement itself failed, the logger failure is attached as a suppressed exception to the primary failure.
+[`StatementLogger`](https://javadoc.pyranid.com/com/pyranid/StatementLogger.html) failures are intentionally fail-fast. If your logger throws after a statement otherwise succeeds, that exception propagates to the caller. Inside a Pyranid transaction, logger failures participate in normal transaction failure handling and cause rollback. If the statement itself failed, the logger failure is attached as a suppressed exception to the primary failure.
 
 Keep logger implementations lightweight and failure-safe. If logging must never affect database writes, catch and handle exceptions inside your logger implementation, or use [`MetricsCollector`](https://javadoc.pyranid.com/com/pyranid/MetricsCollector.html) for best-effort observability.
 
-`StatementContext::toString()` and `StatementLog::toString()` use [`StatementContext::getRedactedParameters()`](https://javadoc.pyranid.com/com/pyranid/StatementContext.html#getRedactedParameters()). Values wrapped with [`Parameters::secure(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) render as their mask:
+[`StatementContext::toString()`](https://javadoc.pyranid.com/com/pyranid/StatementContext.html#toString()) and [`StatementLog::toString()`](https://javadoc.pyranid.com/com/pyranid/StatementLog.html#toString()) use [`StatementContext::getRedactedParameters()`](https://javadoc.pyranid.com/com/pyranid/StatementContext.html#getRedactedParameters()). Values wrapped with [`Parameters::secure(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) render as their mask:
 
 ```java
 Database database = Database.withDataSource(dataSource)
@@ -1846,7 +1846,7 @@ database.query("INSERT INTO api_credential (account_id, token_hash) VALUES (:acc
   .execute();
 ```
 
-The logged `StatementLog` includes a redacted parameter display:
+The logged [`StatementLog`](https://javadoc.pyranid.com/com/pyranid/StatementLog.html) includes a redacted parameter display:
 
 ```text
 parameters=[acct_123, <redacted>]
@@ -1863,13 +1863,13 @@ Pyranid exception messages use the same bounded parameter display. Under the def
 
 [`StatementLog`](https://javadoc.pyranid.com/com/pyranid/StatementLog.html) instances give you access to the following for each SQL statement executed:
 
-* `statementContext`
-* `connectionAcquisitionDuration` (optional)
-* `preparationDuration` (optional)
-* `executionDuration` (optional)
-* `resultSetMappingDuration` (optional)
-* `batchSize` (optional)
-* `exception` (optional)
+* [`getStatementContext()`](https://javadoc.pyranid.com/com/pyranid/StatementLog.html#getStatementContext())
+* [`getConnectionAcquisitionDuration()`](https://javadoc.pyranid.com/com/pyranid/StatementLog.html#getConnectionAcquisitionDuration()) (optional)
+* [`getPreparationDuration()`](https://javadoc.pyranid.com/com/pyranid/StatementLog.html#getPreparationDuration()) (optional)
+* [`getExecutionDuration()`](https://javadoc.pyranid.com/com/pyranid/StatementLog.html#getExecutionDuration()) (optional)
+* [`getResultSetMappingDuration()`](https://javadoc.pyranid.com/com/pyranid/StatementLog.html#getResultSetMappingDuration()) (optional)
+* [`getBatchSize()`](https://javadoc.pyranid.com/com/pyranid/StatementLog.html#getBatchSize()) (optional)
+* [`getException()`](https://javadoc.pyranid.com/com/pyranid/StatementLog.html#getException()) (optional)
 
 ### Statement Identifiers
 
@@ -1952,7 +1952,7 @@ mvn -q -P integration,it-mariadb -Dit.test=MariaDbIntegrationIT verify
 mvn -q -P integration,it-yugabyte -Dit.test=YugabyteNotificationIT verify
 ```
 
-The `integration` Maven profile runs JDBC integration tests against PostgreSQL, MySQL, SQLite, and DuckDB. PostgreSQL and MySQL use Testcontainers and require a working local Docker environment; SQLite and DuckDB run in-process against temporary local database files. Add `it-mariadb`, `it-yugabyte`, `it-sqlserver`, or `it-oracle` for the optional MariaDB, YugabyteDB, SQL Server, and Oracle integration source sets. The YugabyteDB leg is advisory and enables its Early Access `LISTEN`/`NOTIFY` feature on both Masters and TServers. SQL Server requires the Microsoft container EULA; the test container calls `acceptLicense()`, and CI/local runs should provide `ACCEPT_EULA=Y` when required by the environment. The default Docker image tags are `pgvector/pgvector:pg17`, `mysql:8.4`, `mariadb:11.4`, `yugabytedb/yugabyte:2026.1.1.1-b2`, `mcr.microsoft.com/mssql/server:2022-CU26-ubuntu-22.04`, and `gvenzl/oracle-free:23-slim-faststart`. They can be overridden with `-Dpostgres.integration.image=...`, `-Dmysql.integration.image=...`, `-Dmariadb.integration.image=...`, `-Dyugabyte.integration.image=...`, `-Dsqlserver.integration.image=...`, and `-Doracle.integration.image=...`. PostgreSQL image overrides must include the `vector` extension.
+The `integration` Maven profile runs JDBC integration tests against PostgreSQL, MySQL, SQLite, and DuckDB. PostgreSQL and MySQL use Testcontainers and require a working local Docker environment; SQLite and DuckDB run in-process against temporary local database files. Add `it-mariadb`, `it-yugabyte`, `it-sqlserver`, or `it-oracle` for the optional MariaDB, YugabyteDB, SQL Server, and Oracle integration source sets. The YugabyteDB leg is advisory and enables its Early Access `LISTEN`/`NOTIFY` feature on both Masters and TServers. SQL Server requires the Microsoft container EULA; the test container calls [`MSSQLServerContainer::acceptLicense()`](https://javadoc.io/doc/org.testcontainers/testcontainers-mssqlserver/2.0.5/org/testcontainers/containers/MSSQLServerContainer.html#acceptLicense()), and CI/local runs should provide `ACCEPT_EULA=Y` when required by the environment. The default Docker image tags are `pgvector/pgvector:pg17`, `mysql:8.4`, `mariadb:11.4`, `yugabytedb/yugabyte:2026.1.1.1-b2`, `mcr.microsoft.com/mssql/server:2022-CU26-ubuntu-22.04`, and `gvenzl/oracle-free:23-slim-faststart`. They can be overridden with `-Dpostgres.integration.image=...`, `-Dmysql.integration.image=...`, `-Dmariadb.integration.image=...`, `-Dyugabyte.integration.image=...`, `-Dsqlserver.integration.image=...`, and `-Doracle.integration.image=...`. PostgreSQL image overrides must include the `vector` extension.
 
 The portable integration suites cover named binding, repeated parameters, `IN` expansion, null binding/mapping, numeric and temporal conversions, JDBC-generated keys, transaction commit/rollback, transaction options where supported, batch chunking, streaming, guarded raw connection access, statement row limits, health checks, SQL ARRAY guards, and exception wrapping/classification. Vendor suites add coverage for PostgreSQL JSONB, SQL arrays, UUIDs, `RETURNING`, temporal binding/mapping, pgvector binding/read-back, and exception metadata; YugabyteDB smart-driver JSONB binding plus enabled notification send/receive; MySQL/MariaDB JSON, UUID strings, unsigned numerics, streaming, and MariaDB `INSERT ... RETURNING`; SQLite `RETURNING`, UUID text, and decimal text precision; DuckDB STRUCT-to-record mapping (nested records, record lists, map rows), native UUID, `HUGEINT`, JSON, BLOB, vector binding with `array_cosine_distance`, SQL ARRAY round trips, sequence-backed `RETURNING`, the generated-key guard, and write-write conflict classification; SQL Server `OUTPUT`, trigger-safe `OUTPUT INTO`, `MERGE ... OUTPUT`, `uniqueidentifier`, and `datetimeoffset`; and Oracle explicit generated-key columns, UUID `RAW(16)`, empty-string-as-null, timestamp-with-time-zone, and `NUMBER` mapping.
 
@@ -1978,7 +1978,7 @@ Pyranid is a zero-runtime-dependency library, but applications still need to pro
 
 ### SQL Injection and Dynamic SQL
 
-Pyranid named parameters bind SQL values through JDBC `PreparedStatement` placeholders. Use them for values such as IDs, names, timestamps, limits, and status codes.
+Pyranid named parameters bind SQL values through JDBC [`PreparedStatement`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/PreparedStatement.html) placeholders. Use them for values such as IDs, names, timestamps, limits, and status codes.
 
 Named parameters do not bind SQL structure. Table names, column names, sort directions, operators, and other SQL syntax must not be built from untrusted input. If SQL structure needs to vary, map application-level choices to hardcoded SQL fragments with an allowlist.
 
@@ -2002,7 +2002,7 @@ Pyranid exception messages include bounded SQL and bounded parameter display val
 
 ### Startup and Database Type Detection
 
-[`Database.Builder::build()`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#build()) does not validate connectivity or inspect JDBC metadata. If you do not configure [`Database.Builder::databaseType(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#databaseType(com.pyranid.DatabaseType)), Pyranid detects the database type lazily when code first requests database-type-sensitive behavior. Detection recognizes PostgreSQL, Oracle, MySQL, MariaDB, SQLite, SQL Server, and DuckDB from JDBC product, URL, driver, and MariaDB-version signals, then falls back to `GENERIC`. Calling [`Database::getDatabaseType()`](https://javadoc.pyranid.com/com/pyranid/Database.html#getDatabaseType()) outside an active query may acquire a fresh connection; configure `databaseType(...)` explicitly when using small pools, database proxies, or startup paths that must avoid surprise connection checkouts.
+[`Database.Builder::build()`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#build()) does not validate connectivity or inspect JDBC metadata. If you do not configure [`Database.Builder::databaseType(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#databaseType(com.pyranid.DatabaseType)), Pyranid detects the database type lazily when code first requests database-type-sensitive behavior. Detection recognizes PostgreSQL, Oracle, MySQL, MariaDB, SQLite, SQL Server, and DuckDB from JDBC product, URL, driver, and MariaDB-version signals, then falls back to [`DatabaseType::GENERIC`](https://javadoc.pyranid.com/com/pyranid/DatabaseType.html#GENERIC). Calling [`Database::getDatabaseType()`](https://javadoc.pyranid.com/com/pyranid/Database.html#getDatabaseType()) outside an active query may acquire a fresh connection; configure [`Database.Builder::databaseType(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#databaseType(com.pyranid.DatabaseType)) explicitly when using small pools, database proxies, or startup paths that must avoid surprise connection checkouts.
 
 Use [`Database::performHealthCheck(Duration)`](https://javadoc.pyranid.com/com/pyranid/Database.html#performHealthCheck(java.time.Duration)) when you want an explicit startup or readiness validation step:
 
@@ -2010,19 +2010,19 @@ Use [`Database::performHealthCheck(Duration)`](https://javadoc.pyranid.com/com/p
 database.performHealthCheck(Duration.ofSeconds(2));
 ```
 
-This borrows a fresh connection, calls JDBC [`Connection::isValid(int)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html#isValid(int)), closes the connection, and throws `DatabaseException` if acquisition or validation fails. It does not execute SQL, so it is portable across JDBC drivers that implement the standard validation API. It does not participate in an active Pyranid transaction.
+This borrows a fresh connection, calls JDBC [`Connection::isValid(int)`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html#isValid(int)), closes the connection, and throws [`DatabaseException`](https://javadoc.pyranid.com/com/pyranid/DatabaseException.html) if acquisition or validation fails. It does not execute SQL, so it is portable across JDBC drivers that implement the standard validation API. It does not participate in an active Pyranid transaction.
 
 ### Timestamp Time Zone Handling
 
-`Database.Builder::timeZone(...)` controls how zone-less `TIMESTAMP` values are interpreted when mapping to instant-based Java types. It also controls binding if `ambiguousTimestampBindingStrategy(TIMESTAMP_WITHOUT_TIME_ZONE)` is enabled for drivers that cannot report identifying timestamp parameter metadata.
+[`Database.Builder::timeZone(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#timeZone(java.time.ZoneId)) controls how zone-less `TIMESTAMP` values are interpreted when mapping to instant-based Java types. It also controls binding if [`Database.Builder::ambiguousTimestampBindingStrategy(...)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#ambiguousTimestampBindingStrategy(com.pyranid.AmbiguousTimestampBindingStrategy)) is configured with [`TIMESTAMP_WITHOUT_TIME_ZONE`](https://javadoc.pyranid.com/com/pyranid/AmbiguousTimestampBindingStrategy.html#TIMESTAMP_WITHOUT_TIME_ZONE) for drivers that cannot report identifying timestamp parameter metadata.
 
-A [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) instance has one effective [`DatabaseType`](https://javadoc.pyranid.com/com/pyranid/DatabaseType.html). If one application talks to multiple database products, create one `Database` per product and configure each explicitly.
+A [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) instance has one effective [`DatabaseType`](https://javadoc.pyranid.com/com/pyranid/DatabaseType.html). If one application talks to multiple database products, create one [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) per product and configure each explicitly.
 
 ### Transaction Boundaries
 
-Each call to [`Database::transaction(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transaction(com.pyranid.TransactionalOperation)) opens an independent transaction with its own physical connection. Nested `transaction(...)` calls do not auto-join an outer transaction and can pressure small pools. Use [`Database::participate(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#participate(com.pyranid.Transaction,com.pyranid.TransactionalOperation)) to run work on an existing transaction from another thread, and make sure participating workers complete before the owning transaction closure returns; coordinate with application primitives such as [`CompletableFuture::join`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/CompletableFuture.html#join()), [`ExecutorService::awaitTermination`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/ExecutorService.html#awaitTermination(long,java.util.concurrent.TimeUnit)), or [`CountDownLatch`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/CountDownLatch.html).
+Each call to [`Database::transaction(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transaction(com.pyranid.TransactionalOperation)) opens an independent transaction with its own physical connection. Nested [`Database::transaction(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transaction(com.pyranid.TransactionalOperation)) calls do not auto-join an outer transaction and can pressure small pools. Use [`Database::participate(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#participate(com.pyranid.Transaction,com.pyranid.TransactionalOperation)) to run work on an existing transaction from another thread, and make sure participating workers complete before the owning transaction closure returns; coordinate with application primitives such as [`CompletableFuture::join`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/CompletableFuture.html#join()), [`ExecutorService::awaitTermination`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/ExecutorService.html#awaitTermination(long,java.util.concurrent.TimeUnit)), or [`CountDownLatch`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/concurrent/CountDownLatch.html).
 
-Because transaction context is thread-local, async frameworks that resume work on a different thread do not automatically carry a Pyranid transaction with them. Pin transactional database work to the transaction thread, or explicitly rejoin with `participate(...)` on the thread that performs the database work.
+Because transaction context is thread-local, async frameworks that resume work on a different thread do not automatically carry a Pyranid transaction with them. Pin transactional database work to the transaction thread, or explicitly rejoin with [`Database::participate(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#participate(com.pyranid.Transaction,com.pyranid.TransactionalOperation)) on the thread that performs the database work.
 
 ### Streaming Results
 
@@ -2036,13 +2036,13 @@ DuckDB's JDBC driver does not support savepoints. Savepoints are stack-like on m
 
 ### Large Update Counts
 
-Pyranid uses JDBC `executeLargeUpdate(...)` / `executeLargeBatch(...)` when supported and falls back to standard update APIs when the driver reports lack of support. That support decision is cached per `Database` instance.
+Pyranid uses JDBC [`PreparedStatement::executeLargeUpdate()`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/PreparedStatement.html#executeLargeUpdate()) / [`Statement::executeLargeBatch()`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Statement.html#executeLargeBatch()) when supported and falls back to standard update APIs when the driver reports lack of support. That support decision is cached per [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) instance.
 
 ### Notifications
 
 Pyranid provides a database-neutral API for transient named notifications. PostgreSQL `LISTEN`/`NOTIFY` is the only currently supported implementation. Notifications are lossy hints: applications remain responsible for reconciling authoritative durable state and for supervising or reopening listener sessions.
 
-YugabyteDB exposes `LISTEN`/`NOTIFY` as an Early Access feature in v2025.2.3 and later. It is disabled by default and requires `ysql_yb_enable_listen_notify=true` on both Masters and TServers. Pyranid's capability query checks the dialect and runtime driver adapter; it cannot inspect this server flag. If the feature is disabled or unavailable in the current server version, notification setup or sending fails with `UnsupportedOperationException`. See the [YugabyteDB documentation](https://docs.yugabyte.com/stable/api/ysql/the-sql-language/statements/cmd_listen_notify/).
+YugabyteDB exposes `LISTEN`/`NOTIFY` as an Early Access feature in v2025.2.3 and later. It is disabled by default and requires `ysql_yb_enable_listen_notify=true` on both Masters and TServers. Pyranid's capability query checks the dialect and runtime driver adapter; it cannot inspect this server flag. If the feature is disabled or unavailable in the current server version, notification setup or sending fails with [`UnsupportedOperationException`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/UnsupportedOperationException.html). See the [YugabyteDB documentation](https://docs.yugabyte.com/stable/api/ysql/the-sql-language/statements/cmd_listen_notify/).
 
 Each listener holds one backend session for the callback lifetime. Use a direct or session-pooled listener source; PgBouncer transaction and statement pooling are unsupported for listeners and can appear to register before delivery silently stops. See the [Notifications guide](https://www.pyranid.com/docs/notifications) for the API, topology, interruption, and reconciliation contracts.
 
