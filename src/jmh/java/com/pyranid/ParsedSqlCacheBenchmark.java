@@ -94,8 +94,8 @@ public class ParsedSqlCacheBenchmark {
 	}
 
 	@Benchmark
-	public Database.ParsedSql parseOnly() {
-		return Database.parseNamedParameterSql(SQL);
+	public SqlCompiler.ParsedSql parseOnly() {
+		return SqlCompiler.parseNamedParameterSql(SQL);
 	}
 
 	@Benchmark

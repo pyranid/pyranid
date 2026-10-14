@@ -2,6 +2,67 @@
 
 All notable changes to Pyranid will be documented in this file.
 
+## 4.8.0-SNAPSHOT
+
+### Added
+
+- Core `NotificationSupervisor` provides application-executor-owned listener startup, readiness, reconnection,
+  reconciliation, cooperative stop, and termination. It creates no threads or fallback scheduler.
+- `TransactionOptions.completionObserver(...)` reports immutable `TransactionCompletion` records after cleanup
+  and post-transaction hooks, with correlated scope IDs, database outcome, and the final throwable.
+- `RetryPolicy.Backoff.fullJitter(...)` and optional `withMaxElapsedTime(...)` retry budgets. Defaults are unchanged;
+  budgets govern admission of another attempt, not cancellation of an in-flight JDBC operation.
+- `StatementLog.getElapsedDuration()` reports time from executor entry through resource release, separately
+  from the existing phase-sum `getTotalDuration()`.
+- Configurable bounded LOB materialization through `ResultSetMapper.Builder.maxLobBytes(...)`,
+  `maxLobCharacters(...)`, and `unboundedLobMaterialization()`.
+
+### Changed
+
+- SQL compilation, query preparation, statement/stream execution, transaction coordination, retries, and
+  notification session handling have dedicated internal components. Statements and streams share connection
+  ownership and release logic; stream resources still close at exhaustion or explicit early closure.
+- Cached and uncached typed row mapping share the same plan compiler and execution path. Cache configuration
+  changes retention, not conversion behavior. Scalar, record, and JavaBean conversions share built-in rules.
+- API compatibility now compares against the verified 4.7.0 release, without the old 4.7.0 exclusions.
+
+### Fixed
+
+- Zone-less SQL timestamps fetched as scalar `OffsetDateTime` values now use the configured database time zone,
+  consistent with record and JavaBean properties, even when the driver can attach its own session time zone.
+- Temporal record and JavaBean properties targeting `java.sql.Timestamp` or `java.sql.Date` now select the JDBC
+  subtype conversion before the general `java.util.Date` conversion, retaining timestamp nanoseconds. Zoned
+  timestamps mapped to `java.sql.Date` consistently use the configured database time zone across row shapes.
+- `TimeZone` mapping preserves valid `UTC` and `UT` offsets instead of silently returning the GMT fallback.
+- SQL Server and SQLite bracket-quoted identifiers remain quoted in predicates and implicit aliases, so colons
+  inside identifiers no longer become phantom named parameters. Other dialects retain their subscript rules.
+- Scoped savepoints reject JDBC work from other participating threads while the scope is active, preventing
+  rollback of another participant's successful statements. Same-thread nesting remains supported, and ownership
+  is released when the scope returns or throws. Manually managed savepoints still require caller coordination.
+- Statement diagnostics and metrics retain preparation, execution, and mapping time when the corresponding
+  operation fails, including failed stream opening and iteration.
+
+### Migration Notes
+
+- Built-in BLOB-to-`byte[]` and CLOB/NCLOB-to-`String` materialization now defaults to at most 16 MiB of bytes
+  or 8,388,608 UTF-16 code units per value. This deliberate 4.8.0 behavior change can reject values accepted
+  by earlier versions. Set larger positive limits or explicitly opt into unbounded materialization. Limits
+  apply before Pyranid's eager dialect conversion; driver buffering, custom mappers, ordinary VARCHAR values,
+  and aggregate result-list size are outside their scope.
+- Raw LOB/Object/Map results retain their driver and cursor lifetime. A resource-bearing value passed to a
+  custom mapper is borrowed even if that mapper declines it; Pyranid cannot know whether the mapper retained
+  the value. Custom column mapper order, handled-null semantics, and nested-attribute behavior are unchanged.
+- Completion observer failures are contained. Existing post-transaction business hooks still propagate;
+  a committed transaction can therefore report `COMMITTED` with a failure. Observe each retry attempt separately.
+- Notification readiness means registration plus initial reconciliation succeeded at least once. It is not
+  durable delivery or a continuing health signal. Keep independent reconciliation polling and make it idempotent.
+- Elapsed timing includes consumer time while a cursor remains open and ends at early closure. Existing
+  phase timings and OpenTelemetry `db.client.operation.duration` retain their previous meanings.
+- JDBC work from another thread during `Transaction::withSavepoint(...)` now fails before reaching the driver.
+  Coordinate that work after the savepoint scope ends. As before, an exception escaping `Database::participate(...)`
+  marks the transaction rollback-only; handle an expected ownership conflict inside the participating callback
+  if the transaction should continue.
+
 ## 4.7.0
 
 ### Added

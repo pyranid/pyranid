@@ -85,6 +85,105 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 	}
 
 	@Test
+	public void testNotificationSupervisorReconcilesCommittedStateAndClosesItsListener() throws Exception {
+		TrackingNotificationDataSource listenerSource = new TrackingNotificationDataSource(dataSource());
+		Database listenerDatabase = Database.withDataSource(listenerSource).databaseType(DatabaseType.POSTGRESQL).build();
+		Database applicationDatabase = Database.withDataSource(dataSource()).databaseType(DatabaseType.POSTGRESQL).build();
+		String suffix = UUID.randomUUID().toString().replace("-", "");
+		String table = "supervisor_state_" + suffix;
+		String channel = "supervisor_hint_" + suffix;
+		applicationDatabase.query("CREATE TABLE " + table + " (version INTEGER NOT NULL)").execute();
+		applicationDatabase.query("INSERT INTO " + table + " VALUES (0)").execute();
+		AtomicInteger observed = new AtomicInteger(-1);
+		CountDownLatch changed = new CountDownLatch(1);
+		ExecutorService executor = Executors.newSingleThreadExecutor();
+		NotificationSupervisor supervisor = NotificationSupervisor.withDatabase(listenerDatabase)
+				.channels(Set.of(channel)).reconcile(() -> {
+			int version = applicationDatabase.query("SELECT version FROM " + table).fetchObject(Integer.class).orElseThrow();
+			observed.set(version);
+			if (version == 1)
+				changed.countDown();
+		}).build();
+		try {
+			supervisor.start(executor);
+			supervisor.firstReady().toCompletableFuture().get(10, TimeUnit.SECONDS);
+			Assertions.assertEquals(0, observed.get());
+			applicationDatabase.transaction(() -> {
+				applicationDatabase.query("UPDATE " + table + " SET version = 1").execute();
+				applicationDatabase.sendNotification(channel);
+			});
+			Assertions.assertTrue(changed.await(10, TimeUnit.SECONDS), "Notification did not trigger reconciliation");
+		} finally {
+			supervisor.requestStop();
+			try {
+				Assertions.assertTrue(supervisor.termination().toCompletableFuture()
+						.get(10, TimeUnit.SECONDS).getFailure().isEmpty());
+			} finally {
+				executor.shutdownNow();
+				Assertions.assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS));
+				applicationDatabase.query("DROP TABLE " + table).execute();
+			}
+		}
+		Assertions.assertEquals(1, listenerSource.connectionCheckouts.get());
+		Assertions.assertEquals(List.of("close"), listenerSource.lifecycleEvents);
+	}
+
+	@Test
+	public void testNotificationSupervisorReconnectReconcilesStateWithoutAnotherHint() throws Exception {
+		TrackingNotificationDataSource listenerSource = new TrackingNotificationDataSource(dataSource());
+		Database listenerDatabase = Database.withDataSource(listenerSource).databaseType(DatabaseType.POSTGRESQL).build();
+		Database applicationDatabase = Database.withDataSource(dataSource()).databaseType(DatabaseType.POSTGRESQL).build();
+		String suffix = UUID.randomUUID().toString().replace("-", "");
+		String table = "supervisor_reconnect_" + suffix;
+		String channel = "supervisor_reconnect_hint_" + suffix;
+		applicationDatabase.query("CREATE TABLE " + table + " (version INTEGER NOT NULL)").execute();
+		applicationDatabase.query("INSERT INTO " + table + " VALUES (0)").execute();
+		AtomicInteger reconciliations = new AtomicInteger();
+		CountDownLatch recovered = new CountDownLatch(1);
+		AtomicReference<NotificationSupervisor.FailurePhase> failedPhase = new AtomicReference<>();
+		ExecutorService executor = Executors.newSingleThreadExecutor();
+		NotificationSupervisor supervisor = NotificationSupervisor.withDatabase(listenerDatabase)
+				.channels(Set.of(channel)).reconcile(() -> {
+			int version = applicationDatabase.query("SELECT version FROM " + table).fetchObject(Integer.class).orElseThrow();
+			reconciliations.incrementAndGet();
+			if (version == 7)
+				recovered.countDown();
+		}).retry(failure -> {
+			failedPhase.set(failure.getPhase());
+			return failure.isFirstReadyReached()
+					&& failure.getPhase() == NotificationSupervisor.FailurePhase.RECEIVE;
+		}, RetryPolicy.Backoff.fixed(Duration.ZERO), Duration.ofMinutes(1)).build();
+		try {
+			supervisor.start(executor);
+			supervisor.firstReady().toCompletableFuture().get(10, TimeUnit.SECONDS);
+			int originalBackend = listenerSource.backendPid.get();
+			// No NOTIFY: registration-time reconciliation must recover this durable change.
+			applicationDatabase.query("UPDATE " + table + " SET version = 7").execute();
+			Assertions.assertTrue(applicationDatabase.query("SELECT pg_terminate_backend(:pid)")
+					.bind("pid", originalBackend).fetchObject(Boolean.class).orElseThrow());
+			Assertions.assertTrue(recovered.await(10, TimeUnit.SECONDS), "Reconnect did not reconcile durable state");
+			supervisor.firstReady().toCompletableFuture().get(1, TimeUnit.SECONDS);
+			Assertions.assertEquals(NotificationSupervisor.FailurePhase.RECEIVE, failedPhase.get());
+			Assertions.assertTrue(supervisor.snapshot().isEverReady());
+			Assertions.assertEquals(2L, supervisor.snapshot().getAttemptNumber());
+			Assertions.assertNotEquals(originalBackend, listenerSource.backendPid.get());
+		} finally {
+			supervisor.requestStop();
+			try {
+				Assertions.assertTrue(supervisor.termination().toCompletableFuture()
+						.get(10, TimeUnit.SECONDS).getFailure().isEmpty());
+			} finally {
+				executor.shutdownNow();
+				Assertions.assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS));
+				applicationDatabase.query("DROP TABLE " + table).execute();
+			}
+		}
+		Assertions.assertEquals(2, reconciliations.get());
+		Assertions.assertEquals(2, listenerSource.connectionCheckouts.get());
+		Assertions.assertEquals(List.of("abort", "close", "close"), listenerSource.lifecycleEvents);
+	}
+
+	@Test
 	public void testNotificationDeliveryCommitRollbackPayloadsAndChannels() throws InterruptedException {
 		Database listenerDatabase = Database.withDataSource(dataSource())
 				.databaseType(DatabaseType.POSTGRESQL)

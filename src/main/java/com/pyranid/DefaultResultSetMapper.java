@@ -27,7 +27,6 @@ import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import java.lang.reflect.Parameter;
 import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
 import java.math.BigDecimal;
@@ -100,6 +99,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	@NonNull
 	private static final Map<Class<?>, Class<?>> WRAPPER_CLASSES_BY_PRIMITIVE_CLASS;
 	@NonNull
+	private static final ClassValue<TargetType> RAW_TARGET_TYPES = new ClassValue<>() {
+		@Override protected TargetType computeValue(Class<?> type) { return TargetType.of(type); }
+	};
+	@NonNull
 	private static final Pattern CAMEL_CASE_PATTERN = Pattern.compile("([a-z])([A-Z]+)");
 	@NonNull
 	private static final Pattern LETTER_FOLLOWED_BY_NUMBER_PATTERN = Pattern.compile("(\\D)(\\d)");
@@ -111,6 +114,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	@NonNull
 	private final Boolean planCachingEnabled;
 	private final int planCacheCapacity;
+	private final @Nullable Long maxLobBytes;
+	private final @Nullable Long maxLobCharacters;
 	// Enables faster lookup of CustomColumnMapper instances by remembering which TargetType they've been used with before.
 	@NonNull
 	private final ClassValue<List<CustomColumnMapper>> customColumnMappersByRawClassCache =
@@ -169,6 +174,13 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					return components == null ? new RecordComponent[0] : components;
 				}
 			};
+	// Class-only reflection stays reusable even when schema-plan retention is disabled.
+	private final ClassValue<RowTypeMetadata> rowTypeMetadata = new ClassValue<>() {
+		@Override protected RowTypeMetadata computeValue(Class<?> type) {
+			return computeRowTypeMetadata(type);
+		}
+	};
+
 	// Only used if row-planning is enabled
 	@NonNull
 	private final ClassValue<Map<String, RowPlan<?>>> rowPlanningCacheByResultClass =
@@ -179,11 +191,22 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				}
 			};
 	@NonNull
-	private final Map<ResultSetMetaData, String> schemaSignatureByResultSetMetaData;
+	private final Map<ResultSetMetaData, Map<DatabaseDialect, String>> schemaSignatureByResultSetMetaData;
 	@NonNull
 	private final ReentrantLock schemaSignatureByResultSetMetaDataLock;
 	@NonNull
 	private final ThreadLocal<SchemaSignatureMemo> schemaSignatureMemo;
+	// The retained value contains only empty resource bookkeeping and weak cursor metadata.
+	private final ThreadLocal<MappingResources> mappingResources = new ThreadLocal<>();
+
+	private MappingResources acquireMappingResources() {
+		MappingResources resources = this.mappingResources.get();
+		if (resources == null) {
+			resources = new MappingResources(this.maxLobBytes, this.maxLobCharacters);
+			this.mappingResources.set(resources);
+		}
+		return resources.acquire();
+	}
 
 	static {
 		WRAPPER_CLASSES_BY_PRIMITIVE_CLASS = Map.of(
@@ -542,6 +565,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		this.planCachingEnabled = requireNonNull(builder.planCachingEnabled);
 
 		this.planCacheCapacity = builder.planCacheCapacity;
+		this.maxLobBytes = builder.maxLobBytes;
+		this.maxLobCharacters = builder.maxLobCharacters;
 		this.schemaSignatureByResultSetMetaData = new WeakHashMap<>();
 		this.schemaSignatureByResultSetMetaDataLock = new ReentrantLock();
 		this.schemaSignatureMemo = new ThreadLocal<>();
@@ -570,8 +595,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		// Map row target: return the row as an insertion-ordered (column-ordered) map of
 		// normalized (lowercase) column labels to dialect-aware extracted values. Checked before the
-		// row-planning fork - no row plan applies to a Map. Note: subclasses invoking the protected
-		// mapWithRowPlanning/mapWithoutRowPlanning methods directly bypass this special case.
+		// row assembly - Map targets retain native/dialect-normalized values.
 		if (resultSetRowType == Map.class || resultSetRowType == LinkedHashMap.class) {
 			@SuppressWarnings("unchecked")
 			T row = (T) mapResultSetToMap(statementContext, resultSet, resultSetMetaData);
@@ -583,10 +607,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					"%s is not a supported Map row type. Use Map.class or LinkedHashMap.class to fetch rows as maps.",
 					resultSetRowType.getName()));
 
-		if (getPlanCachingEnabled())
-			return mapWithRowPlanning(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData);
-
-		return mapWithoutRowPlanning(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData);
+		return mapWithRowPlanning(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData);
 	}
 
 	/**
@@ -651,41 +672,6 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		return row;
 	}
 
-	@NonNull
-	protected <T> Optional<T> mapWithoutRowPlanning(@NonNull StatementContext<T> statementContext,
-																									@NonNull ResultSet resultSet,
-																									@NonNull Class<T> resultSetRowType,
-																									@NonNull InstanceProvider instanceProvider,
-																									@NonNull ResultSetMetaData resultSetMetaData) throws SQLException {
-		requireNonNull(statementContext);
-		requireNonNull(resultSet);
-		requireNonNull(resultSetRowType);
-		requireNonNull(instanceProvider);
-		requireNonNull(resultSetMetaData);
-
-		try {
-			StandardTypeResult<T> standardTypeResult = mapResultSetToStandardType(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData);
-
-			if (standardTypeResult.isStandardType())
-				return standardTypeResult.getValue();
-
-			if (resultSetRowType.isRecord()) {
-				if (isSingleStructColumn(resultSetMetaData) && !resultSetHasMappedRowColumns(resultSetRowType, resultSetMetaData))
-					return Optional.ofNullable(mapStructColumnToRecord(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData));
-
-				return Optional.of((T) mapResultSetToRecord((StatementContext<? extends Record>) statementContext, resultSet, instanceProvider, resultSetMetaData));
-			}
-
-			return Optional.ofNullable(mapResultSetToBean(statementContext, resultSet, instanceProvider, resultSetMetaData));
-		} catch (DatabaseException e) {
-			throw e;
-		} catch (SQLException e) {
-			throw e;
-		} catch (Exception e) {
-			throw new DatabaseException(format("Unable to map JDBC %s row to %s", ResultSet.class.getSimpleName(), resultSetRowType),
-					e);
-		}
-	}
 
 	@NonNull
 	protected <T> Optional<T> mapWithRowPlanning(@NonNull StatementContext<T> statementContext,
@@ -699,23 +685,20 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(instanceProvider);
 		requireNonNull(resultSetMetaData);
 
-		try {
+		try (MappingResources resources = acquireMappingResources()) {
 			// Use "standard type" fast path
-			StandardTypeResult<T> standardTypeResult = mapResultSetToStandardType(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData);
+			StandardTypeResult<T> standardTypeResult = mapResultSetToStandardType(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData, resources);
 			if (standardTypeResult.isStandardType()) return standardTypeResult.getValue();
 
 			// Otherwise, use a per-schema row plan
-			String schemaSignature = schemaSignatureFor(statementContext, resultSet, resultSetMetaData);
+			String schemaSignature = getPlanCachingEnabled() ? schemaSignatureFor(statementContext, resultSet, resultSetMetaData) : "";
 			RowPlan<T> plan = buildPlan(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData, schemaSignature);
-			final boolean hasFanOut = plan.hasFanOut;
-			// Per-row raw cache: 1-based, size = columnCount + 1 (only when we have fan-out)
-			final Object[] rawByCol = hasFanOut ? new Object[plan.columnCount + 1] : null;
-			final boolean[] rawLoaded = hasFanOut ? new boolean[plan.columnCount + 1] : null;
+			RowReadScope reads = plan.hasFanOut ? new RowReadScope(resultSet, statementContext, plan) : null;
 
 			if (plan.isRecord) {
 				if (plan.mappedColumnCount == 0) {
 					if (isSingleStructColumn(resultSetMetaData))
-						return Optional.ofNullable(mapStructColumnToRecord(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData));
+						return Optional.ofNullable(mapStructColumnToRecord(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData, resources));
 
 					throw noRecordColumnMappingsException(resultSetRowType, resultSetMetaData);
 				}
@@ -725,19 +708,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 				for (ColumnBinding b : plan.bindings) {
 					if (b.recordArgIndexOrMinusOne < 0) continue; // bean binding or SKIP
-					Object raw;
-					if (hasFanOut) {
-						if (!rawLoaded[b.columnIndex]) {
-							raw = b.reader.read(resultSet, statementContext, b.columnIndex);
-							rawByCol[b.columnIndex] = raw;
-							rawLoaded[b.columnIndex] = true;
-						} else {
-							raw = rawByCol[b.columnIndex];
-						}
-					} else {
-						raw = b.reader.read(resultSet, statementContext, b.columnIndex);
-					}
-					Object val = b.converter.convert(raw, resultSet, statementContext, instanceProvider);
+					Object raw = reads == null ? b.reader.read(resultSet, statementContext, b.columnIndex) : reads.read(b);
+					Object val = b.converter.convert(raw, resultSet, statementContext, instanceProvider, resources);
 
 					if (val == null) {
 						if (b.targetIsPrimitive) {
@@ -772,7 +744,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					}
 				}
 
-				// Construct via InstanceProvider to keep semantics consistent with non-planned path
+				// Both cache modes construct through the configured InstanceProvider.
 				@SuppressWarnings("unchecked")
 				T rec = (T) provideRecordVia(instanceProvider, statementContext, resultSetRowType, args);
 				return Optional.of(rec);
@@ -785,19 +757,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 				for (ColumnBinding b : plan.bindings) {
 					if (b.setterOrNull == null) continue; // record-only or SKIP
-					Object raw;
-					if (hasFanOut) {
-						if (!rawLoaded[b.columnIndex]) {
-							raw = b.reader.read(resultSet, statementContext, b.columnIndex);
-							rawByCol[b.columnIndex] = raw;
-							rawLoaded[b.columnIndex] = true;
-						} else {
-							raw = rawByCol[b.columnIndex];
-						}
-					} else {
-						raw = b.reader.read(resultSet, statementContext, b.columnIndex);
-					}
-					Object val = b.converter.convert(raw, resultSet, statementContext, instanceProvider);
+					Object raw = reads == null ? b.reader.read(resultSet, statementContext, b.columnIndex) : reads.read(b);
+					Object val = b.converter.convert(raw, resultSet, statementContext, instanceProvider, resources);
 
 					if (val == null) {
 						if (b.targetIsPrimitive) {
@@ -806,7 +767,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 											+ "Use a non-primitive type or COALESCE/CAST in SQL.",
 									b.propertyName, resultSetRowType.getSimpleName(), b.targetRawClass.getSimpleName()));
 						}
-						// Mirror non-planned path: call setter with null
+						// A selected SQL NULL invokes the setter with null.
 						b.setterOrNull.invoke(object, (Object) null);
 						continue;
 					}
@@ -830,6 +791,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			throw e;
 		} catch (SQLException e) {
 			throw e;
+		} catch (Error error) {
+			throw error;
 		} catch (Throwable t) {
 			throw new DatabaseException(format("Unable to map JDBC %s row to %s", ResultSet.class.getSimpleName(), resultSetRowType), t);
 		}
@@ -845,11 +808,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		SchemaSignatureMemo memo = getSchemaSignatureMemo().get();
 
-		if (memo != null && memo.matches(resultSet))
+		if (memo != null && memo.matches(resultSet, statementContext.getDatabaseDialect()))
 			return memo.getSchemaSignature();
 
 		String schemaSignature = schemaSignatureFor(statementContext, resultSetMetaData);
-		getSchemaSignatureMemo().set(new SchemaSignatureMemo(resultSet, schemaSignature));
+		getSchemaSignatureMemo().set(new SchemaSignatureMemo(resultSet, statementContext.getDatabaseDialect(), schemaSignature));
 		return schemaSignature;
 	}
 
@@ -863,7 +826,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		lock.lock();
 
 		try {
-			String signature = getSchemaSignatureByResultSetMetaData().get(resultSetMetaData);
+			Map<DatabaseDialect, String> signatures = getSchemaSignatureByResultSetMetaData().get(resultSetMetaData);
+			String signature = signatures == null ? null : signatures.get(statementContext.getDatabaseDialect());
 			if (signature != null)
 				return signature;
 		} finally {
@@ -875,11 +839,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		lock.lock();
 
 		try {
-			String existingSignature = getSchemaSignatureByResultSetMetaData().get(resultSetMetaData);
+			Map<DatabaseDialect, String> signatures = getSchemaSignatureByResultSetMetaData().computeIfAbsent(resultSetMetaData, ignored -> new WeakHashMap<>());
+			String existingSignature = signatures.get(statementContext.getDatabaseDialect());
 			if (existingSignature != null)
 				return existingSignature;
 
-			getSchemaSignatureByResultSetMetaData().put(resultSetMetaData, signature);
+			signatures.put(statementContext.getDatabaseDialect(), signature);
 		} finally {
 			lock.unlock();
 		}
@@ -903,11 +868,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			boolean tsTz = databaseDialect.isTimestampWithTimeZone(resultSetMetaData, i);
 			boolean timeTz = TemporalReaders.isTimeWithTimeZone(resultSetMetaData, i);
 			String typeName = Objects.toString(resultSetMetaData.getColumnTypeName(i), "").toUpperCase(Locale.ROOT);
-			sig.append('|').append(labelNorm)
+			sig.append('|').append(labelNorm.length()).append(':').append(labelNorm)
 					.append(':').append(jdbcType)
 					.append(':').append(tsTz ? 'T' : 't')
 					.append(':').append(timeTz ? 'Z' : 'z')
-					.append(':').append(typeName);
+					.append(':').append(typeName.length()).append(':').append(typeName);
 		}
 
 		return sig.toString();
@@ -933,7 +898,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	 * Attempts to map the current {@code resultSet} row to an instance of {@code resultClass} using one of the
 	 * "out-of-the-box" types (primitives, common types like {@link UUID}, etc.)
 	 * <p>
-	 * This does not attempt to map to a user-defined JavaBean - see {@link #mapResultSetToBean(StatementContext, ResultSet, InstanceProvider, ResultSetMetaData)} for
+	 * This does not assemble a user-defined JavaBean; the row plan handles
 	 * that functionality.
 	 *
 	 * @param <T>              result instance type token
@@ -949,7 +914,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 																																 @NonNull ResultSet resultSet,
 																																 @NonNull Class<T> resultClass,
 																																 @NonNull InstanceProvider instanceProvider,
-																																 @NonNull ResultSetMetaData resultSetMetaData) throws Exception {
+																																 @NonNull ResultSetMetaData resultSetMetaData, @NonNull MappingResources resources) throws Exception {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(resultClass);
@@ -958,9 +923,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		Object value = null;
 		boolean standardType = true;
+		Object customRaw = null;
+		boolean customRawRead = false;
 
 		// See if custom mappers apply, e.g. user mapping a SQL ARRAY to a List<UUID>
-		TargetType targetType = TargetType.of(resultClass);
+		TargetType targetType = RAW_TARGET_TYPES.get(resultClass);
 		List<CustomColumnMapper> mappers = customColumnMappersFor(targetType);
 
 		if (!mappers.isEmpty()) {
@@ -974,6 +941,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			}
 
 			Object resultSetValue = extractColumnValue(resultSetMetaData, statementContext, resultSet, 1).orElse(null);
+			customRaw = resultSetValue;
+			customRawRead = true;
+			resources.borrow(resultSetValue);
 
 			if (resultSetValue == null) {
 				if (rowColumnsClaimed == null)
@@ -1026,69 +996,25 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			}
 		}
 
-		if (resultClass == Byte.class || resultClass == byte.class) {
-			value = getNullableByte(resultSet, 1);
-		} else if (resultClass == Short.class || resultClass == short.class) {
-			value = getNullableShort(resultSet, 1);
-		} else if (resultClass == Integer.class || resultClass == int.class) {
-			value = getNullableInt(resultSet, 1);
-		} else if (resultClass == Long.class || resultClass == long.class) {
-			value = getNullableLong(resultSet, 1);
-		} else if (resultClass == Float.class || resultClass == float.class) {
-			value = getNullableFloat(resultSet, 1);
-		} else if (resultClass == Double.class || resultClass == double.class) {
-			value = getNullableDouble(resultSet, 1);
-		} else if (resultClass == Boolean.class || resultClass == boolean.class) {
+		// Target-aware JDBC readers preserve driver getter behavior. All detached values then
+		// pass through the same built-in conversion engine used by bean/record bindings.
+		Class<?> boxed = boxedClass(resultClass);
+		if (boxed == Byte.class || boxed == Short.class || boxed == Integer.class || boxed == Long.class
+				|| boxed == Float.class || boxed == Double.class || boxed == Number.class) {
+			value = getNullableNumber(resultSet, 1, resultClass);
+		} else if (boxed == Boolean.class) {
 			value = getNullableBoolean(resultSet, 1);
-		} else if (resultClass == Character.class || resultClass == char.class) {
-			String string = resultSet.getString(1);
-
-			if (string != null) {
-				if (string.length() == 1)
-					value = string.charAt(0);
-				else
-					throw new DatabaseException(format("Cannot map String value '%s' to %s", string, resultClass.getSimpleName()));
-			}
-		} else if (resultClass == String.class) {
+		} else if (boxed == Character.class) {
 			value = resultSet.getString(1);
-		} else if (resultClass == byte[].class) {
-			value = resultSet.getBytes(1);
-		} else if (resultClass.isArray() || resultClass == List.class || resultClass == Set.class) {
-			Object raw = resultSet.getObject(1);
-			value = raw == null ? null : convertResultSetValueToTargetType(statementContext, raw, TargetType.of(resultClass))
-					.orElse(null);
-
-			if (value != null && !resultClass.isInstance(value)) {
-				throw new DatabaseException(format("Cannot map value '%s' (%s) to %s",
-						raw, raw.getClass().getName(), resultClass.getSimpleName()));
-			}
-		} else if (resultClass.isEnum()) {
-			Object raw = resultSet.getObject(1);
-			if (raw == null)
-				value = null; // -> Optional.empty()
-			else
-				value = extractEnumValue(resultClass, raw);
-		} else if (resultClass == UUID.class) {
-			value = uuidFromValue(resultSet.getObject(1));
-		} else if (resultClass == BigDecimal.class) {
+		} else if (resultClass == String.class || resultClass == byte[].class) {
+			value = readDetachedColumn(resultSet, resultSetMetaData, 1, resultClass, customRawRead, customRaw, resources);
+		} else if (resultClass.isArray() || resultClass == List.class || resultClass == Set.class
+				|| resultClass.isEnum() || resultClass == UUID.class || resultClass == Year.class || resultClass == Object.class
+				|| resultClass == java.sql.Blob.class || resultClass == java.sql.Clob.class || resultClass == java.sql.NClob.class) {
+			value = resultSet.getObject(1);
+		} else if (resultClass == BigDecimal.class || resultClass == BigInteger.class) {
 			value = resultSet.getBigDecimal(1);
-		} else if (resultClass == BigInteger.class) {
-			BigDecimal bd = resultSet.getBigDecimal(1);
-			if (bd != null) value = exactBigInteger(bd);
-		} else if (resultClass == Number.class) {
-			Object raw = resultSet.getObject(1);
-			if (raw == null) {
-				value = null;
-			} else if (raw instanceof Number) {
-				value = raw;
-			} else {
-				throw new DatabaseException(format("Cannot map value '%s' (%s) to %s",
-						raw, raw.getClass().getName(), resultClass.getSimpleName()));
-			}
-		} else if (resultClass == Date.class) {
-			Instant inst = TemporalReaders.asInstant(resultSet, 1, statementContext, resultSetMetaData);
-			value = (inst == null) ? null : Date.from(inst);
-		} else if (resultClass == Instant.class) {
+		} else if (resultClass == Date.class || resultClass == Instant.class || resultClass == ZonedDateTime.class) {
 			value = TemporalReaders.asInstant(resultSet, 1, statementContext, resultSetMetaData);
 		} else if (resultClass == LocalDate.class) {
 			value = TemporalReaders.asLocalDate(resultSet, 1);
@@ -1100,52 +1026,17 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			value = TemporalReaders.asOffsetTime(resultSet, 1, statementContext, resultSetMetaData);
 		} else if (resultClass == OffsetDateTime.class) {
 			value = TemporalReaders.asOffsetDateTime(resultSet, 1, statementContext, resultSetMetaData);
-		} else if (resultClass == ZonedDateTime.class) {
-			value = TemporalReaders.asZonedDateTime(resultSet, 1, statementContext, resultSetMetaData);
 		} else if (resultClass == java.sql.Timestamp.class) {
-			boolean withTz = statementContext.getDatabaseDialect().isTimestampWithTimeZone(resultSetMetaData, 1);
-
-			if (withTz) {
-				Instant inst = TemporalReaders.asInstant(resultSet, 1, statementContext, resultSetMetaData);
-				value = (inst == null) ? null : Timestamp.from(inst);
-			} else {
-				LocalDateTime ldt = TemporalReaders.asLocalDateTime(resultSet, 1, statementContext, resultSetMetaData);
-				value = (ldt == null) ? null : Timestamp.valueOf(ldt);
-			}
+			value = statementContext.getDatabaseDialect().isTimestampWithTimeZone(resultSetMetaData, 1)
+					? TemporalReaders.asInstant(resultSet, 1, statementContext, true)
+					: TemporalReaders.asLocalDateTime(resultSet, 1, statementContext, false);
 		} else if (resultClass == java.sql.Date.class) {
-			LocalDate ld = TemporalReaders.asLocalDate(resultSet, 1);
-			value = (ld == null) ? null : java.sql.Date.valueOf(ld);
-		} else if (resultClass == ZoneId.class) {
-			String zoneId = resultSet.getString(1);
-			if (zoneId != null) {
-				try {
-					value = ZoneId.of(zoneId);
-				} catch (DateTimeException e) {
-					throw new DatabaseException(format("Unable to convert value '%s' to ZoneId", zoneId), e);
-				}
-			}
-		} else if (resultClass == TimeZone.class) {
-			String tz = resultSet.getString(1);
-			if (tz != null) value = timeZoneFromId(tz);
-		} else if (resultClass == Locale.class) {
-			String locale = resultSet.getString(1);
-			if (locale != null) value = localeFromLanguageTag(locale);
-		} else if (resultClass == Currency.class) {
-			String currency = resultSet.getString(1);
-			if (currency != null) {
-				try {
-					value = Currency.getInstance(currency);
-				} catch (IllegalArgumentException e) {
-					throw new DatabaseException(format("Unable to convert value '%s' to Currency", currency), e);
-				}
-			}
-		} else if (resultClass == Year.class) {
-			value = yearFromValue(resultSet.getObject(1));
-		} else if (resultClass == YearMonth.class) {
-			String yearMonth = resultSet.getString(1);
-			if (yearMonth != null) value = yearMonthFromString(yearMonth);
-		} else if (resultClass == Object.class) {
-			value = resultSet.getObject(1);
+			value = statementContext.getDatabaseDialect().isTimestampWithTimeZone(resultSetMetaData, 1)
+					? TemporalReaders.asInstant(resultSet, 1, statementContext, true)
+					: TemporalReaders.asLocalDate(resultSet, 1);
+		} else if (resultClass == ZoneId.class || resultClass == TimeZone.class || resultClass == Locale.class
+				|| resultClass == Currency.class || resultClass == YearMonth.class) {
+			value = resultSet.getString(1);
 		} else {
 			standardType = false;
 		}
@@ -1160,7 +1051,27 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			}
 		}
 
+		if (standardType && resultClass != Object.class) {
+			value = (resultClass.isArray() && resultClass != byte[].class) || resultClass == List.class || resultClass == Set.class
+					? convertResultSetValueToTargetType(statementContext, value, targetType, resources)
+					: convertDetachedValue(statementContext, value, targetType, resources);
+			if (value != null && !boxed.isInstance(value))
+				throw new DatabaseException("Cannot map " + value.getClass().getName() + " to " + resultClass.getName());
+		}
+
 		return new StandardTypeResult(value, standardType);
+	}
+
+	@Nullable
+	private Object readDetachedColumn(ResultSet resultSet, ResultSetMetaData metadata, int column,
+			Class<?> target, boolean rawRead, @Nullable Object raw, MappingResources resources) throws SQLException {
+		int jdbcType = resources.scalarJdbcType(resultSet, metadata);
+		boolean lob = jdbcType == Types.BLOB || jdbcType == Types.CLOB || jdbcType == Types.NCLOB;
+		if (lob || raw instanceof java.sql.Blob || raw instanceof java.sql.Clob) {
+			if (!rawRead) raw = resultSet.getObject(column);
+			return resources.materialize(raw, target, jdbcType, "column '" + metadata.getColumnLabel(column) + "'");
+		}
+		return target == String.class ? resultSet.getString(column) : resultSet.getBytes(column);
 	}
 
 	private boolean resultSetHasMappedRowColumns(@NonNull Class<?> resultClass,
@@ -1193,227 +1104,6 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		return false;
-	}
-
-	/**
-	 * Attempts to map the current {@code resultSet} row to an instance of {@code resultClass}, which must be a
-	 * Record.
-	 *
-	 * @param <T>              result instance type token
-	 * @param statementContext current SQL context
-	 * @param resultSet        provides raw row data to pull from
-	 * @param instanceProvider an instance-creation factory, used to instantiate resultset row objects as needed.
-	 * @return the result of the mapping
-	 * @throws Exception if an error occurs during mapping
-	 */
-	@NonNull
-	protected <T extends Record> T mapResultSetToRecord(@NonNull StatementContext<T> statementContext,
-																											@NonNull ResultSet resultSet,
-																											@NonNull InstanceProvider instanceProvider,
-																											@NonNull ResultSetMetaData resultSetMetaData) throws Exception {
-		requireNonNull(statementContext);
-		requireNonNull(resultSet);
-		requireNonNull(instanceProvider);
-		requireNonNull(resultSetMetaData);
-
-		Class<T> resultSetRowType = statementContext.getResultSetRowType().get();
-
-		RecordComponent[] recordComponents = determineRecordComponents(resultSetRowType);
-		Map<String, Set<String>> columnLabelsByRecordComponentName = determineColumnLabelsByRecordComponentName(resultSetRowType);
-		ColumnLabelMaps columnLabelMaps = extractColumnLabelsToValues(statementContext, resultSet, resultSetMetaData);
-		Map<String, Object> columnLabelsToValues = columnLabelMaps.getValuesByLabel();
-		Map<String, Integer> columnLabelsToIndexes = columnLabelMaps.getIndexesByLabel();
-
-		Map<String, TargetType> propertyTargetTypes = determinePropertyTargetTypes(resultSetRowType);
-
-		Object[] args = new Object[recordComponents.length];
-		int mappedColumnCount = 0;
-		List<RecordComponent> missingPrimitiveRecordComponents = new ArrayList<>();
-
-		for (int i = 0; i < recordComponents.length; ++i) {
-			RecordComponent recordComponent = recordComponents[i];
-			String propertyName = recordComponent.getName();
-
-			// If there are any @DatabaseColumn annotations on this field, respect them
-			Set<String> potentialPropertyNames = columnLabelsByRecordComponentName.get(propertyName);
-
-			// There were no @DatabaseColumn annotations, use the default naming strategy
-			if (potentialPropertyNames == null || potentialPropertyNames.isEmpty())
-				potentialPropertyNames = databaseColumnNamesForPropertyName(propertyName);
-
-			Class<?> recordComponentType = recordComponent.getType();
-
-			// Get the precise TargetType (generic-aware) for this component
-			TargetType targetType = propertyTargetTypes.get(propertyName);
-			if (targetType == null) targetType = TargetType.of(recordComponent.getGenericType());
-
-			// Set the value for the Record ctor (apply in column order for deterministic results)
-			List<String> orderedPropertyNames = new ArrayList<>(potentialPropertyNames.size());
-			for (String potentialPropertyName : potentialPropertyNames)
-				if (columnLabelsToValues.containsKey(potentialPropertyName))
-					orderedPropertyNames.add(potentialPropertyName);
-
-			if (orderedPropertyNames.isEmpty()) {
-				if (recordComponentType.isPrimitive())
-					missingPrimitiveRecordComponents.add(recordComponent);
-				continue;
-			}
-
-			orderedPropertyNames.sort((left, right) ->
-					Integer.compare(columnLabelsToIndexes.get(left), columnLabelsToIndexes.get(right)));
-
-			for (String potentialPropertyName : orderedPropertyNames) {
-				++mappedColumnCount;
-				Object rawValue = columnLabelsToValues.get(potentialPropertyName);
-
-				Integer columnIndex = requireNonNull(columnLabelsToIndexes.get(potentialPropertyName));
-				Object value;
-				if (rawValue == null) {
-					value = null;
-				} else {
-					CustomMappingOutcome outcome = tryCustomColumnMappers(statementContext, resultSet, rawValue, targetType, columnIndex, potentialPropertyName, instanceProvider);
-					value = outcome.isApplied()
-							? outcome.getValue()
-							: convertResultSetValueToTargetType(statementContext, rawValue, targetType).orElse(null);
-				}
-
-				// It's considered programmer error to have a NULL value in the ResultSet and map it to a primitive (which does not support null)
-				if (value == null && recordComponentType.isPrimitive())
-					throw new DatabaseException(format("Column '%s' is NULL but record component '%s' of %s is primitive (%s). Use a non-primitive type or COALESCE/CAST in SQL.",
-							potentialPropertyName, recordComponent.getName(), resultSetRowType.getSimpleName(), recordComponentType.getSimpleName()));
-
-				Class<?> checkedType = boxedClass(recordComponentType);
-
-				if (value != null && !checkedType.isInstance(value)) {
-					String resultSetTypeDescription = value.getClass().toString();
-
-					throw new DatabaseException(
-							format(
-									"Property '%s' of %s has a write method of type %s, but the ResultSet type %s does not match. "
-											+ "Consider providing a %s to %s to detect instances of %s and convert them to %s",
-									recordComponent.getName(), resultSetRowType, recordComponentType, resultSetTypeDescription,
-									CustomColumnMapper.class.getSimpleName(), DefaultResultSetMapper.class.getSimpleName(), resultSetTypeDescription, recordComponentType));
-				}
-
-				args[i] = value;
-			}
-		}
-
-		if (mappedColumnCount == 0)
-			throw noRecordColumnMappingsException(resultSetRowType, resultSetMetaData);
-
-		if (!missingPrimitiveRecordComponents.isEmpty()) {
-			RecordComponent missingPrimitiveRecordComponent = missingPrimitiveRecordComponents.get(0);
-			throw new DatabaseException(format(
-					"No column matches record component '%s' of %s, but the component is primitive (%s). "
-							+ "Ensure the column is selected/aliased or use a non-primitive type.",
-					missingPrimitiveRecordComponent.getName(), resultSetRowType.getSimpleName(), missingPrimitiveRecordComponent.getType().getSimpleName()));
-		}
-
-		return instanceProvider.provideRecord(statementContext, resultSetRowType, args);
-	}
-
-
-	/**
-	 * Attempts to map the current {@code resultSet} row to an instance of {@code resultClass}, which should be a
-	 * JavaBean.
-	 *
-	 * @param <T>              result instance type token
-	 * @param statementContext current SQL context
-	 * @param resultSet        provides raw row data to pull from
-	 * @param instanceProvider an instance-creation factory, used to instantiate resultset row objects as needed.
-	 * @return the result of the mapping
-	 * @throws Exception if an error occurs during mapping
-	 */
-	@NonNull
-	protected <T> T mapResultSetToBean(@NonNull StatementContext<T> statementContext,
-																		 @NonNull ResultSet resultSet,
-																		 @NonNull InstanceProvider instanceProvider,
-																		 @NonNull ResultSetMetaData resultSetMetaData) throws Exception {
-		requireNonNull(statementContext);
-		requireNonNull(resultSet);
-		requireNonNull(instanceProvider);
-		requireNonNull(resultSetMetaData);
-
-		Class<T> resultSetRowType = statementContext.getResultSetRowType().get();
-
-		T object = null;
-		WritableProperty[] writableProperties = determineWritableProperties(resultSetRowType);
-		ColumnLabelMaps columnLabelMaps = extractColumnLabelsToValues(statementContext, resultSet, resultSetMetaData);
-		Map<String, Object> columnLabelsToValues = columnLabelMaps.getValuesByLabel();
-		Map<String, Integer> columnLabelsToIndexes = columnLabelMaps.getIndexesByLabel();
-		Map<String, Set<String>> normalizedColumnLabelsByPropertyName = determineNormalizedColumnLabelsByPropertyName(resultSetRowType);
-
-		// Compute once per class (generic-aware)
-		Map<String, TargetType> propertyTargetTypes = determinePropertyTargetTypes(resultSetRowType);
-		int mappedColumnCount = 0;
-
-		for (WritableProperty writableProperty : writableProperties) {
-			Method writeMethod = writableProperty.getWriteMethod();
-
-			Parameter parameter = writeMethod.getParameters()[0];
-			Class<?> writeMethodParameterType = writeMethod.getParameterTypes()[0];
-
-			// Pull in property names, taking into account any aliases defined by @DatabaseColumn
-			Set<String> propertyNames = normalizedColumnLabelsByPropertyName.get(writableProperty.getName());
-			if (propertyNames == null || propertyNames.isEmpty())
-				propertyNames = databaseColumnNamesForPropertyName(writableProperty.getName());
-
-			// Precise TargetType for this property (generic-aware)
-			TargetType targetType = propertyTargetTypes.get(writableProperty.getName());
-			if (targetType == null) targetType = TargetType.of(parameter.getParameterizedType());
-
-			List<String> orderedPropertyNames = new ArrayList<>(propertyNames.size());
-			for (String propertyName : propertyNames)
-				if (columnLabelsToValues.containsKey(propertyName))
-					orderedPropertyNames.add(propertyName);
-
-			orderedPropertyNames.sort((left, right) ->
-					Integer.compare(columnLabelsToIndexes.get(left), columnLabelsToIndexes.get(right)));
-
-			for (String propertyName : orderedPropertyNames) {
-				++mappedColumnCount;
-				Object rawValue = columnLabelsToValues.get(propertyName);
-
-				Integer columnIndex = requireNonNull(columnLabelsToIndexes.get(propertyName));
-				Object value;
-				if (rawValue == null) {
-					value = null;
-				} else {
-					CustomMappingOutcome outcome = tryCustomColumnMappers(statementContext, resultSet, rawValue, targetType, columnIndex, propertyName, instanceProvider);
-					value = outcome.isApplied()
-							? outcome.getValue()
-							: convertResultSetValueToTargetType(statementContext, rawValue, targetType).orElse(null);
-				}
-
-				// It's considered programmer error to have a NULL value in the ResultSet and map it to a primitive (which does not support null)
-				if (value == null && writeMethodParameterType.isPrimitive())
-					throw new DatabaseException(format("Column '%s' is NULL but bean property '%s' of %s is primitive (%s). Use a non-primitive type or COALESCE/CAST in SQL.",
-							propertyName, writableProperty.getName(), resultSetRowType.getSimpleName(), writeMethodParameterType.getSimpleName()));
-
-				Class<?> checkedType = boxedClass(writeMethodParameterType);
-
-				if (value != null && !checkedType.isInstance(value)) {
-					String resultSetTypeDescription = value.getClass().toString();
-					throw new DatabaseException(
-							format(
-									"Property '%s' of %s has a write method of type %s, but the ResultSet type %s does not match. "
-											+ "Consider providing a %s to %s to detect instances of %s and convert them to %s",
-									writableProperty.getName(), resultSetRowType, writeMethodParameterType, resultSetTypeDescription,
-									CustomColumnMapper.class.getSimpleName(), DefaultResultSetMapper.class.getSimpleName(), resultSetTypeDescription, writeMethodParameterType));
-				}
-
-				if (object == null)
-					object = instanceProvider.provide(statementContext, resultSetRowType);
-
-				writeMethod.invoke(object, value);
-			}
-		}
-
-		if (mappedColumnCount == 0)
-			throw noWritableBeanColumnMappingsException(resultSetRowType, resultSetMetaData);
-
-		return requireNonNull(object);
 	}
 
 	@NonNull
@@ -1484,141 +1174,124 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@NonNull
-	private static final class ColumnLabelMaps {
-		@NonNull
-		private final Map<@NonNull String, @Nullable Object> valuesByLabel;
-		@NonNull
-		private final Map<@NonNull String, @NonNull Integer> indexesByLabel;
-
-		private ColumnLabelMaps(@NonNull Map<@NonNull String, @Nullable Object> valuesByLabel,
-														@NonNull Map<@NonNull String, @NonNull Integer> indexesByLabel) {
-			this.valuesByLabel = requireNonNull(valuesByLabel);
-			this.indexesByLabel = requireNonNull(indexesByLabel);
-		}
-
-		@NonNull
-		private Map<@NonNull String, @Nullable Object> getValuesByLabel() {
-			return this.valuesByLabel;
-		}
-
-		@NonNull
-		private Map<@NonNull String, @NonNull Integer> getIndexesByLabel() {
-			return this.indexesByLabel;
-		}
-	}
-
-	protected <T> ColumnLabelMaps extractColumnLabelsToValues(@NonNull StatementContext<T> statementContext,
-																													 @NonNull ResultSet resultSet,
-																													 @NonNull ResultSetMetaData resultSetMetaData) throws SQLException {
-		requireNonNull(statementContext);
-		requireNonNull(resultSet);
-		requireNonNull(resultSetMetaData);
-
-		int columnCount = resultSetMetaData.getColumnCount();
-		Map<String, Object> columnLabelsToValues = new HashMap<>(columnCount);
-		Map<String, Integer> columnLabelsToIndexes = new HashMap<>(columnCount);
-		Map<String, String> normalizedLabelsToRawLabels = new HashMap<>(columnCount);
-
-		for (int i = 1; i <= columnCount; i++) {
-			String rawLabel = resultSetMetaData.getColumnLabel(i);
-			String label = normalizeColumnLabel(rawLabel);
-			String previousRawLabel = normalizedLabelsToRawLabels.putIfAbsent(label, rawLabel);
-
-			if (previousRawLabel != null) {
-				throw new DatabaseException(format(
-						"Duplicate column label '%s' (normalized from '%s' and '%s'); use column aliases to disambiguate.",
-						label, previousRawLabel, rawLabel));
-			}
-
-			Object resultSetValue = extractColumnValue(resultSetMetaData, statementContext, resultSet, i).orElse(null);
-
-			columnLabelsToValues.put(label, resultSetValue);
-			columnLabelsToIndexes.put(label, i);
-		}
-
-		return new ColumnLabelMaps(columnLabelsToValues, columnLabelsToIndexes);
-	}
-
-	@NonNull
 	protected <T> Optional<Object> extractColumnValue(@NonNull ResultSetMetaData resultSetMetaData,
 																										@NonNull StatementContext<T> statementContext,
 																										@NonNull ResultSet resultSet,
 																										int columnIndex) throws SQLException {
-		Object resultSetValue;
+		return Optional.ofNullable(columnReaderFor(resultSetMetaData, statementContext, columnIndex)
+				.read(resultSet, statementContext, columnIndex));
+	}
 
-		int jdbcType = resultSetMetaData.getColumnType(columnIndex);
-		boolean tsTz = statementContext.getDatabaseDialect().isTimestampWithTimeZone(resultSetMetaData, columnIndex);
-		boolean timeTz = TemporalReaders.isTimeWithTimeZone(resultSetMetaData, columnIndex);
+	private ColumnReader columnReaderFor(ResultSetMetaData metadata, StatementContext<?> context, int column) throws SQLException {
+		int jdbcType = metadata.getColumnType(column);
+		if (context.getDatabaseDialect().isTimestampWithTimeZone(metadata, column))
+			return (r, c, i) -> TemporalReaders.asOffsetDateTime(r, i, c, true);
+		if (jdbcType == Types.TIMESTAMP)
+			return (r, c, i) -> TemporalReaders.asLocalDateTime(r, i, c, false);
+		if (jdbcType == Types.DATE)
+			return (r, c, i) -> TemporalReaders.asLocalDate(r, i);
+		if (TemporalReaders.isTimeWithTimeZone(metadata, column))
+			return (r, c, i) -> TemporalReaders.asOffsetTime(r, i, c, true);
+		if (jdbcType == Types.TIME)
+			return (r, c, i) -> TemporalReaders.asLocalTime(r, i);
+		return (r, c, i) -> {
+			Object raw = r.getObject(i);
+			return raw instanceof Array array ? extractSqlArrayResultSetValue(array) : raw;
+		};
+	}
 
-		if (tsTz) {
-			resultSetValue = TemporalReaders.asOffsetDateTime(resultSet, columnIndex, statementContext, resultSetMetaData);
-		} else if (jdbcType == Types.TIMESTAMP) {
-			resultSetValue = TemporalReaders.asLocalDateTime(resultSet, columnIndex, statementContext, resultSetMetaData);
-		} else if (jdbcType == Types.DATE) {
-			resultSetValue = TemporalReaders.asLocalDate(resultSet, columnIndex);
-		} else if (timeTz) {
-			resultSetValue = TemporalReaders.asOffsetTime(resultSet, columnIndex, statementContext, resultSetMetaData);
-		} else if (jdbcType == Types.TIME) {
-			resultSetValue = TemporalReaders.asLocalTime(resultSet, columnIndex);
-		} else {
-			// Non-temporal or unknown: take the driver's native object (BigDecimal, SQLXML, etc.)
-			resultSetValue = resultSet.getObject(columnIndex);
-
-			if (resultSetValue instanceof Array sqlArray)
-				resultSetValue = extractSqlArrayResultSetValue(sqlArray);
+	@Nullable
+	private Object convertColumn(@Nullable Object raw, TargetType target, List<CustomColumnMapper> mappers,
+			ResultSet resultSet, StatementContext<?> context, InstanceProvider instances,
+			MappingResources resources, int column, String label, int jdbcType) {
+		if (raw == null) return null;
+		if (!mappers.isEmpty()) {
+			// Even a mapper returning fallback can retain the borrowed driver value.
+			resources.borrow(raw);
+			CustomMappingOutcome custom = tryCustomColumnMappers(context, resultSet, raw, target,
+					mappers, column, label, instances);
+			if (custom.isApplied()) return custom.getValue();
 		}
-
-		return Optional.ofNullable(resultSetValue);
+		Object value = MappingResources.requiresMaterialization(raw, target.getRawClass(), jdbcType)
+				? resources.materialize(raw, target.getRawClass(), jdbcType, "column '" + label + "'") : raw;
+		return convertResultSetValueToTargetType(context, value, target, resources);
 	}
 
-	/**
-	 * Massages a {@link ResultSet#getObject(String)} value to match the given {@code propertyType}.
-	 * <p>
-	 * For example, the JDBC driver might give us {@link java.sql.Timestamp} but our corresponding JavaBean field is of
-	 * type {@link java.util.Date}, so we need to manually convert that ourselves.
-	 *
-	 * @param statementContext current SQL context
-	 * @param resultSetValue   the value returned by {@link ResultSet#getObject(String)}
-	 * @param propertyType     the JavaBean property type we'd like to map {@code resultSetValue} to
-	 * @return a representation of {@code resultSetValue} that is of type {@code propertyType}
-	 */
+	/** Convenience entry point for a detached value; row execution shares one resource scope. */
 	@NonNull
-	protected <T> Optional<Object> convertResultSetValueToPropertyType(@NonNull StatementContext<T> statementContext,
-																																		 @Nullable Object resultSetValue,
-																																		 @NonNull Class<?> propertyType) {
-		requireNonNull(statementContext);
-		requireNonNull(propertyType);
-		return convertResultSetValueToTargetType(statementContext, resultSetValue, TargetType.of(propertyType));
+	protected <T> Optional<Object> convertResultSetValueToTargetType(StatementContext<T> context,
+			@Nullable Object value, TargetType target) {
+		try (MappingResources resources = acquireMappingResources()) {
+			return Optional.ofNullable(convertResultSetValueToTargetType(context, value, target, resources));
+		} catch (SQLException failure) {
+			throw new DatabaseException("Unable to release mapping resources", failure);
+		}
 	}
 
-	@NonNull
-	protected <T> Optional<Object> convertResultSetValueToTargetType(@NonNull StatementContext<T> statementContext,
+	@Nullable
+	private <T> Object convertResultSetValueToTargetType(@NonNull StatementContext<T> statementContext,
 																																 @Nullable Object resultSetValue,
-																																 @NonNull TargetType targetType) {
+																																 @NonNull TargetType targetType, @NonNull MappingResources resources) {
 		requireNonNull(statementContext);
 		requireNonNull(targetType);
 
 		if (resultSetValue == null)
-			return Optional.empty();
+			return null;
 
-		resultSetValue = statementContext.getDatabaseDialect().unwrapResultSetValue(resultSetValue);
+		// All built-in dialects preserve these exact base scalar values. Column execution has
+		// already run custom hooks and validated JDBC-identified detached LOBs before this call.
+		if (isIdentityScalar(resultSetValue, boxedClass(targetType.getRawClass())))
+			return resultSetValue;
 
-		if (resultSetValue == null)
-			return Optional.empty();
+		if (MappingResources.requiresMaterialization(resultSetValue, targetType.getRawClass(), Types.OTHER))
+			resultSetValue = resources.materialize(resultSetValue, targetType.getRawClass(), Types.OTHER, "target " + targetType.getRawClass().getTypeName());
+		if (targetType.getRawClass() == Object.class || targetType.getRawClass().isInstance(resultSetValue))
+			resources.borrow(resultSetValue);
+		DatabaseDialect dialect = statementContext.getDatabaseDialect();
+		boolean nativeTarget = targetType.getRawClass() == Object.class || Map.class.isAssignableFrom(targetType.getRawClass());
+		resultSetValue = nativeTarget ? resources.nativeValue(resultSetValue, dialect)
+				: dialect instanceof DuckDbDialect duck ? duck.unwrapForTypedMapping(resultSetValue)
+				: dialect.unwrapResultSetValue(resultSetValue);
 
+		return convertDetachedValue(statementContext, resultSetValue, targetType, resources);
+	}
+
+	/** Pure built-in conversion also serves scalar JDBC readers without forcing dialect detection. */
+	@Nullable
+	private <T> Object convertDetachedValue(StatementContext<T> statementContext, @Nullable Object resultSetValue,
+			TargetType targetType, MappingResources resources) {
+		if (resultSetValue == null) return null;
+		Class<?> targetClass = boxedClass(targetType.getRawClass());
+		// Keep this shared identity path small enough to inline. Floating-point values still
+		// undergo finite checks; containers still undergo recursive element conversion.
+		if (isIdentityScalar(resultSetValue, targetClass)) return resultSetValue;
+		return convertDetachedValueSlow(statementContext, resultSetValue, targetType, resources);
+	}
+
+	private static boolean isIdentityScalar(Object value, Class<?> targetClass) {
+		return value.getClass() == targetClass && (targetClass == String.class
+				|| targetClass == Integer.class || targetClass == Long.class || targetClass == Short.class
+				|| targetClass == Byte.class || targetClass == Boolean.class || targetClass == Character.class
+				|| targetClass == BigInteger.class || targetClass == BigDecimal.class || targetClass == byte[].class);
+	}
+
+	@Nullable
+	private <T> Object convertDetachedValueSlow(StatementContext<T> statementContext, Object resultSetValue,
+			TargetType targetType, MappingResources resources) {
 		Class<?> propertyType = targetType.getRawClass();
+		if (propertyType == byte[].class && resultSetValue instanceof byte[]) return resultSetValue;
 
 		if (resultSetValue instanceof Array sqlArray && (targetType.isArray() || targetType.isList() || targetType.isSet()))
-			return Optional.of(convertSqlArrayResultSetValue(statementContext, sqlArray, targetType));
+			return convertSqlArrayResultSetValue(statementContext, sqlArray, targetType, resources);
 
 		if (resultSetValue.getClass().isArray() && (targetType.isArray() || targetType.isList() || targetType.isSet()))
-			return Optional.of(convertArrayResultSetValue(statementContext, resultSetValue, targetType));
+			return convertArrayResultSetValue(statementContext, resultSetValue, targetType, resources);
 
 		// STRUCT-shaped values: dialects that surface SQL STRUCT columns as insertion-ordered
 		// attribute-name -> value maps (for example DuckDB - see DuckDbDialect#unwrapResultSetValue)
 		// map directly to record targets, recursively converting each attribute to its component type.
 		if (resultSetValue instanceof Map<?, ?> mapValue && propertyType.isRecord())
-			return Optional.of(convertMapResultSetValueToRecord(statementContext, mapValue, propertyType, STRUCT_RECORD_INSTANCE_PROVIDER));
+			return convertMapResultSetValueToRecord(statementContext, mapValue, propertyType, STRUCT_RECORD_INSTANCE_PROVIDER, resources);
 
 		// Vector read-back: drivers surface vector columns (e.g. pgvector) as text like "[1.5,2.5]" -
 		// unwrapResultSetValue above already converted PGobject to its String form. Parse into
@@ -1626,179 +1299,185 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		if (resultSetValue instanceof String string && (propertyType == float[].class || propertyType == double[].class)) {
 			Object vector = vectorFromLiteral(string, propertyType == float[].class);
 			if (vector != null)
-				return Optional.of(vector);
+				return vector;
 		}
 
 		// Normalize primitives to wrappers
 		Class<?> targetClass = boxedClass(propertyType);
 
+		// Already converted scalar values and native property values retain their representation.
+		if (targetClass.isInstance(resultSetValue) && !(resultSetValue instanceof Number))
+			return resultSetValue;
+
 		// Numbers
 		if (resultSetValue instanceof BigDecimal bigDecimal) {
 			if (BigDecimal.class.isAssignableFrom(targetClass))
-				return Optional.of(bigDecimal);
+				return bigDecimal;
 			if (BigInteger.class.isAssignableFrom(targetClass))
-				return Optional.of(exactBigInteger(bigDecimal));
+				return exactBigInteger(bigDecimal);
 		}
 
 		if (resultSetValue instanceof BigInteger bigInteger) {
 			if (BigDecimal.class.isAssignableFrom(targetClass))
-				return Optional.of(new BigDecimal(bigInteger));
+				return new BigDecimal(bigInteger);
 			if (BigInteger.class.isAssignableFrom(targetClass))
-				return Optional.of(bigInteger);
+				return bigInteger;
 		}
 
 		if (resultSetValue instanceof Number number) {
 			if (Byte.class.isAssignableFrom(targetClass))
-				return Optional.of(exactByte(number));
+				return exactByte(number);
 			if (Short.class.isAssignableFrom(targetClass))
-				return Optional.of(exactShort(number));
+				return exactShort(number);
 			if (Integer.class.isAssignableFrom(targetClass))
-				return Optional.of(exactInt(number));
+				return exactInt(number);
 			if (Long.class.isAssignableFrom(targetClass))
-				return Optional.of(exactLong(number));
+				return exactLong(number);
 			if (Float.class.isAssignableFrom(targetClass))
-				return Optional.of(finiteFloat(number));
+				return finiteFloat(number);
 			if (Double.class.isAssignableFrom(targetClass))
-				return Optional.of(finiteDouble(number));
+				return finiteDouble(number);
 			if (BigDecimal.class.isAssignableFrom(targetClass)) {
 				if (number instanceof Byte || number instanceof Short || number instanceof Integer || number instanceof Long)
-					return Optional.of(BigDecimal.valueOf(number.longValue()));
-				return Optional.of(new BigDecimal(number.toString()));
+					return BigDecimal.valueOf(number.longValue());
+				return new BigDecimal(number.toString());
 			}
 			if (BigInteger.class.isAssignableFrom(targetClass)) {
 				if (number instanceof Byte || number instanceof Short || number instanceof Integer || number instanceof Long)
-					return Optional.of(BigInteger.valueOf(number.longValue()));
-				return Optional.of(exactBigInteger(decimalForNumericConversion(number)));
+					return BigInteger.valueOf(number.longValue());
+				return exactBigInteger(decimalForNumericConversion(number));
 			}
 		}
 
 		// Legacy java.sql.* coming from drivers
 		if (resultSetValue instanceof java.sql.Timestamp timestamp) {
 			if (Date.class.isAssignableFrom(targetClass))
-				return Optional.of(timestamp);
+				return timestamp;
 			if (Instant.class.isAssignableFrom(targetClass))
-				return Optional.of(timestamp.toInstant());
+				return timestamp.toInstant();
 			if (LocalDate.class.isAssignableFrom(targetClass))
-				return Optional.of(timestamp.toLocalDateTime().toLocalDate());
+				return timestamp.toLocalDateTime().toLocalDate();
 			if (LocalDateTime.class.isAssignableFrom(targetClass))
-				return Optional.of(timestamp.toLocalDateTime());
+				return timestamp.toLocalDateTime();
 			if (OffsetDateTime.class.isAssignableFrom(targetClass))
-				return Optional.of(timestamp.toInstant().atZone(statementContext.getTimeZone()).toOffsetDateTime());
+				return timestamp.toInstant().atZone(statementContext.getTimeZone()).toOffsetDateTime();
 			if (ZonedDateTime.class.isAssignableFrom(targetClass))
-				return Optional.of(timestamp.toInstant().atZone(statementContext.getTimeZone()));
+				return timestamp.toInstant().atZone(statementContext.getTimeZone());
 		}
 
 		if (resultSetValue instanceof java.sql.Date date) {
 			if (Date.class.isAssignableFrom(targetClass))
-				return Optional.of(date);
+				return date;
 			if (Instant.class.isAssignableFrom(targetClass))
-				return Optional.of(date.toInstant());
+				return date.toInstant();
 			if (LocalDate.class.isAssignableFrom(targetClass))
-				return Optional.of(date.toLocalDate());
+				return date.toLocalDate();
 			if (LocalDateTime.class.isAssignableFrom(targetClass))
-				return Optional.of(LocalDateTime.ofInstant(date.toInstant(), statementContext.getTimeZone()));
+				return LocalDateTime.ofInstant(date.toInstant(), statementContext.getTimeZone());
 		}
 
 		if (resultSetValue instanceof java.sql.Time time) {
 			if (LocalTime.class.isAssignableFrom(targetClass))
-				return Optional.of(time.toLocalTime());
+				return time.toLocalTime();
 		}
 
 		// New java.time values (preferred)
 		if (resultSetValue instanceof Instant instant) {
 			if (Instant.class.isAssignableFrom(targetClass))
-				return Optional.of(instant);
-			if (Date.class.isAssignableFrom(targetClass))
-				return Optional.of(Date.from(instant));
-			if (LocalDateTime.class.isAssignableFrom(targetClass))
-				return Optional.of(instant.atZone(statementContext.getTimeZone()).toLocalDateTime());
-			if (LocalDate.class.isAssignableFrom(targetClass))
-				return Optional.of(instant.atZone(statementContext.getTimeZone()).toLocalDate());
-			if (OffsetDateTime.class.isAssignableFrom(targetClass))
-				return Optional.of(instant.atZone(statementContext.getTimeZone()).toOffsetDateTime());
-			if (ZonedDateTime.class.isAssignableFrom(targetClass))
-				return Optional.of(instant.atZone(statementContext.getTimeZone()));
+				return instant;
 			if (java.sql.Timestamp.class.isAssignableFrom(targetClass))
-				return Optional.of(Timestamp.from(instant));
+				return Timestamp.from(instant);
 			if (java.sql.Date.class.isAssignableFrom(targetClass))
-				return Optional.of(java.sql.Date.valueOf(instant.atZone(statementContext.getTimeZone()).toLocalDate()));
+				return java.sql.Date.valueOf(instant.atZone(statementContext.getTimeZone()).toLocalDate());
+			if (Date.class.isAssignableFrom(targetClass))
+				return Date.from(instant);
+			if (LocalDateTime.class.isAssignableFrom(targetClass))
+				return instant.atZone(statementContext.getTimeZone()).toLocalDateTime();
+			if (LocalDate.class.isAssignableFrom(targetClass))
+				return instant.atZone(statementContext.getTimeZone()).toLocalDate();
+			if (OffsetDateTime.class.isAssignableFrom(targetClass))
+				return instant.atZone(statementContext.getTimeZone()).toOffsetDateTime();
+			if (ZonedDateTime.class.isAssignableFrom(targetClass))
+				return instant.atZone(statementContext.getTimeZone());
 		}
 
 		if (resultSetValue instanceof LocalDateTime localDateTime) {
 			if (LocalDateTime.class.isAssignableFrom(targetClass))
-				return Optional.of(localDateTime);
+				return localDateTime;
 			if (Instant.class.isAssignableFrom(targetClass))
-				return Optional.of(localDateTime.atZone(statementContext.getTimeZone()).toInstant());
-			if (Date.class.isAssignableFrom(targetClass))
-				return Optional.of(Date.from(localDateTime.atZone(statementContext.getTimeZone()).toInstant()));
-			if (LocalDate.class.isAssignableFrom(targetClass))
-				return Optional.of(localDateTime.toLocalDate());
-			if (OffsetDateTime.class.isAssignableFrom(targetClass))
-				return Optional.of(localDateTime.atZone(statementContext.getTimeZone()).toOffsetDateTime());
-			if (ZonedDateTime.class.isAssignableFrom(targetClass))
-				return Optional.of(localDateTime.atZone(statementContext.getTimeZone()));
+				return localDateTime.atZone(statementContext.getTimeZone()).toInstant();
 			if (java.sql.Timestamp.class.isAssignableFrom(targetClass))
-				return Optional.of(Timestamp.valueOf(localDateTime));
+				return Timestamp.valueOf(localDateTime);
 			if (java.sql.Date.class.isAssignableFrom(targetClass))
-				return Optional.of(java.sql.Date.valueOf(localDateTime.toLocalDate()));
+				return java.sql.Date.valueOf(localDateTime.toLocalDate());
+			if (Date.class.isAssignableFrom(targetClass))
+				return Date.from(localDateTime.atZone(statementContext.getTimeZone()).toInstant());
+			if (LocalDate.class.isAssignableFrom(targetClass))
+				return localDateTime.toLocalDate();
+			if (OffsetDateTime.class.isAssignableFrom(targetClass))
+				return localDateTime.atZone(statementContext.getTimeZone()).toOffsetDateTime();
+			if (ZonedDateTime.class.isAssignableFrom(targetClass))
+				return localDateTime.atZone(statementContext.getTimeZone());
 		}
 
 		if (resultSetValue instanceof OffsetDateTime offsetDateTime) {
 			if (OffsetDateTime.class.isAssignableFrom(targetClass))
-				return Optional.of(offsetDateTime);
+				return offsetDateTime;
 			if (Instant.class.isAssignableFrom(targetClass))
-				return Optional.of(offsetDateTime.toInstant());
+				return offsetDateTime.toInstant();
 			if (LocalDateTime.class.isAssignableFrom(targetClass))
-				return Optional.of(offsetDateTime.atZoneSameInstant(statementContext.getTimeZone()).toLocalDateTime());
-			if (Date.class.isAssignableFrom(targetClass))
-				return Optional.of(Date.from(offsetDateTime.toInstant()));
-			if (ZonedDateTime.class.isAssignableFrom(targetClass))
-				return Optional.of(offsetDateTime.atZoneSameInstant(statementContext.getTimeZone()));
+				return offsetDateTime.atZoneSameInstant(statementContext.getTimeZone()).toLocalDateTime();
 			if (java.sql.Timestamp.class.isAssignableFrom(targetClass))
-				return Optional.of(Timestamp.from(offsetDateTime.toInstant()));
+				return Timestamp.from(offsetDateTime.toInstant());
+			if (java.sql.Date.class.isAssignableFrom(targetClass))
+				return java.sql.Date.valueOf(offsetDateTime.atZoneSameInstant(statementContext.getTimeZone()).toLocalDate());
+			if (Date.class.isAssignableFrom(targetClass))
+				return Date.from(offsetDateTime.toInstant());
+			if (ZonedDateTime.class.isAssignableFrom(targetClass))
+				return offsetDateTime.atZoneSameInstant(statementContext.getTimeZone());
 		}
 
 		if (resultSetValue instanceof LocalDate localDate) {
 			if (LocalDate.class.isAssignableFrom(targetClass))
-				return Optional.of(localDate);
+				return localDate;
 			if (LocalDateTime.class.isAssignableFrom(targetClass))
-				return Optional.of(localDate.atStartOfDay());
+				return localDate.atStartOfDay();
 			if (ZonedDateTime.class.isAssignableFrom(targetClass))
-				return Optional.of(localDate.atStartOfDay(statementContext.getTimeZone()));
+				return localDate.atStartOfDay(statementContext.getTimeZone());
 			if (Instant.class.isAssignableFrom(targetClass))
-				return Optional.of(localDate.atStartOfDay(statementContext.getTimeZone()).toInstant());
+				return localDate.atStartOfDay(statementContext.getTimeZone()).toInstant();
 			if (java.sql.Date.class.isAssignableFrom(targetClass))
-				return Optional.of(java.sql.Date.valueOf(localDate));
+				return java.sql.Date.valueOf(localDate);
 			if (Date.class.isAssignableFrom(targetClass))
-				return Optional.of(Date.from(localDate.atStartOfDay(statementContext.getTimeZone()).toInstant()));
+				return Date.from(localDate.atStartOfDay(statementContext.getTimeZone()).toInstant());
 		}
 
 		if (resultSetValue instanceof LocalTime localTime) {
 			if (LocalTime.class.isAssignableFrom(targetClass))
-				return Optional.of(localTime);
+				return localTime;
 
 			if (OffsetTime.class.isAssignableFrom(targetClass)) {
 				ZoneOffset off = statementContext.getTimeZone().getRules().getOffset(Instant.EPOCH);
-				return Optional.of(localTime.atOffset(off));
+				return localTime.atOffset(off);
 			}
 
 			if (java.sql.Time.class.isAssignableFrom(targetClass))
-				return Optional.of(java.sql.Time.valueOf(localTime));
+				return java.sql.Time.valueOf(localTime);
 		}
 
 		if (resultSetValue instanceof OffsetTime offsetTime) {
 			if (OffsetTime.class.isAssignableFrom(targetClass))
-				return Optional.of(offsetTime);
+				return offsetTime;
 			if (LocalTime.class.isAssignableFrom(targetClass))
-				return Optional.of(offsetTime.toLocalTime());
+				return offsetTime.toLocalTime();
 			if (java.sql.Time.class.isAssignableFrom(targetClass))
-				return Optional.of(java.sql.Time.valueOf(offsetTime.toLocalTime()));
+				return java.sql.Time.valueOf(offsetTime.toLocalTime());
 		}
 
 		if (resultSetValue instanceof String string) {
 			if (BigDecimal.class.isAssignableFrom(targetClass)) {
 				try {
-					return Optional.of(new BigDecimal(string));
+					return new BigDecimal(string);
 				} catch (NumberFormatException e) {
 					throw new DatabaseException(format("Unable to convert value '%s' to BigDecimal", resultSetValue), e);
 				}
@@ -1806,7 +1485,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 			if (BigInteger.class.isAssignableFrom(targetClass)) {
 				try {
-					return Optional.of(exactBigInteger(new BigDecimal(string)));
+					return exactBigInteger(new BigDecimal(string));
 				} catch (NumberFormatException e) {
 					throw new DatabaseException(format("Unable to convert value '%s' to BigInteger", resultSetValue), e);
 				}
@@ -1814,7 +1493,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 			if (LocalDate.class.isAssignableFrom(targetClass)) {
 				try {
-					return Optional.of(localDateFromString(string));
+					return localDateFromString(string);
 				} catch (DateTimeException | IllegalArgumentException e) {
 					throw new DatabaseException(format("Unable to convert value '%s' to LocalDate", resultSetValue), e);
 				}
@@ -1822,7 +1501,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 			if (LocalTime.class.isAssignableFrom(targetClass)) {
 				try {
-					return Optional.of(localTimeFromString(string));
+					return localTimeFromString(string);
 				} catch (DateTimeException | IllegalArgumentException e) {
 					throw new DatabaseException(format("Unable to convert value '%s' to LocalTime", resultSetValue), e);
 				}
@@ -1830,7 +1509,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 			if (LocalDateTime.class.isAssignableFrom(targetClass)) {
 				try {
-					return Optional.of(localDateTimeFromString(string));
+					return localDateTimeFromString(string);
 				} catch (DateTimeException | IllegalArgumentException e) {
 					throw new DatabaseException(format("Unable to convert value '%s' to LocalDateTime", resultSetValue), e);
 				}
@@ -1838,7 +1517,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 			if (Instant.class.isAssignableFrom(targetClass)) {
 				try {
-					return Optional.of(instantFromString(string, statementContext));
+					return instantFromString(string, statementContext);
 				} catch (DateTimeException | IllegalArgumentException e) {
 					throw new DatabaseException(format("Unable to convert value '%s' to Instant", resultSetValue), e);
 				}
@@ -1846,7 +1525,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 			if (OffsetDateTime.class.isAssignableFrom(targetClass)) {
 				try {
-					return Optional.of(offsetDateTimeFromString(string, statementContext));
+					return offsetDateTimeFromString(string, statementContext);
 				} catch (DateTimeException | IllegalArgumentException e) {
 					throw new DatabaseException(format("Unable to convert value '%s' to OffsetDateTime", resultSetValue), e);
 				}
@@ -1854,7 +1533,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 			if (ZonedDateTime.class.isAssignableFrom(targetClass)) {
 				try {
-					return Optional.of(zonedDateTimeFromString(string, statementContext));
+					return zonedDateTimeFromString(string, statementContext);
 				} catch (DateTimeException | IllegalArgumentException e) {
 					throw new DatabaseException(format("Unable to convert value '%s' to ZonedDateTime", resultSetValue), e);
 				}
@@ -1862,51 +1541,51 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		if (UUID.class.isAssignableFrom(targetClass)) {
-			return Optional.ofNullable(uuidFromValue(resultSetValue));
+			return uuidFromValue(resultSetValue);
 		} else if (ZoneId.class.isAssignableFrom(targetClass)) {
 			try {
-				return Optional.ofNullable(ZoneId.of(resultSetValue.toString()));
+				return ZoneId.of(resultSetValue.toString());
 			} catch (DateTimeException e) {
 				throw new DatabaseException(format("Unable to convert value '%s' to ZoneId", resultSetValue), e);
 			}
 		} else if (TimeZone.class.isAssignableFrom(targetClass)) {
-			return Optional.of(timeZoneFromId(resultSetValue.toString()));
+			return timeZoneFromId(resultSetValue.toString());
 		} else if (Locale.class.isAssignableFrom(targetClass)) {
-			return Optional.of(localeFromLanguageTag(resultSetValue.toString()));
+			return localeFromLanguageTag(resultSetValue.toString());
 		} else if (Currency.class.isAssignableFrom(targetClass)) {
 			try {
-				return Optional.ofNullable(Currency.getInstance(resultSetValue.toString()));
+				return Currency.getInstance(resultSetValue.toString());
 			} catch (IllegalArgumentException e) {
 				throw new DatabaseException(format("Unable to convert value '%s' to Currency", resultSetValue), e);
 			}
 		} else if (Year.class.isAssignableFrom(targetClass)) {
-			return Optional.ofNullable(yearFromValue(resultSetValue));
+			return yearFromValue(resultSetValue);
 		} else if (YearMonth.class.isAssignableFrom(targetClass)) {
-			return Optional.ofNullable(yearMonthFromString(resultSetValue.toString()));
+			return yearMonthFromString(resultSetValue.toString());
 		} else if (targetClass.isEnum()) {
-			return Optional.ofNullable(extractEnumValue(targetClass, resultSetValue));
+			return extractEnumValue(targetClass, resultSetValue);
 		}
 
 		if (Boolean.class.isAssignableFrom(targetClass)) {
 			// Native boolean
 			if (resultSetValue instanceof Boolean b)
-				return Optional.of(b);
+				return b;
 
 			// Numeric truthiness (0=false, nonzero=true)
 			if (resultSetValue instanceof Number number)
-				return Optional.of(decimalForNumericConversion(number).signum() != 0);
+				return decimalForNumericConversion(number).signum() != 0;
 
 			throw new DatabaseException(format("Cannot map value '%s' (%s) to boolean", resultSetValue, resultSetValue.getClass().getName()));
 		}
 
 		if (Character.class.isAssignableFrom(targetClass)) {
 			// Native char
-			if (resultSetValue instanceof Character c) return Optional.of(c);
+			if (resultSetValue instanceof Character c) return c;
 
 			// Single-character string
 			if (resultSetValue instanceof String string) {
 				if (string.length() == 1)
-					return Optional.of(string.charAt(0));
+					return string.charAt(0);
 
 				throw new DatabaseException(format("Cannot map String value '%s' to %s; expected length 1", string, propertyType.getSimpleName()));
 			}
@@ -1915,7 +1594,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			if (resultSetValue instanceof Number number) {
 				int code = exactInt(number);
 				if (code >= Character.MIN_VALUE && code <= Character.MAX_VALUE)
-					return Optional.of((char) code);
+					return (char) code;
 
 				throw new DatabaseException(format("Numeric value %d is outside valid char range", code));
 			}
@@ -1924,19 +1603,19 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					resultSetValue.getClass().getName(), propertyType.getSimpleName()));
 		}
 
-		return Optional.ofNullable(resultSetValue);
+		return resultSetValue;
 	}
 
 	@NonNull
 	private <T> Object convertSqlArrayResultSetValue(@NonNull StatementContext<T> statementContext,
 																									 @NonNull Array sqlArray,
-																									 @NonNull TargetType targetType) {
+																									 @NonNull TargetType targetType, @NonNull MappingResources resources) {
 		requireNonNull(statementContext);
 		requireNonNull(sqlArray);
 		requireNonNull(targetType);
 
 		try {
-			return convertArrayResultSetValue(statementContext, extractSqlArrayResultSetValue(sqlArray), targetType);
+			return convertArrayResultSetValue(statementContext, extractSqlArrayResultSetValue(sqlArray), targetType, resources);
 		} catch (SQLException e) {
 			DatabaseException wrapped = new DatabaseException("Unable to extract JDBC Array value", e);
 			throw wrapped;
@@ -1969,7 +1648,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	@NonNull
 	private <T> Object convertArrayResultSetValue(@NonNull StatementContext<T> statementContext,
 																								@NonNull Object arrayValue,
-																								@NonNull TargetType targetType) {
+																								@NonNull TargetType targetType, @NonNull MappingResources resources) {
 		requireNonNull(statementContext);
 		requireNonNull(arrayValue);
 		requireNonNull(targetType);
@@ -1986,7 +1665,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			List<Object> values = new ArrayList<>(length);
 
 			for (int i = 0; i < length; ++i)
-				values.add(convertResultSetArrayElement(statementContext, java.lang.reflect.Array.get(arrayValue, i), elementType, i));
+				values.add(convertResultSetArrayElement(statementContext, java.lang.reflect.Array.get(arrayValue, i), elementType, i, resources));
 
 			return values;
 		}
@@ -1996,7 +1675,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			Set<Object> values = new LinkedHashSet<>(length);
 
 			for (int i = 0; i < length; ++i)
-				values.add(convertResultSetArrayElement(statementContext, java.lang.reflect.Array.get(arrayValue, i), elementType, i));
+				values.add(convertResultSetArrayElement(statementContext, java.lang.reflect.Array.get(arrayValue, i), elementType, i, resources));
 
 			return values;
 		}
@@ -2006,7 +1685,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		Object convertedArray = java.lang.reflect.Array.newInstance(componentClass, length);
 
 		for (int i = 0; i < length; ++i) {
-			Object convertedElement = convertResultSetArrayElement(statementContext, java.lang.reflect.Array.get(arrayValue, i), componentType, i);
+			Object convertedElement = convertResultSetArrayElement(statementContext, java.lang.reflect.Array.get(arrayValue, i), componentType, i, resources);
 
 			if (convertedElement == null && componentClass.isPrimitive())
 				throw new DatabaseException(format("SQL ARRAY element %s is NULL but target array component type is primitive (%s)",
@@ -2022,7 +1701,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	private <T> Object convertResultSetArrayElement(@NonNull StatementContext<T> statementContext,
 																									@Nullable Object value,
 																									@NonNull TargetType targetType,
-																									int elementIndex) {
+																									int elementIndex, @NonNull MappingResources resources) {
 		requireNonNull(statementContext);
 		requireNonNull(targetType);
 
@@ -2031,10 +1710,14 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		Class<?> targetClass = boxedClass(targetType.getRawClass());
 
-		if (targetClass == Object.class || targetClass.isInstance(value))
+		if (targetClass == Object.class)
+			return resources.nativeValue(value, statementContext.getDatabaseDialect());
+		if (targetClass.isInstance(value)) {
+			resources.borrow(value);
 			return value;
+		}
 
-		Object converted = convertResultSetValueToTargetType(statementContext, value, targetType).orElse(null);
+		Object converted = convertResultSetValueToTargetType(statementContext, value, targetType, resources);
 
 		if (converted != null && !targetClass.isInstance(converted)) {
 			throw new DatabaseException(format("SQL ARRAY element %s of type %s cannot be mapped to %s",
@@ -2070,7 +1753,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 																				@NonNull ResultSet resultSet,
 																				@NonNull Class<T> resultSetRowType,
 																				@NonNull InstanceProvider instanceProvider,
-																				@NonNull ResultSetMetaData resultSetMetaData) throws SQLException {
+																				@NonNull ResultSetMetaData resultSetMetaData, @NonNull MappingResources resources) throws SQLException {
 		requireNonNull(statementContext);
 		requireNonNull(resultSet);
 		requireNonNull(resultSetRowType);
@@ -2080,7 +1763,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		Object resultSetValue = extractColumnValue(resultSetMetaData, statementContext, resultSet, 1).orElse(null);
 
 		if (resultSetValue != null)
-			resultSetValue = statementContext.getDatabaseDialect().unwrapResultSetValue(resultSetValue);
+			resultSetValue = statementContext.getDatabaseDialect() instanceof DuckDbDialect duck
+				? duck.unwrapForTypedMapping(resultSetValue)
+				: statementContext.getDatabaseDialect().unwrapResultSetValue(resultSetValue);
 
 		if (resultSetValue == null)
 			return null;
@@ -2089,7 +1774,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			throw noRecordColumnMappingsException(resultSetRowType, resultSetMetaData);
 
 		@SuppressWarnings("unchecked")
-		T record = (T) convertMapResultSetValueToRecord(statementContext, mapValue, resultSetRowType, instanceProvider);
+		T record = (T) convertMapResultSetValueToRecord(statementContext, mapValue, resultSetRowType, instanceProvider, resources);
 		return record;
 	}
 
@@ -2110,7 +1795,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	private <T> Object convertMapResultSetValueToRecord(@NonNull StatementContext<T> statementContext,
 																											@NonNull Map<?, ?> mapValue,
 																											@NonNull Class<?> recordClass,
-																											@NonNull InstanceProvider instanceProvider) {
+																											@NonNull InstanceProvider instanceProvider, @NonNull MappingResources resources) {
 		requireNonNull(statementContext);
 		requireNonNull(mapValue);
 		requireNonNull(recordClass);
@@ -2179,7 +1864,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				++mappedAttributeCount;
 				Object rawValue = valuesByNormalizedName.get(attributeName);
 				Object value = rawValue == null ? null
-						: convertResultSetValueToTargetType(statementContext, rawValue, targetType).orElse(null);
+						: convertResultSetValueToTargetType(statementContext, rawValue, targetType, resources);
 
 				// It's considered programmer error to have a NULL attribute value and map it to a primitive (which does not support null)
 				if (value == null && recordComponentType.isPrimitive())
@@ -2593,7 +2278,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			if (!upper.equals("GMT") && !upper.equals("UTC") && !upper.equals("UT")) {
 				if (upper.startsWith("GMT") || upper.startsWith("UTC") || upper.startsWith("UT")) {
 					try {
-						ZoneId.of(upper);
+						return TimeZone.getTimeZone(ZoneId.of(upper));
 					} catch (DateTimeException e) {
 						throw new DatabaseException(format("Unable to convert value '%s' to TimeZone", zoneId), e);
 					}
@@ -2832,22 +2517,17 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		public static OffsetDateTime asOffsetDateTime(ResultSet rs, int col, StatementContext<?> ctx, boolean withTz) throws SQLException {
-			OffsetDateTime got = tryGet(rs, col, OffsetDateTime.class);
-			if (got != null) return got;
-
 			if (withTz) {
+				OffsetDateTime got = tryGet(rs, col, OffsetDateTime.class);
+				if (got != null) return got;
+
 				// Try via Instant if driver only gives us Timestamp
 				Instant inst = asInstant(rs, col, ctx, true);
 				return inst == null ? null : inst.atOffset(ctx.getTimeZone().getRules().getOffset(inst));
 			} else {
-				LocalDateTime ldt = tryGet(rs, col, LocalDateTime.class);
-				if (ldt == null) {
-					Timestamp ts = rs.getTimestamp(col);
-					ldt = ts == null ? null : ts.toLocalDateTime();
-				}
-				if (ldt == null) return null;
-				ZoneOffset off = ctx.getTimeZone().getRules().getOffset(ldt.atZone(ctx.getTimeZone()).toInstant());
-				return ldt.atOffset(off);
+				// A driver's OffsetDateTime conversion would attach its session/JVM zone, not the configured zone.
+				LocalDateTime ldt = asLocalDateTime(rs, col, ctx, false);
+				return ldt == null ? null : ldt.atZone(ctx.getTimeZone()).toOffsetDateTime();
 			}
 		}
 
@@ -2963,42 +2643,6 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@Nullable
-	private Integer getNullableInt(@NonNull ResultSet resultSet, int columnIndex) throws SQLException {
-		Number value = getNullableNumber(resultSet, columnIndex, Integer.class);
-		return value == null ? null : exactInt(value);
-	}
-
-	@Nullable
-	private Long getNullableLong(@NonNull ResultSet resultSet, int columnIndex) throws SQLException {
-		Number value = getNullableNumber(resultSet, columnIndex, Long.class);
-		return value == null ? null : exactLong(value);
-	}
-
-	@Nullable
-	private Short getNullableShort(@NonNull ResultSet resultSet, int columnIndex) throws SQLException {
-		Number value = getNullableNumber(resultSet, columnIndex, Short.class);
-		return value == null ? null : exactShort(value);
-	}
-
-	@Nullable
-	private Byte getNullableByte(@NonNull ResultSet resultSet, int columnIndex) throws SQLException {
-		Number value = getNullableNumber(resultSet, columnIndex, Byte.class);
-		return value == null ? null : exactByte(value);
-	}
-
-	@Nullable
-	private Float getNullableFloat(@NonNull ResultSet resultSet, int columnIndex) throws SQLException {
-		Number value = getNullableNumber(resultSet, columnIndex, Float.class);
-		return value == null ? null : finiteFloat(value);
-	}
-
-	@Nullable
-	private Double getNullableDouble(@NonNull ResultSet resultSet, int columnIndex) throws SQLException {
-		Number value = getNullableNumber(resultSet, columnIndex, Double.class);
-		return value == null ? null : finiteDouble(value);
-	}
-
-	@Nullable
 	private Boolean getNullableBoolean(@NonNull ResultSet resultSet, int columnIndex) throws SQLException {
 		Object value = resultSet.getObject(columnIndex);
 
@@ -3051,7 +2695,32 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		Object convert(@Nullable Object raw,
 									 @NonNull ResultSet rs,
 									 @NonNull StatementContext<?> ctx,
-									 @NonNull InstanceProvider ip);
+									 @NonNull InstanceProvider ip, @NonNull MappingResources resources);
+	}
+
+	/** Execution-only state; source values are shared by alias bindings without caching conversions. */
+	private static final class RowReadScope {
+		private final ResultSet resultSet;
+		private final StatementContext<?> context;
+		private final @Nullable Object[] raw;
+		private final @Nullable boolean[] loaded;
+
+		RowReadScope(ResultSet resultSet, StatementContext<?> context, RowPlan<?> plan) {
+			this.resultSet = resultSet;
+			this.context = context;
+			this.raw = plan.hasFanOut ? new Object[plan.columnCount + 1] : null;
+			this.loaded = plan.hasFanOut ? new boolean[plan.columnCount + 1] : null;
+		}
+
+		@Nullable Object read(ColumnBinding binding) throws SQLException {
+			if (this.raw == null) return binding.reader.read(this.resultSet, this.context, binding.columnIndex);
+			int column = binding.columnIndex;
+			if (!this.loaded[column]) {
+				this.raw[column] = binding.reader.read(this.resultSet, this.context, column);
+				this.loaded[column] = true;
+			}
+			return this.raw[column];
+		}
 	}
 
 	@ThreadSafe
@@ -3101,25 +2770,27 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			this.columnCount = columnCount;
 			this.hasFanOut = hasFanOut;
 			this.mappedColumnCount = mappedColumnCount;
-			this.bindings = requireNonNull(bindings);
+			this.bindings = List.copyOf(bindings);
 		}
 	}
 
 	protected static final class SchemaSignatureMemo {
 		@NonNull
 		private final WeakReference<ResultSet> resultSetReference;
+		private final WeakReference<DatabaseDialect> dialectReference;
 		@NonNull
 		private final String schemaSignature;
 
-		SchemaSignatureMemo(@NonNull ResultSet resultSet,
+		SchemaSignatureMemo(@NonNull ResultSet resultSet, @NonNull DatabaseDialect dialect,
 												@NonNull String schemaSignature) {
 			this.resultSetReference = new WeakReference<>(requireNonNull(resultSet));
+			this.dialectReference = new WeakReference<>(requireNonNull(dialect));
 			this.schemaSignature = requireNonNull(schemaSignature);
 		}
 
-		boolean matches(@NonNull ResultSet resultSet) {
+		boolean matches(@NonNull ResultSet resultSet, @NonNull DatabaseDialect dialect) {
 			requireNonNull(resultSet);
-			return this.resultSetReference.get() == resultSet;
+			return this.resultSetReference.get() == resultSet && this.dialectReference.get() == dialect;
 		}
 
 		@NonNull
@@ -3128,27 +2799,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 	}
 
-	@SuppressWarnings({"unchecked", "rawtypes"})
-	@NonNull
-	protected <T> RowPlan<T> buildPlan(@NonNull StatementContext<T> ctx,
-																		 @NonNull ResultSet rs,
-																		 @NonNull Class<T> resultClass,
-																		 @NonNull InstanceProvider instanceProvider,
-																		 @NonNull ResultSetMetaData resultSetMetaData,
-																		 @NonNull String schemaSignature) throws Exception {
-		requireNonNull(ctx);
-		requireNonNull(rs);
-		requireNonNull(resultClass);
-		requireNonNull(instanceProvider);
-		requireNonNull(resultSetMetaData);
-		requireNonNull(schemaSignature);
+	private record RowTypeMetadata(boolean isRecord, Map<String, TargetType> propertyTargetTypes,
+			Map<String, Integer> recordIndexByProp, RecordComponent[] recordComponents,
+			Map<String, MethodHandle> setterByProp, Map<String, List<String>> propertiesByLabel) {}
 
-		Map<String, RowPlan<?>> planCache = getRowPlanningCacheForResultClass(resultClass);
-		RowPlan<?> cached = planCache.get(schemaSignature);
-		if (cached != null) return (RowPlan<T>) cached;
-
-		int cols = resultSetMetaData.getColumnCount();
-
+	private RowTypeMetadata computeRowTypeMetadata(Class<?> resultClass) {
 		// Precompute property metadata for this class
 		Map<String, TargetType> propertyTargetTypes = determinePropertyTargetTypes(resultClass);
 		final boolean isRecord = resultClass.isRecord();
@@ -3167,7 +2822,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		final Map<String, MethodHandle> setterByProp = new HashMap<>();
 		if (!isRecord) {
 			for (WritableProperty writableProperty : determineWritableProperties(resultClass))
-				setterByProp.put(writableProperty.getName(), lookup.unreflect(writableProperty.getWriteMethod()));
+				try {
+					setterByProp.put(writableProperty.getName(), lookup.unreflect(writableProperty.getWriteMethod()));
+				} catch (IllegalAccessException failure) {
+					throw new DatabaseException("Unable to access property setter for " + resultClass.getName(), failure);
+				}
 		}
 
 		// Union of all writable property names
@@ -3181,39 +2840,49 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				? determineColumnLabelsByRecordComponentName(resultClass)
 				: determineNormalizedColumnLabelsByPropertyName(resultClass);
 		for (String prop : allProps) {
-			Set<String> labels = labelsByProperty.getOrDefault(prop, databaseColumnNamesForPropertyName(prop));
+			Set<String> labels = labelsByProperty.get(prop);
+			if (labels == null) labels = databaseColumnNamesForPropertyName(prop);
 
 			for (String label : labels)
 				propertiesByLabel.computeIfAbsent(label, labelKey -> new ArrayList<>(1)).add(prop);
 		}
 
-		// Build per-column readers (decided once)
-		final ColumnReader[] readers = new ColumnReader[cols + 1]; // 1-based indexing
-		DatabaseDialect databaseDialect = ctx.getDatabaseDialect();
-		for (int i = 1; i <= cols; i++) {
-			int jdbcType = resultSetMetaData.getColumnType(i);
-			boolean tsTz = databaseDialect.isTimestampWithTimeZone(resultSetMetaData, i);
-			boolean timeTz = TemporalReaders.isTimeWithTimeZone(resultSetMetaData, i);
-			if (tsTz) {
-				readers[i] = (r, c, col) -> TemporalReaders.asOffsetDateTime(r, col, c, true);
-			} else if (jdbcType == Types.TIMESTAMP) {
-				readers[i] = (r, c, col) -> TemporalReaders.asLocalDateTime(r, col, c, false);
-			} else if (jdbcType == Types.DATE) {
-				readers[i] = (r, c, col) -> TemporalReaders.asLocalDate(r, col);
-			} else if (timeTz) {
-				readers[i] = (r, c, col) -> TemporalReaders.asOffsetTime(r, col, c, true);
-			} else if (jdbcType == Types.TIME) {
-				readers[i] = (r, c, col) -> TemporalReaders.asLocalTime(r, col);
-			} else {
-				readers[i] = (r, c, col) -> {
-					Object value = r.getObject(col);
-					return value instanceof Array sqlArray ? extractSqlArrayResultSetValue(sqlArray) : value;
-				};
-			}
-		}
+		propertiesByLabel.replaceAll((label, properties) -> List.copyOf(properties));
+		return new RowTypeMetadata(isRecord, propertyTargetTypes, Map.copyOf(recordIndexByProp),
+				recordComponents, Map.copyOf(setterByProp), Map.copyOf(propertiesByLabel));
+	}
+
+	@SuppressWarnings({"unchecked", "rawtypes"})
+	@NonNull
+	protected <T> RowPlan<T> buildPlan(@NonNull StatementContext<T> ctx,
+																		 @NonNull ResultSet rs,
+																		 @NonNull Class<T> resultClass,
+																		 @NonNull InstanceProvider instanceProvider,
+																		 @NonNull ResultSetMetaData resultSetMetaData,
+																		 @NonNull String schemaSignature) throws Exception {
+		requireNonNull(ctx);
+		requireNonNull(rs);
+		requireNonNull(resultClass);
+		requireNonNull(instanceProvider);
+		requireNonNull(resultSetMetaData);
+		requireNonNull(schemaSignature);
+
+		Map<String, RowPlan<?>> planCache = getPlanCachingEnabled() ? getRowPlanningCacheForResultClass(resultClass) : null;
+		RowPlan<?> cached = planCache == null ? null : planCache.get(schemaSignature);
+		if (cached != null) return (RowPlan<T>) cached;
+
+		int cols = resultSetMetaData.getColumnCount();
+
+		RowTypeMetadata metadata = this.rowTypeMetadata.get(resultClass);
+		Map<String, TargetType> propertyTargetTypes = metadata.propertyTargetTypes;
+		boolean isRecord = metadata.isRecord;
+		Map<String, Integer> recordIndexByProp = metadata.recordIndexByProp;
+		RecordComponent[] recordComponents = metadata.recordComponents;
+		Map<String, MethodHandle> setterByProp = metadata.setterByProp;
+		Map<String, List<String>> propertiesByLabel = metadata.propertiesByLabel;
 
 		// For each column, bind ALL matching properties (fan-out)
-		List<ColumnBinding> bindings = new ArrayList<>();
+		List<ColumnBinding> bindings = new ArrayList<>(cols);
 		boolean hasFanOut = false;
 		int mappedColumnCount = 0;
 		Map<String, String> normalizedLabelsToRawLabels = new HashMap<>(cols);
@@ -3227,7 +2896,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 						"Duplicate column label '%s' (normalized from '%s' and '%s'); use column aliases to disambiguate.",
 						labelNorm, previousRawLabel, rawLabel));
 			}
-			ColumnReader reader = readers[i];
+			ColumnReader reader = columnReaderFor(resultSetMetaData, ctx, i);
+			final int jdbcType = resultSetMetaData.getColumnType(i);
 
 			// Find all properties that claim this label
 			List<String> matchedProps = propertiesByLabel.get(labelNorm);
@@ -3240,7 +2910,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 								-1,                           // recordArgIndexOrMinusOne (SKIP)
 								null,                         // setterOrNull
 								reader,                       // reader
-								(raw, rrs, cctx, ip) -> raw,  // converter: 4-arg form now
+								(raw, rrs, cctx, ip, resources) -> raw,  // converter
 								false,                        // targetIsPrimitive (SKIP => false)
 								Object.class,                 // targetRawClass (boxed)
 								""                            // propertyName (empty for SKIP)
@@ -3285,18 +2955,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				final String labelFinal = labelNorm;
 
 				List<CustomColumnMapper> customMappers = customColumnMappersFor(targetTypeFinal);
-				Converter converter = (raw, rrs, cctx, ip) -> {
-					if (raw == null) return null;
+				Converter converter = (raw, rrs, cctx, ip, resources) -> convertColumn(
+						raw, targetTypeFinal, customMappers, rrs, cctx, ip, resources,
+						colIndexFinal, labelFinal, jdbcType);
 
-					if (!customMappers.isEmpty()) {
-						CustomMappingOutcome outcome = tryCustomColumnMappers(cctx, rrs, raw, targetTypeFinal, customMappers, colIndexFinal, labelFinal, ip);
-						if (outcome.isApplied())
-							return outcome.getValue();
-					}
-
-					return convertResultSetValueToTargetType(cctx, raw, targetTypeFinal)
-							.orElse(raw);
-				};
 
 				bindings.add(new ColumnBinding(i, recordArgIndex, setterMH, reader, converter,
 						targetIsPrimitive, rawTargetClassBoxed, propertyNameFinal));
@@ -3304,7 +2966,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		RowPlan<T> plan = new RowPlan<>(isRecord, cols, hasFanOut, mappedColumnCount, bindings);
-		planCache.putIfAbsent(schemaSignature, plan);
+		if (planCache != null) planCache.putIfAbsent(schemaSignature, plan);
 		return plan;
 	}
 
@@ -3325,7 +2987,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@NonNull
-	protected Map<@NonNull ResultSetMetaData, @NonNull String> getSchemaSignatureByResultSetMetaData() {
+	protected Map<ResultSetMetaData, Map<DatabaseDialect, String>> getSchemaSignatureByResultSetMetaData() {
 		return this.schemaSignatureByResultSetMetaData;
 	}
 

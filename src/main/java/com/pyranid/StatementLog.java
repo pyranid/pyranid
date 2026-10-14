@@ -44,6 +44,8 @@ public final class StatementLog<T> {
 	@NonNull
 	private final Duration totalDuration;
 	@Nullable
+	private final Duration elapsedDuration;
+	@Nullable
 	private final Duration connectionAcquisitionDuration;
 	@Nullable
 	private final Duration preparationDuration;
@@ -71,6 +73,7 @@ public final class StatementLog<T> {
 		this.resultSetMappingDuration = builder.resultSetMappingDuration;
 		this.batchSize = builder.batchSize;
 		this.exception = builder.exception;
+		this.elapsedDuration = builder.elapsedDuration;
 
 		Duration totalDuration = Duration.ZERO;
 
@@ -107,6 +110,7 @@ public final class StatementLog<T> {
 
 		components.add(format("statementContext=%s", getStatementContext()));
 		components.add(format("totalDuration=%s", getTotalDuration()));
+		getElapsedDuration().ifPresent(elapsed -> components.add(format("elapsedDuration=%s", elapsed)));
 
 		Duration connectionAcquisitionDuration = getConnectionAcquisitionDuration().orElse(null);
 
@@ -156,6 +160,7 @@ public final class StatementLog<T> {
 				&& Objects.equals(getPreparationDuration(), statementLog.getPreparationDuration())
 				&& Objects.equals(getExecutionDuration(), statementLog.getExecutionDuration())
 				&& Objects.equals(getResultSetMappingDuration(), statementLog.getResultSetMappingDuration())
+				&& Objects.equals(getElapsedDuration(), statementLog.getElapsedDuration())
 				&& Objects.equals(getBatchSize(), statementLog.getBatchSize())
 				&& Objects.equals(getException(), statementLog.getException());
 	}
@@ -163,7 +168,7 @@ public final class StatementLog<T> {
 	@Override
 	public int hashCode() {
 		return Objects.hash(getStatementContext(), getConnectionAcquisitionDuration(), getPreparationDuration(),
-				getExecutionDuration(), getResultSetMappingDuration(), getBatchSize(), getException());
+				getExecutionDuration(), getResultSetMappingDuration(), getElapsedDuration(), getBatchSize(), getException());
 	}
 
 	/**
@@ -218,6 +223,18 @@ public final class StatementLog<T> {
 	}
 
 	/**
+	 * Elapsed time from executor entry, before connection/lock acquisition, through resource cleanup.
+	 * Includes consumer time while a stream remains open, and ends at stream exhaustion or explicit early closure.
+	 * Later application callback work, SQL compilation, and terminal statement metrics/logger callbacks are excluded.
+	 * This is measured independently of the active phase sum returned by {@link #getTotalDuration()}.
+	 *
+	 * @return elapsed duration, absent for manually constructed logs unless explicitly supplied
+	 * @since 4.8.0
+	 */
+	@NonNull
+	public Optional<Duration> getElapsedDuration() { return Optional.ofNullable(this.elapsedDuration); }
+
+	/**
 	 * The SQL statement that was executed.
 	 *
 	 * @return the SQL statement that was executed.
@@ -261,6 +278,8 @@ public final class StatementLog<T> {
 		private final StatementContext<T> statementContext;
 		@Nullable
 		private Duration connectionAcquisitionDuration;
+		@Nullable
+		private Duration elapsedDuration;
 		@Nullable
 		private Duration preparationDuration;
 		@Nullable
@@ -324,6 +343,20 @@ public final class StatementLog<T> {
 		 */
 		public Builder resultSetMappingDuration(@Nullable Duration resultSetMappingDuration) {
 			this.resultSetMappingDuration = resultSetMappingDuration;
+			return this;
+		}
+
+		/**
+		 * Supplies independently measured elapsed time; null leaves it absent.
+		 * @param elapsedDuration nonnegative elapsed duration, or null
+		 * @return this builder
+		 * @since 4.8.0
+		 */
+		@NonNull
+		public Builder elapsedDuration(@Nullable Duration elapsedDuration) {
+			if (elapsedDuration != null && elapsedDuration.isNegative())
+				throw new IllegalArgumentException("elapsedDuration must be >= 0");
+			this.elapsedDuration = elapsedDuration;
 			return this;
 		}
 

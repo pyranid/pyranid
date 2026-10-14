@@ -24,7 +24,6 @@ import org.junit.jupiter.api.Test;
 
 import javax.sql.DataSource;
 import java.io.PrintWriter;
-import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.sql.Connection;
@@ -473,11 +472,8 @@ public class TransactionLifecycleTests {
 	}
 
 	@NonNull
-	private static ThreadLocal<?> transactionStackHolder() throws NoSuchFieldException, IllegalAccessException {
-		Field transactionStackHolderField = Database.class.getDeclaredField("TRANSACTION_STACK_HOLDER");
-		transactionStackHolderField.setAccessible(true);
-
-		return (ThreadLocal<?>) transactionStackHolderField.get(null);
+	private static ThreadLocal<?> transactionStackHolder() {
+		return TransactionCoordinator.TRANSACTION_STACK_HOLDER;
 	}
 
 	@NonNull

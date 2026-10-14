@@ -17,9 +17,11 @@
 package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 
 import javax.annotation.concurrent.ThreadSafe;
 import java.time.Duration;
+import java.util.Optional;
 
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
@@ -40,13 +42,16 @@ public final class RetryPolicy {
 	private final Condition condition;
 	@NonNull
 	private final Backoff backoff;
+	@Nullable
+	private final Duration maxElapsedTime;
 
 	private RetryPolicy(@NonNull Integer maxAttempts,
 											@NonNull Condition condition,
-											@NonNull Backoff backoff) {
+											@NonNull Backoff backoff, @Nullable Duration maxElapsedTime) {
 		this.maxAttempts = maxAttempts;
 		this.condition = condition;
 		this.backoff = backoff;
+		this.maxElapsedTime = maxElapsedTime;
 	}
 
 	/**
@@ -71,7 +76,7 @@ public final class RetryPolicy {
 		if (maxAttempts < 1)
 			throw new IllegalArgumentException("maxAttempts must be at least 1");
 
-		return new RetryPolicy(maxAttempts, condition, backoff);
+		return new RetryPolicy(maxAttempts, condition, backoff, null);
 	}
 
 	/**
@@ -104,11 +109,55 @@ public final class RetryPolicy {
 		return this.backoff;
 	}
 
+	/**
+	 * Copies this policy with a positive elapsed retry budget measured from the start of the first attempt.
+	 * <p>
+	 * Work, cleanup, completion observation, policy evaluation, and backoff all consume the budget. The initial attempt
+	 * always runs. No later attempt starts once the budget is exhausted, and a delay that would exhaust the remaining
+	 * budget is not slept. Exhaustion propagates the final original database failure, retaining earlier failures as
+	 * suppressed exceptions. This is retry admission control, not a timeout: an in-flight attempt can succeed after the
+	 * budget expires and is never cancelled by this setting.
+	 *
+	 * @param limit strictly positive elapsed limit
+	 * @return a new policy with the elapsed limit
+	 * @since 4.8.0
+	 */
+	@NonNull
+	public RetryPolicy withMaxElapsedTime(@NonNull Duration limit) {
+		requireNonNull(limit);
+		if (limit.isZero() || limit.isNegative())
+			throw new IllegalArgumentException("maxElapsedTime must be positive");
+		return new RetryPolicy(this.maxAttempts, this.condition, this.backoff, limit);
+	}
+
+	/**
+	 * Copies this policy without an elapsed retry budget.
+	 *
+	 * @return a new policy without an elapsed limit
+	 * @since 4.8.0
+	 */
+	@NonNull
+	public RetryPolicy withoutMaxElapsedTime() {
+		return new RetryPolicy(this.maxAttempts, this.condition, this.backoff, null);
+	}
+
+	/**
+	 * Gets the elapsed retry budget, if any.
+	 *
+	 * @return elapsed limit
+	 * @since 4.8.0
+	 */
+	@NonNull
+	public Optional<Duration> getMaxElapsedTime() {
+		return Optional.ofNullable(this.maxElapsedTime);
+	}
+
 	@Override
 	@NonNull
 	public String toString() {
-		return format("%s{maxAttempts=%s, condition=%s, backoff=%s}",
-				getClass().getSimpleName(), getMaxAttempts(), getCondition(), getBackoff());
+		return format("%s{maxAttempts=%s, condition=%s, backoff=%s%s}",
+				getClass().getSimpleName(), getMaxAttempts(), getCondition(), getBackoff(),
+				this.maxElapsedTime == null ? "" : ", maxElapsedTime=" + this.maxElapsedTime);
 	}
 
 	/**
@@ -225,6 +274,20 @@ public final class RetryPolicy {
 				validateFailedAttemptNumber(failedAttemptNumber);
 				return delay;
 			};
+		}
+
+		/**
+		 * Randomizes a delegate's delay uniformly at nanosecond resolution from zero (inclusive) to its cap (exclusive).
+		 * A zero cap remains zero. This is useful for spreading simultaneous retries across clients. The delegate must
+		 * return a non-null, nonnegative duration and be thread-safe when shared.
+		 *
+		 * @param delegate backoff supplying the delay cap
+		 * @return a backoff with full jitter
+		 * @since 4.8.0
+		 */
+		@NonNull
+		static Backoff fullJitter(@NonNull Backoff delegate) {
+			return new FullJitterBackoff(requireNonNull(delegate));
 		}
 
 		/**

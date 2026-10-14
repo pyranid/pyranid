@@ -40,6 +40,44 @@ Similarly-flavored commercially-friendly OSS libraries are available.
 * [Soklet](https://www.soklet.com) - DI-friendly HTTP 1.1 (and SSE) server that supports [JEP 444 Virtual Threads](https://openjdk.org/jeps/444)
 * [Lokalized](https://www.lokalized.com) - natural-sounding translations (i18n) via expression language
 
+### 4.8.0 Development Snapshot
+
+The current development version is `4.8.0-SNAPSHOT`; the Maven installation example below remains the released version.
+See [migration notes](CHANGELOG.md#480-snapshot) before upgrading. Java 17 and zero runtime dependencies remain unchanged.
+
+```java
+ResultSetMapper mapper = ResultSetMapper.withPlanCachingEnabled(true)
+  .maxLobBytes(32L * 1024 * 1024)
+  .maxLobCharacters(16_777_216L)
+  .build();
+```
+
+Built-in LOB materialization defaults to 16 MiB binary or 8,388,608 UTF-16 code units per value. Positive limits
+apply equally to scalar, record, and bean targets. `unboundedLobMaterialization()` disables both limits;
+a later setter re-enables only its own limit. Driver buffers, custom mappers, VARCHAR, and whole-result size
+are outside these limits. Raw LOB/Object/Map values remain subject to JDBC lifetime rules.
+
+```java
+TransactionOptions options = TransactionOptions.withIsolation(TransactionIsolation.DEFAULT)
+  .completionObserver(completion -> auditOutcome(completion.getTransactionId(),
+    completion.getResult(), completion.getFailure()))
+  .build();
+```
+
+The observer runs once for each transaction scope after cleanup and business hooks, including each retry attempt.
+Observer failures are contained. Database outcome and caller-visible failure are independent: a post-commit hook
+can leave a `COMMITTED` completion with a failure. Scope IDs are local diagnostics, and nested transactions expose
+their enclosing scope ID.
+
+`RetryPolicy.Backoff.fullJitter(backoff)` decorates an existing delay policy. `retryPolicy.withMaxElapsedTime(Duration.ofSeconds(5))`
+bounds admission of retries, including time in attempts, cleanup, observers, policy decisions, and sleep. It always
+permits the initial attempt; it never cancels running JDBC work. Budget exhaustion rethrows the last original failure.
+
+Notification reconnection is available in the core `NotificationSupervisor`, using an application-owned asynchronous
+`Executor`. Readiness follows successful registration and reconciliation. Stop is cooperative and termination follows
+cleanup. Independent polling is still needed because notifications are transient hints. See the
+[notification guide](https://www.pyranid.com/docs/notifications) for lifecycle and retry configuration.
+
 ### Maven Installation
 
 Java 17+
@@ -236,6 +274,8 @@ Pyranid supports named parameters (e.g. `:id`) only; positional `?` parameters a
 Pyranid scans SQL before handing it to JDBC so it can translate named parameters into [`PreparedStatement`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/PreparedStatement.html) placeholders. It ignores parameter-looking text inside string literals, quoted identifiers, comments, PostgreSQL dollar-quoted strings, and SQL Server-style bracket-quoted identifiers. For a configured or detected DuckDB database, brackets are treated as list/subscript syntax instead, so list literals such as `[:first, :second]` can contain named parameters. Unterminated quotes, dollar-quoted strings, and block comments fail fast with an [`IllegalArgumentException`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/IllegalArgumentException.html).
 
 PostgreSQL JSONB/hstore `?`, `?|`, and `?&` operators are supported. When the [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) is configured or detected as PostgreSQL, Pyranid automatically emits pgjdbc's escaped `??` form for those operators while preserving named-parameter binding.
+
+For SQL Server and SQLite, brackets always quote identifiers, including in predicates and implicit aliases such as `SELECT 1 [a:b]`. Other database types retain their existing subscript rules. SQL whose interpretation differs between these lexical modes can trigger lazy database-type detection; configure `Database.Builder::databaseType(...)` explicitly to avoid that connection checkout.
 
 DuckDB SQL uses `:` inside struct literals (`{'key':expr}`) and list slicing (`list[a:b]`); when the character after `:` can start an identifier, Pyranid parses it as a named parameter. Write a space after the colon (`{'key': expr}` - bound parameters still work, e.g. `{'key': :value}`), or use `struct_pack(key := expr)` / `list_slice(...)`. DuckDB `::` casts and `->`/`->>` JSON operators need no escaping.
 
@@ -607,6 +647,8 @@ database.transaction(() -> {
 ```
 
 The lower-level [`Transaction::createSavepoint()`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#createSavepoint()), [`Transaction::rollback(Savepoint)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#rollback(java.sql.Savepoint)), and [`Transaction::releaseSavepoint(Savepoint)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#releaseSavepoint(java.sql.Savepoint)) methods remain available for callers that need manual control. Prefer [`Transaction::withSavepoint(...)`](https://javadoc.pyranid.com/com/pyranid/Transaction.html#withSavepoint(com.pyranid.TransactionalOperation)) for common partial-rollback workflows because it handles rollback, release, and suppressed cleanup failures consistently.
+
+While `withSavepoint(...)` is active, only the thread running its callback may access that transaction's JDBC connection. Queries, raw connection operations, streams, and savepoint operations from other participating threads fail immediately when they acquire the connection lock. This prevents unrelated participants' writes from being rolled back by the scope. Nested scopes on the same thread remain supported; other participants can resume JDBC work after the scope and its cleanup finish. A participant may catch an ownership conflict and retry after the scope ends. As with any other participation failure, an exception escaping `participate(...)` marks the whole transaction rollback-only. Manual savepoints do not reserve a scope, so callers must coordinate their use across threads.
 
 ### Nesting
 
@@ -1868,8 +1910,14 @@ Pyranid exception messages use the same bounded parameter display. Under the def
 * [`getPreparationDuration()`](https://javadoc.pyranid.com/com/pyranid/StatementLog.html#getPreparationDuration()) (optional)
 * [`getExecutionDuration()`](https://javadoc.pyranid.com/com/pyranid/StatementLog.html#getExecutionDuration()) (optional)
 * [`getResultSetMappingDuration()`](https://javadoc.pyranid.com/com/pyranid/StatementLog.html#getResultSetMappingDuration()) (optional)
+* `getElapsedDuration()` (optional; executor entry through resource cleanup)
 * [`getBatchSize()`](https://javadoc.pyranid.com/com/pyranid/StatementLog.html#getBatchSize()) (optional)
 * [`getException()`](https://javadoc.pyranid.com/com/pyranid/StatementLog.html#getException()) (optional)
+
+`getTotalDuration()` remains the sum of acquisition, preparation, execution, and mapping. `getElapsedDuration()`
+also includes stream consumer time while resources remain open, transaction lock waits, and cleanup. It stops at
+EOF or explicit stream closure, before terminal statement metrics and logging; callback work after early closure
+is excluded. Manually built logs leave it absent unless supplied. The OpenTelemetry adapter keeps using the phase sum.
 
 ### Statement Identifiers
 

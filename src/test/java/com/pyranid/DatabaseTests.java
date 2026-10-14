@@ -797,9 +797,9 @@ public class DatabaseTests {
 		String sql = "SELECT [:first, :second] AS values WHERE :enabled";
 
 		Assertions.assertEquals(List.of("first", "second", "enabled"),
-				parseNamedParameters(sql, Database.SqlLexicalMode.DUCK_DB));
+				parseNamedParameters(sql, SqlCompiler.SqlLexicalMode.DUCK_DB));
 		Assertions.assertEquals(List.of("enabled"),
-				parseNamedParameters(sql, Database.SqlLexicalMode.STANDARD));
+				parseNamedParameters(sql, SqlCompiler.SqlLexicalMode.STANDARD));
 	}
 
 	@Test
@@ -813,14 +813,14 @@ public class DatabaseTests {
 	public void testMySqlNamedParameterParsingSkipsHashCommentsAndBackslashEscapedStrings() {
 		String sql = "SELECT 'it\\'s :ignored' # :also_ignored\nFROM t WHERE id = :id";
 
-		Assertions.assertEquals(List.of("id"), parseNamedParameters(sql, Database.SqlLexicalMode.MYSQL));
+		Assertions.assertEquals(List.of("id"), parseNamedParameters(sql, SqlCompiler.SqlLexicalMode.MYSQL));
 	}
 
 	@Test
 	public void testStandardNamedParameterParsingPreservesPostgresHashOperators() {
 		String sql = "SELECT payload #> :path FROM t WHERE id = :id";
 
-		Assertions.assertEquals(List.of("path", "id"), parseNamedParameters(sql, Database.SqlLexicalMode.STANDARD));
+		Assertions.assertEquals(List.of("path", "id"), parseNamedParameters(sql, SqlCompiler.SqlLexicalMode.STANDARD));
 	}
 
 	@Test
@@ -872,11 +872,74 @@ public class DatabaseTests {
 		db.query(sql);
 		db.query(sql);
 
-		Field cacheField = Database.class.getDeclaredField("parsedSqlCache");
+		Field compilerField = Database.class.getDeclaredField("sqlCompiler");
+		compilerField.setAccessible(true);
+		Field cacheField = SqlCompiler.class.getDeclaredField("cache");
 		cacheField.setAccessible(true);
-		Map<?, ?> cache = (Map<?, ?>) cacheField.get(db);
+		Map<?, ?> cache = (Map<?, ?>) cacheField.get(compilerField.get(db));
 		Assertions.assertEquals(1, cache.size());
 		Assertions.assertTrue(cache.containsKey(sql));
+	}
+
+	@Test
+	public void testBracketIdentifiersRemainQuotedInEverySqlServerAndSqliteContext() {
+		List<String> statements = List.of(
+				"SELECT :value [a:b]",
+				"SELECT 1 [a:b] WHERE :value = 1",
+				"SELECT [a:b] FROM t WHERE [a:b] = :value",
+				"SELECT [a:b] FROM t JOIN u ON [a:b] = :value",
+				"SELECT CASE WHEN [a:b] = :value THEN 1 ELSE 0 END FROM t",
+				"SELECT (1 + 2) [a:b] WHERE :value = 1",
+				"SELECT [a]]b:ignored] FROM t WHERE [a]]b:ignored] = :value");
+
+		for (DatabaseType databaseType : List.of(DatabaseType.SQL_SERVER, DatabaseType.SQLITE)) {
+			for (int cacheCapacity : List.of(0, 8)) {
+				AtomicReference<StatementLog<?>> statementLog = new AtomicReference<>();
+				Database db = Database.withDataSource(dataSourceForPreparedStatement(preparedStatementWithDefaultBehavior()))
+						.databaseType(databaseType)
+						.parsedSqlCacheCapacity(cacheCapacity)
+						.statementLogger(statementLog::set)
+						.build();
+
+				for (String sql : statements) {
+					for (int execution = 0; execution < 2; execution++) {
+						db.query(sql).bind("value", 7).execute();
+						Assertions.assertEquals(sql.replace(":value", "?"),
+								statementLog.get().getStatementContext().getStatement().getSql());
+						Assertions.assertEquals(List.of(7), statementLog.get().getStatementContext().getParameters());
+					}
+				}
+
+				Assertions.assertThrows(IllegalArgumentException.class,
+						() -> db.query("SELECT 1 [a:b]").bind("b", 7).execute());
+				Assertions.assertThrows(IllegalArgumentException.class,
+						() -> db.query("SELECT 1 [a:b").execute());
+			}
+		}
+	}
+
+	@Test
+	public void testConfiguredPostgresAndDuckDbRetainSubscriptParameters() {
+		for (DatabaseType databaseType : List.of(DatabaseType.POSTGRESQL, DatabaseType.DUCK_DB)) {
+			for (int cacheCapacity : List.of(0, 8)) {
+				AtomicReference<StatementLog<?>> statementLog = new AtomicReference<>();
+				Database db = Database.withDataSource(dataSourceForPreparedStatement(preparedStatementWithDefaultBehavior()))
+						.databaseType(databaseType)
+						.parsedSqlCacheCapacity(cacheCapacity)
+						.statementLogger(statementLog::set)
+						.build();
+
+				for (String sql : List.of("SELECT tags[:idx] FROM t WHERE id = :id",
+						"SELECT tags [ :idx ] FROM t WHERE id = :id")) {
+					for (int execution = 0; execution < 2; execution++) {
+						db.query(sql).bind("idx", 2).bind("id", 7).execute();
+						Assertions.assertEquals(sql.replace(":idx", "?").replace(":id", "?"),
+								statementLog.get().getStatementContext().getStatement().getSql());
+						Assertions.assertEquals(List.of(2, 7), statementLog.get().getStatementContext().getParameters());
+					}
+				}
+			}
+		}
 	}
 
 	@Test
@@ -1647,20 +1710,15 @@ public class DatabaseTests {
 							Statement.of(db.generateId(), "SELECT 1 FROM (VALUES (0)) AS t(x)"), db)
 					.resultSetRowType(Integer.class)
 					.build();
-			Class<?> iteratorClass = Class.forName("com.pyranid.Database$StreamingResultSet");
-			Constructor<?> constructor = iteratorClass.getDeclaredConstructor(Database.class, StatementContext.class, List.class,
-					PreparedStatementCustomizer.class, boolean.class);
-			Method close = iteratorClass.getDeclaredMethod("close");
-			constructor.setAccessible(true);
-			close.setAccessible(true);
-			Object iterator = constructor.newInstance(db, statementContext, List.of(), null, false);
+			Field executorField = Database.class.getDeclaredField("statementExecutor");
+			executorField.setAccessible(true);
+			StreamCursor<Integer> iterator = new StreamCursor<>((StatementExecutor) executorField.get(db),
+					statementContext, List.of(), null, false);
 			AtomicReference<Throwable> closeThrowable = new AtomicReference<>();
 
 			Thread closer = new Thread(() -> {
 				try {
-					close.invoke(iterator);
-				} catch (InvocationTargetException e) {
-					closeThrowable.set(e.getTargetException());
+					iterator.close();
 				} catch (Throwable t) {
 					closeThrowable.set(t);
 				}
@@ -1673,7 +1731,7 @@ public class DatabaseTests {
 			Assertions.assertTrue(closeThrowable.get().getMessage().contains("thread that opened"),
 					"Expected same-thread close guidance in exception message");
 
-			close.invoke(iterator);
+			iterator.close();
 		});
 	}
 
@@ -5344,17 +5402,17 @@ public class DatabaseTests {
 
 	@SuppressWarnings("unchecked")
 	private static List<String> parseNamedParameters(@NonNull String sql) {
-		return parseNamedParameters(sql, Database.SqlLexicalMode.STANDARD);
+		return parseNamedParameters(sql, SqlCompiler.SqlLexicalMode.STANDARD);
 	}
 
 	@SuppressWarnings("unchecked")
 	private static List<String> parseNamedParameters(@NonNull String sql,
-																							 Database.SqlLexicalMode lexicalMode) {
+																							 SqlCompiler.SqlLexicalMode lexicalMode) {
 		requireNonNull(sql);
 		requireNonNull(lexicalMode);
 
 		try {
-			Database.ParsedSql parsedSql = Database.parseNamedParameterSql(sql, lexicalMode);
+			SqlCompiler.ParsedSql parsedSql = SqlCompiler.parseNamedParameterSql(sql, lexicalMode);
 			Field parameterNamesField = parsedSql.getClass().getDeclaredField("parameterNames");
 			parameterNamesField.setAccessible(true);
 			return (List<String>) parameterNamesField.get(parsedSql);
@@ -5369,7 +5427,7 @@ public class DatabaseTests {
 		requireNonNull(expectedConstruct);
 
 		IllegalArgumentException exception = Assertions.assertThrows(IllegalArgumentException.class,
-				() -> Database.parseNamedParameterSql(sql));
+				() -> SqlCompiler.parseNamedParameterSql(sql));
 
 		Assertions.assertTrue(exception.getMessage().contains("Unterminated " + expectedConstruct),
 				format("Expected unterminated construct '%s' in message: %s", expectedConstruct, exception.getMessage()));

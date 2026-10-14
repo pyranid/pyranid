@@ -80,6 +80,11 @@ public final class Transaction {
 	private final List<@NonNull Consumer<TransactionResult>> postTransactionOperations;
 	@NonNull
 	private final ReentrantLock connectionLock;
+	// Guarded by connectionLock. JDBC savepoints affect the whole connection, so a scoped savepoint must exclude
+	// JDBC work from other participants without holding the lock while application callbacks run.
+	@Nullable
+	private Thread savepointScopeOwner;
+	private int savepointScopeDepth;
 	@NonNull
 	private final AtomicBoolean rollbackOnly;
 	@NonNull
@@ -161,7 +166,7 @@ public final class Transaction {
 	 * {@link #withSavepoint(ReturningTransactionalOperation)} so rollback and release cleanup are handled automatically.
 	 *
 	 * @return a transaction savepoint
-	 * @throws IllegalStateException if this transaction has already completed
+	 * @throws IllegalStateException if this transaction has already completed or another thread owns an active savepoint scope
 	 */
 	@NonNull
 	public Savepoint createSavepoint() {
@@ -183,7 +188,7 @@ public final class Transaction {
 	 * Rolls back to the provided transaction savepoint.
 	 *
 	 * @param savepoint the savepoint to roll back to
-	 * @throws IllegalStateException if this transaction has already completed
+	 * @throws IllegalStateException if this transaction has already completed or another thread owns an active savepoint scope
 	 */
 	public void rollback(@NonNull Savepoint savepoint) {
 		requireNonNull(savepoint);
@@ -195,6 +200,9 @@ public final class Transaction {
 			assertNotCompleted("roll back to a savepoint");
 			getConnection().rollback(savepoint);
 			getMetricsCollectorDispatcher().didRollbackToSavepoint(this, getDatabaseType());
+		} catch (SavepointScopeConflictException e) {
+			// No JDBC rollback was attempted. A caller may handle this ownership conflict and retry after the scope ends.
+			throw e;
 		} catch (SQLException e) {
 			this.rollbackOnly.set(true);
 			throw databaseException("Unable to roll back to savepoint", e);
@@ -214,7 +222,7 @@ public final class Transaction {
 	 * {@link #withSavepoint(ReturningTransactionalOperation)} so rollback and release cleanup are handled automatically.
 	 *
 	 * @param savepoint the savepoint to release
-	 * @throws IllegalStateException if this transaction has already completed
+	 * @throws IllegalStateException if this transaction has already completed or another thread owns an active savepoint scope
 	 * @since 4.1.0
 	 */
 	public void releaseSavepoint(@NonNull Savepoint savepoint) {
@@ -232,9 +240,14 @@ public final class Transaction {
 	 * <p>
 	 * Nested savepoint usage should be stack-like: finish inner savepoints before manually releasing or rolling back outer
 	 * savepoints.
+	 * <p>
+	 * While this scope is active, only the thread running its callback may use this transaction's JDBC connection.
+	 * JDBC access from other participating threads is rejected instead of waiting for the callback to finish, so it cannot
+	 * be silently rolled back with this scope. Nested scopes on the same thread are supported. Other participants may
+	 * resume JDBC work after this method returns or throws.
 	 *
 	 * @param transactionalOperation the operation to perform inside a savepoint
-	 * @throws IllegalStateException if this transaction has already completed
+	 * @throws IllegalStateException if this transaction has already completed or another thread owns an active savepoint scope
 	 * @since 4.1.0
 	 */
 	public void withSavepoint(@NonNull TransactionalOperation transactionalOperation) {
@@ -255,38 +268,47 @@ public final class Transaction {
 	 * <p>
 	 * Nested savepoint usage should be stack-like: finish inner savepoints before manually releasing or rolling back outer
 	 * savepoints.
+	 * <p>
+	 * While this scope is active, only the thread running its callback may use this transaction's JDBC connection.
+	 * JDBC access from other participating threads is rejected instead of waiting for the callback to finish, so it cannot
+	 * be silently rolled back with this scope. Nested scopes on the same thread are supported. Other participants may
+	 * resume JDBC work after this method returns or throws.
 	 *
 	 * @param transactionalOperation the operation to perform inside a savepoint
 	 * @param <T>                    the type to be returned
 	 * @return the result of the operation
-	 * @throws IllegalStateException if this transaction has already completed
+	 * @throws IllegalStateException if this transaction has already completed or another thread owns an active savepoint scope
 	 * @since 4.1.0
 	 */
 	@NonNull
 	public <T> Optional<T> withSavepoint(@NonNull ReturningTransactionalOperation<T> transactionalOperation) {
 		requireNonNull(transactionalOperation);
-		assertNotCompleted("run a savepoint operation");
-
-		Savepoint savepoint = createSavepoint();
+		enterSavepointScope();
 
 		try {
-			Optional<T> returnValue = transactionalOperation.perform();
+			Savepoint savepoint = createSavepoint();
 
-			if (returnValue == null)
-				returnValue = Optional.empty();
+			try {
+				Optional<T> returnValue = transactionalOperation.perform();
 
-			releaseSavepointAfterSuccess(savepoint);
-			return returnValue;
-		} catch (RuntimeException e) {
-			cleanupSavepointAfterFailure(savepoint, e);
-			throw e;
-		} catch (Error e) {
-			cleanupSavepointAfterFailure(savepoint, e);
-			throw e;
-		} catch (Throwable t) {
-			RuntimeException wrapped = new RuntimeException(t);
-			cleanupSavepointAfterFailure(savepoint, wrapped);
-			throw wrapped;
+				if (returnValue == null)
+					returnValue = Optional.empty();
+
+				releaseSavepointAfterSuccess(savepoint);
+				return returnValue;
+			} catch (RuntimeException e) {
+				cleanupSavepointAfterFailure(savepoint, e);
+				throw e;
+			} catch (Error e) {
+				cleanupSavepointAfterFailure(savepoint, e);
+				throw e;
+			} catch (Throwable t) {
+				RuntimeException wrapped = new RuntimeException(t);
+				cleanupSavepointAfterFailure(savepoint, wrapped);
+				throw wrapped;
+			}
+		} finally {
+			exitSavepointScope();
 		}
 	}
 
@@ -495,6 +517,7 @@ public final class Transaction {
 
 		try {
 			assertNotCompleted("get the transaction connection");
+			assertSavepointScopeAccess();
 
 			if (this.physicalTransactionBeginState == PhysicalTransactionBeginState.READY)
 				return requireNonNull(this.connection);
@@ -804,6 +827,37 @@ public final class Transaction {
 		return this.completed.get();
 	}
 
+	private void enterSavepointScope() {
+		lockConnectionInterruptibly("run a savepoint operation");
+
+		try {
+			assertNotCompleted("run a savepoint operation");
+			assertSavepointScopeAccess();
+			this.savepointScopeOwner = Thread.currentThread();
+			++this.savepointScopeDepth;
+		} finally {
+			getConnectionLock().unlock();
+		}
+	}
+
+	private void exitSavepointScope() {
+		// Cleanup must release ownership even when the callback left the current thread interrupted.
+		getConnectionLock().lock();
+
+		try {
+			if (--this.savepointScopeDepth == 0)
+				this.savepointScopeOwner = null;
+		} finally {
+			getConnectionLock().unlock();
+		}
+	}
+
+	private void assertSavepointScopeAccess() {
+		if (this.savepointScopeOwner != null && this.savepointScopeOwner != Thread.currentThread())
+			throw new SavepointScopeConflictException(format(
+					"Transaction %s has an active savepoint scope on another thread; JDBC work must wait until that scope finishes", id()));
+	}
+
 	private void releaseSavepointAfterSuccess(@NonNull Savepoint savepoint) {
 		requireNonNull(savepoint);
 		lockConnectionInterruptibly("release a savepoint");
@@ -941,5 +995,11 @@ public final class Transaction {
 		STARTING,
 		READY,
 		FAILED
+	}
+
+	private static final class SavepointScopeConflictException extends IllegalStateException {
+		private SavepointScopeConflictException(@NonNull String message) {
+			super(message);
+		}
 	}
 }

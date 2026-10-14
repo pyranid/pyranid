@@ -23,6 +23,7 @@ import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Consumer;
 
 import static java.util.Objects.requireNonNull;
 
@@ -49,20 +50,24 @@ public final class TransactionOptions {
 	static final TransactionOptions DEFAULT;
 
 	static {
-		DEFAULT = new TransactionOptions(TransactionIsolation.DEFAULT, null);
+		DEFAULT = new TransactionOptions(TransactionIsolation.DEFAULT, null, null);
 	}
 
 	@NonNull
 	private final TransactionIsolation isolation;
 	@Nullable
 	private final Boolean readOnly;
+	@Nullable
+	private final Consumer<@NonNull TransactionCompletion> completionObserver;
 
 	private TransactionOptions(@NonNull TransactionIsolation isolation,
-														 @Nullable Boolean readOnly) {
+														 @Nullable Boolean readOnly,
+			@Nullable Consumer<@NonNull TransactionCompletion> completionObserver) {
 		requireNonNull(isolation);
 
 		this.isolation = isolation;
 		this.readOnly = readOnly;
+		this.completionObserver = completionObserver;
 	}
 
 	/**
@@ -113,6 +118,17 @@ public final class TransactionOptions {
 		return Optional.ofNullable(this.readOnly);
 	}
 
+	/**
+	 * Gets the diagnostic observer invoked after connection cleanup and all post-transaction hooks.
+	 *
+	 * @return completion observer, if configured
+	 * @since 4.8.0
+	 */
+	@NonNull
+	public Optional<Consumer<@NonNull TransactionCompletion>> getCompletionObserver() {
+		return Optional.ofNullable(this.completionObserver);
+	}
+
 	@Override
 	public boolean equals(Object object) {
 		if (this == object)
@@ -123,12 +139,13 @@ public final class TransactionOptions {
 
 		TransactionOptions transactionOptions = (TransactionOptions) object;
 		return getIsolation() == transactionOptions.getIsolation()
-				&& Objects.equals(getReadOnly(), transactionOptions.getReadOnly());
+				&& Objects.equals(getReadOnly(), transactionOptions.getReadOnly())
+				&& Objects.equals(this.completionObserver, transactionOptions.completionObserver);
 	}
 
 	@Override
 	public int hashCode() {
-		return Objects.hash(getIsolation(), getReadOnly());
+		return Objects.hash(getIsolation(), getReadOnly(), this.completionObserver);
 	}
 
 	@Override
@@ -152,6 +169,8 @@ public final class TransactionOptions {
 		private TransactionIsolation isolation;
 		@Nullable
 		private Boolean readOnly;
+		@Nullable
+		private Consumer<@NonNull TransactionCompletion> completionObserver;
 
 		private Builder() {
 			this.isolation = TransactionIsolation.DEFAULT;
@@ -187,13 +206,32 @@ public final class TransactionOptions {
 		}
 
 		/**
+		 * Configures diagnostic observation of each transaction boundary, including every retry attempt.
+		 * <p>
+		 * The observer runs synchronously after JDBC cleanup and all post-transaction hooks, before the transaction
+		 * method returns or throws. Its failure is contained and does not change the transaction result or retry
+		 * decisions. Use {@link Transaction#addPostTransactionOperation(Consumer)} for application hooks whose failures
+		 * should propagate. Observers must be fast and thread-safe when these options are shared across threads.
+		 * Argument validation failures before a transaction scope exists are not observed.
+		 *
+		 * @param completionObserver observer, or {@code null} to remove it
+		 * @return this builder, for chaining
+		 * @since 4.8.0
+		 */
+		@NonNull
+		public Builder completionObserver(@Nullable Consumer<@NonNull TransactionCompletion> completionObserver) {
+			this.completionObserver = completionObserver;
+			return this;
+		}
+
+		/**
 		 * Builds transaction options.
 		 *
 		 * @return transaction options
 		 */
 		@NonNull
 		public TransactionOptions build() {
-			return new TransactionOptions(this.isolation, this.readOnly);
+			return new TransactionOptions(this.isolation, this.readOnly, this.completionObserver);
 		}
 	}
 }

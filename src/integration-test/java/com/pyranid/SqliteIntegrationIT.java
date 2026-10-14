@@ -38,6 +38,16 @@ public class SqliteIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 	private Path tempDir;
 
 	@Test
+	public void testBracketIdentifiersDoNotBecomeNamedParameters() {
+		Database db = database();
+		Assertions.assertEquals(1, db.query("SELECT 1 [a:b]").fetchObject(Integer.class).orElseThrow());
+		Assertions.assertEquals(1, db.query("SELECT [a:b] FROM (SELECT 1 AS [a:b]) WHERE [a:b] = :value")
+				.bind("value", 1).fetchObject(Integer.class).orElseThrow());
+		Assertions.assertEquals(1, db.query("SELECT CASE WHEN [a:b] = :value THEN 1 ELSE 0 END FROM (SELECT 1 AS [a:b])")
+				.bind("value", 1).fetchObject(Integer.class).orElseThrow());
+	}
+
+	@Test
 	public void testSqliteReturningMapsMultipleGeneratedRows() {
 		Database db = database();
 		String table = "pyranid_sqlite_returning_keys";

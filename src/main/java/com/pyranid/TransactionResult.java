@@ -17,7 +17,7 @@
 package com.pyranid;
 
 /**
- * Indicates the transaction result reported to post-transaction operations.
+ * Indicates the transaction result reported to post-transaction operations and completion observers.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 2.0.0

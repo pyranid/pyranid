@@ -51,10 +51,19 @@ inspecting the generic interfaces of a callback implementation compiled against 
 fail on the new two-argument declaration. Recompile such implementations. Source that explicitly names the
 interface must add `Connection` as its first type argument.
 
-Because these changes are deliberate, japicmp narrowly excludes the boxed member signatures plus the
-`RawConnectionOperation` interface and the established one-argument `Database#useRawConnection(...)`
-signature whose generic metadata changed. The new typed overload and every other public member remain gated.
-Remove the exclusions once the 4.7.0 baseline is in place.
+The comparison baseline is now the released 4.7.0 artifact. Its old exclusions have been removed, so all
+public members are gated against that release.
+
+### Intentional behavior changes in 4.8.0
+
+4.8.0 is an explicitly documented exception to the usual minor-release behavior expectation. Built-in LOB
+materialization now has per-value limits: 16 MiB binary and 8,388,608 UTF-16 code units for characters.
+Applications that require larger detached values must configure limits or call `unboundedLobMaterialization()`.
+The new APIs are additive; package-private execution and mapping internals have changed substantially and are
+not extension points. Existing custom mapping SPIs keep their ordering, null, and fallback contracts.
+
+Java 17 remains the minimum runtime, and core retains zero runtime dependencies. Refer to the 4.8.0 changelog
+migration notes for LOB ownership, scoped savepoint thread ownership, timing semantics, and notification lifecycle.
 
 ### Historical compatibility notes
 

@@ -17,6 +17,7 @@
 package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 
 import javax.annotation.concurrent.NotThreadSafe;
 import java.sql.ResultSet;
@@ -123,7 +124,7 @@ public interface ResultSetMapper {
 	/**
 	 * Acquires a builder for a concrete implementation of this interface, specifying whether an internal "mapping plan" cache should be used to speed up {@link ResultSet} mapping.
 	 * <p>
-	 * Disabling plan caching is primarily useful for highly dynamic schemas; the non-planned path allocates per-row maps and does more reflection.
+	 * Disabling plan caching is primarily useful for highly dynamic schemas; plans use the same mapping rules but are compiled without retention.
 	 *
 	 * @param planCachingEnabled whether an internal "mapping plan" cache should be used to speed up {@link ResultSet} mapping
 	 * @return a {@code Builder} for a concrete implementation
@@ -164,7 +165,10 @@ public interface ResultSetMapper {
 		Boolean planCachingEnabled;
 		@NonNull
 		Integer planCacheCapacity;
-		@NonNull
+		@Nullable
+		Long maxLobBytes = 16L * 1024 * 1024;
+		@Nullable
+		Long maxLobCharacters = 8L * 1024 * 1024;
 
 		private Builder() {
 			this.normalizationLocale = Locale.ROOT;
@@ -202,7 +206,7 @@ public interface ResultSetMapper {
 		/**
 		 * Specifies whether an internal "mapping plan" cache should be used to speed up {@link ResultSet} mapping.
 		 * <p>
-		 * Disabling plan caching is primarily useful for highly dynamic schemas; the non-planned path allocates per-row maps and does more reflection.
+		 * Disabling plan caching is primarily useful for highly dynamic schemas; plans use the same mapping rules but are compiled without retention.
 		 *
 		 * @param planCachingEnabled whether an internal "mapping plan" cache should be used to speed up {@link ResultSet} mapping
 		 * @return this {@code Builder}, for chaining
@@ -229,6 +233,58 @@ public interface ResultSetMapper {
 			if (planCacheCapacity < 0)
 				throw new IllegalArgumentException("Plan cache capacity must be >= 0");
 			this.planCacheCapacity = planCacheCapacity;
+			return this;
+		}
+
+		/**
+		 * Limits each BLOB value materialized by the default mapper as {@code byte[]}.
+		 * Defaults to 16 MiB. The limit does not cover driver buffering, custom mappers,
+		 * ordinary binary columns, or the aggregate size of a result list.
+		 * This setter enables the binary limit even after {@link #unboundedLobMaterialization()}.
+		 *
+		 * @param maxLobBytes strictly positive maximum byte count
+		 * @return this builder
+		 * @since 4.8.0
+		 */
+		@NonNull
+		public Builder maxLobBytes(@NonNull Long maxLobBytes) {
+			requireNonNull(maxLobBytes);
+			if (maxLobBytes <= 0)
+				throw new IllegalArgumentException("Maximum LOB bytes must be > 0");
+			this.maxLobBytes = maxLobBytes;
+			return this;
+		}
+
+		/**
+		 * Limits each CLOB/NCLOB value materialized by the default mapper as {@link String}.
+		 * Defaults to 8,388,608 UTF-16 code units. The limit does not cover driver buffering,
+		 * custom mappers, ordinary character columns, or the aggregate size of a result list.
+		 * This setter enables the character limit even after {@link #unboundedLobMaterialization()}.
+		 *
+		 * @param maxLobCharacters strictly positive maximum UTF-16 code-unit count
+		 * @return this builder
+		 * @since 4.8.0
+		 */
+		@NonNull
+		public Builder maxLobCharacters(@NonNull Long maxLobCharacters) {
+			requireNonNull(maxLobCharacters);
+			if (maxLobCharacters <= 0)
+				throw new IllegalArgumentException("Maximum LOB characters must be > 0");
+			this.maxLobCharacters = maxLobCharacters;
+			return this;
+		}
+
+		/**
+		 * Disables both configurable LOB limits. Java array and string size limits still apply.
+		 * Later calls to either finite-limit setter re-enable that limit independently.
+		 *
+		 * @return this builder
+		 * @since 4.8.0
+		 */
+		@NonNull
+		public Builder unboundedLobMaterialization() {
+			this.maxLobBytes = null;
+			this.maxLobCharacters = null;
 			return this;
 		}
 
