@@ -51,6 +51,126 @@ import static java.util.Objects.requireNonNull;
  */
 @ThreadSafe
 public class DatabaseNotificationTests {
+
+	@Test
+	public void throwingRegistrationCauseAndNextAccessorsCannotSkipConnectionCleanup() {
+		for (boolean cause : new boolean[]{false, true}) {
+			AssertionError inspectionFailure = new AssertionError("driver accessor failed");
+			SQLException registrationFailure = new SQLException("registration failed", "42000") {
+				@Override public Throwable getCause() {
+					if (cause)
+						throw inspectionFailure;
+					return super.getCause();
+				}
+				@Override public SQLException getNextException() {
+					if (!cause)
+						throw inspectionFailure;
+					return super.getNextException();
+				}
+			};
+			ConnectionHarness harness = new ConnectionHarness(true).failListenOn(1, registrationFailure);
+			DatabaseException thrown = Assertions.assertThrows(DatabaseException.class,
+					() -> postgresDatabase(harness, null).withNotificationSession("events", session -> Assertions.fail("unexpected callback")));
+			Assertions.assertSame(registrationFailure, thrown.getCause());
+			Assertions.assertEquals(List.of("abort", "close"), harness.events().subList(harness.events().size() - 2, harness.events().size()));
+		}
+	}
+
+	@Test
+	public void throwingRegistrationMetadataCannotReplaceFailureOrSkipConnectionCleanup() {
+		for (boolean sqlState : new boolean[]{false, true}) {
+			AssertionError inspectionFailure = new AssertionError("driver metadata unavailable");
+			SQLException registrationFailure = new SQLException("registration failed", "42000") {
+				@Override public String getSQLState() {
+					if (sqlState)
+						throw inspectionFailure;
+					return super.getSQLState();
+				}
+				@Override public int getErrorCode() {
+					if (!sqlState)
+						throw inspectionFailure;
+					return super.getErrorCode();
+				}
+			};
+			ConnectionHarness harness = new ConnectionHarness(true).failListenOn(1, registrationFailure);
+			DatabaseException thrown = Assertions.assertThrows(DatabaseException.class,
+					() -> postgresDatabase(harness, null).withNotificationSession("events", session -> Assertions.fail("unexpected callback")));
+			Assertions.assertSame(registrationFailure, thrown.getCause());
+			Assertions.assertArrayEquals(new Throwable[]{inspectionFailure}, registrationFailure.getSuppressed());
+			Assertions.assertTrue(thrown.getSqlState().isEmpty());
+			Assertions.assertEquals("close", harness.events().get(harness.events().size() - 1));
+		}
+	}
+
+	@Test
+	public void throwingCallbackMetadataStillClosesConnectionAndRetainsPrimaryFailure() {
+		AssertionError inspectionFailure = new AssertionError("callback metadata unavailable");
+		SQLException primary = new SQLException("callback failed") {
+			@Override public String getSQLState() { throw inspectionFailure; }
+		};
+		ConnectionHarness harness = new ConnectionHarness(true);
+		DatabaseException thrown = Assertions.assertThrows(DatabaseException.class,
+				() -> postgresDatabase(harness, null).withNotificationSession("events", session -> { throw primary; }));
+		Assertions.assertSame(primary, thrown.getCause());
+		Assertions.assertArrayEquals(new Throwable[]{inspectionFailure}, primary.getSuppressed());
+		Assertions.assertEquals("close", harness.events().get(harness.events().size() - 1));
+	}
+
+	@Test
+	public void unsupportedRegistrationJdbcDetailsAreRecognizedAcrossCauseAndNextCycles() {
+		for (String sqlState : List.of("0A000", "42601", "42883")) {
+			SQLException primary = new SQLException("registration failed", "HY000");
+			SQLException detail = new SQLException("LISTEN is disabled", sqlState);
+			primary.setNextException(detail);
+			detail.initCause(primary);
+			ConnectionHarness harness = new ConnectionHarness(true).failListenOn(1, primary);
+			UnsupportedOperationException thrown = Assertions.assertThrows(UnsupportedOperationException.class,
+					() -> postgresDatabase(harness, null).withNotificationSession("events", session -> Assertions.fail("unexpected callback")));
+			Assertions.assertSame(primary, thrown.getCause());
+			Assertions.assertEquals("close", harness.events().get(harness.events().size() - 1));
+		}
+	}
+
+	@Test
+	public void statementCloseConnectionFailureCannotHideUnsupportedRegistration() {
+		SQLException primary = new SQLException("LISTEN unavailable", "0A000");
+		SQLException closeFailure = new SQLException("statement close connection lost", "08006");
+		ConnectionHarness harness = new ConnectionHarness(true).failListenOn(1, primary).failStatementCloseOn(2, closeFailure);
+		UnsupportedOperationException thrown = Assertions.assertThrows(UnsupportedOperationException.class,
+				() -> postgresDatabase(harness, null).withNotificationSession("events", session -> Assertions.fail("unexpected callback")));
+		Assertions.assertSame(primary, thrown.getCause());
+		Assertions.assertArrayEquals(new Throwable[]{closeFailure}, primary.getSuppressed());
+		Assertions.assertEquals(List.of("abort", "close"), harness.events().subList(harness.events().size() - 2, harness.events().size()));
+	}
+
+	@Test
+	public void suppressedStatementCloseCapabilityFailureDoesNotReclassifyRegistrationFailure() {
+		SQLException primary = new SQLException("registration failed", "42000");
+		SQLException closeFailure = new SQLException("statement close unavailable", "0A000");
+		ConnectionHarness harness = new ConnectionHarness(true).failListenOn(1, primary).failStatementCloseOn(2, closeFailure);
+		DatabaseException thrown = Assertions.assertThrows(DatabaseException.class,
+				() -> postgresDatabase(harness, null).withNotificationSession("events", session -> Assertions.fail("unexpected callback")));
+		Assertions.assertSame(primary, thrown.getCause());
+		Assertions.assertArrayEquals(new Throwable[]{closeFailure}, primary.getSuppressed());
+		Assertions.assertEquals("close", harness.events().get(harness.events().size() - 1));
+	}
+
+	@Test
+	public void throwingAbortMetadataStillPreservesRegistrationFailureAndClosesConnection() {
+		SQLException primary = new SQLException("connection lost during registration", "08006");
+		AssertionError inspectionFailure = new AssertionError("abort metadata unavailable");
+		SQLException abortFailure = new SQLException("abort failed") {
+			@Override public String getSQLState() { throw inspectionFailure; }
+		};
+		ConnectionHarness harness = new ConnectionHarness(true).failListenOn(1, primary).failAbort(abortFailure);
+		DatabaseException thrown = Assertions.assertThrows(DatabaseException.class,
+				() -> postgresDatabase(harness, null).withNotificationSession("events", session -> Assertions.fail("unexpected callback")));
+		Assertions.assertSame(primary, thrown.getCause());
+		Assertions.assertSame(abortFailure, thrown.getSuppressed()[0].getCause());
+		Assertions.assertArrayEquals(new Throwable[]{inspectionFailure}, abortFailure.getSuppressed());
+		Assertions.assertEquals(List.of("abort", "close"), harness.events().subList(harness.events().size() - 2, harness.events().size()));
+	}
+
 	@Test
 	public void unsupportedGenericOperationsDoNotCheckoutAndSessionFailureIsMeasured() {
 		ConnectionHarness harness = new ConnectionHarness(true);

@@ -398,13 +398,13 @@ class GenericDialect implements DatabaseDialect {
 
 				enqueueCause(sqlException, stack, visited);
 
-				SQLException nextException = sqlException.getNextException();
+				SQLException nextException = nextException(sqlException);
 				while (nextException != null && visited.add(nextException)) {
 					if (predicate.test(nextException))
 						return true;
 
 					enqueueCause(nextException, stack, visited);
-					nextException = nextException.getNextException();
+					nextException = nextException(nextException);
 				}
 			} else {
 				enqueueCause(throwable, stack, visited);
@@ -414,6 +414,16 @@ class GenericDialect implements DatabaseDialect {
 		return false;
 	}
 
+	@Nullable
+	private SQLException nextException(@NonNull SQLException exception) {
+		try {
+			return exception.getNextException();
+		} catch (Throwable inspectionFailure) {
+			// Diagnostics must not replace the original failure; the retry-safety scan rejects unreadable graphs.
+			return null;
+		}
+	}
+
 	private void enqueueCause(@NonNull Throwable throwable,
 														@NonNull Deque<Throwable> stack,
 														@NonNull Set<Throwable> visited) {
@@ -421,7 +431,12 @@ class GenericDialect implements DatabaseDialect {
 		requireNonNull(stack);
 		requireNonNull(visited);
 
-		Throwable cause = throwable.getCause();
+		Throwable cause;
+		try {
+			cause = throwable.getCause();
+		} catch (Throwable inspectionFailure) {
+			return;
+		}
 		if (cause != null && cause != throwable && !visited.contains(cause))
 			stack.add(cause);
 	}

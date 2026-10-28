@@ -151,10 +151,13 @@ public class TransactionRetryTests {
 	}
 
 	@Test
-	public void testTransactionWithRetryInterruptedBackoffRestoresInterruptFlag() {
+	public void testTransactionWithRetryPreInterruptedFailureStopsBeforePolicy() {
 		Database database = database("retry_interrupt");
-		RetryPolicy retryPolicy = RetryPolicy.ofMaxAttempts(3, RetryPolicy.Backoff.fixed(Duration.ofMillis(100)),
-				RetryPolicy.Condition.serializationFailure());
+		RetryPolicy retryPolicy = RetryPolicy.ofMaxAttempts(3, (attempt, failure) -> {
+			throw new AssertionError("Interrupted attempts must not invoke backoff");
+		}, failure -> {
+			throw new AssertionError("Interrupted attempts must not invoke the condition");
+		});
 		DatabaseException failure = serializationFailure("interrupted");
 
 		try {
@@ -167,8 +170,7 @@ public class TransactionRetryTests {
 
 			Assertions.assertSame(failure, thrown);
 			Assertions.assertTrue(Thread.currentThread().isInterrupted());
-			Assertions.assertEquals(1, thrown.getSuppressed().length);
-			Assertions.assertTrue(thrown.getSuppressed()[0] instanceof InterruptedException);
+			Assertions.assertEquals(0, thrown.getSuppressed().length);
 		} finally {
 			Thread.interrupted();
 		}

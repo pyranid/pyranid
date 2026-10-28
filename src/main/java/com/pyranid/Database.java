@@ -792,17 +792,9 @@ public final class Database {
 
 	static void restoreInterruptIfNeeded(@NonNull Throwable throwable) {
 		requireNonNull(throwable);
-
-		Throwable current = throwable;
-
-		while (current != null) {
-			if (current instanceof InterruptedException) {
-				Thread.currentThread().interrupt();
-				return;
-			}
-
-			current = current.getCause();
-		}
+		// Failure inspection is best effort; it must never prevent cleanup or replace the primary exception.
+		if (ThrowableGraph.inspect(throwable, current -> current instanceof InterruptedException ? 1 : 0, 0) != 0)
+			Thread.currentThread().interrupt();
 	}
 
 	static void lockInterruptibly(@NonNull ReentrantLock lock,
@@ -830,14 +822,22 @@ public final class Database {
 			try {
 				cleanupOperation.close();
 			} catch (Throwable cleanupException) {
-				if (cleanupFailure == null)
-					cleanupFailure = cleanupException;
-				else
-					cleanupFailure.addSuppressed(cleanupException);
+				cleanupFailure = appendCleanupFailure(cleanupFailure, cleanupException);
 			}
 		}
 
 		return cleanupFailure;
+	}
+
+	/** Keeps the first failure while allowing cleanup to continue when a driver reuses an exception instance. */
+	@NonNull
+	static Throwable appendCleanupFailure(@Nullable Throwable existing, @NonNull Throwable additional) {
+		requireNonNull(additional);
+		if (existing == null)
+			return additional;
+		if (existing != additional)
+			existing.addSuppressed(additional);
+		return existing;
 	}
 
 	static boolean isUnsupportedSqlFeature(@NonNull SQLException e) {
@@ -1468,7 +1468,7 @@ public final class Database {
 
 					if (cleanupFailure != null) {
 						if (thrown != null) {
-							thrown.addSuppressed(cleanupFailure);
+							appendCleanupFailure(thrown, cleanupFailure);
 						} else if (cleanupFailure instanceof RuntimeException) {
 							throw (RuntimeException) cleanupFailure;
 						} else if (cleanupFailure instanceof Error) {
@@ -1507,7 +1507,7 @@ public final class Database {
 						closeConnection(connection);
 					} catch (Throwable cleanupException) {
 						if (thrown != null) {
-							thrown.addSuppressed(cleanupException);
+							appendCleanupFailure(thrown, cleanupException);
 						} else if (cleanupException instanceof RuntimeException) {
 							throw (RuntimeException) cleanupException;
 						} else if (cleanupException instanceof Error) {

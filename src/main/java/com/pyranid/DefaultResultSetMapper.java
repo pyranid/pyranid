@@ -36,6 +36,7 @@ import java.sql.Array;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.DateTimeException;
@@ -645,31 +646,33 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(resultSet);
 		requireNonNull(resultSetMetaData);
 
-		int columnCount = resultSetMetaData.getColumnCount();
-		Map<String, Object> row = new LinkedHashMap<>(columnCount);
-		Map<String, String> normalizedLabelsToRawLabels = new HashMap<>(columnCount);
+		try (MappingResources resources = acquireMappingResources()) {
+			int columnCount = resultSetMetaData.getColumnCount();
+			Map<String, Object> row = new LinkedHashMap<>(columnCount);
+			Map<String, String> normalizedLabelsToRawLabels = new HashMap<>(columnCount);
 
-		for (int i = 1; i <= columnCount; i++) {
-			String rawLabel = resultSetMetaData.getColumnLabel(i);
-			String label = normalizeColumnLabel(rawLabel);
-			String previousRawLabel = normalizedLabelsToRawLabels.putIfAbsent(label, rawLabel);
+			for (int i = 1; i <= columnCount; i++) {
+				String rawLabel = resultSetMetaData.getColumnLabel(i);
+				String label = normalizeColumnLabel(rawLabel);
+				String previousRawLabel = normalizedLabelsToRawLabels.putIfAbsent(label, rawLabel);
 
-			if (previousRawLabel != null)
-				throw new DatabaseException(format(
-						"Duplicate column label '%s' (normalized from '%s' and '%s'); use column aliases to disambiguate.",
-						label, previousRawLabel, rawLabel));
+				if (previousRawLabel != null)
+					throw new DatabaseException(format(
+							"Duplicate column label '%s' (normalized from '%s' and '%s'); use column aliases to disambiguate.",
+							label, previousRawLabel, rawLabel));
 
-			Object columnValue = extractColumnValue(resultSetMetaData, statementContext, resultSet, i).orElse(null);
+				Object columnValue = extractColumnValue(resultSetMetaData, statementContext, resultSet, i, resources).orElse(null);
 
-			// Match record/bean mapping: unwrap driver-specific wrappers (e.g. PostgreSQL PGobject for
-			// JSONB/vector columns becomes its String form) so map rows never carry raw driver objects
-			if (columnValue != null)
-				columnValue = statementContext.getDatabaseDialect().unwrapResultSetValue(columnValue);
+				// Match record/bean mapping: unwrap driver-specific wrappers (e.g. PostgreSQL PGobject for
+				// JSONB/vector columns becomes its String form) so map rows never carry raw driver objects
+				if (columnValue != null)
+					columnValue = resources.nativeValue(columnValue, statementContext.getDatabaseDialect());
 
-			row.put(label, columnValue);
+				row.put(label, columnValue);
+			}
+
+			return row;
 		}
-
-		return row;
 	}
 
 
@@ -693,7 +696,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			// Otherwise, use a per-schema row plan
 			String schemaSignature = getPlanCachingEnabled() ? schemaSignatureFor(statementContext, resultSet, resultSetMetaData) : "";
 			RowPlan<T> plan = buildPlan(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData, schemaSignature);
-			RowReadScope reads = plan.hasFanOut ? new RowReadScope(resultSet, statementContext, plan) : null;
+			RowReadScope reads = plan.hasFanOut ? new RowReadScope(resultSet, statementContext, plan, resources) : null;
 
 			if (plan.isRecord) {
 				if (plan.mappedColumnCount == 0) {
@@ -708,7 +711,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 				for (ColumnBinding b : plan.bindings) {
 					if (b.recordArgIndexOrMinusOne < 0) continue; // bean binding or SKIP
-					Object raw = reads == null ? b.reader.read(resultSet, statementContext, b.columnIndex) : reads.read(b);
+					Object raw = reads == null ? readColumn(b.reader, resultSet, statementContext, b.columnIndex, resources) : reads.read(b);
 					Object val = b.converter.convert(raw, resultSet, statementContext, instanceProvider, resources);
 
 					if (val == null) {
@@ -757,7 +760,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 				for (ColumnBinding b : plan.bindings) {
 					if (b.setterOrNull == null) continue; // record-only or SKIP
-					Object raw = reads == null ? b.reader.read(resultSet, statementContext, b.columnIndex) : reads.read(b);
+					Object raw = reads == null ? readColumn(b.reader, resultSet, statementContext, b.columnIndex, resources) : reads.read(b);
 					Object val = b.converter.convert(raw, resultSet, statementContext, instanceProvider, resources);
 
 					if (val == null) {
@@ -940,7 +943,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					return new StandardTypeResult<>(null, false);
 			}
 
-			Object resultSetValue = extractColumnValue(resultSetMetaData, statementContext, resultSet, 1).orElse(null);
+			Object resultSetValue = extractColumnValue(resultSetMetaData, statementContext, resultSet, 1, resources).orElse(null);
 			customRaw = resultSetValue;
 			customRawRead = true;
 			resources.borrow(resultSetValue);
@@ -989,6 +992,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					// Return exactly like the fast path: Optional.ofNullable(value), standardType=true
 					@SuppressWarnings("unchecked")
 					T cast = (T) outcome.getValue();
+					resources.borrow(cast);
 					return new StandardTypeResult<>(cast, true);
 				}
 
@@ -1011,7 +1015,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		} else if (resultClass.isArray() || resultClass == List.class || resultClass == Set.class
 				|| resultClass.isEnum() || resultClass == UUID.class || resultClass == Year.class || resultClass == Object.class
 				|| resultClass == java.sql.Blob.class || resultClass == java.sql.Clob.class || resultClass == java.sql.NClob.class) {
-			value = resultSet.getObject(1);
+			value = customRawRead && (resultClass.isArray() || resultClass == List.class || resultClass == Set.class)
+					? customRaw : resultSet.getObject(1);
 		} else if (resultClass == BigDecimal.class || resultClass == BigInteger.class) {
 			value = resultSet.getBigDecimal(1);
 		} else if (resultClass == Date.class || resultClass == Instant.class || resultClass == ZonedDateTime.class) {
@@ -1059,6 +1064,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				throw new DatabaseException("Cannot map " + value.getClass().getName() + " to " + resultClass.getName());
 		}
 
+		if (standardType && (resultClass == Object.class || resultClass == java.sql.Blob.class
+				|| resultClass == java.sql.Clob.class || resultClass == java.sql.NClob.class)) resources.borrow(value);
 		return new StandardTypeResult(value, standardType);
 	}
 
@@ -1066,11 +1073,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	private Object readDetachedColumn(ResultSet resultSet, ResultSetMetaData metadata, int column,
 			Class<?> target, boolean rawRead, @Nullable Object raw, MappingResources resources) throws SQLException {
 		int jdbcType = resources.scalarJdbcType(resultSet, metadata);
-		boolean lob = jdbcType == Types.BLOB || jdbcType == Types.CLOB || jdbcType == Types.NCLOB;
-		if (lob || raw instanceof java.sql.Blob || raw instanceof java.sql.Clob) {
+		if (MappingResources.requiresMaterialization(raw, target, jdbcType)) {
 			if (!rawRead) raw = resultSet.getObject(column);
 			return resources.materialize(raw, target, jdbcType, "column '" + metadata.getColumnLabel(column) + "'");
 		}
+		// Cross-type LOB conversions belong to the driver (e.g. DuckDB BLOB -> String).
+		// Preserve JDBC getter semantics outside the matching typed-LOB detachment policy.
 		return target == String.class ? resultSet.getString(column) : resultSet.getBytes(column);
 	}
 
@@ -1178,12 +1186,27 @@ class DefaultResultSetMapper implements ResultSetMapper {
 																										@NonNull StatementContext<T> statementContext,
 																										@NonNull ResultSet resultSet,
 																										int columnIndex) throws SQLException {
-		return Optional.ofNullable(columnReaderFor(resultSetMetaData, statementContext, columnIndex)
-				.read(resultSet, statementContext, columnIndex));
+		try (MappingResources resources = acquireMappingResources()) {
+			return extractColumnValue(resultSetMetaData, statementContext, resultSet, columnIndex, resources);
+		}
+	}
+
+	private Optional<Object> extractColumnValue(ResultSetMetaData metadata, StatementContext<?> context,
+			ResultSet resultSet, int column, MappingResources resources) throws SQLException {
+		return Optional.ofNullable(readColumn(columnReaderFor(metadata, context, column), resultSet, context, column, resources));
+	}
+
+	private static Object readColumn(ColumnReader reader, ResultSet resultSet, StatementContext<?> context,
+			int column, MappingResources resources) throws SQLException {
+		Object raw = reader.read(resultSet, context, column);
+		return raw instanceof Array array ? extractSqlArrayResultSetValue(array, resources) : raw;
 	}
 
 	private ColumnReader columnReaderFor(ResultSetMetaData metadata, StatementContext<?> context, int column) throws SQLException {
 		int jdbcType = metadata.getColumnType(column);
+		// An array type name can itself contain "TIMESTAMP WITH TIME ZONE".
+		if (jdbcType == Types.ARRAY || jdbcType == Types.STRUCT)
+			return (r, c, i) -> r.getObject(i);
 		if (context.getDatabaseDialect().isTimestampWithTimeZone(metadata, column))
 			return (r, c, i) -> TemporalReaders.asOffsetDateTime(r, i, c, true);
 		if (jdbcType == Types.TIMESTAMP)
@@ -1194,10 +1217,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			return (r, c, i) -> TemporalReaders.asOffsetTime(r, i, c, true);
 		if (jdbcType == Types.TIME)
 			return (r, c, i) -> TemporalReaders.asLocalTime(r, i);
-		return (r, c, i) -> {
-			Object raw = r.getObject(i);
-			return raw instanceof Array array ? extractSqlArrayResultSetValue(array) : raw;
-		};
+		return (r, c, i) -> r.getObject(i);
 	}
 
 	@Nullable
@@ -1210,7 +1230,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			resources.borrow(raw);
 			CustomMappingOutcome custom = tryCustomColumnMappers(context, resultSet, raw, target,
 					mappers, column, label, instances);
-			if (custom.isApplied()) return custom.getValue();
+			if (custom.isApplied()) {
+				resources.borrow(custom.getValue());
+				return custom.getValue();
+			}
 		}
 		Object value = MappingResources.requiresMaterialization(raw, target.getRawClass(), jdbcType)
 				? resources.materialize(raw, target.getRawClass(), jdbcType, "column '" + label + "'") : raw;
@@ -1249,10 +1272,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			resources.borrow(resultSetValue);
 		DatabaseDialect dialect = statementContext.getDatabaseDialect();
 		boolean nativeTarget = targetType.getRawClass() == Object.class || Map.class.isAssignableFrom(targetType.getRawClass());
+		Object beforeUnwrap = resultSetValue;
 		resultSetValue = nativeTarget ? resources.nativeValue(resultSetValue, dialect)
-				: dialect instanceof DuckDbDialect duck ? duck.unwrapForTypedMapping(resultSetValue)
+				: dialect instanceof DuckDbDialect duck ? duck.unwrapForTypedMapping(resultSetValue, resources)
 				: dialect.unwrapResultSetValue(resultSetValue);
 
+		resources.copyArrayType(beforeUnwrap, resultSetValue);
 		return convertDetachedValue(statementContext, resultSetValue, targetType, resources);
 	}
 
@@ -1351,6 +1376,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		// Legacy java.sql.* coming from drivers
 		if (resultSetValue instanceof java.sql.Timestamp timestamp) {
+			if (java.sql.Date.class.isAssignableFrom(targetClass))
+				return java.sql.Date.valueOf(timestamp.toLocalDateTime().toLocalDate());
 			if (Date.class.isAssignableFrom(targetClass))
 				return timestamp;
 			if (Instant.class.isAssignableFrom(targetClass))
@@ -1365,16 +1392,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				return timestamp.toInstant().atZone(statementContext.getTimeZone());
 		}
 
-		if (resultSetValue instanceof java.sql.Date date) {
-			if (Date.class.isAssignableFrom(targetClass))
-				return date;
-			if (Instant.class.isAssignableFrom(targetClass))
-				return date.toInstant();
-			if (LocalDate.class.isAssignableFrom(targetClass))
-				return date.toLocalDate();
-			if (LocalDateTime.class.isAssignableFrom(targetClass))
-				return LocalDateTime.ofInstant(date.toInstant(), statementContext.getTimeZone());
-		}
+		if (resultSetValue instanceof java.sql.Date date)
+			return convertDetachedValue(statementContext, date.toLocalDate(), targetType, resources);
 
 		if (resultSetValue instanceof java.sql.Time time) {
 			if (LocalTime.class.isAssignableFrom(targetClass))
@@ -1427,6 +1446,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				return offsetDateTime.toInstant();
 			if (LocalDateTime.class.isAssignableFrom(targetClass))
 				return offsetDateTime.atZoneSameInstant(statementContext.getTimeZone()).toLocalDateTime();
+			if (LocalDate.class.isAssignableFrom(targetClass))
+				return offsetDateTime.atZoneSameInstant(statementContext.getTimeZone()).toLocalDate();
 			if (java.sql.Timestamp.class.isAssignableFrom(targetClass))
 				return Timestamp.from(offsetDateTime.toInstant());
 			if (java.sql.Date.class.isAssignableFrom(targetClass))
@@ -1448,6 +1469,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				return localDate.atStartOfDay(statementContext.getTimeZone()).toInstant();
 			if (java.sql.Date.class.isAssignableFrom(targetClass))
 				return java.sql.Date.valueOf(localDate);
+			if (java.sql.Timestamp.class.isAssignableFrom(targetClass))
+				return Timestamp.valueOf(localDate.atStartOfDay());
+			if (OffsetDateTime.class.isAssignableFrom(targetClass))
+				return localDate.atStartOfDay(statementContext.getTimeZone()).toOffsetDateTime();
 			if (Date.class.isAssignableFrom(targetClass))
 				return Date.from(localDate.atStartOfDay(statementContext.getTimeZone()).toInstant());
 		}
@@ -1615,7 +1640,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(targetType);
 
 		try {
-			return convertArrayResultSetValue(statementContext, extractSqlArrayResultSetValue(sqlArray), targetType, resources);
+			return convertArrayResultSetValue(statementContext, extractSqlArrayResultSetValue(sqlArray, resources), targetType, resources);
 		} catch (SQLException e) {
 			DatabaseException wrapped = new DatabaseException("Unable to extract JDBC Array value", e);
 			throw wrapped;
@@ -1623,26 +1648,151 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	}
 
 	@Nullable
-	private static Object extractSqlArrayResultSetValue(@NonNull Array sqlArray) throws SQLException {
+	static Object extractSqlArrayResultSetValue(@NonNull Array sqlArray, MappingResources resources) throws SQLException {
 		requireNonNull(sqlArray);
 
 		Throwable thrown = null;
 
 		try {
-			return sqlArray.getArray();
-		} catch (SQLException e) {
+			Object values = sqlArray.getArray();
+			int baseType = Types.OTHER;
+			try {
+				baseType = sqlArray.getBaseType();
+				if (baseType == Types.TIMESTAMP || baseType == Types.TIME) {
+					// Some drivers report both zoned and zone-less types with the legacy JDBC code.
+					try {
+						String typeName = sqlArray.getBaseTypeName();
+						if (typeName != null) {
+							String normalized = typeName.toUpperCase(Locale.ROOT);
+							if (baseType == Types.TIMESTAMP && (normalized.equals("TIMESTAMPTZ")
+									|| normalized.contains("WITH TIME ZONE") || normalized.contains("WITH LOCAL TIME ZONE")))
+								baseType = Types.TIMESTAMP_WITH_TIMEZONE;
+							else if (baseType == Types.TIME && TemporalReaders.isTimeWithTimeZoneName(normalized))
+								baseType = Types.TIME_WITH_TIMEZONE;
+						}
+					} catch (SQLException | UnsupportedOperationException | AbstractMethodError unsupportedTypeName) {
+						// A supported JDBC type remains useful when the optional SQL name is unavailable.
+					}
+				}
+			} catch (SQLException | UnsupportedOperationException | AbstractMethodError unsupportedMetadata) {
+				// Older drivers can expose array contents without optional base-type metadata.
+			}
+			resources.registerArrayType(values, baseType);
+			if (baseType == Types.TIME_WITH_TIMEZONE && containsLegacyTime(values)) {
+				// java.sql.Time has already lost the original offset and fractional seconds. Keep
+				// the raw array for custom/native targets and detach a lossless alternate while alive.
+				TimeArrayRead read = readTimeArray(sqlArray, values, false);
+				if (read.failure != null) {
+					if (read.cleanupFailed || !isUnsupportedArrayReader(read.failure))
+						rethrowArrayFailure(read.failure);
+					resources.registerArrayTimeValues(values, read.failure);
+				} else resources.registerArrayTimeValues(values, read.values);
+			}
+			return values;
+		} catch (SQLException | RuntimeException | Error e) {
 			thrown = e;
 			throw e;
 		} finally {
 			try {
 				sqlArray.free();
-			} catch (SQLException e) {
-				if (thrown != null)
+			} catch (SQLException | RuntimeException | Error e) {
+				if (thrown != null && thrown != e)
 					thrown.addSuppressed(e);
 				else
 					throw e;
 			}
 		}
+	}
+
+	private static boolean isUnsupportedArrayReader(Throwable failure) {
+		if (failure instanceof SQLFeatureNotSupportedException || failure instanceof UnsupportedOperationException
+				|| failure instanceof AbstractMethodError) return true;
+		if (failure instanceof SQLException sql) {
+			try {
+				String state = sql.getSQLState();
+				return state != null && (state.startsWith("0A") || state.equals("HYC00"));
+			} catch (Throwable unreadableState) {
+				// Preserve the original read failure if a driver cannot expose its classification.
+			}
+		}
+		return false;
+	}
+
+	private static boolean containsLegacyTime(@Nullable Object value) {
+		if (value instanceof java.sql.Time) return true;
+		if (value instanceof Object[] elements)
+			for (Object element : elements) if (containsLegacyTime(element)) return true;
+		return false;
+	}
+
+	private record TimeArrayRead(@Nullable Object values, @Nullable Throwable failure, boolean cleanupFailed) {}
+
+	private static TimeArrayRead readTimeArray(Array array, Object raw, boolean free) {
+		ResultSet rows = null;
+		Object[] values = null;
+		Throwable failure = null;
+		boolean cleanupFailed = false;
+		try {
+			int length = java.lang.reflect.Array.getLength(raw);
+			values = new Object[length];
+			rows = array.getResultSet();
+			if (rows == null) throw new SQLFeatureNotSupportedException("Driver did not provide SQL ARRAY element rows");
+			for (int index = 0; index < length; index++) {
+				if (!rows.next()) throw new SQLException("SQL ARRAY element rows ended before the array contents");
+				Object element = java.lang.reflect.Array.get(raw, index);
+				if (element != null && element.getClass().isArray()) {
+					Array nested = rows.getArray(2);
+					if (nested == null) throw new SQLException("Driver returned NULL for a non-null nested SQL ARRAY");
+					TimeArrayRead read = readTimeArray(nested, element, true);
+					if (read.failure != null) {
+						failure = read.failure;
+						cleanupFailed = read.cleanupFailed;
+						break;
+					}
+					values[index] = read.values;
+				} else {
+					values[index] = rows.getObject(2, OffsetTime.class);
+					if (element != null && values[index] == null)
+						throw new SQLException("Driver returned NULL for a non-null SQL TIME WITH TIME ZONE element");
+				}
+			}
+			if (failure == null && rows.next()) throw new SQLException("SQL ARRAY element rows exceeded the array contents");
+		} catch (SQLException | RuntimeException | Error readFailure) {
+			failure = readFailure;
+		} finally {
+			if (rows != null) {
+				try { rows.close(); }
+				catch (SQLException | RuntimeException | Error closeFailure) {
+					cleanupFailed = true;
+					if (failure == null) failure = closeFailure;
+					else if (failure != closeFailure) failure.addSuppressed(closeFailure);
+				}
+			}
+			if (free) {
+				try { array.free(); }
+				catch (SQLException | RuntimeException | Error freeFailure) {
+					cleanupFailed = true;
+					if (failure == null) failure = freeFailure;
+					else if (failure != freeFailure) failure.addSuppressed(freeFailure);
+				}
+			}
+		}
+		return new TimeArrayRead(values, failure, cleanupFailed);
+	}
+
+	private static void rethrowArrayFailure(Throwable failure) throws SQLException {
+		if (failure instanceof SQLException sql) throw sql;
+		if (failure instanceof RuntimeException runtime) throw runtime;
+		throw (Error) failure;
+	}
+
+	private static boolean isTimeContainerTarget(TargetType target) {
+		while (target.isArray() || target.isList() || target.isSet()) {
+			target = (target.isArray() ? target.getArrayComponentType()
+					: target.isList() ? target.getListElementType() : target.getSetElementType()).orElse(TargetType.of(Object.class));
+		}
+		return target.getRawClass() == OffsetTime.class || target.getRawClass() == LocalTime.class
+				|| target.getRawClass() == java.sql.Time.class;
 	}
 
 	@NonNull
@@ -1658,6 +1808,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			throw new DatabaseException(format("Expected JDBC Array value to expose a Java array but encountered %s",
 					arrayClass.getName()));
 
+		int elementJdbcType = resources.arrayType(arrayValue);
+		if (elementJdbcType == Types.TIME_WITH_TIMEZONE && isTimeContainerTarget(targetType))
+			arrayValue = resources.arrayTimeValues(arrayValue);
 		int length = java.lang.reflect.Array.getLength(arrayValue);
 
 		if (targetType.isList()) {
@@ -1665,7 +1818,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			List<Object> values = new ArrayList<>(length);
 
 			for (int i = 0; i < length; ++i)
-				values.add(convertResultSetArrayElement(statementContext, java.lang.reflect.Array.get(arrayValue, i), elementType, i, resources));
+				values.add(convertResultSetArrayElement(statementContext, java.lang.reflect.Array.get(arrayValue, i), elementType, i, resources, elementJdbcType));
 
 			return values;
 		}
@@ -1675,7 +1828,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			Set<Object> values = new LinkedHashSet<>(length);
 
 			for (int i = 0; i < length; ++i)
-				values.add(convertResultSetArrayElement(statementContext, java.lang.reflect.Array.get(arrayValue, i), elementType, i, resources));
+				values.add(convertResultSetArrayElement(statementContext, java.lang.reflect.Array.get(arrayValue, i), elementType, i, resources, elementJdbcType));
 
 			return values;
 		}
@@ -1685,7 +1838,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		Object convertedArray = java.lang.reflect.Array.newInstance(componentClass, length);
 
 		for (int i = 0; i < length; ++i) {
-			Object convertedElement = convertResultSetArrayElement(statementContext, java.lang.reflect.Array.get(arrayValue, i), componentType, i, resources);
+			Object convertedElement = convertResultSetArrayElement(statementContext, java.lang.reflect.Array.get(arrayValue, i), componentType, i, resources, elementJdbcType);
 
 			if (convertedElement == null && componentClass.isPrimitive())
 				throw new DatabaseException(format("SQL ARRAY element %s is NULL but target array component type is primitive (%s)",
@@ -1701,7 +1854,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	private <T> Object convertResultSetArrayElement(@NonNull StatementContext<T> statementContext,
 																									@Nullable Object value,
 																									@NonNull TargetType targetType,
-																									int elementIndex, @NonNull MappingResources resources) {
+																									int elementIndex, @NonNull MappingResources resources, int jdbcType) {
 		requireNonNull(statementContext);
 		requireNonNull(targetType);
 
@@ -1712,7 +1865,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		if (targetClass == Object.class)
 			return resources.nativeValue(value, statementContext.getDatabaseDialect());
-		if (targetClass.isInstance(value)) {
+		value = normalizeContainerTemporalValue(value, jdbcType);
+		if (value.getClass().isArray()) resources.registerArrayType(value, jdbcType);
+		if (targetClass.isInstance(value) && !(value.getClass().isArray()
+				&& (targetType.isArray() || targetType.isList() || targetType.isSet()))) {
 			resources.borrow(value);
 			return value;
 		}
@@ -1725,6 +1881,25 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		return converted;
+	}
+
+	private static Object normalizeContainerTemporalValue(Object value, int jdbcType) {
+		// A Timestamp stores a JVM-zone-based epoch even for SQL TIMESTAMP WITHOUT TIME ZONE.
+		// Preserve the SQL container's type so only zone-less values become wall-clock values.
+		if (value instanceof Timestamp timestamp) {
+			if (jdbcType == Types.TIMESTAMP) value = timestamp.toLocalDateTime();
+			else if (jdbcType == Types.TIMESTAMP_WITH_TIMEZONE) value = timestamp.toInstant();
+		} else if (value instanceof java.sql.Date date) {
+			value = date.toLocalDate();
+		} else if (value instanceof java.sql.Time time && jdbcType == Types.TIME) {
+			value = time.toLocalTime();
+		}
+		return value;
+	}
+
+	private static boolean isTimestampConversionTarget(Class<?> target) {
+		return target == Instant.class || target == LocalDate.class || target == LocalDateTime.class
+				|| target == OffsetDateTime.class || target == ZonedDateTime.class || Date.class.isAssignableFrom(target);
 	}
 
 	/**
@@ -1760,11 +1935,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(instanceProvider);
 		requireNonNull(resultSetMetaData);
 
-		Object resultSetValue = extractColumnValue(resultSetMetaData, statementContext, resultSet, 1).orElse(null);
+		Object resultSetValue = extractColumnValue(resultSetMetaData, statementContext, resultSet, 1, resources).orElse(null);
 
 		if (resultSetValue != null)
 			resultSetValue = statementContext.getDatabaseDialect() instanceof DuckDbDialect duck
-				? duck.unwrapForTypedMapping(resultSetValue)
+				? duck.unwrapForTypedMapping(resultSetValue, resources)
 				: statementContext.getDatabaseDialect().unwrapResultSetValue(resultSetValue);
 
 		if (resultSetValue == null)
@@ -1863,6 +2038,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			for (String attributeName : orderedAttributeNames) {
 				++mappedAttributeCount;
 				Object rawValue = valuesByNormalizedName.get(attributeName);
+				if (rawValue instanceof Timestamp && isTimestampConversionTarget(recordComponentType)
+						&& statementContext.getDatabaseDialect() instanceof DuckDbDialect duck)
+					rawValue = normalizeContainerTemporalValue(rawValue, duck.structAttributeJdbcType(resources.structType(mapValue),
+							attributeIndexesByNormalizedName.get(attributeName)));
 				Object value = rawValue == null ? null
 						: convertResultSetValueToTargetType(statementContext, rawValue, targetType, resources);
 
@@ -2443,7 +2622,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			int jdbcType = md.getColumnType(col);
 			if (jdbcType == Types.TIME_WITH_TIMEZONE) return true;
 			@Nullable String name = md.getColumnTypeName(col);
-			return name != null && name.toUpperCase(Locale.ROOT).contains("TIME WITH TIME ZONE");
+			return name != null && isTimeWithTimeZoneName(name.toUpperCase(Locale.ROOT));
+		}
+
+		private static boolean isTimeWithTimeZoneName(String normalized) {
+			return normalized.equals("TIMETZ") || normalized.startsWith("TIME") && !normalized.startsWith("TIMESTAMP")
+					&& normalized.contains("WITH TIME ZONE");
 		}
 
 		/**
@@ -2702,21 +2886,23 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	private static final class RowReadScope {
 		private final ResultSet resultSet;
 		private final StatementContext<?> context;
+		private final MappingResources resources;
 		private final @Nullable Object[] raw;
 		private final @Nullable boolean[] loaded;
 
-		RowReadScope(ResultSet resultSet, StatementContext<?> context, RowPlan<?> plan) {
+		RowReadScope(ResultSet resultSet, StatementContext<?> context, RowPlan<?> plan, MappingResources resources) {
 			this.resultSet = resultSet;
 			this.context = context;
+			this.resources = resources;
 			this.raw = plan.hasFanOut ? new Object[plan.columnCount + 1] : null;
 			this.loaded = plan.hasFanOut ? new boolean[plan.columnCount + 1] : null;
 		}
 
 		@Nullable Object read(ColumnBinding binding) throws SQLException {
-			if (this.raw == null) return binding.reader.read(this.resultSet, this.context, binding.columnIndex);
+			if (this.raw == null) return readColumn(binding.reader, this.resultSet, this.context, binding.columnIndex, this.resources);
 			int column = binding.columnIndex;
 			if (!this.loaded[column]) {
-				this.raw[column] = binding.reader.read(this.resultSet, this.context, column);
+				this.raw[column] = readColumn(binding.reader, this.resultSet, this.context, column, this.resources);
 				this.loaded[column] = true;
 			}
 			return this.raw[column];

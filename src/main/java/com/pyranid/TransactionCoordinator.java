@@ -119,6 +119,13 @@ final class TransactionCoordinator {
 
 		Transaction transaction = new Transaction(dataSource, transactionOptions, this.metrics,
 				this.cachedDatabaseType.get(), this.databaseTypeResolver);
+		try (var ignored = transaction.retrySafety().activate()) {
+			return run(transaction, transactionOptions, transactionalOperation);
+		}
+	}
+
+	private <T> Optional<T> run(Transaction transaction, TransactionOptions transactionOptions,
+			ReturningTransactionalOperation<T> transactionalOperation) {
 		Deque<Transaction> transactionStack = transactionStackForPush();
 		Long enclosingTransactionId = transactionStack.isEmpty() ? null : transactionStack.peek().id();
 		transactionStack.push(transaction);
@@ -131,7 +138,13 @@ final class TransactionCoordinator {
 		this.metrics.didEnterTransactionClosure(transaction, transactionOptions.getIsolation(), transaction.getDatabaseType());
 
 		try {
-			Optional<T> returnValue = transactionalOperation.perform();
+			Optional<T> returnValue;
+			try {
+				returnValue = transactionalOperation.perform();
+			} finally {
+				// Close public admission before waiting for the JDBC lock on either the success or failure path.
+				transaction.beginCompletion();
+			}
 
 			// Safeguard in case user code accidentally returns null instead of Optional.empty()
 			if (returnValue == null)
@@ -271,6 +284,13 @@ final class TransactionCoordinator {
 				}
 			}
 
+			int unsafeOutcomes = TransactionRetrySafety.outcomesOf(exitThrown);
+			if (transactionOutcomeIndeterminate) unsafeOutcomes |= TransactionRetrySafety.IN_DOUBT;
+			if (committed && exitThrown != null) unsafeOutcomes |= TransactionRetrySafety.COMMITTED;
+			transaction.retrySafety().record(unsafeOutcomes);
+			if (exitThrown instanceof DatabaseException databaseException)
+				TransactionRetrySafety.applyTo(databaseException, transaction.retrySafety().outcomes());
+
 			this.metrics.didExitTransactionClosure(transaction,
 					transactionClosureOutcome(committed, hadPhysicalTransaction, physicalTransactionBeganSuccessfully,
 							transactionOutcomeIndeterminate),
@@ -279,6 +299,11 @@ final class TransactionCoordinator {
 			Consumer<TransactionCompletion> observer = transactionOptions.getCompletionObserver().orElse(null);
 			if (observer != null)
 				observeCompletion(observer, new TransactionCompletion(transaction.id(), enclosingTransactionId, result, exitThrown));
+
+			// Cleanup and post-transaction hooks can introduce interruption after the operation's catch block.
+			// Restore from the final failure after diagnostics, which may themselves consume the thread flag.
+			if (exitThrown != null)
+				Database.restoreInterruptIfNeeded(exitThrown);
 
 			if (thrown == null && exitThrown != null) {
 				if (exitThrown instanceof Error error)
@@ -289,10 +314,10 @@ final class TransactionCoordinator {
 	}
 
 	private void observeCompletion(Consumer<TransactionCompletion> observer, TransactionCompletion completion) {
-		try {
+		try (var ignored = TransactionRetrySafety.isolate()) {
 			observer.accept(completion);
 		} catch (Throwable ignored) {
-			try {
+			try (var ignoredScope = TransactionRetrySafety.isolate()) {
 				// Avoid arbitrary throwable messages, stack traces, or user-defined toString() in diagnostics.
 				this.logger.log(Level.FINE, "Transaction completion observer failure ignored");
 			} catch (Throwable loggingFailure) {
@@ -477,9 +502,15 @@ final class TransactionCoordinator {
 		if (!isTransactionOwnedByThisDatabase(transaction))
 			throw wrongDatabaseTransactionException(transaction);
 
-		if (transaction.isCompleted())
-			throw new IllegalStateException(format("Transaction %s has already completed and cannot participate", transaction.id()));
+		transaction.assertCanParticipate();
 
+		try (var ignored = transaction.retrySafety().activate()) {
+			return participateInContext(transaction, transactionalOperation);
+		}
+	}
+
+	private <T> Optional<T> participateInContext(Transaction transaction,
+			ReturningTransactionalOperation<T> transactionalOperation) {
 		Deque<Transaction> transactionStack = transactionStackForPush();
 		transactionStack.push(transaction);
 
@@ -513,6 +544,8 @@ final class TransactionCoordinator {
 																												@NonNull Throwable primary) {
 		requireNonNull(transaction);
 		requireNonNull(primary);
+
+		transaction.retrySafety().record(TransactionRetrySafety.outcomesOf(primary));
 
 		try {
 			transaction.setRollbackOnly(true);

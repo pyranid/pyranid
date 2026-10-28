@@ -52,6 +52,17 @@ class LobMappingIntegrationIT {
 		assertArrayEquals("hello".getBytes(StandardCharsets.UTF_8), assertInstanceOf(byte[].class, arrayValue));
 	}
 
+	@Test
+	void duckDbScalarBlobToStringRetainsDriverGetterConversion() {
+		for (boolean cached : new boolean[]{false, true}) {
+			Database database = duckDb(ResultSetMapper.withPlanCachingEnabled(cached).maxLobCharacters(1L).maxLobBytes(1L).build());
+			for (int execution = 0; execution < 2; execution++) {
+				assertEquals("hello", database.query("SELECT 'hello'::BLOB AS value").fetchObject(String.class).orElseThrow());
+				assertTrue(database.query("SELECT NULL::BLOB AS value").fetchObject(String.class).isEmpty());
+			}
+		}
+	}
+
 	private Database duckDb(ResultSetMapper mapper) {
 		return Database.withDataSource(new AbstractPortableJdbcIntegrationTests.DriverManagerDataSource("jdbc:duckdb:", null, null))
 				.databaseType(DatabaseType.DUCK_DB).resultSetMapper(mapper).build();

@@ -1023,16 +1023,13 @@ final class StatementExecutor {
 				try {
 					getStatementLogger().log(statementLog);
 				} catch (Throwable cleanupException) {
-					if (cleanupFailure == null)
-						cleanupFailure = cleanupException;
-					else
-						cleanupFailure.addSuppressed(cleanupException);
+					cleanupFailure = appendCleanupFailure(cleanupFailure, cleanupException);
 				}
 			}
 
 			if (cleanupFailure != null) {
 				if (thrown != null) {
-					thrown.addSuppressed(cleanupFailure);
+					appendCleanupFailure(thrown, cleanupFailure);
 				} else if (cleanupFailure instanceof RuntimeException) {
 					throw (RuntimeException) cleanupFailure;
 				} else if (cleanupFailure instanceof Error) {

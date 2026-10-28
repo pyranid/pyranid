@@ -80,6 +80,7 @@ public final class Transaction {
 	private final List<@NonNull Consumer<TransactionResult>> postTransactionOperations;
 	@NonNull
 	private final ReentrantLock connectionLock;
+	private final TransactionRetrySafety retrySafety;
 	// Guarded by connectionLock. JDBC savepoints affect the whole connection, so a scoped savepoint must exclude
 	// JDBC work from other participants without holding the lock while application callbacks run.
 	@Nullable
@@ -87,8 +88,9 @@ public final class Transaction {
 	private int savepointScopeDepth;
 	@NonNull
 	private final AtomicBoolean rollbackOnly;
-	@NonNull
-	private final AtomicBoolean completed;
+	// Lifecycle coordination never holds this lock across JDBC or application callbacks.
+	private final ReentrantLock lifecycleLock;
+	private volatile CompletionPhase completionPhase;
 	@NonNull
 	private final AtomicBoolean commitSerializationFailure;
 	@NonNull
@@ -138,7 +140,8 @@ public final class Transaction {
 		this.databaseTypeResolver = databaseTypeResolver;
 		this.connection = null;
 		this.rollbackOnly = new AtomicBoolean(false);
-		this.completed = new AtomicBoolean(false);
+		this.lifecycleLock = new ReentrantLock();
+		this.completionPhase = CompletionPhase.ACTIVE;
 		this.commitSerializationFailure = new AtomicBoolean(false);
 		this.physicalTransactionBeginState = PhysicalTransactionBeginState.NOT_STARTED;
 		this.physicalTransactionBeginFailure = null;
@@ -150,6 +153,7 @@ public final class Transaction {
 		this.readOnlyWasChanged = new AtomicBoolean(false);
 		this.postTransactionOperations = new CopyOnWriteArrayList();
 		this.connectionLock = new ReentrantLock();
+		this.retrySafety = TransactionRetrySafety.currentOrNew();
 	}
 
 	@Override
@@ -204,10 +208,10 @@ public final class Transaction {
 			// No JDBC rollback was attempted. A caller may handle this ownership conflict and retry after the scope ends.
 			throw e;
 		} catch (SQLException e) {
-			this.rollbackOnly.set(true);
+			markRollbackOnlyIfActive();
 			throw databaseException("Unable to roll back to savepoint", e);
 		} catch (RuntimeException | Error e) {
-			this.rollbackOnly.set(true);
+			markRollbackOnlyIfActive();
 			throw e;
 		} finally {
 			if (connectionLockAcquired)
@@ -331,8 +335,13 @@ public final class Transaction {
 	 */
 	public void setRollbackOnly(@NonNull Boolean rollbackOnly) {
 		requireNonNull(rollbackOnly);
-		assertNotCompleted("set rollback-only state");
-		this.rollbackOnly.set(rollbackOnly);
+		this.lifecycleLock.lock();
+		try {
+			assertNotCompleted("set rollback-only state");
+			this.rollbackOnly.set(rollbackOnly);
+		} finally {
+			this.lifecycleLock.unlock();
+		}
 	}
 
 	/**
@@ -353,12 +362,20 @@ public final class Transaction {
 	 */
 	public void addPostTransactionOperation(@NonNull Consumer<TransactionResult> postTransactionOperation) {
 		requireNonNull(postTransactionOperation);
-		assertNotCompleted("add a post-transaction operation");
-		this.postTransactionOperations.add(postTransactionOperation);
+		this.lifecycleLock.lock();
+		try {
+			assertNotCompleted("add a post-transaction operation");
+			this.postTransactionOperations.add(postTransactionOperation);
+		} finally {
+			this.lifecycleLock.unlock();
+		}
 	}
 
 	/**
 	 * Removes an operation from the list of operations to be executed when the transaction completes.
+	 * <p>
+	 * Equality is evaluated against a snapshot of the registered operations. New operation instances added while
+	 * equality is evaluated are left for a later removal call.
 	 *
 	 * @param postTransactionOperation the post-transaction operation to remove
 	 * @return {@code true} if the post-transaction operation was removed, {@code false} otherwise
@@ -367,7 +384,33 @@ public final class Transaction {
 	public Boolean removePostTransactionOperation(@NonNull Consumer<TransactionResult> postTransactionOperation) {
 		requireNonNull(postTransactionOperation);
 		assertNotCompleted("remove a post-transaction operation");
-		return this.postTransactionOperations.remove(postTransactionOperation);
+		Object[] snapshot = this.postTransactionOperations.toArray();
+		// Consumer.equals() is application code. Match one stable snapshot outside the lifecycle lock; chasing
+		// newly added operations could run forever when equals() itself registers an unrelated operation.
+		for (Object candidate : snapshot) {
+			if (!postTransactionOperation.equals(candidate)) continue;
+			this.lifecycleLock.lock();
+			try {
+				assertNotCompleted("remove a post-transaction operation");
+				// Another removal may have shifted or removed this occurrence. Identity lookup avoids calling
+				// equals() again while locked, and preserves the order of equal or duplicate registrations.
+				for (int index = 0; index < this.postTransactionOperations.size(); ++index) {
+					if (this.postTransactionOperations.get(index) == candidate) {
+						this.postTransactionOperations.remove(index);
+						return true;
+					}
+				}
+			} finally {
+				this.lifecycleLock.unlock();
+			}
+		}
+		this.lifecycleLock.lock();
+		try {
+			assertNotCompleted("remove a post-transaction operation");
+			return false;
+		} finally {
+			this.lifecycleLock.unlock();
+		}
 	}
 
 	/**
@@ -442,7 +485,9 @@ public final class Transaction {
 			long startTime = nanoTime();
 
 			try {
-				getConnection().commit();
+				// The public connection accessor rejects COMPLETING. Internal completion owns the existing handle.
+				assertSavepointScopeAccess();
+				requireNonNull(this.connection).commit();
 				getMetricsCollectorDispatcher().didCommitPhysicalTransaction(this, getDatabaseType(), Duration.ofNanos(nanoTime() - startTime));
 				LOGGER.finer("Transaction committed.");
 			} catch (SQLException e) {
@@ -792,6 +837,10 @@ public final class Transaction {
 		return this.readOnlyWasChanged.get();
 	}
 
+	TransactionRetrySafety retrySafety() {
+		return this.retrySafety;
+	}
+
 	@NonNull
 	ReentrantLock getConnectionLock() {
 		return this.connectionLock;
@@ -818,13 +867,47 @@ public final class Transaction {
 		}
 	}
 
+	void beginCompletion() {
+		this.lifecycleLock.lock();
+		try {
+			if (this.completionPhase == CompletionPhase.ACTIVE)
+				this.completionPhase = CompletionPhase.COMPLETING;
+		} finally {
+			this.lifecycleLock.unlock();
+		}
+	}
+
 	void markCompleted() {
-		this.completed.set(true);
+		this.lifecycleLock.lock();
+		try {
+			this.completionPhase = CompletionPhase.COMPLETED;
+		} finally {
+			this.lifecycleLock.unlock();
+		}
+	}
+
+	void assertCanParticipate() {
+		this.lifecycleLock.lock();
+		try {
+			assertNotCompleted("participate");
+		} finally {
+			this.lifecycleLock.unlock();
+		}
 	}
 
 	@NonNull
 	Boolean isCompleted() {
-		return this.completed.get();
+		return this.completionPhase == CompletionPhase.COMPLETED;
+	}
+
+	private void markRollbackOnlyIfActive() {
+		this.lifecycleLock.lock();
+		try {
+			if (this.completionPhase == CompletionPhase.ACTIVE)
+				this.rollbackOnly.set(true);
+		} finally {
+			this.lifecycleLock.unlock();
+		}
 	}
 
 	private void enterSavepointScope() {
@@ -887,7 +970,7 @@ public final class Transaction {
 			getConnection().rollback(savepoint);
 			getMetricsCollectorDispatcher().didRollbackToSavepoint(this, getDatabaseType());
 		} catch (Throwable rollbackException) {
-			this.rollbackOnly.set(true);
+			markRollbackOnlyIfActive();
 			primary.addSuppressed(databaseException("Unable to roll back to savepoint", rollbackException));
 		} finally {
 			if (rollbackConnectionLockAcquired)
@@ -927,6 +1010,7 @@ public final class Transaction {
 
 	private void lockConnectionInterruptibly(@NonNull String operation) {
 		requireNonNull(operation);
+		assertNotCompleted(operation);
 		ReentrantLock connectionLock = getConnectionLock();
 
 		// Interruptibility is for a participant waiting on another thread. Reentrant acquisition never waits, and using
@@ -986,8 +1070,14 @@ public final class Transaction {
 	private void assertNotCompleted(@NonNull String operation) {
 		requireNonNull(operation);
 
-		if (isCompleted())
-			throw new IllegalStateException(format("Transaction %s has already completed and cannot %s", id(), operation));
+		if (this.completionPhase != CompletionPhase.ACTIVE)
+			throw new IllegalStateException(format("Transaction %s has already completed its closure and cannot %s", id(), operation));
+	}
+
+	private enum CompletionPhase {
+		ACTIVE,
+		COMPLETING,
+		COMPLETED
 	}
 
 	private enum PhysicalTransactionBeginState {

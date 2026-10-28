@@ -573,6 +573,8 @@ database.transaction(() -> {
 
 Transaction handles are scoped to the transaction closure. After the closure completes, mutating or JDBC-touching methods on a captured [`Transaction`](https://javadoc.pyranid.com/com/pyranid/Transaction.html) handle throw [`IllegalStateException`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/IllegalStateException.html).
 
+Admission closes before JDBC commit or rollback begins, including when the closure throws. A late rollback-only change or new `participate(...)` call is rejected during completion; it cannot cancel a commit already in progress. Join all participating work before returning from the owning closure.
+
 ### Multi-threaded Transactions
 
 Internally, [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) manages a thread-local stack of [`Transaction`](https://javadoc.pyranid.com/com/pyranid/Transaction.html) instances to simplify single-threaded usage. Should you need to share the same transaction across multiple threads, use the [`Database::participate`](https://javadoc.pyranid.com/com/pyranid/Database.html#participate(com.pyranid.Transaction,com.pyranid.TransactionalOperation)) API.
@@ -805,6 +807,8 @@ TransactionRetryResult<Void> retryResult = database.transactionWithRetry(retryPo
 
 Unlike [`Database::transaction(ReturningTransactionalOperation<T>)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transaction(com.pyranid.ReturningTransactionalOperation)), [`Database::transactionWithRetry(RetryPolicy, TransactionalOperation)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transactionWithRetry(com.pyranid.RetryPolicy,com.pyranid.TransactionalOperation)) returns a [`TransactionRetryResult`](https://javadoc.pyranid.com/com/pyranid/TransactionRetryResult.html) so callers can inspect failures recovered before success. [`TransactionRetryResult::getValue()`](https://javadoc.pyranid.com/com/pyranid/TransactionRetryResult.html#getValue()) contains the successful transaction value, and [`TransactionRetryResult::getFailures()`](https://javadoc.pyranid.com/com/pyranid/TransactionRetryResult.html#getFailures()) contains failed attempts that Pyranid retried before the transaction eventually succeeded.
 
+Unsafe outcome evidence survives exception wrapping (including JDBC next-exception chains), nested transaction boundaries, and participating threads. Wrapping a committed transaction's cleanup failure in `DatabaseException` does not make it eligible for replay. Independently successful nested transactions remain side effects of the retried closure, so callers must still make them safe to repeat.
+
 ```java
 // Risky: the email may send more than once
 database.transactionWithRetry(retryPolicy, () -> {
@@ -1003,6 +1007,8 @@ Pyranid preserves the fractional-second precision returned by your JDBC driver; 
 
 SQL ARRAY columns can be mapped to Java array targets such as [`String[]`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/String.html) or [`UUID[]`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/UUID.html). They can also be mapped to [`List<T>`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/List.html) or [`Set<T>`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Set.html) when Pyranid can see the generic element type from a Record component or JavaBean setter, for example `record Row(List<String> tags, Set<String> labels) {}` or `void setTags(Set<String> tags)`. Raw scalar [`List.class`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/List.html) and [`Set.class`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Set.html) targets are supported too, but the element type is whatever the JDBC driver returns because Java's [`Class<List>`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Class.html) and [`Class<Set>`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Class.html) tokens carry no generic type argument. [`Set`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Set.html) targets use insertion order from the SQL ARRAY and apply normal Set semantics, so duplicates collapse and multiple SQL `NULL` elements become one `null`.
 
+Typed temporal arrays follow scalar time-zone rules at every nesting level. PostgreSQL `timetz` scalars and arrays mapped to `OffsetTime` preserve their original offset and fractional seconds. If a driver exposes only lossy legacy time values and cannot provide typed array elements, built-in temporal mapping fails instead of inventing an offset.
+
 PostgreSQL `JSON`/`JSONB` values returned by supported PostgreSQL JDBC drivers as [`PGobject`](https://jdbc.postgresql.org/documentation/publicapi/org/postgresql/util/PGobject.html), and DuckDB `JSON` values returned as driver nodes, map to [`String`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/String.html) by default. Pyranid does not parse JSON into application objects; register a [`CustomColumnMapper`](https://javadoc.pyranid.com/com/pyranid/CustomColumnMapper.html) when you want to inflate JSON into your own type.
 
 Text-backed vector columns such as pgvector, which supported PostgreSQL JDBC drivers surface as literals like `[0.1,0.2,0.3]`, map to `float[]` and `double[]` targets by parsing that literal. DuckDB fixed-size vector ARRAYs use Pyranid's SQL ARRAY conversion path. See the Vector section in Parameter Binding for the bind side.
@@ -1010,6 +1016,8 @@ Text-backed vector columns such as pgvector, which supported PostgreSQL JDBC dri
 ### SQL STRUCT Results
 
 On databases whose dialects surface SQL STRUCT columns as attribute-name-to-value maps - currently DuckDB - STRUCT values map onto Java records, recursively. Attribute names follow the same matching rules as result columns: `camelCase` components match `snake_case` attributes, and [`@DatabaseColumn`](https://javadoc.pyranid.com/com/pyranid/DatabaseColumn.html) aliases apply.
+
+Typed DuckDB STRUCT timestamp attributes follow the scalar time-zone rules: zone-less timestamps use the configured database time zone, while timezone-bearing timestamps preserve their instant. This applies to nested records and records inside arrays; raw `Map` and `Object` attributes retain native values.
 
 ```sql
 CREATE TABLE employee (

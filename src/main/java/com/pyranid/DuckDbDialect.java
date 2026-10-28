@@ -228,6 +228,16 @@ final class DuckDbDialect extends GenericDialect {
 		UNKNOWN
 	}
 
+	/** Read-side metadata only; native values retain their driver representation. */
+	int structAttributeJdbcType(@Nullable String typeName, int attributeIndex) {
+		if (typeName == null) return Types.OTHER;
+		return switch (classifyContainerTargetType(structAttributeTypeName(typeName, attributeIndex))) {
+			case TIMESTAMP_WITH_TIME_ZONE -> Types.TIMESTAMP_WITH_TIMEZONE;
+			case TIMESTAMP_WITHOUT_TIME_ZONE -> Types.TIMESTAMP;
+			default -> Types.OTHER;
+		};
+	}
+
 	@Nullable
 	private String structAttributeTypeName(@NonNull String structTypeName,
 																													 @NonNull Integer attributeIndex) {
@@ -389,17 +399,23 @@ final class DuckDbDialect extends GenericDialect {
 	@Nullable
 	@Override
 	public Object unwrapResultSetValue(@NonNull Object resultSetValue) {
-		return unwrapResultSetValue(resultSetValue, true);
+		return unwrapResultSetValue(resultSetValue, true, null);
 	}
 
 	/** Typed mapping owns bounded LOB materialization; native Map/Object unwrapping retains its contract. */
 	@Nullable
 	Object unwrapForTypedMapping(@NonNull Object resultSetValue) {
-		return unwrapResultSetValue(resultSetValue, false);
+		return unwrapResultSetValue(resultSetValue, false, null);
+	}
+
+	/** Retains nested SQL ARRAY base types for the shared typed conversion engine. */
+	@Nullable
+	Object unwrapForTypedMapping(@NonNull Object resultSetValue, @NonNull MappingResources resources) {
+		return unwrapResultSetValue(resultSetValue, false, resources);
 	}
 
 	@Nullable
-	private Object unwrapResultSetValue(@NonNull Object resultSetValue, boolean materializeLobs) {
+	private Object unwrapResultSetValue(@NonNull Object resultSetValue, boolean materializeLobs, @Nullable MappingResources resources) {
 		requireNonNull(resultSetValue);
 
 		String className = resultSetValue.getClass().getName();
@@ -407,7 +423,7 @@ final class DuckDbDialect extends GenericDialect {
 		// STRUCT values become insertion-ordered attribute-name -> value maps so downstream mapping (records,
 		// Map rows) never sees driver-specific types. Attribute values are unwrapped recursively.
 		if (DUCKDB_STRUCT_CLASS_NAME.equals(className) && resultSetValue instanceof Struct)
-			return structAttributesByName(resultSetValue, materializeLobs);
+			return structAttributesByName(resultSetValue, materializeLobs, resources);
 
 		if (DUCKDB_JSON_NODE_CLASS_NAME.equals(className))
 			return resultSetValue.toString();
@@ -419,13 +435,13 @@ final class DuckDbDialect extends GenericDialect {
 		// objects; unwrap them so Map rows never carry driver-specific types. The original array is
 		// returned untouched when no element needs unwrapping.
 		if (resultSetValue instanceof Object[] elements)
-			return unwrapArrayElements(elements, materializeLobs);
+			return unwrapArrayElements(elements, materializeLobs, resources);
 
 		if (resultSetValue instanceof List<?> elements)
-			return unwrapListElements(elements, materializeLobs);
+			return unwrapListElements(elements, materializeLobs, resources);
 
 		if (resultSetValue instanceof Map<?, ?> entries)
-			return unwrapMapEntries(entries, materializeLobs);
+			return unwrapMapEntries(entries, materializeLobs, resources);
 
 		return resultSetValue;
 	}
@@ -460,7 +476,7 @@ final class DuckDbDialect extends GenericDialect {
 	}
 
 	@NonNull
-	private Map<String, Object> structAttributesByName(@NonNull Object duckDbStruct, boolean materializeLobs) {
+	private Map<String, Object> structAttributesByName(@NonNull Object duckDbStruct, boolean materializeLobs, @Nullable MappingResources resources) {
 		requireNonNull(duckDbStruct);
 
 		Map<String, Object> attributesByName;
@@ -478,19 +494,26 @@ final class DuckDbDialect extends GenericDialect {
 		Map<String, Object> unwrappedAttributesByName = new LinkedHashMap<>(attributesByName.size());
 
 		for (Map.Entry<String, Object> entry : attributesByName.entrySet())
-			unwrappedAttributesByName.put(entry.getKey(), unwrapStructAttributeValue(entry.getValue(), materializeLobs));
+			unwrappedAttributesByName.put(entry.getKey(), unwrapStructAttributeValue(entry.getValue(), materializeLobs, resources));
+		if (resources != null) {
+			try {
+				resources.registerStructType(unwrappedAttributesByName, ((Struct) duckDbStruct).getSQLTypeName());
+			} catch (SQLException | UnsupportedOperationException | AbstractMethodError unsupportedMetadata) {
+				// Preserve legacy conversion when the driver cannot supply STRUCT attribute types.
+			}
+		}
 
 		return unwrappedAttributesByName;
 	}
 
 	@NonNull
-	private Object[] unwrapArrayElements(@NonNull Object @NonNull [] elements, boolean materializeLobs) {
+	private Object[] unwrapArrayElements(@NonNull Object @NonNull [] elements, boolean materializeLobs, @Nullable MappingResources resources) {
 		requireNonNull(elements);
 
 		Object[] unwrappedElements = null;
 
 		for (int i = 0; i < elements.length; i++) {
-			Object unwrappedElement = unwrapStructAttributeValue(elements[i], materializeLobs);
+			Object unwrappedElement = unwrapStructAttributeValue(elements[i], materializeLobs, resources);
 
 			if (unwrappedElements == null && unwrappedElement != elements[i]) {
 				unwrappedElements = new Object[elements.length];
@@ -501,18 +524,20 @@ final class DuckDbDialect extends GenericDialect {
 				unwrappedElements[i] = unwrappedElement;
 		}
 
-		return unwrappedElements == null ? elements : unwrappedElements;
+		Object[] result = unwrappedElements == null ? elements : unwrappedElements;
+		if (resources != null) resources.copyArrayType(elements, result);
+		return result;
 	}
 
 	@NonNull
-	private List<?> unwrapListElements(@NonNull List<?> elements, boolean materializeLobs) {
+	private List<?> unwrapListElements(@NonNull List<?> elements, boolean materializeLobs, @Nullable MappingResources resources) {
 		requireNonNull(elements);
 
 		List<Object> unwrappedElements = new ArrayList<>(elements.size());
 		boolean changed = false;
 
 		for (Object element : elements) {
-			Object unwrappedElement = unwrapStructAttributeValue(element, materializeLobs);
+			Object unwrappedElement = unwrapStructAttributeValue(element, materializeLobs, resources);
 			unwrappedElements.add(unwrappedElement);
 			changed |= unwrappedElement != element;
 		}
@@ -521,7 +546,7 @@ final class DuckDbDialect extends GenericDialect {
 	}
 
 	@NonNull
-	private Map<?, ?> unwrapMapEntries(@NonNull Map<?, ?> entries, boolean materializeLobs) {
+	private Map<?, ?> unwrapMapEntries(@NonNull Map<?, ?> entries, boolean materializeLobs, @Nullable MappingResources resources) {
 		requireNonNull(entries);
 
 		Map<Object, Object> unwrappedEntries = new LinkedHashMap<>(entries.size());
@@ -530,31 +555,42 @@ final class DuckDbDialect extends GenericDialect {
 		for (Map.Entry<?, ?> entry : entries.entrySet()) {
 			Object key = entry.getKey();
 			Object value = entry.getValue();
-			Object unwrappedKey = unwrapStructAttributeValue(key, materializeLobs);
-			Object unwrappedValue = unwrapStructAttributeValue(value, materializeLobs);
+			Object unwrappedKey = unwrapStructAttributeValue(key, materializeLobs, resources);
+			Object unwrappedValue = unwrapStructAttributeValue(value, materializeLobs, resources);
 			unwrappedEntries.put(unwrappedKey, unwrappedValue);
 			changed |= unwrappedKey != key || unwrappedValue != value;
 		}
 
-		return changed ? unwrappedEntries : entries;
+		Map<?, ?> result = changed ? unwrappedEntries : entries;
+		if (resources != null) resources.copyStructType(entries, result);
+		return result;
 	}
 
 	@Nullable
-	private Object unwrapStructAttributeValue(@Nullable Object attributeValue, boolean materializeLobs) {
+	private Object unwrapStructAttributeValue(@Nullable Object attributeValue, boolean materializeLobs, @Nullable MappingResources resources) {
 		if (attributeValue == null)
 			return null;
 
 		// Nested lists inside STRUCT attributes are extracted here because no downstream code path would
 		// otherwise call getArray() on them.
 		if (attributeValue instanceof Array sqlArray && attributeValue.getClass().getName().startsWith(DUCKDB_PACKAGE_PREFIX))
-			return extractArrayValue(sqlArray, materializeLobs);
+			return extractArrayValue(sqlArray, materializeLobs, resources);
 
-		return unwrapResultSetValue(attributeValue, materializeLobs);
+		return unwrapResultSetValue(attributeValue, materializeLobs, resources);
 	}
 
 	@Nullable
-	private Object extractArrayValue(@NonNull Array sqlArray, boolean materializeLobs) {
+	private Object extractArrayValue(@NonNull Array sqlArray, boolean materializeLobs, @Nullable MappingResources resources) {
 		requireNonNull(sqlArray);
+
+		if (resources != null) {
+			try {
+				Object values = DefaultResultSetMapper.extractSqlArrayResultSetValue(sqlArray, resources);
+				return values instanceof Object[] elements ? unwrapArrayElements(elements, materializeLobs, resources) : values;
+			} catch (SQLException failure) {
+				throw new DatabaseException("Unable to extract DuckDB STRUCT list attribute", failure);
+			}
+		}
 
 		Object arrayValue;
 		Throwable thrown = null;
@@ -579,7 +615,7 @@ final class DuckDbDialect extends GenericDialect {
 			Object[] unwrappedElements = new Object[elements.length];
 
 			for (int i = 0; i < elements.length; i++)
-				unwrappedElements[i] = unwrapStructAttributeValue(elements[i], materializeLobs);
+				unwrappedElements[i] = unwrapStructAttributeValue(elements[i], materializeLobs, resources);
 
 			return unwrappedElements;
 		}

@@ -23,8 +23,6 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.time.Duration;
-import java.util.Collections;
-import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.UUID;
@@ -206,8 +204,8 @@ final class NotificationSessionRunner {
 			callbackFailure = error;
 			callbackFailureIsError = true;
 		} catch (Throwable throwable) {
-			callbackFailure = new DatabaseException(
-					"Notification session operation failed", throwable, databaseType.dialect());
+			callbackFailure = normalizeNotificationFailure(
+					"Notification session operation failed", throwable, databaseType);
 		} finally {
 			session.expire();
 		}
@@ -296,8 +294,8 @@ final class NotificationSessionRunner {
 		// Pyranid generates the registration SQL itself and validates every channel first. Classify only the
 		// exact SQLException raised by Statement.execute(); statement creation and close failures remain JDBC errors.
 		if (setupPhase == NotificationSetupPhase.REGISTER
-				&& !connectionFailure
 				&& setupCause == registrationStatementFailure
+				&& !isNotificationStatementConnectionFailure(setupCause)
 				&& isNotificationStatementUnsupported(setupCause)) {
 			return new UnsupportedOperationException(
 					notificationServerCapabilityUnavailableMessage(databaseType), setupCause);
@@ -314,18 +312,17 @@ final class NotificationSessionRunner {
 	 * {@code 42883} (undefined function, which is how a missing {@code pg_notify} surfaces).
 	 */
 	static boolean isNotificationStatementUnsupported(@Nullable Throwable throwable) {
-		Set<Throwable> visited = Collections.newSetFromMap(new IdentityHashMap<>());
-
-		for (Throwable current = throwable; current != null && visited.add(current); current = current.getCause()) {
-			if (current instanceof SQLException sqlException) {
+		// A generated statement can carry server details through either causes or JDBC next exceptions.
+		// Suppressed exceptions belong to statement cleanup and must not reclassify the execution failure.
+		return GenericDialect.INSTANCE.hasSqlException(throwable, sqlException -> {
+			try {
 				String sqlState = sqlException.getSQLState();
-
-				if ("0A000".equals(sqlState) || "42601".equals(sqlState) || "42883".equals(sqlState))
-					return true;
+				return "0A000".equals(sqlState) || "42601".equals(sqlState) || "42883".equals(sqlState);
+			} catch (Throwable inspectionFailure) {
+				// Diagnostics must never replace the statement failure or skip connection cleanup.
+				return false;
 			}
-		}
-
-		return false;
+		});
 	}
 
 	@NonNull
@@ -336,16 +333,31 @@ final class NotificationSessionRunner {
 				databaseType);
 	}
 
+	private static boolean isNotificationStatementConnectionFailure(Throwable failure) {
+		// Cleanup may make disposal unsafe without changing what the LISTEN execution reported.
+		// In particular, a suppressed close failure must not turn an unsupported LISTEN into a retry.
+		return GenericDialect.INSTANCE.hasSqlException(failure, sqlException -> {
+			try {
+				String sqlState = sqlException.getSQLState();
+				return sqlState != null && sqlState.startsWith("08");
+			} catch (Throwable inspectionFailure) {
+				return true;
+			}
+		});
+	}
+
 	private static boolean isNotificationConnectionFailure(@Nullable Connection connection,
-																								 @NonNull Throwable throwable) {
+			@NonNull Throwable throwable) {
 		requireNonNull(throwable);
 
-		if (throwable instanceof SQLException sqlException) {
+		// If failure details cannot be inspected, fail closed instead of returning a possibly broken handle.
+		if (ThrowableGraph.inspect(throwable, current -> {
+			if (!(current instanceof SQLException sqlException))
+				return 0;
 			String sqlState = sqlException.getSQLState();
-
-			if (sqlState != null && sqlState.startsWith("08"))
-				return true;
-		}
+			return sqlState != null && sqlState.startsWith("08") ? 1 : 0;
+		}, 1) != 0)
+			return true;
 
 		if (connection != null) {
 			try {
@@ -353,13 +365,6 @@ final class NotificationSessionRunner {
 			} catch (Throwable diagnosticFailure) {
 				if (diagnosticFailure != throwable)
 					throwable.addSuppressed(diagnosticFailure);
-
-				if (diagnosticFailure instanceof SQLException diagnosticSqlException) {
-					String sqlState = diagnosticSqlException.getSQLState();
-
-					if (sqlState != null && sqlState.startsWith("08"))
-						return true;
-				}
 
 				// If connection health cannot be inspected, never return the candidate to a pool as healthy.
 				return true;
@@ -383,7 +388,7 @@ final class NotificationSessionRunner {
 			connection.abort(Runnable::run);
 		} catch (Throwable throwable) {
 			cleanupFailure = appendSuppressed(cleanupFailure,
-					normalizeNotificationFailure("Unable to abort failed notification-session connection",
+					normalizeConnectionCleanupFailure("Unable to abort failed notification-session connection",
 							throwable, databaseType));
 		}
 
@@ -391,7 +396,7 @@ final class NotificationSessionRunner {
 			connection.close();
 		} catch (Throwable throwable) {
 			cleanupFailure = appendSuppressed(cleanupFailure,
-					normalizeNotificationFailure("Unable to close failed notification-session connection",
+					normalizeConnectionCleanupFailure("Unable to close failed notification-session connection",
 							throwable, databaseType));
 		}
 
@@ -452,7 +457,7 @@ final class NotificationSessionRunner {
 				connection.close();
 			} catch (Throwable throwable) {
 				cleanupFailure = appendSuppressed(cleanupFailure,
-						normalizeNotificationFailure("Unable to close notification-session connection",
+						normalizeConnectionCleanupFailure("Unable to close notification-session connection",
 								throwable, databaseType));
 				// Once close has been invoked, the connection handle might already have been returned to a pool.
 				// Do not attempt abort or a second close through a handle whose ownership is now unknown.
@@ -464,7 +469,7 @@ final class NotificationSessionRunner {
 				connection.abort(Runnable::run);
 			} catch (Throwable throwable) {
 				cleanupFailure = appendSuppressed(cleanupFailure,
-						normalizeNotificationFailure("Unable to abort uncertain notification-session connection",
+						normalizeConnectionCleanupFailure("Unable to abort uncertain notification-session connection",
 								throwable, databaseType));
 			}
 
@@ -472,12 +477,26 @@ final class NotificationSessionRunner {
 				connection.close();
 			} catch (Throwable throwable) {
 				cleanupFailure = appendSuppressed(cleanupFailure,
-						normalizeNotificationFailure("Unable to close uncertain notification-session connection",
+						normalizeConnectionCleanupFailure("Unable to close uncertain notification-session connection",
 								throwable, databaseType));
 			}
 		}
 
 		return cleanupFailure;
+	}
+
+	@NonNull
+	private static Throwable normalizeConnectionCleanupFailure(@NonNull String message,
+			@NonNull Throwable throwable, @NonNull DatabaseType databaseType) {
+		// Preserve fatal identity; the supervisor always scans errors, regardless of their origin.
+		if (throwable instanceof Error)
+			return throwable;
+		try {
+			return new NotificationConnectionCleanupException(message, throwable, databaseType.dialect());
+		} catch (Throwable inspectionFailure) {
+			appendSuppressed(throwable, inspectionFailure);
+			return new NotificationConnectionCleanupException(message, throwable, databaseType.dialect(), false);
+		}
 	}
 
 	@NonNull
@@ -491,7 +510,12 @@ final class NotificationSessionRunner {
 		if (throwable instanceof DatabaseException || throwable instanceof Error)
 			return throwable;
 
-		return new DatabaseException(message, throwable, databaseType.dialect());
+		try {
+			return new DatabaseException(message, throwable, databaseType.dialect());
+		} catch (Throwable inspectionFailure) {
+			appendSuppressed(throwable, inspectionFailure);
+			return new DatabaseException(message, throwable, databaseType.dialect(), null, false);
+		}
 	}
 
 	private static void throwNotificationFailure(@NonNull Throwable throwable) {

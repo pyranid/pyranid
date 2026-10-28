@@ -63,7 +63,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.willAcquireStatementConnection(ctx);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -75,7 +75,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didAcquireStatementConnection(ctx, acquisitionDuration);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -89,7 +89,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didFailToAcquireStatementConnection(ctx, databaseType, acquisitionDuration, throwable);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -101,7 +101,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didReleaseStatementConnection(ctx, heldDuration);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -114,7 +114,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didFailToReleaseStatementConnection(ctx, heldDuration, throwable);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -126,7 +126,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.willAcquireTransactionConnection(transaction, databaseType);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -139,7 +139,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didAcquireTransactionConnection(transaction, databaseType, acquisitionDuration);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -153,7 +153,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didFailToAcquireTransactionConnection(transaction, databaseType, acquisitionDuration, throwable);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -166,7 +166,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didReleaseTransactionConnection(transaction, databaseType, heldDuration);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -180,7 +180,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didFailToReleaseTransactionConnection(transaction, databaseType, heldDuration, throwable);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -193,7 +193,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didEnterTransactionClosure(transaction, isolation, databaseType);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -208,7 +208,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didExitTransactionClosure(transaction, outcome, databaseType, logicalDuration, thrown);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -221,7 +221,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didBeginPhysicalTransaction(transaction, isolation, databaseType);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -236,7 +236,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didFailToBeginPhysicalTransaction(transaction, isolation, phase, databaseType, throwable);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -249,7 +249,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didCommitPhysicalTransaction(transaction, databaseType, physicalDuration);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -263,7 +263,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didFailToCommitPhysicalTransaction(transaction, databaseType, physicalDuration, throwable);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -276,7 +276,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didRollbackPhysicalTransaction(transaction, databaseType, physicalDuration);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -290,7 +290,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didFailToRollbackPhysicalTransaction(transaction, databaseType, physicalDuration, throwable);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -305,7 +305,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didRunPostTransactionOperation(transaction, result, databaseType, duration, throwable);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -317,7 +317,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didCreateSavepoint(transaction, databaseType);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -329,7 +329,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didRollbackToSavepoint(transaction, databaseType);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -341,7 +341,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didReleaseSavepoint(transaction, databaseType);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -352,7 +352,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.willExecuteStatement(ctx);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -365,7 +365,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didExecuteStatement(ctx, statementLog, result);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -379,7 +379,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didFailToExecuteStatement(ctx, statementLog, databaseType, throwable);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -390,7 +390,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.willOpenStream(ctx);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -402,7 +402,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didOpenStream(ctx, openDuration);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -416,7 +416,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didFailToOpenStream(ctx, databaseType, openDuration, throwable);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -431,7 +431,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didCloseStream(ctx, outcome, rowsConsumed, streamDuration, throwable);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -443,7 +443,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.willOpenNotificationSession(databaseType, notificationSessionId);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -456,7 +456,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didOpenNotificationSession(databaseType, notificationSessionId, openDuration);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -470,7 +470,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didFailToOpenNotificationSession(databaseType, notificationSessionId, openDuration,
 					throwable);
 		} catch (Throwable t) {
@@ -484,7 +484,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didDeliverNotificationBatch(databaseType, notificationSessionId, notificationCount);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -497,7 +497,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didLoseNotificationConnection(databaseType, notificationSessionId, throwable);
 		} catch (Throwable t) {
 			ignoreMetricsFailure(t);
@@ -512,7 +512,7 @@ final class MetricsCollectorDispatcher {
 		if (!isEnabled())
 			return;
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.metricsCollector.didCloseNotificationSession(databaseType, notificationSessionId, outcome,
 					sessionDuration, throwable);
 		} catch (Throwable t) {
@@ -523,7 +523,7 @@ final class MetricsCollectorDispatcher {
 	private void ignoreMetricsFailure(@NonNull Throwable throwable) {
 		requireNonNull(throwable);
 
-		try {
+		try (var ignoredScope = TransactionRetrySafety.isolate()) {
 			this.logger.log(Level.FINE, "Metrics collector failure ignored", throwable);
 		} catch (Throwable ignored) {
 			// Metrics containment must hold even if user-installed JUL handlers are broken.

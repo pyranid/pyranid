@@ -40,6 +40,8 @@ final class MappingResources implements AutoCloseable {
 	private final long maxCharacters;
 	private final @Nullable MappingResources parent;
 	private @Nullable Map<Object, Object> materialized;
+	private @Nullable Map<Object, Object> arrayTypes;
+	private @Nullable Map<Object, String> structTypes;
 	private @Nullable Set<Object> owned;
 	private @Nullable Set<Object> borrowed;
 	private boolean opaqueBorrow;
@@ -66,6 +68,55 @@ final class MappingResources implements AutoCloseable {
 		return this.scalarJdbcType;
 	}
 
+	void registerArrayType(@Nullable Object value, int jdbcType) {
+		if (value == null || !value.getClass().isArray() || jdbcType == Types.OTHER || jdbcType == Types.ARRAY) return;
+		if (this.arrayTypes == null) this.arrayTypes = new IdentityHashMap<>();
+		Object previous = this.arrayTypes.get(value);
+		this.arrayTypes.put(value, previous instanceof TimeArrayValues timeValues
+				? new TimeArrayValues(jdbcType, timeValues.valuesOrFailure) : jdbcType);
+	}
+
+	int arrayType(Object value) {
+		Object metadata = this.arrayTypes == null ? null : this.arrayTypes.get(value);
+		return metadata instanceof Integer type ? type : metadata instanceof TimeArrayValues times ? times.jdbcType : Types.OTHER;
+	}
+
+	void copyArrayType(Object original, @Nullable Object converted) {
+		if (converted != null && converted != original && converted.getClass().isArray()
+				&& this.arrayTypes != null && this.arrayTypes.containsKey(original))
+			this.arrayTypes.put(converted, this.arrayTypes.get(original));
+	}
+
+	private record TimeArrayValues(int jdbcType, Object valuesOrFailure) {}
+
+	void registerArrayTimeValues(Object original, Object valuesOrFailure) {
+		int jdbcType = arrayType(original);
+		if (this.arrayTypes == null) this.arrayTypes = new IdentityHashMap<>();
+		this.arrayTypes.put(original, new TimeArrayValues(jdbcType, valuesOrFailure));
+	}
+
+	Object arrayTimeValues(Object original) {
+		Object metadata = this.arrayTypes == null ? null : this.arrayTypes.get(original);
+		if (!(metadata instanceof TimeArrayValues times)) return original;
+		if (times.valuesOrFailure instanceof Throwable failure)
+			throw new DatabaseException("Driver cannot read SQL TIME WITH TIME ZONE array elements without losing their offset", failure);
+		return times.valuesOrFailure;
+	}
+
+	void registerStructType(Object value, @Nullable String typeName) {
+		if (typeName == null) return;
+		if (this.structTypes == null) this.structTypes = new IdentityHashMap<>();
+		this.structTypes.put(value, typeName);
+	}
+
+	@Nullable String structType(Object value) {
+		return this.structTypes == null ? null : this.structTypes.get(value);
+	}
+
+	void copyStructType(Object original, Object converted) {
+		if (converted != original) registerStructType(converted, structType(original));
+	}
+
 	static boolean requiresMaterialization(@Nullable Object raw, Class<?> target, int jdbcType) {
 		return (target == byte[].class && (raw instanceof Blob || jdbcType == Types.BLOB))
 				|| (target == String.class && (raw instanceof Clob || jdbcType == Types.CLOB || jdbcType == Types.NCLOB));
@@ -90,19 +141,13 @@ final class MappingResources implements AutoCloseable {
 		if (this.borrowed == null) this.borrowed = Collections.newSetFromMap(new IdentityHashMap<>());
 		if (!this.borrowed.add(value)) return;
 		if (this.owned != null) this.owned.remove(value);
-		if (value instanceof Struct || value instanceof Array) {
-			// A custom mapper can retain arbitrary handles inside an opaque driver STRUCT/ARRAY.
+		if (value instanceof Struct || value instanceof Array || value instanceof Iterable<?> || value instanceof Map<?, ?>) {
+			// Traversing application containers can consume one-shot results or execute arbitrary
+			// user code. They may retain any row handle, so leave cleanup to the owning cursor.
 			this.opaqueBorrow = true;
 			if (this.owned != null) this.owned.clear();
 		} else if (value instanceof Object[] elements) {
 			for (Object element : elements) borrow(element);
-		} else if (value instanceof Iterable<?> elements) {
-			for (Object element : elements) borrow(element);
-		} else if (value instanceof Map<?, ?> entries) {
-			for (Map.Entry<?, ?> entry : entries.entrySet()) {
-				borrow(entry.getKey());
-				borrow(entry.getValue());
-			}
 		}
 	}
 
@@ -284,6 +329,8 @@ final class MappingResources implements AutoCloseable {
 			this.owned = null;
 			this.borrowed = null;
 			this.materialized = null;
+			this.arrayTypes = null;
+			this.structTypes = null;
 			this.opaqueBorrow = false;
 			this.inUse = false;
 		}

@@ -21,6 +21,7 @@ import org.jspecify.annotations.Nullable;
 
 import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
+import java.sql.SQLFeatureNotSupportedException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
@@ -274,7 +275,8 @@ public final class NotificationSupervisor {
 			} catch (DatabaseException failure) {
 				noteFailure(attempt, failure);
 				if (stopping() || Thread.currentThread().isInterrupted()
-						|| attempt.unexpectedCallbackFailure || this.retryCondition == null)
+						|| attempt.unexpectedCallbackFailure || this.retryCondition == null
+						|| containsTerminalFailure(failure))
 					return failure;
 				if (attempt.readySince != null
 						&& attempt.failedAt - attempt.readySince >= this.stabilityWindowNanos)
@@ -315,6 +317,17 @@ public final class NotificationSupervisor {
 				previousFailure = failure;
 			}
 		}
+	}
+
+	private static boolean containsTerminalFailure(Throwable failure) {
+		// Fatal errors and unreadable graphs remain terminal even inside connection cleanup failures.
+		if (ThrowableGraph.inspect(failure, current -> current instanceof Error ? 1 : 0, 1) != 0)
+			return true;
+		// Unsupported abort/close operations do not imply that notification receive is unavailable.
+		// Prune only those explicit cleanup branches; wrapped or suppressed receive failures still count.
+		return ThrowableGraph.inspect(failure, current -> current instanceof NotificationReceiveUnsupportedException
+				|| current instanceof UnsupportedOperationException || current instanceof SQLFeatureNotSupportedException ? 1 : 0,
+				1, current -> !(current instanceof NotificationConnectionCleanupException)) != 0;
 	}
 
 	private void consume(HintSession session, Attempt attempt) throws InterruptedException {

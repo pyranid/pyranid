@@ -28,6 +28,36 @@ All notable changes to Pyranid will be documented in this file.
 
 ### Fixed
 
+- Transaction retries retain unsafe outcome evidence through exception wrapping, JDBC next-exception chains,
+  nested transactions, and participating threads. A committed transaction's cleanup failure or an uncertain
+  outcome cannot become retryable merely because application code wraps the original failure.
+- Transaction completion closes admission before JDBC commit or rollback begins. Captured handles reject
+  late mutations, JDBC work, and new participation during completion, including rollback after a body failure.
+- Notification supervision treats fatal errors and unsupported receive capabilities as terminal even when
+  they appear inside causes, suppressed failures, or JDBC next-exception chains; retry conditions and
+  backoffs are not invoked. Unsupported optional abort/close cleanup does not disable reconnection after a
+  transient failure. Generated LISTEN capability checks include JDBC next exceptions and tolerate throwing
+  exception accessors without skipping connection cleanup.
+- Transaction failure inspection handles cyclic exception graphs and throwing cause accessors without
+  hanging cleanup or replacing the primary failure. Reachable interrupt evidence restores thread interruption,
+  including failures introduced by connection cleanup or post-transaction hooks. An interrupted thread cannot
+  admit another retry, including when the backoff is zero or a retry-policy callback sets the interrupt flag.
+- Resource cleanup continues when drivers reuse the same exception instance across failures. The original
+  operation failure is retained, and later arrays, result sets, statements, and connections are still released.
+- Removing a post-transaction hook makes bounded progress when its equality comparison adds or removes
+  other hooks, while retaining the guard against mutations after transaction completion begins.
+- Scalar cross-type LOB conversions retain JDBC getter behavior, including DuckDB BLOB-to-`String` mapping.
+  Bounded built-in BLOB-to-`byte[]` and CLOB/NCLOB-to-`String` materialization remains unchanged.
+- Visible raw JDBC handles returned by custom mappers or reentrant scalar/map mapping remain borrowed,
+  preventing row cleanup from freeing a handle returned to the caller while its cursor is still open.
+  Ownership tracking does not iterate custom Iterable or Map outputs, preserving lazy and single-use results.
+- Typed SQL ARRAY temporal elements follow scalar conversion semantics, preserving SQL element type,
+  configured database time zone, timestamp nanoseconds, and requested JDBC date/time subtypes.
+  PostgreSQL `timestamptz` arrays retain their instant semantics even when the driver reports `TIMESTAMP`
+  as their JDBC base type. Nested arrays receive element conversion even when the driver's array subtype is
+  assignable to the requested type. PostgreSQL `timetz` scalars and arrays preserve their original offset
+  and fractional seconds through typed JDBC reads. Typed DuckDB STRUCT timestamp attributes also use their SQL temporal type,
+  so zone-less attributes follow the configured database time zone instead of the JVM default.
 - Zone-less SQL timestamps fetched as scalar `OffsetDateTime` values now use the configured database time zone,
   consistent with record and JavaBean properties, even when the driver can attach its own session time zone.
 - Temporal record and JavaBean properties targeting `java.sql.Timestamp` or `java.sql.Date` now select the JDBC

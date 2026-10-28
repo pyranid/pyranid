@@ -147,9 +147,17 @@ public class DatabaseException extends RuntimeException {
 										@Nullable Throwable cause,
 										@NonNull DatabaseDialect databaseDialect,
 										@Nullable UnaryOperator<String> diagnosticRedactor) {
+		this(message, cause, databaseDialect, diagnosticRedactor, true);
+	}
+
+	/** Preserves a failure after driver diagnostic accessors have themselves failed. */
+	DatabaseException(@Nullable String message, @Nullable Throwable cause,
+			@NonNull DatabaseDialect databaseDialect, @Nullable UnaryOperator<String> diagnosticRedactor,
+			boolean inspectCause) {
 		super(message, cause);
 
-		DatabaseExceptionMetadata metadata = databaseDialect.databaseExceptionMetadata(cause);
+		Throwable diagnosticCause = inspectCause ? cause : null;
+		DatabaseExceptionMetadata metadata = databaseDialect.databaseExceptionMetadata(diagnosticCause);
 
 		this.errorCode = metadata.errorCode;
 		this.sqlState = applyDiagnosticRedactor(diagnosticRedactor, metadata.sqlState);
@@ -169,14 +177,15 @@ public class DatabaseException extends RuntimeException {
 		this.severity = applyDiagnosticRedactor(diagnosticRedactor, metadata.severity);
 		this.table = applyDiagnosticRedactor(diagnosticRedactor, metadata.table);
 		this.where = applyDiagnosticRedactor(diagnosticRedactor, metadata.where);
-		this.uniqueConstraintViolation = databaseDialect.isUniqueConstraintViolation(metadata, cause);
-		this.foreignKeyViolation = databaseDialect.isForeignKeyViolation(metadata, cause);
-		this.deadlock = databaseDialect.isDeadlock(metadata, cause);
-		this.transientException = databaseDialect.isTransient(metadata, cause);
-		this.serializationFailure = databaseDialect.isSerializationFailure(metadata, cause);
-		this.timeout = databaseDialect.isTimeout(metadata, cause);
-		this.transactionOutcomeCommitted = false;
-		this.transactionOutcomeIndeterminate = false;
+		this.uniqueConstraintViolation = databaseDialect.isUniqueConstraintViolation(metadata, diagnosticCause);
+		this.foreignKeyViolation = databaseDialect.isForeignKeyViolation(metadata, diagnosticCause);
+		this.deadlock = databaseDialect.isDeadlock(metadata, diagnosticCause);
+		this.transientException = databaseDialect.isTransient(metadata, diagnosticCause);
+		this.serializationFailure = databaseDialect.isSerializationFailure(metadata, diagnosticCause);
+		this.timeout = databaseDialect.isTimeout(metadata, diagnosticCause);
+		int inheritedOutcomes = TransactionRetrySafety.outcomesOf(cause);
+		this.transactionOutcomeCommitted = (inheritedOutcomes & TransactionRetrySafety.COMMITTED) != 0;
+		this.transactionOutcomeIndeterminate = (inheritedOutcomes & TransactionRetrySafety.IN_DOUBT) != 0;
 		this.statementDiagnosticsApplied = false;
 	}
 
@@ -231,7 +240,7 @@ public class DatabaseException extends RuntimeException {
 	}
 
 	boolean isTransactionOutcomeRetryUnsafe() {
-		return isTransactionOutcomeCommitted() || isTransactionOutcomeIndeterminate();
+		return TransactionRetrySafety.outcomesOf(this) != 0;
 	}
 
 	void markStatementDiagnosticsApplied() {

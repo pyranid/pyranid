@@ -65,6 +65,79 @@ import static java.util.Objects.requireNonNull;
 public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 	public record JsonbAndArrayRow(String payload, String[] tagsArray, List<String> tagsList, Set<String> tagsSet) {}
 	public record PgvectorRow(Long documentId, float[] embeddingFloats, double[] embeddingDoubles) {}
+	public record TemporalArrayRow(List<Instant> value) {}
+	public record NestedTemporalArrayRow(List<List<Instant>> value) {}
+
+	@Test
+	public void timestampArraysPreserveZonedInstantsAndZoneLessWallClockValues() {
+		for (boolean cached : new boolean[]{false, true}) {
+			for (ZoneId zone : List.of(ZoneId.of("UTC"), ZoneId.of("Asia/Kathmandu"))) {
+				Database database = Database.withDataSource(dataSource()).databaseType(DatabaseType.POSTGRESQL)
+						.timeZone(zone).resultSetMapper(ResultSetMapper.withPlanCachingEnabled(cached).build()).build();
+				for (boolean withZone : new boolean[]{false, true}) {
+					String literal = withZone ? "TIMESTAMPTZ '2024-01-02 12:34:56.123456+05:45'"
+							: "TIMESTAMP '2024-01-02 12:34:56.123456'";
+					Instant expected = withZone ? Instant.parse("2024-01-02T06:49:56.123456Z")
+							: java.time.LocalDateTime.parse("2024-01-02T12:34:56.123456").atZone(zone).toInstant();
+					Assertions.assertEquals(expected, database.query("SELECT " + literal).fetchObject(Instant.class).orElseThrow());
+					for (int execution = 0; execution < 2; execution++) {
+						String sql = "SELECT ARRAY[" + literal + ", NULL] AS value";
+						Assertions.assertArrayEquals(new Instant[]{expected, null}, database.query(sql).fetchObject(Instant[].class).orElseThrow());
+						Assertions.assertEquals(java.util.Arrays.asList(expected, null), database.query(sql).fetchObject(TemporalArrayRow.class).orElseThrow().value());
+						Assertions.assertEquals(List.of(java.util.Arrays.asList(expected, null)), database.query("SELECT ARRAY[ARRAY[" + literal + ", NULL] ] AS value")
+								.fetchObject(NestedTemporalArrayRow.class).orElseThrow().value());
+					}
+				}
+			}
+		}
+	}
+
+	public record ZonedTimeArrayRow(List<java.time.OffsetTime> value) {}
+	public record NestedZonedTimeArrayRow(List<List<java.time.OffsetTime>> value) {}
+
+	@Test
+	public void nestedLegacyDateArraysMatchScalarTimestampConversions() {
+		for (boolean cached : new boolean[]{false, true}) {
+			for (ZoneId zone : List.of(ZoneId.of("UTC"), ZoneId.of("Asia/Kathmandu"))) {
+				Database database = Database.withDataSource(dataSource()).databaseType(DatabaseType.POSTGRESQL)
+						.timeZone(zone).resultSetMapper(ResultSetMapper.withPlanCachingEnabled(cached).build()).build();
+				String literal = "TIMESTAMP '2024-01-02 12:34:56.123456'";
+				java.util.Date expected = database.query("SELECT " + literal).fetchObject(java.util.Date.class).orElseThrow();
+				java.util.Date[][] nested = database.query("SELECT ARRAY[ARRAY[" + literal + ", NULL]]")
+						.fetchObject(java.util.Date[][].class).orElseThrow();
+				Assertions.assertArrayEquals(new java.util.Date[]{expected, null}, nested[0]);
+				Assertions.assertEquals(java.util.Date[].class, nested[0].getClass());
+			}
+		}
+	}
+
+	@Test
+	public void zonedTimeScalarsAndArraysRetainOriginalOffsetAndMicroseconds() {
+		for (boolean cached : new boolean[]{false, true}) {
+			Database database = Database.withDataSource(dataSource()).databaseType(DatabaseType.POSTGRESQL)
+					.timeZone(ZoneId.of("UTC")).resultSetMapper(ResultSetMapper.withPlanCachingEnabled(cached).build()).build();
+			for (String value : List.of("12:34:56.123456+05:45", "01:02:03.987654-04:30", "23:59:59.999999Z")) {
+				String literal = "TIMETZ '" + value + "'";
+				java.time.OffsetTime expected = java.time.OffsetTime.parse(value);
+				Assertions.assertEquals(expected, database.query("SELECT " + literal).fetchObject(java.time.OffsetTime.class).orElseThrow());
+				for (int execution = 0; execution < 2; execution++) {
+					String array = "SELECT ARRAY[" + literal + ", NULL] AS value";
+					String nested = "SELECT ARRAY[ARRAY[" + literal + ", NULL]] AS value";
+					Assertions.assertArrayEquals(new java.time.OffsetTime[]{expected, null}, database.query(array)
+							.fetchObject(java.time.OffsetTime[].class).orElseThrow());
+					Assertions.assertEquals(java.util.Arrays.asList(expected, null), database.query(array)
+							.fetchObject(ZonedTimeArrayRow.class).orElseThrow().value());
+					Assertions.assertArrayEquals(new java.time.OffsetTime[]{expected, null}, database.query(nested)
+							.fetchObject(java.time.OffsetTime[][].class).orElseThrow()[0]);
+					Assertions.assertEquals(List.of(java.util.Arrays.asList(expected, null)), database.query(nested)
+							.fetchObject(NestedZonedTimeArrayRow.class).orElseThrow().value());
+				}
+			}
+			Assertions.assertEquals(0, database.query("SELECT ARRAY[]::timetz[]").fetchObject(java.time.OffsetTime[].class).orElseThrow().length);
+			Assertions.assertArrayEquals(new java.time.OffsetTime[]{null}, database.query("SELECT ARRAY[NULL]::timetz[]")
+					.fetchObject(java.time.OffsetTime[].class).orElseThrow());
+		}
+	}
 
 	private static final String POSTGRES_IMAGE_NAME =
 			System.getProperty("postgres.integration.image", "pgvector/pgvector:pg17");

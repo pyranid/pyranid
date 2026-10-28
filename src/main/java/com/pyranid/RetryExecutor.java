@@ -47,18 +47,22 @@ final class RetryExecutor {
 		List<DatabaseException> priorFailures = new ArrayList<>();
 
 		for (int attempt = 1; attempt <= retryPolicy.getMaxAttempts(); ++attempt) {
-			if (attempt > 1 && budget != null && elapsedSince(startedAt).compareTo(budget) >= 0) {
+			if (attempt > 1 && (Thread.currentThread().isInterrupted()
+					|| (budget != null && elapsedSince(startedAt).compareTo(budget) >= 0))) {
 				DatabaseException lastFailure = priorFailures.get(priorFailures.size() - 1);
 				suppressPriorFailures(lastFailure, priorFailures);
 				throw lastFailure;
 			}
 
-			try {
+			TransactionRetrySafety attemptSafety = new TransactionRetrySafety();
+			try (var ignored = attemptSafety.activate()) {
 				return TransactionRetryResult.of(operation.get(), priorFailures);
 			} catch (DatabaseException failure) {
 				// Outcome fences precede any user policy invocation. An enclosing rollback must not erase evidence
 				// that an independent inner transaction committed or has an unknown outcome.
-				if (failure.isTransactionOutcomeRetryUnsafe() || attempt == retryPolicy.getMaxAttempts()
+				TransactionRetrySafety.applyTo(failure, attemptSafety.outcomes());
+				if (Thread.currentThread().isInterrupted() || failure.isTransactionOutcomeRetryUnsafe()
+						|| attempt == retryPolicy.getMaxAttempts()
 						|| (budget != null && elapsedSince(startedAt).compareTo(budget) >= 0)) {
 					suppressPriorFailures(failure, priorFailures);
 					throw failure;
@@ -70,6 +74,10 @@ final class RetryExecutor {
 				} catch (RuntimeException | Error conditionFailure) {
 					suppressRetryFailures(conditionFailure, failure, priorFailures);
 					throw conditionFailure;
+				}
+				if (Thread.currentThread().isInterrupted()) {
+					suppressPriorFailures(failure, priorFailures);
+					throw failure;
 				}
 				if (retryable == null) {
 					NullPointerException invalidCondition = new NullPointerException("RetryPolicy.Condition returned null");
@@ -92,6 +100,10 @@ final class RetryExecutor {
 				} catch (RuntimeException | Error backoffFailure) {
 					suppressPriorFailures(backoffFailure, priorFailures);
 					throw backoffFailure;
+				}
+				if (Thread.currentThread().isInterrupted()) {
+					suppressPriorFailures(failure, priorFailures);
+					throw failure;
 				}
 				if (delay == null) {
 					NullPointerException invalidBackoff = new NullPointerException("RetryPolicy.Backoff returned null");

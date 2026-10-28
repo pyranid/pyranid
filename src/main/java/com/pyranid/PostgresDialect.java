@@ -284,13 +284,7 @@ final class PostgresDialect extends GenericDialect {
 	@NonNull
 	private Throwable addCleanupFailure(@Nullable Throwable cleanupFailure,
 																			@NonNull Throwable cleanupException) {
-		requireNonNull(cleanupException);
-
-		if (cleanupFailure == null)
-			return cleanupException;
-
-		cleanupFailure.addSuppressed(cleanupException);
-		return cleanupFailure;
+		return Database.appendCleanupFailure(cleanupFailure, cleanupException);
 	}
 
 	@NonNull

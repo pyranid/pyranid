@@ -281,7 +281,7 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 				try {
 					this.resultSet.close();
 				} catch (Throwable cleanupException) {
-					cleanupFailure = cleanupFailure == null ? cleanupException : addSuppressed(cleanupFailure, cleanupException);
+					cleanupFailure = appendCleanupFailure(cleanupFailure, cleanupException);
 				}
 			}
 
@@ -289,7 +289,7 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 				try {
 					this.preparedStatement.close();
 				} catch (Throwable cleanupException) {
-					cleanupFailure = cleanupFailure == null ? cleanupException : addSuppressed(cleanupFailure, cleanupException);
+					cleanupFailure = appendCleanupFailure(cleanupFailure, cleanupException);
 				}
 			}
 
@@ -321,15 +321,16 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 			try {
 				this.executor.getStatementLogger().log(statementLog);
 			} catch (Throwable cleanupException) {
-				cleanupFailure = cleanupFailure == null ? cleanupException : addSuppressed(cleanupFailure, cleanupException);
+				cleanupFailure = appendCleanupFailure(cleanupFailure, cleanupException);
 			}
 		}
 
 		this.cleanupFailure = cleanupFailure;
 
 		if (cleanupFailure != null) {
-			if (this.thrown != null) {
-				this.thrown.addSuppressed(cleanupFailure);
+			Throwable primary = this.thrown != null ? this.thrown : this.callbackThrowable;
+			if (primary != null) {
+				appendCleanupFailure(primary, cleanupFailure);
 			} else if (cleanupFailure instanceof RuntimeException) {
 				throw (RuntimeException) cleanupFailure;
 			} else if (cleanupFailure instanceof Error) {
@@ -384,11 +385,4 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 				Duration.ofNanos(nanoTime() - this.openStartTime), throwable);
 	}
 
-	@NonNull
-	private static Throwable addSuppressed(@NonNull Throwable existing,
-																				 @NonNull Throwable additional) {
-		existing.addSuppressed(additional);
-		return existing;
-	}
 }
-
