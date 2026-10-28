@@ -19,6 +19,9 @@ All notable changes to Pyranid will be documented in this file.
 
 ### Changed
 
+- Refreshed stable Maven build/test tools, JDBC drivers, and GitHub Actions. Integration tests now use
+  DuckDB JDBC 2.0.0.0, MariaDB Connector/J 4.0.0, and MySQL Connector/J 26.10.0. Java 17 and Maven 3.9
+  remain the minimum build versions; core still declares zero runtime dependencies.
 - SQL compilation, query preparation, statement/stream execution, transaction coordination, retries, and
   notification session handling have dedicated internal components. Statements and streams share connection
   ownership and release logic; stream resources still close at exhaustion or explicit early closure.
@@ -74,6 +77,10 @@ All notable changes to Pyranid will be documented in this file.
 
 ### Migration Notes
 
+- JDBC drivers remain application-selected. The refreshed test dependencies do not force application
+  driver upgrades. Applications adopting MariaDB Connector/J 4.0 should review its verified TLS default,
+  stricter JDBC savepoint/query behavior, and streaming LOB modes. New DuckDB 2.0 database files use a
+  storage format older DuckDB drivers cannot read; follow the driver migration guide before upgrading files.
 - Built-in BLOB-to-`byte[]` and CLOB/NCLOB-to-`String` materialization now defaults to at most 16 MiB of bytes
   or 8,388,608 UTF-16 code units per value. This deliberate 4.8.0 behavior change can reject values accepted
   by earlier versions. Set larger positive limits or explicitly opt into unbounded materialization. Limits

@@ -187,10 +187,15 @@ Maven Enforcer `bannedDependencies` rule and visible in the published POM. Compi
 `provided` scope and never required for ordinary runtime use. The PostgreSQL driver is used for optional rich
 error metadata and notification receive; PostgreSQL notification sending remains pure SQL.
 
-The tested DuckDB JDBC driver baseline is **1.5.5.1**. Pyranid uses it only in test scope and does not force
-it onto application classpaths; applications that connect to DuckDB must provide the driver themselves.
+The current tested DuckDB JDBC driver version is **2.0.0.0**. Pyranid uses it only in test scope and does not force
+it onto application classpaths; applications that connect to DuckDB must provide the driver themselves. Newly
+created DuckDB 2.0 databases use a format older DuckDB drivers cannot read. See the
+[DuckDB migration guide](https://www.duckdb.org/docs/2.0/operations_manual/migration) before upgrading
+persistent database files. MariaDB integration tests use Connector/J **4.0.0**, including its default
+verified TLS and JDBC transaction semantics; applications choose and configure their own driver version.
 
-The supported and tested pgjdbc baseline for notification receive is **42.7.13**. pgjdbc remains a Maven
+The supported pgjdbc minimum for notification receive remains **42.7.13**; the current test suite uses
+**42.7.14**. pgjdbc remains a Maven
 `provided` dependency. Applications that receive PostgreSQL-family notifications must supply pgjdbc 42.7.13 or
 newer, or the explicitly supported YugabyteDB smart driver, at runtime. Ordinary Pyranid use and PostgreSQL
 notification sending do not require the receive adapter. Other repackaged pgjdbc forks are not supported.
@@ -212,5 +217,5 @@ CI does not use PgBouncer transaction or statement pooling as a listener source 
 rejection of those unsupported modes. It also does not currently provision a PostgreSQL recovery standby or the
 optional half-open Toxiproxy topology. A separate advisory integration leg runs a send/receive smoke test against
 YugabyteDB 2026.1.1.1 with `ysql_yb_enable_listen_notify=true` on Masters and TServers, using smart driver
-42.7.3-yb-4. Isolated unit coverage additionally exercises context-class-loader discovery, pooled-wrapper
+42.7.3-yb-7. Isolated unit coverage additionally exercises context-class-loader discovery, pooled-wrapper
 unwrapping, notification mapping, and reflected failure identity for the `com.yugabyte` API.

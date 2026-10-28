@@ -26,6 +26,7 @@ import org.testcontainers.utility.DockerImageName;
 
 import javax.sql.DataSource;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
 
@@ -149,6 +150,56 @@ public class MariaDbIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 		Assertions.assertEquals(List.of(2L, 3L), ids);
 		Assertions.assertEquals(List.of("one", "two", "three"), db.query("SELECT name FROM " + table + " ORDER BY id")
 				.fetchList(String.class));
+	}
+
+	@Test
+	public void testMariaDbSavepointsStartPhysicalTransactionBeforeFirstStatement() {
+		Database db = database();
+		String table = "pyranid_mariadb_savepoint_items";
+		recreateTable(db, table, "CREATE TABLE " + table + " (id INTEGER PRIMARY KEY)");
+
+		db.transaction(() -> {
+			Transaction transaction = db.currentTransaction().orElseThrow();
+			// Connector/J 4 rejects setSavepoint while autocommit is enabled. Creating a scoped
+			// savepoint before any statement must still start Pyranid's physical transaction.
+			transaction.withSavepoint(() -> db.query("INSERT INTO " + table + " VALUES (1)").execute());
+			Assertions.assertThrows(IllegalStateException.class, () -> transaction.withSavepoint(() -> {
+				db.query("INSERT INTO " + table + " VALUES (2)").execute();
+				throw new IllegalStateException("roll back only this savepoint");
+			}));
+			db.query("INSERT INTO " + table + " VALUES (3)").execute();
+		});
+
+		Assertions.assertEquals(List.of(1, 3), db.query("SELECT id FROM " + table + " ORDER BY id").fetchList(Integer.class));
+	}
+
+	@Test
+	public void testMariaDbSequentialLobStreamsCloseBeforeReusingTransactionConnection() {
+		Database db = database();
+		String table = "pyranid_mariadb_lob_items";
+		recreateTable(db, table, "CREATE TABLE " + table + " (id INTEGER PRIMARY KEY, payload LONGBLOB, note LONGTEXT)");
+		byte[] bytes = "binary-payload-\u00e9".repeat(32_768).getBytes(StandardCharsets.UTF_8);
+		String text = "text-payload-\u00e9".repeat(32_768);
+		for (int id : List.of(1, 2)) {
+			db.query("INSERT INTO " + table + " VALUES (:id, :payload, :note)")
+					.bind("id", id).bind("payload", bytes).bind("note", text).execute();
+		}
+
+		db.transaction(() -> {
+			// Connector/J 4's sequential mode can read LOBs from the socket. Early stream
+			// closure must release the remaining rows before another command uses this connection.
+			byte[] first = db.query("SELECT payload FROM " + table + " ORDER BY id")
+					.customize((context, statement) -> statement.setFetchSize(Integer.MIN_VALUE))
+					.fetchStream(byte[].class, stream -> stream.findFirst().orElseThrow());
+			Assertions.assertArrayEquals(bytes, first);
+			Assertions.assertEquals(1, db.query("SELECT 1").fetchObject(Integer.class).orElseThrow());
+
+			String firstText = db.query("SELECT note FROM " + table + " ORDER BY id")
+					.customize((context, statement) -> statement.setFetchSize(Integer.MIN_VALUE))
+					.fetchStream(String.class, stream -> stream.findFirst().orElseThrow());
+			Assertions.assertEquals(text, firstText);
+			Assertions.assertEquals(2L, db.query("SELECT COUNT(*) FROM " + table).fetchObject(Long.class).orElseThrow());
+		});
 	}
 
 	@NonNull
