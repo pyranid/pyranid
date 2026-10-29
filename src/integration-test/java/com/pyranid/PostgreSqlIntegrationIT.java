@@ -139,6 +139,86 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 		}
 	}
 
+	public record PlainTimeArrayRow(List<java.time.LocalTime> value) {}
+	public record PlainTimeSetRow(Set<java.time.LocalTime> value) {}
+	public record NestedPlainTimeArrayRow(List<List<java.time.LocalTime>> value) {}
+	public record LocalTimeValueRow(java.time.LocalTime value) {}
+	public static class LocalTimeValueBean {
+		private java.time.LocalTime value;
+		public java.time.LocalTime getValue() { return this.value; }
+		public void setValue(java.time.LocalTime value) { this.value = value; }
+	}
+
+	@Test
+	public void plainTimeArraysPreserveFractionalSecondsLikeScalars() {
+		for (boolean cached : new boolean[]{false, true}) {
+			for (ZoneId zone : List.of(ZoneId.of("UTC"), ZoneId.of("Asia/Kathmandu"))) {
+				Database database = Database.withDataSource(dataSource()).databaseType(DatabaseType.POSTGRESQL)
+						.timeZone(zone).resultSetMapper(ResultSetMapper.withPlanCachingEnabled(cached).build()).build();
+				for (String value : List.of("12:34:56.123456", "00:00:00.000001", "23:59:59.999999")) {
+					java.time.LocalTime expected = java.time.LocalTime.parse(value);
+					String literal = "TIME '" + value + "'";
+					Assertions.assertEquals(expected, database.query("SELECT " + literal).fetchObject(java.time.LocalTime.class).orElseThrow());
+					for (int execution = 0; execution < 2; execution++) {
+						String array = "SELECT ARRAY[" + literal + ", NULL] AS value";
+						Assertions.assertArrayEquals(new java.time.LocalTime[]{expected, null}, database.query(array)
+								.fetchObject(java.time.LocalTime[].class).orElseThrow());
+						Assertions.assertEquals(java.util.Arrays.asList(expected, null), database.query(array)
+								.fetchObject(PlainTimeArrayRow.class).orElseThrow().value());
+						Assertions.assertEquals(new java.util.LinkedHashSet<>(java.util.Arrays.asList(expected, null)),
+								database.query("SELECT ARRAY[" + literal + ", NULL, " + literal + "] AS value")
+										.fetchObject(PlainTimeSetRow.class).orElseThrow().value());
+						Assertions.assertArrayEquals(new java.time.LocalTime[]{expected, null}, database.query("SELECT ARRAY[ARRAY[" + literal + ", NULL]]")
+								.fetchObject(java.time.LocalTime[][].class).orElseThrow()[0]);
+						Assertions.assertEquals(List.of(java.util.Arrays.asList(expected, null)), database.query("SELECT ARRAY[ARRAY[" + literal + ", NULL]] AS value")
+								.fetchObject(NestedPlainTimeArrayRow.class).orElseThrow().value());
+					}
+				}
+				Assertions.assertEquals(0, database.query("SELECT ARRAY[]::time[]").fetchObject(java.time.LocalTime[].class).orElseThrow().length);
+				Assertions.assertArrayEquals(new java.time.LocalTime[]{null}, database.query("SELECT ARRAY[NULL]::time[]")
+						.fetchObject(java.time.LocalTime[].class).orElseThrow());
+			}
+		}
+	}
+
+	@Test
+	public void plainTimeArraysPreserveEndOfDayLikeScalarDriverReads() {
+		for (boolean cached : new boolean[]{false, true}) {
+			Database database = Database.withDataSource(dataSource()).databaseType(DatabaseType.POSTGRESQL)
+					.timeZone(ZoneId.of("UTC")).resultSetMapper(ResultSetMapper.withPlanCachingEnabled(cached).build()).build();
+			java.time.LocalTime expected = java.time.LocalTime.MAX;
+			Assertions.assertEquals(expected, database.query("SELECT TIME '24:00:00'").fetchObject(java.time.LocalTime.class).orElseThrow());
+			String array = "SELECT ARRAY[TIME '24:00:00', NULL] AS value";
+			Assertions.assertArrayEquals(new java.time.LocalTime[]{expected, null}, database.query(array)
+					.fetchObject(java.time.LocalTime[].class).orElseThrow());
+			Assertions.assertEquals(java.util.Arrays.asList(expected, null), database.query(array).fetchObject(PlainTimeArrayRow.class).orElseThrow().value());
+			Assertions.assertArrayEquals(new java.time.LocalTime[]{expected, null}, database.query("SELECT ARRAY[ARRAY[TIME '24:00:00', NULL]]")
+					.fetchObject(java.time.LocalTime[][].class).orElseThrow()[0]);
+		}
+	}
+
+	@Test
+	public void zonedTimeScalarLocalTimeMatchesRecordBeanAndArray() {
+		for (boolean cached : new boolean[]{false, true}) {
+			for (ZoneId zone : List.of(ZoneId.of("UTC"), ZoneId.of("Asia/Kathmandu"))) {
+				Database database = Database.withDataSource(dataSource()).databaseType(DatabaseType.POSTGRESQL)
+						.timeZone(zone).resultSetMapper(ResultSetMapper.withPlanCachingEnabled(cached).build()).build();
+				for (String value : List.of("12:34:56.123456+05:45", "01:02:03.987654-04:30", "23:59:59.999999Z")) {
+					String sql = "SELECT TIMETZ '" + value + "' AS value";
+					java.time.LocalTime expected = java.time.OffsetTime.parse(value).toLocalTime();
+					for (int execution = 0; execution < 2; execution++) {
+						Assertions.assertEquals(expected, database.query(sql).fetchObject(java.time.LocalTime.class).orElseThrow());
+						Assertions.assertEquals(expected, database.query(sql).fetchObject(LocalTimeValueRow.class).orElseThrow().value());
+						Assertions.assertEquals(expected, database.query(sql).fetchObject(LocalTimeValueBean.class).orElseThrow().getValue());
+						Assertions.assertArrayEquals(new java.time.LocalTime[]{expected}, database.query("SELECT ARRAY[TIMETZ '" + value + "']")
+								.fetchObject(java.time.LocalTime[].class).orElseThrow());
+					}
+				}
+				Assertions.assertTrue(database.query("SELECT NULL::timetz").fetchObject(java.time.LocalTime.class).isEmpty());
+			}
+		}
+	}
+
 	private static final String POSTGRES_IMAGE_NAME =
 			System.getProperty("postgres.integration.image", "pgvector/pgvector:pg17");
 	private static final DockerImageName POSTGRES_IMAGE = DockerImageName.parse(POSTGRES_IMAGE_NAME)

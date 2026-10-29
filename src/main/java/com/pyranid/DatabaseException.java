@@ -94,6 +94,36 @@ public class DatabaseException extends RuntimeException {
 	private boolean transactionOutcomeIndeterminate;
 	private boolean statementDiagnosticsApplied;
 
+	/** Keeps diagnostic accessors from replacing the operation failure or bypassing cleanup. */
+	static DatabaseException wrapSafely(String message, Throwable cause, DatabaseDialect dialect) {
+		if (cause instanceof DatabaseException original) return original;
+		return wrapSafely(message, cause, dialect, null);
+	}
+
+	static DatabaseException wrapSafely(String message, Throwable cause, DatabaseDialect dialect,
+			@Nullable UnaryOperator<String> diagnosticRedactor) {
+		try {
+			return cause instanceof DatabaseException original
+					? new DatabaseException(message, original, diagnosticRedactor)
+					: new DatabaseException(message, cause, dialect, diagnosticRedactor);
+		} catch (Throwable diagnosticFailure) {
+			if (cause != diagnosticFailure) cause.addSuppressed(diagnosticFailure);
+			// The original cause remains available, including retry-outcome and interruption evidence.
+			// No driver metadata is inspected again, and no raw metadata bypasses diagnostic redaction.
+			return new DatabaseException(message, cause, GenericDialect.INSTANCE, null, false);
+		}
+	}
+
+	static String messageSafely(Throwable cause, String fallback) {
+		try {
+			String message = cause.getMessage();
+			return message == null || message.trim().isEmpty() ? fallback : message;
+		} catch (Throwable diagnosticFailure) {
+			if (cause != diagnosticFailure) cause.addSuppressed(diagnosticFailure);
+			return fallback;
+		}
+	}
+
 	/**
 	 * Creates a {@code DatabaseException} with the given {@code message}.
 	 *

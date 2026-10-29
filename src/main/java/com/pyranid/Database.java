@@ -408,7 +408,7 @@ public final class Database {
 		try {
 			connection.close();
 		} catch (SQLException e) {
-			throw new DatabaseException("Unable to close database connection", e);
+			throw DatabaseException.wrapSafely("Unable to close database connection", e, DatabaseDialect.forExceptionCause(e));
 		}
 	}
 
@@ -421,10 +421,7 @@ public final class Database {
 		if (cause instanceof DatabaseException databaseException && databaseException.areStatementDiagnosticsApplied())
 			return databaseException;
 
-		String message = cause.getMessage();
-
-		if (message == null || message.trim().length() == 0)
-			message = "Database operation failed";
+		String message = DatabaseException.messageSafely(cause, "Database operation failed");
 
 		if (cause instanceof DatabaseException databaseException) {
 			SecureParameterSupport.DiagnosticScrub diagnosticScrub = diagnosticScrubForStatementContext(statementContext);
@@ -464,15 +461,20 @@ public final class Database {
 
 		// Scrub the RAW message before whitespace-collapsing/truncation: bounding first would break needles
 		// containing consecutive whitespace and can cut a secret mid-way, leaving an unmatchable prefix
-		String scrubbedMessage = diagnosticRedactor == null ? message : diagnosticRedactor.apply(message);
+		String scrubbedMessage;
+		try {
+			scrubbedMessage = diagnosticRedactor == null ? message : diagnosticRedactor.apply(message);
+		} catch (Throwable diagnosticFailure) {
+			if (cause != diagnosticFailure) cause.addSuppressed(diagnosticFailure);
+			// A failed redactor must not expose the unredacted driver text as the replacement message.
+			scrubbedMessage = "Database operation failed";
+		}
 
 		StatementDiagnostic statementDiagnostic = statementDiagnostic(statementContext);
 		String diagnosticMessage = format("%s [%s]",
 				boundedDiagnosticMessage(scrubbedMessage), statementDiagnostic.diagnostic());
-		DatabaseException databaseException = cause instanceof DatabaseException original
-				? new DatabaseException(diagnosticMessage, original, diagnosticRedactor)
-				: new DatabaseException(diagnosticMessage, cause,
-						databaseDialectForException(statementContext, cause), diagnosticRedactor);
+		DatabaseException databaseException = DatabaseException.wrapSafely(diagnosticMessage, cause,
+				databaseDialectForException(statementContext, cause), diagnosticRedactor);
 		databaseException.markStatementDiagnosticsApplied();
 
 		if (statementDiagnostic.parameterRenderingFailure() != null)
@@ -515,7 +517,8 @@ public final class Database {
 																																			@NonNull Exception cause) {
 		requireNonNull(cause);
 
-		return new DatabaseException(cause.getMessage(), cause, databaseDialectForRawConnectionException(connection, cause));
+		return DatabaseException.wrapSafely(DatabaseException.messageSafely(cause, "Database operation failed"),
+				cause, databaseDialectForRawConnectionException(connection, cause));
 	}
 
 	@NonNull
@@ -1251,12 +1254,19 @@ public final class Database {
 
 		for (;;) {
 			if (resultAvailable) {
-				try (ResultSet resultSet = preparedStatement.getResultSet()) {
+				ResultSet resultSet = preparedStatement.getResultSet();
+				Throwable resultSetFailure = null;
+				try {
 					if (resultSet != null) {
 						while (resultSet.next()) {
 							// Drain every row before advancing to a possible subsequent result.
 						}
 					}
+				} catch (SQLException | RuntimeException | Error failure) {
+					resultSetFailure = failure;
+					throw failure;
+				} finally {
+					JdbcResources.close(resultSet, resultSetFailure);
 				}
 			} else if (preparedStatement.getUpdateCount() == -1) {
 				break;

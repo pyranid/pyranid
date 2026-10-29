@@ -279,10 +279,12 @@ public final class NotificationSession {
 	private DatabaseException fail(@NonNull Throwable cause) {
 		requireNonNull(cause);
 
-		DatabaseException databaseException = cause instanceof DatabaseException
-				? (DatabaseException) cause
-				: new DatabaseException(
-						"Unable to receive database notifications", cause, this.databaseType.dialect());
+		// Close receive admission before inspecting driver diagnostics. Even a broken exception accessor
+		// must not leave a failed transport available to a callback that catches the secondary failure.
+		this.state = State.FAILED;
+		this.terminalFailure = cause;
+		DatabaseException databaseException = cause instanceof DatabaseException original ? original
+				: DatabaseException.wrapSafely("Unable to receive database notifications", cause, this.databaseType.dialect());
 
 		latchFailure(databaseException);
 		return databaseException;

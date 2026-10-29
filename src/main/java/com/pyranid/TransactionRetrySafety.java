@@ -42,24 +42,28 @@ final class TransactionRetrySafety {
 	Scope activate() {
 		TransactionRetrySafety previous = CURRENT.get();
 		CURRENT.set(this);
-		return new Scope(this, previous);
+		return new Scope(this, previous, false);
 	}
 
 	static Scope isolate() {
 		TransactionRetrySafety previous = CURRENT.get();
-		if (previous == null) return null;
-		// Most observers do no database work. Only callbacks that start transactions need a separate safety state.
-		CURRENT.remove();
-		return new Scope(null, previous);
+		boolean interrupted = Thread.currentThread().isInterrupted();
+		if (previous == null && !interrupted) return null;
+		// Diagnostics must not consume cancellation or contribute independent transaction outcomes.
+		// Preserve the no-allocation fast path when neither kind of state needs protection.
+		if (previous != null) CURRENT.remove();
+		return new Scope(null, previous, interrupted);
 	}
 
 	static final class Scope implements AutoCloseable {
 		private final TransactionRetrySafety active;
 		private final TransactionRetrySafety previous;
+		private final boolean interrupted;
 
-		private Scope(TransactionRetrySafety active, TransactionRetrySafety previous) {
+		private Scope(TransactionRetrySafety active, TransactionRetrySafety previous, boolean interrupted) {
 			this.active = active;
 			this.previous = previous;
+			this.interrupted = interrupted;
 		}
 
 		@Override
@@ -72,6 +76,7 @@ final class TransactionRetrySafety {
 				if (this.active != null) this.previous.record(this.active.outcomes());
 				CURRENT.set(this.previous);
 			}
+			if (this.interrupted) Thread.currentThread().interrupt();
 		}
 	}
 

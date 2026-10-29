@@ -39,6 +39,39 @@ import static org.junit.jupiter.api.Assertions.*;
 /** Exercises retry fences through the production PostgreSQL adapter and notification-session lifecycle. */
 class NotificationSupervisorFatalFailureTests {
 	@Test
+	void sharedRegistrationAndCloseExceptionRemainsTerminal() throws Exception {
+		for (String sqlState : List.of("0A000", "42601", "42883")) {
+			SQLException primary = new SQLException("LISTEN unavailable", sqlState);
+			Fixture fixture = new Fixture(primary);
+			fixture.failOnRegistration = true;
+			fixture.registrationCloseFailure = primary;
+			Throwable terminal = fixture.run(fixture.builder().build()).getFailure().orElseThrow();
+			assertInstanceOf(UnsupportedOperationException.class, terminal);
+			assertSame(primary, terminal.getCause());
+			assertArrayEquals(new Throwable[0], primary.getSuppressed());
+			assertEquals(1, fixture.checkouts.get());
+			assertEquals(1, fixture.closes.get());
+			assertEquals(0, fixture.policyCalls.get());
+			assertEquals(0, fixture.backoffCalls.get());
+		}
+	}
+
+	@Test
+	void sharedRegistrationAndCloseErrorRetainsFatalIdentity() throws Exception {
+		AssertionError primary = new AssertionError("fatal LISTEN failure");
+		Fixture fixture = new Fixture(primary);
+		fixture.failOnRegistration = true;
+		fixture.registrationCloseFailure = primary;
+		Throwable terminal = fixture.run(fixture.builder().build()).getFailure().orElseThrow();
+		assertSame(primary, terminal);
+		assertArrayEquals(new Throwable[0], primary.getSuppressed());
+		assertEquals(1, fixture.checkouts.get());
+		assertEquals(1, fixture.closes.get());
+		assertEquals(0, fixture.policyCalls.get());
+		assertEquals(0, fixture.backoffCalls.get());
+	}
+
+	@Test
 	void unsupportedAbortDuringTransientFailureStillAllowsReconnect() throws Exception {
 		for (Throwable unsupported : List.of(new SQLFeatureNotSupportedException("abort unavailable"),
 				new UnsupportedOperationException("abort unavailable"),
@@ -424,7 +457,10 @@ class NotificationSupervisorFatalFailureTests {
 				NotificationSupervisor.Result result = supervisor.termination().toCompletableFuture().get(5, TimeUnit.SECONDS);
 				worker.get().join(5_000);
 				assertFalse(worker.get().isAlive(), "worker did not terminate");
-				assertNull(uncaught.get());
+				if (result.getFailure().orElse(null) instanceof Error error)
+					assertSame(error, uncaught.get(), "Fatal worker errors must retain their identity");
+				else
+					assertNull(uncaught.get());
 				return result;
 			} finally {
 				supervisor.requestStop();

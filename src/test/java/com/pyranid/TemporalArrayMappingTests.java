@@ -25,6 +25,7 @@ import java.sql.Types;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.OffsetTime;
 import java.time.ZoneId;
@@ -49,6 +50,8 @@ class TemporalArrayMappingTests {
 	public record NestedInstants(List<List<Instant>> value) {}
 	public record OffsetTimes(List<OffsetTime> value) {}
 	public record NestedOffsetTimes(List<List<OffsetTime>> value) {}
+	public record LocalTimes(List<LocalTime> value) {}
+	public record LocalTimeSet(Set<LocalTime> value) {}
 	public static class InstantBean {
 		private List<Instant> value;
 		public List<Instant> getValue() { return this.value; }
@@ -360,6 +363,142 @@ class TemporalArrayMappingTests {
 		assertEquals(List.of("root.0:close", "root.0:free", "root:close", "root:free"), events);
 	}
 
+	@Test
+	void plainTimeArrayReadersPreserveFractionsEndOfDayAndNestedShape() throws Exception {
+		LocalTime fraction = LocalTime.parse("12:34:56.123456789");
+		for (boolean cached : new boolean[]{false, true}) {
+			ResultSetMapper mapper = ResultSetMapper.withPlanCachingEnabled(cached).build();
+			for (LocalTime expected : List.of(fraction, LocalTime.MAX)) {
+				java.sql.Time raw = java.sql.Time.valueOf(expected == LocalTime.MAX ? LocalTime.MIDNIGHT : expected);
+				List<String> events = new ArrayList<>();
+				LocalTime[][] nested = mapArray(mapper, ZoneId.of("UTC"), timeArray(
+						new Object[]{new java.sql.Time[]{raw, null}, new java.sql.Time[0], null},
+						new Object[]{new Object[]{expected, null}, new Object[0], null}, Types.TIME, "time",
+						events, "root", null, null, null), LocalTime[][].class);
+				assertArrayEquals(new LocalTime[]{expected, null}, nested[0]);
+				assertArrayEquals(new LocalTime[0], nested[1]);
+				assertNull(nested[2]);
+				assertEquals(List.of("root.0:close", "root.0:free", "root.1:close", "root.1:free", "root:close", "root:free"), events);
+				assertEquals(Arrays.asList(expected, null), mapArray(mapper, ZoneId.of("UTC"), timeArray(
+						new java.sql.Time[]{raw, null}, new Object[]{expected, null}, Types.TIME, "time",
+						new ArrayList<>(), "root", null, null, null), LocalTimes.class).value());
+				assertEquals(Set.of(expected), mapArray(mapper, ZoneId.of("UTC"), timeArray(
+						new java.sql.Time[]{raw, raw}, new Object[]{expected, expected}, Types.TIME, "time",
+						new ArrayList<>(), "root", null, null, null), LocalTimeSet.class).value());
+			}
+		}
+	}
+
+	@Test
+	void plainTimeCustomFallbackAndNativeTargetsKeepDriverInputs() throws Exception {
+		LocalTime expected = LocalTime.parse("12:34:56.123456789");
+		java.sql.Time raw = java.sql.Time.valueOf(expected);
+		for (boolean cached : new boolean[]{false, true}) {
+			AtomicInteger calls = new AtomicInteger();
+			ResultSetMapper mapper = ResultSetMapper.withPlanCachingEnabled(cached).customColumnMappers(List.of(new CustomColumnMapper() {
+				@Override public Boolean appliesTo(TargetType type) { return type.getRawClass() == List.class; }
+				@Override public MappingResult map(StatementContext<?> context, ResultSet rows, Object value,
+						TargetType target, Integer column, String label, InstanceProvider provider) {
+					assertSame(raw, ((Object[]) value)[0]);
+					calls.incrementAndGet();
+					return MappingResult.fallback();
+				}
+			})).build();
+			assertEquals(List.of(expected), mapArray(mapper, ZoneId.of("UTC"), timeArray(
+					new java.sql.Time[]{raw}, new Object[]{expected}, Types.TIME, "time",
+					new ArrayList<>(), "root", null, null, null), LocalTimes.class).value());
+			assertEquals(1, calls.get());
+			Map<?, ?> nativeRow = mapArray(mapper, ZoneId.of("UTC"), timeArray(
+					new java.sql.Time[]{raw}, new Object[]{expected}, Types.TIME, "time",
+					new ArrayList<>(), "root", null, null, null), Map.class);
+			assertSame(raw, ((Object[]) nativeRow.get("value"))[0]);
+		}
+	}
+
+	@Test
+	void unsupportedPlainTimeReaderFailsBuiltInMappingWithoutChangingNativeOrCustomResults() throws Exception {
+		java.sql.Time raw = java.sql.Time.valueOf("12:34:56");
+		SQLException brokenMetadata = new SQLFeatureNotSupportedException("typed getter unavailable") {
+			@Override public String getSQLState() { throw new IllegalStateException("unreadable SQLState"); }
+		};
+		for (Throwable unsupported : List.of(new SQLFeatureNotSupportedException("typed getter unavailable"),
+				new SQLException("typed getter unavailable", "0A000"), new SQLException("typed getter unavailable", "HYC00"),
+				new UnsupportedOperationException("typed getter unavailable"), new AbstractMethodError("typed getter unavailable"), brokenMetadata)) {
+			List<String> events = new ArrayList<>();
+			DatabaseException failure = assertThrows(DatabaseException.class, () -> mapArray(ResultSetMapper.withDefaultConfiguration(),
+					ZoneId.of("UTC"), timeArray(new java.sql.Time[]{raw}, new Object[]{null}, Types.TIME, "time",
+					events, "root", unsupported, null, null), LocalTime[].class));
+			assertSame(unsupported, failure.getCause());
+			assertEquals(List.of("root:close", "root:free"), events);
+			Map<?, ?> nativeRow = mapArray(ResultSetMapper.withDefaultConfiguration(), ZoneId.of("UTC"), timeArray(
+					new java.sql.Time[]{raw}, new Object[]{null}, Types.TIME, "time", new ArrayList<>(), "root",
+					unsupported, null, null), Map.class);
+			assertSame(raw, ((Object[]) nativeRow.get("value"))[0]);
+			LocalTime supplied = LocalTime.parse("12:34:56.123456789");
+			ResultSetMapper custom = ResultSetMapper.withPlanCachingEnabled(true).customColumnMappers(List.of(new CustomColumnMapper() {
+				@Override public Boolean appliesTo(TargetType type) { return type.getRawClass() == LocalTime[].class; }
+				@Override public MappingResult map(StatementContext<?> context, ResultSet rows, Object value,
+						TargetType target, Integer column, String label, InstanceProvider provider) {
+					assertSame(raw, ((Object[]) value)[0]);
+					return MappingResult.of(new LocalTime[]{supplied});
+				}
+			})).build();
+			assertArrayEquals(new LocalTime[]{supplied}, mapArray(custom, ZoneId.of("UTC"), timeArray(
+					new java.sql.Time[]{raw}, new Object[]{null}, Types.TIME, "time", new ArrayList<>(), "root",
+					unsupported, null, null), LocalTime[].class));
+		}
+	}
+
+	@Test
+	void plainTimeReaderFailureStillClosesEveryNestedHandle() {
+		SQLException failure = new SQLException("connection lost", "08006");
+		java.sql.Time raw = java.sql.Time.valueOf("12:34:56");
+		List<String> events = new ArrayList<>();
+		SQLException thrown = assertThrows(SQLException.class, () -> mapArray(ResultSetMapper.withDefaultConfiguration(),
+				ZoneId.of("UTC"), timeArray(new Object[]{new java.sql.Time[]{raw}}, new Object[]{new Object[]{null}},
+				Types.TIME, "time", events, "root", failure, failure, failure), Map.class));
+		assertSame(failure, thrown);
+		assertEquals(0, failure.getSuppressed().length);
+		assertEquals(List.of("root.0:close", "root.0:free", "root:close", "root:free"), events);
+	}
+
+	@Test
+	void scalarZonedLocalTimeUsesOffsetReaderAndRawOffsetFallback() throws Exception {
+		OffsetTime expected = OffsetTime.parse("12:34:56.123456789+05:45");
+		for (boolean cached : new boolean[]{false, true}) {
+			for (boolean typed : new boolean[]{false, true}) {
+				for (int jdbcType : new int[]{Types.TIME, Types.TIME_WITH_TIMEZONE}) {
+					ResultSetMapper mapper = ResultSetMapper.withPlanCachingEnabled(cached).build();
+					ResultSetMetaData metadata = (ResultSetMetaData) Proxy.newProxyInstance(ResultSetMetaData.class.getClassLoader(),
+							new Class<?>[]{ResultSetMetaData.class}, (proxy, method, args) -> switch (method.getName()) {
+								case "getColumnCount" -> 1;
+								case "getColumnLabel", "getColumnName" -> "value";
+								case "getColumnType" -> jdbcType;
+								case "getColumnTypeName" -> "timetz";
+								default -> throw new AssertionError(method.getName());
+							});
+					ResultSet rows = (ResultSet) Proxy.newProxyInstance(ResultSet.class.getClassLoader(), new Class<?>[]{ResultSet.class},
+							(proxy, method, args) -> switch (method.getName()) {
+								case "getMetaData" -> metadata;
+								case "getObject" -> {
+									if (args.length > 1) {
+										assertEquals(OffsetTime.class, args[1], "A zoned time must not use the driver's LocalTime conversion");
+										if (!typed) throw new SQLFeatureNotSupportedException("typed getter unavailable");
+									}
+									yield expected;
+								}
+								case "wasNull" -> false;
+								default -> throw new AssertionError(method.getName());
+							});
+					Database database = database(mapper, ZoneId.of("UTC"));
+					StatementContext<LocalTime> context = StatementContext.<LocalTime>with(Statement.of("zoned_time", "SELECT value"), database)
+							.resultSetRowType(LocalTime.class).build();
+					assertEquals(expected.toLocalTime(), mapper.map(context, rows, LocalTime.class, new InstanceProvider() {}).orElseThrow());
+				}
+			}
+		}
+	}
+
 	private static Array timeArray(Object[] raw, Object[] typed, int baseType, String name, List<String> events,
 			String path, Throwable readFailure, Throwable closeFailure, Throwable freeFailure) {
 		return (Array) Proxy.newProxyInstance(Array.class.getClassLoader(), new Class<?>[]{Array.class},
@@ -373,7 +512,10 @@ class TemporalArrayMappingTests {
 								(row, operation, arguments) -> switch (operation.getName()) {
 									case "next" -> index.incrementAndGet() < raw.length;
 									case "getObject" -> {
-										assertEquals(OffsetTime.class, arguments[1]);
+										String normalizedName = name == null ? "" : name.toUpperCase(java.util.Locale.ROOT);
+										boolean zoned = baseType == Types.TIME_WITH_TIMEZONE || normalizedName.equals("TIMETZ")
+												|| normalizedName.contains("WITH TIME ZONE");
+										assertEquals(zoned ? OffsetTime.class : LocalTime.class, arguments[1]);
 										if (readFailure != null) throw readFailure;
 										yield typed[index.get()];
 									}

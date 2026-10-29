@@ -139,7 +139,9 @@ final class StatementExecutor {
 		performDatabaseOperation(statementContext, parametersAsList, preparedStatementCustomizer, (PreparedStatement preparedStatement, DatabaseOperationTiming timing) -> {
 			long startTime = nanoTime();
 
-			try (ResultSet resultSet = preparedStatement.executeQuery()) {
+			ResultSet resultSet = preparedStatement.executeQuery();
+			Throwable resultSetFailure = null;
+			try {
 				timing.beginMapping();
 				Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);
 				startTime = nanoTime();
@@ -169,6 +171,11 @@ final class StatementExecutor {
 						? StatementResult.ofRowsReturned(rowsReturned)
 						: StatementResult.empty();
 				return new DatabaseOperationResult(executionDuration, resultSetMappingDuration, statementResult);
+			} catch (Exception | Error failure) {
+				resultSetFailure = failure;
+				throw failure;
+			} finally {
+				JdbcResources.close(resultSet, resultSetFailure);
 			}
 		});
 
@@ -233,7 +240,9 @@ final class StatementExecutor {
 		performDatabaseOperation(statementContext, parametersAsList, preparedStatementCustomizer, (PreparedStatement preparedStatement, DatabaseOperationTiming timing) -> {
 			long startTime = nanoTime();
 
-			try (ResultSet resultSet = preparedStatement.executeQuery()) {
+			ResultSet resultSet = preparedStatement.executeQuery();
+			Throwable resultSetFailure = null;
+			try {
 				timing.beginMapping();
 				Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);
 				startTime = nanoTime();
@@ -253,6 +262,11 @@ final class StatementExecutor {
 						? StatementResult.ofRowsReturned((long) list.size())
 						: StatementResult.empty();
 				return new DatabaseOperationResult(executionDuration, resultSetMappingDuration, statementResult);
+			} catch (Exception | Error failure) {
+				resultSetFailure = failure;
+				throw failure;
+			} finally {
+				JdbcResources.close(resultSet, resultSetFailure);
 			}
 		});
 
@@ -415,7 +429,9 @@ final class StatementExecutor {
 			long startTime = nanoTime();
 			Long rowsAffected = executeUpdate(preparedStatement);
 
-			try (ResultSet resultSet = preparedStatement.getGeneratedKeys()) {
+			ResultSet resultSet = preparedStatement.getGeneratedKeys();
+			Throwable resultSetFailure = null;
+			try {
 				timing.beginMapping();
 				Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);
 				startTime = nanoTime();
@@ -445,6 +461,11 @@ final class StatementExecutor {
 						? new StatementResult(rowsReturned, rowsAffected)
 						: StatementResult.empty();
 				return new DatabaseOperationResult(executionDuration, resultSetMappingDuration, statementResult);
+			} catch (Exception | Error failure) {
+				resultSetFailure = failure;
+				throw failure;
+			} finally {
+				JdbcResources.close(resultSet, resultSetFailure);
 			}
 		}, generatedKeysPreparedStatementFactory(requestedKeyColumnNames));
 
@@ -475,7 +496,9 @@ final class StatementExecutor {
 			long startTime = nanoTime();
 			Long rowsAffected = executeUpdate(preparedStatement);
 
-			try (ResultSet resultSet = preparedStatement.getGeneratedKeys()) {
+			ResultSet resultSet = preparedStatement.getGeneratedKeys();
+			Throwable resultSetFailure = null;
+			try {
 				timing.beginMapping();
 				Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);
 				startTime = nanoTime();
@@ -495,6 +518,11 @@ final class StatementExecutor {
 						? new StatementResult((long) list.size(), rowsAffected)
 						: StatementResult.empty();
 				return new DatabaseOperationResult(executionDuration, resultSetMappingDuration, statementResult);
+			} catch (Exception | Error failure) {
+				resultSetFailure = failure;
+				throw failure;
+			} finally {
+				JdbcResources.close(resultSet, resultSetFailure);
 			}
 		}, generatedKeysPreparedStatementFactory(requestedKeyColumnNames));
 
@@ -948,29 +976,38 @@ final class StatementExecutor {
 			metadataScope = lease.metadataScope();
 			startTime = nanoTime();
 
-			try (PreparedStatement preparedStatement = preparedStatementFactory.prepare(connection, statementContext)) {
+			try {
+				PreparedStatement preparedStatement = preparedStatementFactory.prepare(connection, statementContext);
+				Throwable statementFailure = null;
 				try {
-					preparedStatementBindingOperation.perform(preparedStatement);
-				} finally {
-					preparationDuration = Duration.ofNanos(nanoTime() - startTime);
-				}
+					try {
+						preparedStatementBindingOperation.perform(preparedStatement);
+					} finally {
+						preparationDuration = Duration.ofNanos(nanoTime() - startTime);
+					}
 
-				getMetricsCollectorDispatcher().willExecuteStatement(statementContext);
-				DatabaseOperationTiming timing = new DatabaseOperationTiming();
-				try {
-					DatabaseOperationResult databaseOperationResult = databaseOperation.perform(preparedStatement, timing);
-					executionDuration = databaseOperationResult.getExecutionDuration().orElse(null);
-					resultSetMappingDuration = databaseOperationResult.getResultSetMappingDuration().orElse(null);
-					statementResult = databaseOperationResult.getStatementResult();
+					getMetricsCollectorDispatcher().willExecuteStatement(statementContext);
+					DatabaseOperationTiming timing = new DatabaseOperationTiming();
+					try {
+						DatabaseOperationResult databaseOperationResult = databaseOperation.perform(preparedStatement, timing);
+						executionDuration = databaseOperationResult.getExecutionDuration().orElse(null);
+						resultSetMappingDuration = databaseOperationResult.getResultSetMappingDuration().orElse(null);
+						statementResult = databaseOperationResult.getStatementResult();
+					} finally {
+						timing.finish();
+						// Failed operations do not return a DatabaseOperationResult; retain the elapsed active phase.
+						if (executionDuration == null)
+							executionDuration = timing.executionDuration;
+						if (resultSetMappingDuration == null)
+							resultSetMappingDuration = timing.resultSetMappingDuration;
+					}
+					warmDatabaseTypeCacheForMetricsIfNeeded(statementContext);
+				} catch (Exception | Error failure) {
+					statementFailure = failure;
+					throw failure;
 				} finally {
-					timing.finish();
-					// Failed operations do not return a DatabaseOperationResult; retain the elapsed active phase.
-					if (executionDuration == null)
-						executionDuration = timing.executionDuration;
-					if (resultSetMappingDuration == null)
-						resultSetMappingDuration = timing.resultSetMappingDuration;
+					JdbcResources.close(preparedStatement, statementFailure);
 				}
-				warmDatabaseTypeCacheForMetricsIfNeeded(statementContext);
 			} finally {
 				// prepareStatement itself can fail before the binding block is entered.
 				if (preparationDuration == null)

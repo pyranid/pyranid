@@ -99,7 +99,8 @@ final class MappingResources implements AutoCloseable {
 		Object metadata = this.arrayTypes == null ? null : this.arrayTypes.get(original);
 		if (!(metadata instanceof TimeArrayValues times)) return original;
 		if (times.valuesOrFailure instanceof Throwable failure)
-			throw new DatabaseException("Driver cannot read SQL TIME WITH TIME ZONE array elements without losing their offset", failure);
+			throw DatabaseException.wrapSafely("Driver cannot read SQL TIME array elements without losing precision or offset", failure,
+					GenericDialect.INSTANCE);
 		return times.valuesOrFailure;
 	}
 

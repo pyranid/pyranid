@@ -126,6 +126,55 @@ public class PostgresNotificationTransportTests {
 	}
 
 	@Test
+	public void testSharedListenAndCloseFailuresRetainExecutionIdentity() throws Exception {
+		for (Throwable primary : List.of(new SQLException("LISTEN failed", "0A000"),
+				new IllegalStateException("LISTEN failed"), new AssertionError("LISTEN failed"))) {
+			TransportFixture fixture = new TransportFixture();
+			fixture.statementExecutionFailure = primary;
+			fixture.statementCloseFailure = primary;
+			AtomicReference<SQLException> observed = new AtomicReference<>();
+			Throwable thrown = Assertions.assertThrows(Throwable.class,
+					() -> fixture.openTransport().listen(Set.of("events"), observed::set));
+			Assertions.assertSame(primary, thrown);
+			Assertions.assertTrue(fixture.statementClosed);
+			Assertions.assertArrayEquals(new Throwable[0], primary.getSuppressed());
+			Assertions.assertSame(primary instanceof SQLException ? primary : null, observed.get());
+		}
+	}
+
+	@Test
+	public void testSharedUnlistenAndCloseFailuresStillCloseStatementAndMarkUncertain() throws Exception {
+		for (Throwable primary : List.of(new SQLException("UNLISTEN failed", "08006"),
+				new IllegalStateException("UNLISTEN failed"), new AssertionError("UNLISTEN failed"))) {
+			TransportFixture fixture = new TransportFixture();
+			fixture.statementExecutionFailure = primary;
+			fixture.statementCloseFailure = primary;
+			NotificationTransport transport = fixture.openTransport();
+			Throwable thrown = Assertions.assertThrows(Throwable.class, transport::unlistenAllForCleanup);
+			Assertions.assertSame(primary, thrown);
+			Assertions.assertTrue(fixture.statementClosed);
+			Assertions.assertTrue(transport.isConnectionUncertain());
+			Assertions.assertArrayEquals(new Throwable[0], primary.getSuppressed());
+		}
+	}
+
+	@Test
+	public void testDistinctListenAndCloseFailuresSuppressCleanupOnly() throws Exception {
+		SQLException primary = new SQLException("LISTEN failed", "0A000");
+		SQLException cleanup = new SQLException("statement close failed", "08006");
+		TransportFixture fixture = new TransportFixture();
+		fixture.statementExecutionFailure = primary;
+		fixture.statementCloseFailure = cleanup;
+		AtomicReference<SQLException> observed = new AtomicReference<>();
+		SQLException thrown = Assertions.assertThrows(SQLException.class,
+				() -> fixture.openTransport().listen(Set.of("events"), observed::set));
+		Assertions.assertSame(primary, thrown);
+		Assertions.assertSame(primary, observed.get());
+		Assertions.assertArrayEquals(new Throwable[]{cleanup}, primary.getSuppressed());
+		Assertions.assertTrue(fixture.statementClosed);
+	}
+
+	@Test
 	public void testCleanupUnlistenCapsZeroNetworkTimeoutAndRestoresAfterStatementClose() throws Exception {
 		TransportFixture fixture = new TransportFixture();
 		fixture.networkTimeout = 0;

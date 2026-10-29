@@ -84,7 +84,9 @@ final class PostgresNotificationTransport implements NotificationTransport {
 		for (String channel : channels)
 			PostgresNotificationSupport.INSTANCE.validateChannel(requireNonNull(channel));
 
-		try (Statement statement = this.connection.createStatement()) {
+		Statement statement = this.connection.createStatement();
+		Throwable primary = null;
+		try {
 			for (String channel : channels) {
 				try {
 					statement.execute("LISTEN " + quotedIdentifier(channel));
@@ -95,13 +97,25 @@ final class PostgresNotificationTransport implements NotificationTransport {
 					throw failure;
 				}
 			}
+		} catch (SQLException | RuntimeException | Error failure) {
+			primary = failure;
+			throw failure;
+		} finally {
+			JdbcResources.close(statement, primary);
 		}
 	}
 
 	@Override
 	public void unlistenAll() throws SQLException {
-		try (Statement statement = this.connection.createStatement()) {
+		Statement statement = this.connection.createStatement();
+		Throwable primary = null;
+		try {
 			statement.execute("UNLISTEN *");
+		} catch (SQLException | RuntimeException | Error failure) {
+			primary = failure;
+			throw failure;
+		} finally {
+			JdbcResources.close(statement, primary);
 		}
 	}
 
@@ -135,7 +149,7 @@ final class PostgresNotificationTransport implements NotificationTransport {
 				}
 			}
 
-			// unlistenAll() returns only after both statement execution and try-with-resources close succeed.
+			// unlistenAll() returns only after both statement execution and statement close succeed.
 			unlistenAll();
 
 			if (timeoutChanged)

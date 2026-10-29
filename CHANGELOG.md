@@ -31,6 +31,15 @@ All notable changes to Pyranid will be documented in this file.
 
 ### Fixed
 
+- Completion observers and metrics callbacks preserve interruption that was pending on entry, including
+  when diagnostic work consumes the flag while blocking. This keeps cancellation terminal for retries even
+  when the original business exception carries no interruption cause.
+- JDBC statement/result-set cleanup preserves an original failure when drivers reuse the same throwable,
+  including fatal errors and unsupported LISTEN failures. Failure diagnostics cannot bypass stream cleanup
+  or leave a failed notification session open to further receives.
+- Plain SQL TIME arrays retain fractional seconds and driver end-of-day semantics through typed reads,
+  including nested arrays. Scalar TIMETZ-to-LocalTime mapping follows the same wall-clock rules as records
+  and typed arrays.
 - Transaction retries retain unsafe outcome evidence through exception wrapping, JDBC next-exception chains,
   nested transactions, and participating threads. A committed transaction's cleanup failure or an uncertain
   outcome cannot become retryable merely because application code wraps the original failure.

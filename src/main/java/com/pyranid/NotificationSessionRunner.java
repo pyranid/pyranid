@@ -510,12 +510,7 @@ final class NotificationSessionRunner {
 		if (throwable instanceof DatabaseException || throwable instanceof Error)
 			return throwable;
 
-		try {
-			return new DatabaseException(message, throwable, databaseType.dialect());
-		} catch (Throwable inspectionFailure) {
-			appendSuppressed(throwable, inspectionFailure);
-			return new DatabaseException(message, throwable, databaseType.dialect(), null, false);
-		}
+		return DatabaseException.wrapSafely(message, throwable, databaseType.dialect());
 	}
 
 	private static void throwNotificationFailure(@NonNull Throwable throwable) {

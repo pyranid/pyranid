@@ -1024,7 +1024,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		} else if (resultClass == LocalDate.class) {
 			value = TemporalReaders.asLocalDate(resultSet, 1);
 		} else if (resultClass == LocalTime.class) {
-			value = TemporalReaders.asLocalTime(resultSet, 1);
+			value = TemporalReaders.asLocalTime(resultSet, 1, statementContext, resultSetMetaData);
 		} else if (resultClass == LocalDateTime.class) {
 			value = TemporalReaders.asLocalDateTime(resultSet, 1, statementContext, resultSetMetaData);
 		} else if (resultClass == OffsetTime.class) {
@@ -1642,8 +1642,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		try {
 			return convertArrayResultSetValue(statementContext, extractSqlArrayResultSetValue(sqlArray, resources), targetType, resources);
 		} catch (SQLException e) {
-			DatabaseException wrapped = new DatabaseException("Unable to extract JDBC Array value", e);
-			throw wrapped;
+			throw DatabaseException.wrapSafely("Unable to extract JDBC Array value", e, DatabaseDialect.forExceptionCause(e));
 		}
 	}
 
@@ -1678,10 +1677,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				// Older drivers can expose array contents without optional base-type metadata.
 			}
 			resources.registerArrayType(values, baseType);
-			if (baseType == Types.TIME_WITH_TIMEZONE && containsLegacyTime(values)) {
-				// java.sql.Time has already lost the original offset and fractional seconds. Keep
-				// the raw array for custom/native targets and detach a lossless alternate while alive.
-				TimeArrayRead read = readTimeArray(sqlArray, values, false);
+			if ((baseType == Types.TIME || baseType == Types.TIME_WITH_TIMEZONE) && containsLegacyTime(values)) {
+				// java.sql.Time has already lost fractional seconds and, for zoned values, the offset.
+				// Keep raw inputs for custom/native targets and detach a lossless alternate while alive.
+				TimeArrayRead read = readTimeArray(sqlArray, values, false, baseType);
 				if (read.failure != null) {
 					if (read.cleanupFailed || !isUnsupportedArrayReader(read.failure))
 						rethrowArrayFailure(read.failure);
@@ -1727,7 +1726,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 	private record TimeArrayRead(@Nullable Object values, @Nullable Throwable failure, boolean cleanupFailed) {}
 
-	private static TimeArrayRead readTimeArray(Array array, Object raw, boolean free) {
+	private static TimeArrayRead readTimeArray(Array array, Object raw, boolean free, int jdbcType) {
 		ResultSet rows = null;
 		Object[] values = null;
 		Throwable failure = null;
@@ -1743,7 +1742,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				if (element != null && element.getClass().isArray()) {
 					Array nested = rows.getArray(2);
 					if (nested == null) throw new SQLException("Driver returned NULL for a non-null nested SQL ARRAY");
-					TimeArrayRead read = readTimeArray(nested, element, true);
+					TimeArrayRead read = readTimeArray(nested, element, true, jdbcType);
 					if (read.failure != null) {
 						failure = read.failure;
 						cleanupFailed = read.cleanupFailed;
@@ -1751,9 +1750,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					}
 					values[index] = read.values;
 				} else {
-					values[index] = rows.getObject(2, OffsetTime.class);
+					values[index] = jdbcType == Types.TIME ? rows.getObject(2, LocalTime.class)
+							: rows.getObject(2, OffsetTime.class);
 					if (element != null && values[index] == null)
-						throw new SQLException("Driver returned NULL for a non-null SQL TIME WITH TIME ZONE element");
+						throw new SQLException("Driver returned NULL for a non-null SQL TIME element");
 				}
 			}
 			if (failure == null && rows.next()) throw new SQLException("SQL ARRAY element rows exceeded the array contents");
@@ -1809,7 +1809,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					arrayClass.getName()));
 
 		int elementJdbcType = resources.arrayType(arrayValue);
-		if (elementJdbcType == Types.TIME_WITH_TIMEZONE && isTimeContainerTarget(targetType))
+		if ((elementJdbcType == Types.TIME || elementJdbcType == Types.TIME_WITH_TIMEZONE) && isTimeContainerTarget(targetType))
 			arrayValue = resources.arrayTimeValues(arrayValue);
 		int length = java.lang.reflect.Array.getLength(arrayValue);
 
@@ -2777,6 +2777,14 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			}
 			java.sql.Date d2 = rs.getDate(col);
 			return d2 == null ? null : d2.toLocalDate();
+		}
+
+		public static LocalTime asLocalTime(ResultSet rs, int col, StatementContext<?> ctx, ResultSetMetaData metadata) throws SQLException {
+			if (isTimeWithTimeZone(metadata, col)) {
+				OffsetTime time = asOffsetTime(rs, col, ctx, true);
+				return time == null ? null : time.toLocalTime();
+			}
+			return asLocalTime(rs, col);
 		}
 
 		public static LocalTime asLocalTime(ResultSet rs, int col) throws SQLException {

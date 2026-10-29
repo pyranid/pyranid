@@ -53,6 +53,80 @@ import static java.util.Objects.requireNonNull;
 public class DatabaseNotificationTests {
 
 	@Test
+	public void receiveMetadataFailuresLatchAndRetainOriginalFailure() throws Exception {
+		for (boolean timed : new boolean[]{false, true}) {
+			for (boolean sqlState : new boolean[]{false, true}) {
+				for (Throwable inspectionFailure : List.of(new IllegalStateException("metadata unavailable"),
+						new AssertionError("metadata unavailable"))) {
+					SQLException original = new SQLException("original receive failure", "08006") {
+						@Override public String getSQLState() {
+							if (sqlState) throwUnchecked(inspectionFailure);
+							return super.getSQLState();
+						}
+						@Override public int getErrorCode() {
+							if (!sqlState) throwUnchecked(inspectionFailure);
+							return super.getErrorCode();
+						}
+					};
+					assertReceiveFailureIsLatched(original, timed, inspectionFailure);
+				}
+			}
+		}
+	}
+
+	@Test
+	public void receiveWithUnreadableMessageStillLatchesOriginalFailure() throws Exception {
+		for (boolean timed : new boolean[]{false, true}) {
+			SQLException original = new SQLException("original receive failure", "08006") {
+				@Override public String getMessage() { throw new IllegalStateException("message unavailable"); }
+			};
+			assertReceiveFailureIsLatched(original, timed, null);
+		}
+	}
+
+	@Test
+	public void receiveWithCyclicCauseStillLatchesOriginalFailure() throws Exception {
+		for (boolean timed : new boolean[]{false, true}) {
+			SQLException original = new SQLException("original receive failure", "08006") {
+				@Override public Throwable getCause() { return this; }
+			};
+			assertReceiveFailureIsLatched(original, timed, null);
+		}
+	}
+
+	private static void assertReceiveFailureIsLatched(SQLException original, boolean timed,
+			@Nullable Throwable inspectionFailure) throws Exception {
+		ConnectionHarness harness = timed ? new ConnectionHarness(true).failReceive(original)
+				: new ConnectionHarness(true).failDrainOn(2, original);
+		RecordingNotificationMetricsCollector metrics = new RecordingNotificationMetricsCollector();
+		AtomicReference<Throwable> first = new AtomicReference<>(), second = new AtomicReference<>();
+		DatabaseException outer = Assertions.assertThrows(DatabaseException.class,
+				() -> postgresDatabase(harness, metrics).withNotificationSession("events", session -> {
+					// Swallow both calls deliberately: the session must retain and rethrow the first failure.
+					try {
+						if (timed) session.awaitNotifications(Duration.ofMillis(1));
+						else session.drainNotifications();
+					} catch (Throwable failure) { first.set(failure); }
+					try { session.drainNotifications(); }
+					catch (Throwable failure) { second.set(failure); }
+				}));
+		Assertions.assertSame(first.get(), outer);
+		Assertions.assertSame(original, outer.getCause());
+		Assertions.assertInstanceOf(IllegalStateException.class, second.get());
+		Assertions.assertSame(outer, metrics.connectionLossFailure.get());
+		Assertions.assertSame(outer, metrics.closeFailure.get());
+		Assertions.assertEquals(1, metrics.connectionLossCount);
+		Assertions.assertEquals(MetricsCollector.NotificationSessionOutcome.FAILED, metrics.closeOutcome.get());
+		Assertions.assertEquals(timed ? 1L : 2L,
+				harness.events().stream().filter(event -> event.startsWith("drain:")).count());
+		Assertions.assertEquals(timed ? 1L : 0L,
+				harness.events().stream().filter(event -> event.startsWith("receive:")).count());
+		Assertions.assertEquals(List.of("abort", "close"), harness.events().subList(harness.events().size() - 2, harness.events().size()));
+		if (inspectionFailure != null)
+			Assertions.assertArrayEquals(new Throwable[]{inspectionFailure}, original.getSuppressed());
+	}
+
+	@Test
 	public void throwingRegistrationCauseAndNextAccessorsCannotSkipConnectionCleanup() {
 		for (boolean cause : new boolean[]{false, true}) {
 			AssertionError inspectionFailure = new AssertionError("driver accessor failed");
@@ -1310,6 +1384,7 @@ public class DatabaseNotificationTests {
 		private Throwable unlistenFailure;
 		private Throwable listenFailure;
 		private Throwable drainFailure;
+		private Throwable receiveFailure;
 		private Throwable abortFailure;
 		private Throwable closeFailure;
 		private Throwable networkTimeoutInspectionFailure;
@@ -1390,6 +1465,12 @@ public class DatabaseNotificationTests {
 				@NonNull Throwable failure) {
 			this.failDrainCall = call;
 			this.drainFailure = requireNonNull(failure);
+			return this;
+		}
+
+		@NonNull
+		private ConnectionHarness failReceive(@NonNull Throwable failure) {
+			this.receiveFailure = requireNonNull(failure);
 			return this;
 		}
 
@@ -1679,6 +1760,8 @@ public class DatabaseNotificationTests {
 		private PGNotification[] notifications(Object[] args) throws Throwable {
 			if (args != null && args.length > 0) {
 				this.events.add("receive:" + args[0]);
+				if (this.receiveFailure != null)
+					throw this.receiveFailure;
 				return new PGNotification[0];
 			}
 

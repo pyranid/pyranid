@@ -203,6 +203,100 @@ class TransactionInterruptionTests {
 		assertEquals(1, fixture.closes.get());
 	}
 
+	@Test
+	void pendingInterruptSurvivesCompletionObserversWithoutThrowableEvidence() {
+		for (boolean failBody : List.of(false, true)) {
+			for (boolean observerThrows : List.of(false, true)) {
+				Fixture fixture = new Fixture(null);
+				AtomicInteger attempts = new AtomicInteger(), conditions = new AtomicInteger(), observations = new AtomicInteger();
+				DatabaseException original = new DatabaseException("cancelled serialization", new SQLException("serialization", "40001"));
+				RetryPolicy policy = RetryPolicy.ofMaxAttempts(2, RetryPolicy.Backoff.fixed(Duration.ZERO), failure -> {
+					conditions.incrementAndGet();
+					return true;
+				});
+				TransactionOptions options = TransactionOptions.withReadOnly(null).completionObserver(completion -> {
+					observations.incrementAndGet();
+					assertTrue(Thread.currentThread().isInterrupted());
+					try { Thread.sleep(1); }
+					catch (InterruptedException interrupted) {
+						if (observerThrows) throw new IllegalStateException("observer interrupted", interrupted);
+					}
+				}).build();
+				ReturningTransactionalOperation<Integer> operation = () -> {
+					attempts.incrementAndGet();
+					assertEquals(1, fixture.database.query("VALUES (1)").fetchObject(Integer.class).orElseThrow());
+					Thread.currentThread().interrupt();
+					if (failBody) throw original;
+					return Optional.of(1);
+				};
+				try {
+					if (failBody) assertSame(original, assertThrows(DatabaseException.class,
+							() -> fixture.database.transactionWithRetry(policy, options, operation)));
+					else assertEquals(Optional.of(1), fixture.database.transactionWithRetry(policy, options, operation).getValue());
+					assertEquals(1, attempts.get());
+					assertEquals(0, conditions.get());
+					assertEquals(1, observations.get());
+					assertEquals(1, fixture.closes.get());
+					assertEquals(failBody ? 1 : 0, fixture.rollbacks.get());
+					assertTrue(Thread.currentThread().isInterrupted());
+				} finally { Thread.interrupted(); }
+			}
+		}
+	}
+
+	@Test
+	void transactionMetricsCannotConsumeCancellationBeforeRetryAdmission() {
+		for (boolean consumeOnRollback : List.of(false, true)) {
+			JDBCDataSource source = new JDBCDataSource();
+			source.setUrl("jdbc:hsqldb:mem:metrics_interruption_" + UUID.randomUUID());
+			source.setUser("sa"); source.setPassword("");
+			AtomicInteger diagnostics = new AtomicInteger(), attempts = new AtomicInteger(), conditions = new AtomicInteger();
+			MetricsCollector collector = new MetricsCollector() {
+				@Override public void didRollbackPhysicalTransaction(Transaction transaction, DatabaseType type, Duration duration) {
+					if (consumeOnRollback) consumeInterrupt();
+				}
+				@Override public void didExitTransactionClosure(Transaction transaction, TransactionClosureOutcome outcome,
+						DatabaseType type, Duration duration, Throwable failure) {
+					if (!consumeOnRollback) consumeInterrupt();
+				}
+				private void consumeInterrupt() {
+					diagnostics.incrementAndGet();
+					try { Thread.sleep(1); }
+					catch (InterruptedException interrupted) { throw new IllegalStateException("metrics interrupted", interrupted); }
+				}
+			};
+			Database database = Database.withDataSource(source).databaseType(DatabaseType.GENERIC).metricsCollector(collector).build();
+			DatabaseException original = new DatabaseException("cancelled serialization", new SQLException("serialization", "40001"));
+			RetryPolicy policy = RetryPolicy.ofMaxAttempts(2, RetryPolicy.Backoff.fixed(Duration.ZERO), failure -> {
+				conditions.incrementAndGet(); return true;
+			});
+			try {
+				assertSame(original, assertThrows(DatabaseException.class, () -> database.transactionWithRetry(policy, () -> {
+					attempts.incrementAndGet();
+					database.query("VALUES (1)").fetchObject(Integer.class);
+					Thread.currentThread().interrupt();
+					throw original;
+				})));
+				assertEquals(1, attempts.get());
+				assertEquals(0, conditions.get());
+				assertEquals(1, diagnostics.get());
+				assertTrue(Thread.currentThread().isInterrupted());
+			} finally { Thread.interrupted(); }
+		}
+	}
+
+	@Test
+	void completionObserverPreservesPendingInterruptWithoutRetryScope() {
+		Fixture fixture = new Fixture(null);
+		TransactionOptions options = TransactionOptions.withReadOnly(null).completionObserver(completion -> Thread.interrupted()).build();
+		fixture.database.transaction(options, () -> {
+			fixture.database.query("VALUES (1)").fetchObject(Integer.class);
+			Thread.currentThread().interrupt();
+		});
+		assertTrue(Thread.currentThread().isInterrupted());
+		assertEquals(1, fixture.closes.get());
+	}
+
 	private static RetryExecutor executor(RetryExecutor.Sleeper sleeper) {
 		return new RetryExecutor(() -> 0, sleeper);
 	}
