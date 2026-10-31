@@ -60,9 +60,9 @@ public interface InstanceProvider {
 		try {
 			return instanceType.getDeclaredConstructor().newInstance();
 		} catch (Exception e) {
-			throw new DatabaseException(format(
+			throw DatabaseException.wrapSafely(format(
 					"Unable to create an instance of %s. Please verify that %s has a public no-argument constructor",
-					instanceType, instanceType.getSimpleName()), e);
+					instanceType, instanceType.getSimpleName()), e, DatabaseDialect.forExceptionCause(e));
 		}
 	}
 
@@ -95,8 +95,8 @@ public interface InstanceProvider {
 			return constructor.newInstance(initargs);
 		} catch (NoSuchMethodException | InstantiationException | IllegalAccessException |
 						 IllegalArgumentException | InvocationTargetException e) {
-			throw new DatabaseException(String.format("Unable to instantiate Record type %s with args %s", recordType,
-					initargs == null ? "[none]" : Arrays.asList(initargs)), e);
+			throw DatabaseException.wrapSafely(String.format("Unable to instantiate Record type %s with args %s", recordType,
+					initargs == null ? "[none]" : Arrays.asList(initargs)), e, DatabaseDialect.forExceptionCause(e));
 		}
 	}
 }

@@ -158,10 +158,12 @@ class GenericDialect implements DatabaseDialect {
 
 	@Override
 	public void bindVector(@NonNull PreparedStatement preparedStatement,
+												 @NonNull StatementContext<?> statementContext,
 												 @NonNull Integer parameterIndex,
 												 double @Nullable [] elements,
 												 @Nullable Integer fallbackSqlType) throws SQLException {
 		requireNonNull(preparedStatement);
+		requireNonNull(statementContext);
 		requireNonNull(parameterIndex);
 
 		throw new IllegalArgumentException(format("%s supported only on %s.%s and %s.%s",

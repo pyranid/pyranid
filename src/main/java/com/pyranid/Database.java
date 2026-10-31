@@ -267,6 +267,12 @@ public final class Database {
 	 * follow-up rollback succeeds. Other commit failures and rollback failures after application work could execute are
 	 * terminal because their outcome is indeterminate.
 	 * <p>
+	 * A savepoint-scope ownership conflict at completion is never replayed, with or without a successful rollback: the
+	 * guard raises an {@link IllegalStateException}, not a {@link DatabaseException}, so the conflict leaves this method
+	 * without reaching the retry policy. What a successful rollback changes is the attempt's outcome evidence; the conflict
+	 * no longer records an indeterminate outcome, so a conflict raised and handled by an independent transaction inside the
+	 * closure no longer fences a retry of a later failure.
+	 * <p>
 	 * Unlike {@link #transaction(TransactionalOperation)} and related transaction methods, retrying methods return
 	 * {@link TransactionRetryResult} so callers can inspect failures that were recovered before success.
 	 * <p>
@@ -301,6 +307,12 @@ public final class Database {
 	 * the candidate is discarded. It also includes a recognized serialization failure reported by physical commit when the
 	 * follow-up rollback succeeds. Other commit failures and rollback failures after application work could execute are
 	 * terminal because their outcome is indeterminate.
+	 * <p>
+	 * A savepoint-scope ownership conflict at completion is never replayed, with or without a successful rollback: the
+	 * guard raises an {@link IllegalStateException}, not a {@link DatabaseException}, so the conflict leaves this method
+	 * without reaching the retry policy. What a successful rollback changes is the attempt's outcome evidence; the conflict
+	 * no longer records an indeterminate outcome, so a conflict raised and handled by an independent transaction inside the
+	 * closure no longer fences a retry of a later failure.
 	 * <p>
 	 * Unlike {@link #transaction(TransactionOptions, TransactionalOperation)} and related transaction methods, retrying
 	 * methods return {@link TransactionRetryResult} so callers can inspect failures that were recovered before success.
@@ -340,6 +352,12 @@ public final class Database {
 	 * follow-up rollback succeeds. Other commit failures and rollback failures after application work could execute are
 	 * terminal because their outcome is indeterminate.
 	 * <p>
+	 * A savepoint-scope ownership conflict at completion is never replayed, with or without a successful rollback: the
+	 * guard raises an {@link IllegalStateException}, not a {@link DatabaseException}, so the conflict leaves this method
+	 * without reaching the retry policy. What a successful rollback changes is the attempt's outcome evidence; the conflict
+	 * no longer records an indeterminate outcome, so a conflict raised and handled by an independent transaction inside the
+	 * closure no longer fences a retry of a later failure.
+	 * <p>
 	 * Unlike {@link #transaction(ReturningTransactionalOperation)} and related transaction methods, retrying methods return
 	 * {@link TransactionRetryResult} so callers can inspect failures that were recovered before success.
 	 * <p>
@@ -373,6 +391,12 @@ public final class Database {
 	 * the candidate is discarded. It also includes a recognized serialization failure reported by physical commit when the
 	 * follow-up rollback succeeds. Other commit failures and rollback failures after application work could execute are
 	 * terminal because their outcome is indeterminate.
+	 * <p>
+	 * A savepoint-scope ownership conflict at completion is never replayed, with or without a successful rollback: the
+	 * guard raises an {@link IllegalStateException}, not a {@link DatabaseException}, so the conflict leaves this method
+	 * without reaching the retry policy. What a successful rollback changes is the attempt's outcome evidence; the conflict
+	 * no longer records an indeterminate outcome, so a conflict raised and handled by an independent transaction inside the
+	 * closure no longer fences a retry of a later failure.
 	 * <p>
 	 * Unlike {@link #transaction(TransactionOptions, ReturningTransactionalOperation)} and related transaction methods,
 	 * retrying methods return {@link TransactionRetryResult} so callers can inspect failures that were recovered before
@@ -505,7 +529,11 @@ public final class Database {
 		requireNonNull(statementContext);
 		requireNonNull(cause);
 
-		try {
+		// Detection can read metadata over the wire and its failure is swallowed here. A driver that reports
+		// cancellation by interrupting the caller and throwing leaves no InterruptedException in the failure, and
+		// restoreInterruptIfNeeded reads only that graph, so outside a transaction the flag is the sole evidence of
+		// cancellation. Inside one, this scope publishes no flag of its own, and a flag it consumes is unrecoverable.
+		try (var ignoredScope = TransactionRetrySafety.isolate(!hasAmbientTransaction())) {
 			return statementContext.getDatabaseDialect();
 		} catch (Throwable ignored) {
 			return DatabaseDialect.forExceptionCause(cause);
@@ -527,7 +555,10 @@ public final class Database {
 		requireNonNull(cause);
 
 		if (connection != null) {
-			try {
+			// Detection reads metadata over this connection and its failure is swallowed here. restoreInterruptIfNeeded
+			// reads the throwable graph rather than the flag, so a flag this attempt consumes is unrecoverable; restoring
+			// it is scoped to operations outside a transaction.
+			try (var ignoredScope = TransactionRetrySafety.isolate(!hasAmbientTransaction())) {
 				return getDatabaseDialect(connection);
 			} catch (Throwable ignored) {
 				// Fall through to cause-based classification below.
@@ -766,6 +797,12 @@ public final class Database {
 	 * <p>
 	 * JDBC accepts timeout values in whole seconds. Positive sub-second durations are rounded up to one second;
 	 * {@link Duration#ZERO} passes a timeout of {@code 0} to the driver.
+	 * <p>
+	 * If the failure this method propagates carries evidence of thread interruption, Pyranid restores the interrupt
+	 * flag before throwing, as long as no Pyranid transaction is open on the calling thread. Inside a transaction this
+	 * method restores nothing, and nothing restores the flag for a failure the caller handles there. A caller that
+	 * handles one of these failures inside a transaction and wants to act on the cancellation must call
+	 * {@link Thread#interrupt()} itself.
 	 *
 	 * @param timeout maximum time to wait for driver validation
 	 * @throws IllegalArgumentException if {@code timeout} is negative or too large for JDBC's integer-second timeout
@@ -783,7 +820,8 @@ public final class Database {
 			try {
 				valid = connection.isValid(timeoutSeconds);
 			} catch (SQLException e) {
-				throw new DatabaseException("Unable to perform database health check", e);
+				throw DatabaseException.wrapSafely("Unable to perform database health check", e,
+						DatabaseDialect.forExceptionCause(e));
 			}
 
 			if (!valid)
@@ -846,27 +884,31 @@ public final class Database {
 	static boolean isUnsupportedSqlFeature(@NonNull SQLException e) {
 		requireNonNull(e);
 
-		String sqlState = e.getSQLState();
-		if (sqlState != null) {
-			if (sqlState.startsWith("0A") || "HYC00".equals(sqlState))
+		try {
+			String sqlState = e.getSQLState();
+			if (sqlState != null && (sqlState.startsWith("0A") || "HYC00".equals(sqlState)))
 				return true;
-		}
 
-		Throwable cause = e.getCause();
-		if (cause instanceof SQLFeatureNotSupportedException
-				|| cause instanceof UnsupportedOperationException
-				|| cause instanceof AbstractMethodError)
-			return true;
+			Throwable cause = e.getCause();
+			if (cause instanceof SQLFeatureNotSupportedException
+					|| cause instanceof UnsupportedOperationException
+					|| cause instanceof AbstractMethodError)
+				return true;
 
-		String message = e.getMessage();
-		if (message == null)
+			String message = e.getMessage();
+			if (message == null)
+				return false;
+
+			String lower = message.toLowerCase(Locale.ROOT);
+			return lower.contains("not supported")
+					|| lower.contains("unsupported")
+					|| lower.contains("not implemented")
+					|| lower.contains("feature not supported");
+		} catch (Throwable diagnosticFailure) {
+			if (e != diagnosticFailure) e.addSuppressed(diagnosticFailure);
+			// Unreadable capability evidence cannot authorize executing the statement again.
 			return false;
-
-		String lower = message.toLowerCase(Locale.ROOT);
-		return lower.contains("not supported")
-				|| lower.contains("unsupported")
-				|| lower.contains("not implemented")
-				|| lower.contains("feature not supported");
+		}
 	}
 
 	@Nullable
@@ -952,6 +994,12 @@ public final class Database {
 	 * The connection is closed as soon as {@link DatabaseMetaDataReader#read(DatabaseMetaData)} completes.
 	 * <p>
 	 * See <a href="https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/DatabaseMetaData.html">{@code DatabaseMetaData} Javadoc</a> for details.
+	 * <p>
+	 * If the failure this method propagates carries evidence of thread interruption, Pyranid restores the interrupt
+	 * flag before throwing, as long as no Pyranid transaction is open on the calling thread. Inside a transaction this
+	 * method restores nothing, and nothing restores the flag for a failure the caller handles there. A caller that
+	 * handles one of these failures inside a transaction and wants to act on the cancellation must call
+	 * {@link Thread#interrupt()} itself.
 	 */
 	public void readDatabaseMetaData(@NonNull DatabaseMetaDataReader databaseMetaDataReader) {
 		requireNonNull(databaseMetaDataReader);
@@ -984,6 +1032,12 @@ public final class Database {
 	 * <p>
 	 * The connection handle is valid only for the duration of the callback. Do not close it, retain it, or use it after this
 	 * method returns.
+	 * <p>
+	 * If the failure this method propagates carries evidence of thread interruption, Pyranid restores the interrupt
+	 * flag before throwing, as long as no Pyranid transaction is open on the calling thread. Inside a transaction this
+	 * method restores nothing, and nothing restores the flag for a failure the caller handles there. A caller that
+	 * handles one of these failures inside a transaction and wants to act on the cancellation must call
+	 * {@link Thread#interrupt()} itself.
 	 *
 	 * @param rawConnectionOperation the raw JDBC operation to perform
 	 * @param <T>                    the type to be returned
@@ -1029,6 +1083,12 @@ public final class Database {
 	 * The connection and every object obtained from it are valid only for the duration of the callback. Statements, result
 	 * sets, appenders, readers, and other derived resources must be closed before this method returns. Retaining or using any
 	 * of these objects after the callback returns has undefined behavior.
+	 * <p>
+	 * If the failure this method propagates carries evidence of thread interruption, Pyranid restores the interrupt
+	 * flag before throwing, as long as no Pyranid transaction is open on the calling thread. Inside a transaction this
+	 * method restores nothing, and nothing restores the flag for a failure the caller handles there. A caller that
+	 * handles one of these failures inside a transaction and wants to act on the cancellation must call
+	 * {@link Thread#interrupt()} itself.
 	 *
 	 * @param connectionType         driver connection class or interface to expose
 	 * @param rawConnectionOperation the driver-specific raw JDBC operation to perform
@@ -1372,9 +1432,10 @@ public final class Database {
 					? DatabaseType.fromDataSource(getDataSource())
 					: DatabaseType.fromConnection(connection);
 		} catch (DatabaseException e) {
-			throw new DatabaseException(format(
+			throw DatabaseException.wrapSafely(format(
 					"Unable to determine database type automatically. Configure %s.%s(%s) explicitly to avoid runtime detection.",
-					Builder.class.getSimpleName(), "databaseType", DatabaseType.class.getSimpleName()), e);
+					Builder.class.getSimpleName(), "databaseType", DatabaseType.class.getSimpleName()), e,
+					DatabaseDialect.forExceptionCause(e), null);
 		}
 
 		if (this.databaseType.compareAndSet(null, detectedDatabaseType))
@@ -1445,7 +1506,8 @@ public final class Database {
 					try {
 						connection = getDataSource().getConnection();
 					} catch (SQLException e) {
-						throw new DatabaseException("Unable to acquire database connection", e);
+						throw DatabaseException.wrapSafely("Unable to acquire database connection", e,
+								DatabaseDialect.forExceptionCause(e));
 					}
 				}
 
@@ -1476,16 +1538,29 @@ public final class Database {
 					if (connectionLockAcquired)
 						connectionLock.unlock();
 
+					Throwable exitThrown = thrown;
+
 					if (cleanupFailure != null) {
 						if (thrown != null) {
 							appendCleanupFailure(thrown, cleanupFailure);
-						} else if (cleanupFailure instanceof RuntimeException) {
-							throw (RuntimeException) cleanupFailure;
-						} else if (cleanupFailure instanceof Error) {
-							throw (Error) cleanupFailure;
 						} else {
-							throw new RuntimeException(cleanupFailure);
+							exitThrown = cleanupFailure instanceof RuntimeException || cleanupFailure instanceof Error
+									? cleanupFailure : new RuntimeException(cleanupFailure);
 						}
+					}
+
+					// Closing the borrowed connection can introduce interruption after the operation's catch block, and a
+					// cleanup failure can replace the primary failure outright. Restore from the failure that actually exits,
+					// and only outside a transaction: publishing the interrupt here would abort an ambient transaction's next
+					// statement on this thread, on a failure the caller handles.
+					if (exitThrown != null && transaction.isEmpty())
+						restoreInterruptIfNeeded(exitThrown);
+
+					if (thrown == null && exitThrown != null) {
+						if (exitThrown instanceof Error error)
+							throw error;
+
+						throw (RuntimeException) exitThrown;
 					}
 				}
 			}
@@ -1508,24 +1583,38 @@ public final class Database {
 			} catch (Exception e) {
 				DatabaseException wrapped = acquiredConnection
 						? databaseExceptionWithRawConnectionContext(connection, e)
-						: new DatabaseException("Unable to acquire database connection", e);
+						: DatabaseException.wrapSafely("Unable to acquire database connection", e,
+								DatabaseDialect.forExceptionCause(e));
 				thrown = wrapped;
 				throw wrapped;
 			} finally {
+				Throwable exitThrown = thrown;
+
 				if (connection != null) {
 					try {
 						closeConnection(connection);
 					} catch (Throwable cleanupException) {
 						if (thrown != null) {
 							appendCleanupFailure(thrown, cleanupException);
-						} else if (cleanupException instanceof RuntimeException) {
-							throw (RuntimeException) cleanupException;
-						} else if (cleanupException instanceof Error) {
-							throw (Error) cleanupException;
 						} else {
-							throw new RuntimeException(cleanupException);
+							exitThrown = cleanupException instanceof RuntimeException || cleanupException instanceof Error
+									? cleanupException : new RuntimeException(cleanupException);
 						}
 					}
+				}
+
+				// Closing the borrowed connection can introduce interruption after the operation's catch block, and a
+				// cleanup failure can replace the primary failure outright. Restore from the failure that actually exits,
+				// and only outside a transaction: this branch never participates, but an ambient transaction on this thread
+				// must not have its next statement aborted here.
+				if (exitThrown != null && !hasAmbientTransaction())
+					restoreInterruptIfNeeded(exitThrown);
+
+				if (thrown == null && exitThrown != null) {
+					if (exitThrown instanceof Error error)
+						throw error;
+
+					throw (RuntimeException) exitThrown;
 				}
 			}
 		}

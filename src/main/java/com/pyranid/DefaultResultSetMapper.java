@@ -353,7 +353,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			try {
 				mappingResult = mapper.map(statementContext, resultSet, resultSetValue, targetType, columnIndex, columnLabel, instanceProvider);
 			} catch (SQLException e) {
-				throw new DatabaseException(e);
+				throw DatabaseException.wrapSafely(DatabaseException.messageSafely(e, "Unable to map custom JDBC column"),
+						e, DatabaseDialect.forExceptionCause(e));
 			}
 
 			if (mappingApplied(mappingResult)) {
@@ -646,7 +647,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(resultSet);
 		requireNonNull(resultSetMetaData);
 
-		try (MappingResources resources = acquireMappingResources()) {
+		MappingResources resources = acquireMappingResources();
+		Throwable mappingFailure = null;
+		try {
 			int columnCount = resultSetMetaData.getColumnCount();
 			Map<String, Object> row = new LinkedHashMap<>(columnCount);
 			Map<String, String> normalizedLabelsToRawLabels = new HashMap<>(columnCount);
@@ -672,6 +675,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			}
 
 			return row;
+		} catch (Throwable failure) {
+			mappingFailure = failure;
+			throw failure;
+		} finally {
+			resources.close(mappingFailure);
 		}
 	}
 
@@ -688,7 +696,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(instanceProvider);
 		requireNonNull(resultSetMetaData);
 
-		try (MappingResources resources = acquireMappingResources()) {
+		MappingResources resources = acquireMappingResources();
+		Throwable mappingFailure = null;
+		try {
 			// Use "standard type" fast path
 			StandardTypeResult<T> standardTypeResult = mapResultSetToStandardType(statementContext, resultSet, resultSetRowType, instanceProvider, resultSetMetaData, resources);
 			if (standardTypeResult.isStandardType()) return standardTypeResult.getValue();
@@ -791,13 +801,27 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				return Optional.of(object);
 			}
 		} catch (DatabaseException e) {
+			mappingFailure = e;
 			throw e;
 		} catch (SQLException e) {
+			mappingFailure = e;
 			throw e;
 		} catch (Error error) {
+			mappingFailure = error;
 			throw error;
 		} catch (Throwable t) {
-			throw new DatabaseException(format("Unable to map JDBC %s row to %s", ResultSet.class.getSimpleName(), resultSetRowType), t);
+			mappingFailure = t;
+			throw DatabaseException.wrapSafely(format("Unable to map JDBC %s row to %s", ResultSet.class.getSimpleName(), resultSetRowType),
+					t, DatabaseDialect.forExceptionCause(t));
+		} finally {
+			try {
+				resources.close(mappingFailure);
+			} catch (DatabaseException failure) {
+				throw failure;
+			} catch (RuntimeException failure) {
+				throw DatabaseException.wrapSafely(format("Unable to map JDBC %s row to %s", ResultSet.class.getSimpleName(), resultSetRowType),
+						failure, DatabaseDialect.forExceptionCause(failure));
+			}
 		}
 	}
 
@@ -1186,8 +1210,15 @@ class DefaultResultSetMapper implements ResultSetMapper {
 																										@NonNull StatementContext<T> statementContext,
 																										@NonNull ResultSet resultSet,
 																										int columnIndex) throws SQLException {
-		try (MappingResources resources = acquireMappingResources()) {
+		MappingResources resources = acquireMappingResources();
+		Throwable mappingFailure = null;
+		try {
 			return extractColumnValue(resultSetMetaData, statementContext, resultSet, columnIndex, resources);
+		} catch (Throwable failure) {
+			mappingFailure = failure;
+			throw failure;
+		} finally {
+			resources.close(mappingFailure);
 		}
 	}
 
@@ -1244,10 +1275,19 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	@NonNull
 	protected <T> Optional<Object> convertResultSetValueToTargetType(StatementContext<T> context,
 			@Nullable Object value, TargetType target) {
-		try (MappingResources resources = acquireMappingResources()) {
+		MappingResources resources = acquireMappingResources();
+		Throwable mappingFailure = null;
+		try {
 			return Optional.ofNullable(convertResultSetValueToTargetType(context, value, target, resources));
-		} catch (SQLException failure) {
-			throw new DatabaseException("Unable to release mapping resources", failure);
+		} catch (Throwable failure) {
+			mappingFailure = failure;
+			throw failure;
+		} finally {
+			try {
+				resources.close(mappingFailure);
+			} catch (SQLException failure) {
+				throw DatabaseException.wrapSafely("Unable to release mapping resources", failure, DatabaseDialect.forExceptionCause(failure));
+			}
 		}
 	}
 
@@ -1670,10 +1710,14 @@ class DefaultResultSetMapper implements ResultSetMapper {
 								baseType = Types.TIME_WITH_TIMEZONE;
 						}
 					} catch (SQLException | UnsupportedOperationException | AbstractMethodError unsupportedTypeName) {
+						if (JdbcFallbacks.isTerminal(unsupportedTypeName))
+							throw unsupportedTypeName;
 						// A supported JDBC type remains useful when the optional SQL name is unavailable.
 					}
 				}
 			} catch (SQLException | UnsupportedOperationException | AbstractMethodError unsupportedMetadata) {
+				if (JdbcFallbacks.isTerminal(unsupportedMetadata))
+					throw unsupportedMetadata;
 				// Older drivers can expose array contents without optional base-type metadata.
 			}
 			resources.registerArrayType(values, baseType);
@@ -1682,7 +1726,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				// Keep raw inputs for custom/native targets and detach a lossless alternate while alive.
 				TimeArrayRead read = readTimeArray(sqlArray, values, false, baseType);
 				if (read.failure != null) {
-					if (read.cleanupFailed || !isUnsupportedArrayReader(read.failure))
+					if (read.cleanupFailed || JdbcFallbacks.isTerminal(read.failure) || !isUnsupportedArrayReader(read.failure))
 						rethrowArrayFailure(read.failure);
 					resources.registerArrayTimeValues(values, read.failure);
 				} else resources.registerArrayTimeValues(values, read.values);
@@ -2638,6 +2682,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			try {
 				return rs.getObject(col, cls);
 			} catch (SQLException | AbstractMethodError e) {
+				if (JdbcFallbacks.isTerminal(e))
+					throw e;
 				return null;
 			}
 		}

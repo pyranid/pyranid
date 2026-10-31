@@ -17,6 +17,7 @@
 package com.pyranid;
 
 import org.hsqldb.jdbc.JDBCDataSource;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
@@ -27,12 +28,16 @@ import java.lang.reflect.Proxy;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Savepoint;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class SavepointConcurrencyTests {
@@ -60,6 +65,7 @@ public class SavepointConcurrencyTests {
 				database.query("INSERT INTO events VALUES (2)").execute();
 			}));
 
+			Throwable bodyFailure = null;
 			try {
 				await(participantEntered);
 				IllegalArgumentException expected = new IllegalArgumentException("recoverable scope failure");
@@ -70,10 +76,13 @@ public class SavepointConcurrencyTests {
 							await(insertRejected);
 							throw expected;
 						})));
+			} catch (Throwable throwable) {
+				bodyFailure = throwable;
+				throw throwable;
 			} finally {
 				attemptInsert.countDown();
 				scopeFinished.countDown();
-				finish(worker);
+				finishIfStarted(worker, bodyFailure);
 			}
 
 			Assertions.assertFalse(transaction.isRollbackOnly());
@@ -199,6 +208,162 @@ public class SavepointConcurrencyTests {
 		Assertions.assertEquals(List.of(1), ids(database));
 	}
 
+	@Test
+	public void completionDuringAnotherThreadsScopeRollsBackAndReleasesTheConnection() throws InterruptedException {
+		JDBCDataSource source = dataSource();
+		Database setupDatabase = database(source);
+		List<String> events = Collections.synchronizedList(new ArrayList<>());
+		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
+		Database database = Database.withDataSource(completionEventRecordingDataSource(source, events, false))
+				.metricsCollector(metricsCollector)
+				.build();
+		List<TransactionResult> hookResults = Collections.synchronizedList(new ArrayList<>());
+		AtomicReference<TransactionCompletion> completion = new AtomicReference<>();
+		AtomicReference<Transaction> completedTransaction = new AtomicReference<>();
+		TransactionOptions options = TransactionOptions.withReadOnly(null).completionObserver(completion::set).build();
+		CountDownLatch scopeEntered = new CountDownLatch(1);
+		CountDownLatch completionFinished = new CountDownLatch(1);
+		AtomicReference<Worker> worker = new AtomicReference<>();
+
+		Throwable bodyFailure = null;
+		try {
+			IllegalStateException conflict = Assertions.assertThrows(IllegalStateException.class, () ->
+					database.transaction(options, () -> {
+						Transaction transaction = database.currentTransaction().orElseThrow();
+						completedTransaction.set(transaction);
+						transaction.addPostTransactionOperation(hookResults::add);
+						database.query("INSERT INTO events VALUES (1)").execute();
+						worker.set(startWorker(() -> database.participate(transaction, () -> {
+							IllegalStateException late = Assertions.assertThrows(IllegalStateException.class,
+									() -> transaction.withSavepoint(() -> {
+										scopeEntered.countDown();
+										// Hold the scope across the owner's completion so commit() meets the ownership guard.
+										await(completionFinished);
+									}));
+							Assertions.assertTrue(late.getMessage().contains("already completed its closure"));
+						})));
+						await(scopeEntered);
+					}));
+
+			Assertions.assertTrue(conflict.getMessage().contains("active savepoint scope"));
+			Assertions.assertEquals(0, conflict.getSuppressed().length);
+			Assertions.assertSame(conflict, completion.get().getFailure().orElseThrow());
+			Assertions.assertEquals(TransactionResult.ROLLED_BACK, completion.get().getResult());
+			Assertions.assertEquals(List.of(TransactionResult.ROLLED_BACK), hookResults);
+			Assertions.assertEquals(0, completedTransaction.get().retrySafety().outcomes());
+			Assertions.assertFalse(events.contains("commit"));
+			Assertions.assertFalse(events.contains("abort"));
+			Assertions.assertTrue(events.contains("rollback"), "Rollback must be recorded; an absent event orders vacuously");
+			Assertions.assertTrue(events.indexOf("rollback") < events.indexOf("restoreAutoCommit"));
+			Assertions.assertTrue(events.indexOf("restoreAutoCommit") < events.lastIndexOf("close"));
+			Assertions.assertEquals(List.of(), ids(setupDatabase));
+
+			MetricsCollector.Snapshot snapshot = metricsCollector.snapshot().orElseThrow();
+			Assertions.assertEquals(0L, snapshot.physicalTransactionsCommitFailed());
+			Assertions.assertEquals(1L, snapshot.physicalTransactionsRolledBack());
+			Assertions.assertEquals(1L, snapshot.transactionClosuresRolledBack());
+			Assertions.assertEquals(0L, snapshot.transactionClosuresFailed());
+		} catch (Throwable throwable) {
+			bodyFailure = throwable;
+			throw throwable;
+		} finally {
+			completionFinished.countDown();
+			finishIfStarted(worker.get(), bodyFailure);
+		}
+	}
+
+	@Test
+	public void completionConflictWithFailedRollbackRemainsInDoubtAndDiscardsTheConnection() throws InterruptedException {
+		JDBCDataSource source = dataSource();
+		Database setupDatabase = database(source);
+		List<String> events = Collections.synchronizedList(new ArrayList<>());
+		Database database = Database.withDataSource(completionEventRecordingDataSource(source, events, true)).build();
+		List<TransactionResult> hookResults = Collections.synchronizedList(new ArrayList<>());
+		CountDownLatch scopeEntered = new CountDownLatch(1);
+		CountDownLatch completionFinished = new CountDownLatch(1);
+		AtomicReference<Transaction> completedTransaction = new AtomicReference<>();
+		AtomicReference<Worker> worker = new AtomicReference<>();
+
+		Throwable bodyFailure = null;
+		try {
+			IllegalStateException conflict = Assertions.assertThrows(IllegalStateException.class, () ->
+					database.transaction(() -> {
+						Transaction transaction = database.currentTransaction().orElseThrow();
+						completedTransaction.set(transaction);
+						transaction.addPostTransactionOperation(hookResults::add);
+						database.query("INSERT INTO events VALUES (1)").execute();
+						worker.set(startWorker(() -> database.participate(transaction, () ->
+								Assertions.assertThrows(IllegalStateException.class, () -> transaction.withSavepoint(() -> {
+									scopeEntered.countDown();
+									await(completionFinished);
+								})))));
+						await(scopeEntered);
+					}));
+
+			// Only the guard's own ordering is provable. An unconfirmed rollback still leaves the outcome unknown.
+			Assertions.assertTrue(conflict.getMessage().contains("active savepoint scope"));
+			Assertions.assertTrue(List.of(conflict.getSuppressed()).stream().anyMatch(suppressed ->
+					"Unable to roll back transaction".equals(suppressed.getMessage())));
+			Assertions.assertEquals(List.of(TransactionResult.IN_DOUBT), hookResults);
+			Assertions.assertEquals(TransactionRetrySafety.IN_DOUBT, completedTransaction.get().retrySafety().outcomes());
+			Assertions.assertFalse(events.contains("commit"));
+			Assertions.assertTrue(events.contains("abort"), "Abort must be recorded; an absent event orders vacuously");
+			Assertions.assertTrue(events.indexOf("abort") < events.lastIndexOf("close"));
+			Assertions.assertEquals(List.of(), ids(setupDatabase));
+		} catch (Throwable throwable) {
+			bodyFailure = throwable;
+			throw throwable;
+		} finally {
+			completionFinished.countDown();
+			finishIfStarted(worker.get(), bodyFailure);
+		}
+	}
+
+	@Test
+	public void completionConflictDoesNotFenceAnEnclosingRetry() {
+		Database database = database(dataSource());
+		AtomicInteger attempts = new AtomicInteger();
+		RetryPolicy retryPolicy = RetryPolicy.ofMaxAttempts(2, RetryPolicy.Backoff.fixed(Duration.ZERO), failure -> true);
+
+		TransactionRetryResult<Void> retryResult = database.transactionWithRetry(retryPolicy, () -> {
+			if (attempts.incrementAndGet() > 1) {
+				database.query("INSERT INTO events VALUES (2)").execute();
+				return;
+			}
+
+			CountDownLatch scopeEntered = new CountDownLatch(1);
+			CountDownLatch completionFinished = new CountDownLatch(1);
+			AtomicReference<Worker> worker = new AtomicReference<>();
+
+			Throwable bodyFailure = null;
+			try {
+				Assertions.assertThrows(IllegalStateException.class, () -> database.transaction(() -> {
+					Transaction inner = database.currentTransaction().orElseThrow();
+					database.query("INSERT INTO events VALUES (1)").execute();
+					worker.set(startWorker(() -> database.participate(inner, () ->
+							Assertions.assertThrows(IllegalStateException.class, () -> inner.withSavepoint(() -> {
+								scopeEntered.countDown();
+								await(completionFinished);
+							})))));
+					await(scopeEntered);
+				}));
+			} catch (Throwable throwable) {
+				bodyFailure = throwable;
+				throw throwable;
+			} finally {
+				completionFinished.countDown();
+				finishIfStarted(worker.get(), bodyFailure);
+			}
+
+			// The inner conflict committed nothing, so it must not fence this attempt against replay.
+			throw new DatabaseException("retryable", new SQLException("serialization failure", "40001"));
+		});
+
+		Assertions.assertEquals(2, attempts.get());
+		Assertions.assertEquals(2, retryResult.getAttemptCount());
+		Assertions.assertEquals(List.of(2), ids(database));
+	}
+
 	private static JDBCDataSource dataSource() {
 		JDBCDataSource source = new JDBCDataSource();
 		source.setUrl("jdbc:hsqldb:mem:savepoint_concurrency_" + UUID.randomUUID());
@@ -235,6 +400,23 @@ public class SavepointConcurrencyTests {
 		return new Worker(thread, failure);
 	}
 
+	// Called from a finally: a failure before the worker is published leaves nothing to join, and a participant failure
+	// is suppressed onto the body failure already in flight rather than replacing the more informative one.
+	private static void finishIfStarted(Worker worker,
+																			@Nullable Throwable bodyFailure) throws InterruptedException {
+		if (worker == null)
+			return;
+
+		try {
+			finish(worker);
+		} catch (AssertionError participantFailure) {
+			if (bodyFailure == null)
+				throw participantFailure;
+
+			bodyFailure.addSuppressed(participantFailure);
+		}
+	}
+
 	private static void finish(Worker worker) throws InterruptedException {
 		worker.thread().join(5_000);
 		if (worker.thread().isAlive()) {
@@ -251,6 +433,38 @@ public class SavepointConcurrencyTests {
 		} catch (InvocationTargetException exception) {
 			throw exception.getCause();
 		}
+	}
+
+	private static DataSource completionEventRecordingDataSource(DataSource source,
+																															 List<String> events,
+																															 boolean failRollback) {
+		return (DataSource) Proxy.newProxyInstance(DataSource.class.getClassLoader(),
+				new Class<?>[]{DataSource.class}, (proxy, method, arguments) -> {
+					Object result = invoke(method, source, arguments);
+					if (!(result instanceof Connection connection))
+						return result;
+					return Proxy.newProxyInstance(Connection.class.getClassLoader(), new Class<?>[]{Connection.class},
+							(connectionProxy, connectionMethod, connectionArguments) -> {
+								String name = connectionMethod.getName();
+								boolean noArguments = connectionMethod.getParameterCount() == 0;
+
+								if (noArguments && name.equals("commit")) {
+									events.add("commit");
+								} else if (noArguments && name.equals("rollback")) {
+									events.add("rollback");
+									if (failRollback)
+										throw new SQLException("rollback was not confirmed", "08006");
+								} else if (name.equals("abort")) {
+									events.add("abort");
+								} else if (noArguments && name.equals("close")) {
+									events.add("close");
+								} else if (name.equals("setAutoCommit") && Boolean.TRUE.equals(connectionArguments[0])) {
+									events.add("restoreAutoCommit");
+								}
+
+								return invoke(connectionMethod, connection, connectionArguments);
+							});
+				});
 	}
 
 	private record Worker(Thread thread, AtomicReference<Throwable> failure) {}

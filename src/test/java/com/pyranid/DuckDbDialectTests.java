@@ -17,6 +17,7 @@
 package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
@@ -25,6 +26,7 @@ import java.lang.reflect.Proxy;
 import java.sql.Array;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -110,7 +112,7 @@ public class DuckDbDialectTests {
 					}
 				});
 
-		DuckDbDialect.INSTANCE.bindVector(preparedStatement, 1, new double[]{0.25, 0.5, 0.75}, null);
+		DuckDbDialect.INSTANCE.bindVector(preparedStatement, vectorStatementContext(), 1, new double[]{0.25, 0.5, 0.75}, null);
 
 		Assertions.assertEquals(List.of("DOUBLE"), createArrayOfTypeNames);
 		Assertions.assertEquals(1, createArrayOfElements.size());
@@ -132,10 +134,175 @@ public class DuckDbDialectTests {
 					return null;
 				});
 
-		DuckDbDialect.INSTANCE.bindVector(preparedStatement, 3, null, null);
+		DuckDbDialect.INSTANCE.bindVector(preparedStatement, vectorStatementContext(), 3, null, null);
 
 		Assertions.assertEquals(1, setNullCalls.size());
 		Assertions.assertArrayEquals(new int[]{3, Types.ARRAY}, setNullCalls.get(0));
+	}
+
+	@Test
+	public void testBindVectorDefersArrayFreeToStatementCleanup() throws Exception {
+		List<String> sqlArrayCalls = new ArrayList<>();
+		List<Object> boundValues = new ArrayList<>();
+		Array sqlArray = recordingSqlArray(sqlArrayCalls, null);
+		PreparedStatement preparedStatement = vectorPreparedStatement(sqlArray, boundValues, null);
+		StatementContext<Long> statementContext = vectorStatementContext();
+
+		DuckDbDialect.INSTANCE.bindVector(preparedStatement, statementContext, 1, new double[]{0.25, 0.5}, null);
+
+		Assertions.assertEquals(List.of(sqlArray), boundValues);
+		Assertions.assertEquals(List.of(), sqlArrayCalls,
+				"The driver may read the array at execute time, so binding must not free it");
+		Assertions.assertEquals(1, statementContext.getCleanupOperations().size(),
+				"A bound array should be handed to the statement's deferred cleanup");
+
+		Assertions.assertNull(Database.closeStatementContextResources(statementContext, null));
+		Assertions.assertEquals(List.of("free"), sqlArrayCalls,
+				"Statement cleanup should free the array exactly once");
+		Assertions.assertTrue(statementContext.getCleanupOperations().isEmpty());
+	}
+
+	@Test
+	public void testBindVectorFreesArrayWhenBindFails() {
+		List<String> sqlArrayCalls = new ArrayList<>();
+		SQLException bindFailure = new SQLException("bind failed");
+		Array sqlArray = recordingSqlArray(sqlArrayCalls, null);
+		PreparedStatement preparedStatement = vectorPreparedStatement(sqlArray, new ArrayList<>(), bindFailure);
+		StatementContext<Long> statementContext = vectorStatementContext();
+
+		SQLException exception = Assertions.assertThrows(SQLException.class, () ->
+				DuckDbDialect.INSTANCE.bindVector(preparedStatement, statementContext, 1, new double[]{0.25}, null));
+
+		Assertions.assertSame(bindFailure, exception);
+		Assertions.assertEquals(List.of("free"), sqlArrayCalls,
+				"An array that never reached the statement must be freed before the failure propagates");
+		Assertions.assertEquals(0, exception.getSuppressed().length);
+		Assertions.assertTrue(statementContext.getCleanupOperations().isEmpty(),
+				"A failed bind must not leave deferred cleanup behind");
+	}
+
+	@Test
+	public void testBindVectorSuppressesArrayFreeFailureWhenBindFails() {
+		List<String> sqlArrayCalls = new ArrayList<>();
+		SQLException bindFailure = new SQLException("bind failed");
+		Array sqlArray = recordingSqlArray(sqlArrayCalls, new SQLException("free failed"));
+		PreparedStatement preparedStatement = vectorPreparedStatement(sqlArray, new ArrayList<>(), bindFailure);
+		StatementContext<Long> statementContext = vectorStatementContext();
+
+		SQLException exception = Assertions.assertThrows(SQLException.class, () ->
+				DuckDbDialect.INSTANCE.bindVector(preparedStatement, statementContext, 1, new double[]{0.25}, null));
+
+		Assertions.assertSame(bindFailure, exception, "A failing free() must not replace the bind failure");
+		Assertions.assertEquals(List.of("free"), sqlArrayCalls);
+		Assertions.assertEquals(1, exception.getSuppressed().length);
+		Assertions.assertEquals("free failed", exception.getSuppressed()[0].getMessage());
+		Assertions.assertTrue(statementContext.getCleanupOperations().isEmpty());
+	}
+
+	@Test
+	public void testBindVectorDoesNotSelfSuppressWhenTheDriverReusesOneException() {
+		// Drivers reuse exception instances; addSuppressed(self) throws IllegalArgumentException
+		List<String> sqlArrayCalls = new ArrayList<>();
+		SQLException sharedFailure = new SQLException("bind and free share one instance");
+		Array sqlArray = recordingSqlArray(sqlArrayCalls, sharedFailure);
+		PreparedStatement preparedStatement = vectorPreparedStatement(sqlArray, new ArrayList<>(), sharedFailure);
+		StatementContext<Long> statementContext = vectorStatementContext();
+
+		SQLException exception = Assertions.assertThrows(SQLException.class, () ->
+				DuckDbDialect.INSTANCE.bindVector(preparedStatement, statementContext, 1, new double[]{0.25}, null));
+
+		Assertions.assertSame(sharedFailure, exception);
+		Assertions.assertEquals(List.of("free"), sqlArrayCalls);
+		Assertions.assertEquals(0, exception.getSuppressed().length);
+		Assertions.assertTrue(statementContext.getCleanupOperations().isEmpty());
+	}
+
+	@Test
+	public void testBindVectorBindsNullWhenTheDriverCreatesNoArray() throws Exception {
+		List<Integer> setObjectParameterIndexes = new ArrayList<>();
+		Connection connection = (Connection) Proxy.newProxyInstance(Connection.class.getClassLoader(),
+				new Class<?>[]{Connection.class}, (proxy, method, args) -> null);
+		PreparedStatement preparedStatement = (PreparedStatement) Proxy.newProxyInstance(
+				PreparedStatement.class.getClassLoader(), new Class<?>[]{PreparedStatement.class},
+				(proxy, method, args) -> {
+					if ("getConnection".equals(method.getName()))
+						return connection;
+
+					if ("setObject".equals(method.getName())) {
+						Assertions.assertNull(args[1]);
+						setObjectParameterIndexes.add((Integer) args[0]);
+					}
+
+					return null;
+				});
+		StatementContext<Long> statementContext = vectorStatementContext();
+
+		DuckDbDialect.INSTANCE.bindVector(preparedStatement, statementContext, 2, new double[]{0.25}, null);
+
+		Assertions.assertEquals(List.of(2), setObjectParameterIndexes,
+				"A driver that creates no array must still bind, as it did before the array was owned");
+		Assertions.assertTrue(statementContext.getCleanupOperations().isEmpty(),
+				"There is no array to release, so nothing should be deferred");
+	}
+
+	@NonNull
+	private StatementContext<Long> vectorStatementContext() {
+		return StatementContext.<Long>with(
+						Statement.of("duckdb-vector-bind-test", "INSERT INTO t (embedding) VALUES (:embedding)"), database())
+				.resultSetRowType(Long.class)
+				.build();
+	}
+
+	@NonNull
+	private Array recordingSqlArray(@NonNull List<String> sqlArrayCalls,
+																	@Nullable SQLException freeFailure) {
+		requireNonNull(sqlArrayCalls);
+
+		return (Array) Proxy.newProxyInstance(Array.class.getClassLoader(), new Class<?>[]{Array.class},
+				(proxy, method, args) -> {
+					if ("free".equals(method.getName())) {
+						sqlArrayCalls.add("free");
+
+						if (freeFailure != null)
+							throw freeFailure;
+
+						return null;
+					}
+
+					return "toString".equals(method.getName()) ? "Array<test>" : null;
+				});
+	}
+
+	@NonNull
+	private PreparedStatement vectorPreparedStatement(@NonNull Array sqlArray,
+																										@NonNull List<Object> boundValues,
+																										@Nullable SQLException bindFailure) {
+		requireNonNull(sqlArray);
+		requireNonNull(boundValues);
+
+		Connection connection = (Connection) Proxy.newProxyInstance(Connection.class.getClassLoader(),
+				new Class<?>[]{Connection.class},
+				(proxy, method, args) -> "createArrayOf".equals(method.getName()) ? sqlArray : null);
+
+		return (PreparedStatement) Proxy.newProxyInstance(PreparedStatement.class.getClassLoader(),
+				new Class<?>[]{PreparedStatement.class},
+				(proxy, method, args) -> {
+					switch (method.getName()) {
+						case "getConnection" -> {
+							return connection;
+						}
+						case "setObject" -> {
+							if (bindFailure != null)
+								throw bindFailure;
+
+							boundValues.add(args[1]);
+							return null;
+						}
+						default -> {
+							return null;
+						}
+					}
+				});
 	}
 
 	@Test

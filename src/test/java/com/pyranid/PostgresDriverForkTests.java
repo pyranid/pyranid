@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
+import javax.sql.DataSource;
 import java.io.IOException;
 import java.lang.reflect.Proxy;
 import java.sql.Connection;
@@ -115,13 +116,16 @@ public class PostgresDriverForkTests {
 		List<Object> boundValues = new ArrayList<>();
 		PreparedStatement preparedStatement = forkPreparedStatement(boundValues);
 
-		PostgresDialect.INSTANCE.bindVector(preparedStatement, 1, new double[]{0.5, 1.5}, null);
+		StatementContext<Long> statementContext = vectorStatementContext();
+		PostgresDialect.INSTANCE.bindVector(preparedStatement, statementContext, 1, new double[]{0.5, 1.5}, null);
 
 		Assertions.assertEquals(1, boundValues.size());
 		Object bound = boundValues.get(0);
 		Assertions.assertInstanceOf(PGobject.class, bound);
 		Assertions.assertEquals("vector", ((PGobject) bound).getType());
 		Assertions.assertEquals("[0.5, 1.5]", ((PGobject) bound).getValue());
+		Assertions.assertTrue(statementContext.getCleanupOperations().isEmpty(),
+				"A PGobject is a plain value, so the vector bind owns no freeable JDBC resource");
 	}
 
 	@Test
@@ -211,6 +215,23 @@ public class PostgresDriverForkTests {
 		} finally {
 			PGobject.clearInjectedFailures();
 		}
+	}
+
+	@NonNull
+	private StatementContext<Long> vectorStatementContext() {
+		DataSource dataSource = (DataSource) Proxy.newProxyInstance(DataSource.class.getClassLoader(),
+				new Class<?>[]{DataSource.class},
+				(proxy, method, args) -> {
+					throw new UnsupportedOperationException("This test should not touch the DataSource");
+				});
+
+		Database database = Database.withDataSource(dataSource)
+				.databaseType(DatabaseType.POSTGRESQL)
+				.build();
+
+		return StatementContext.<Long>with(Statement.of("postgres-vector-bind-test", "SELECT 1"), database)
+				.resultSetRowType(Long.class)
+				.build();
 	}
 
 	/**

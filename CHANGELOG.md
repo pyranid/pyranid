@@ -31,6 +31,17 @@ All notable changes to Pyranid will be documented in this file.
 
 ### Fixed
 
+- Optional JDBC fallbacks reject terminal rollback, connection, cancellation, fatal-error, and unsafe-outcome
+  evidence before continuing. This covers chunk parameter resets, large update/batch execution, temporal reads,
+  ARRAY/STRUCT metadata, TIME-array reader fallback, database-type discovery and metrics cache warming, and
+  optional savepoint release. Benign unsupported features retain their compatibility behavior; failures cannot
+  silently discard earlier transaction work or poison the execution capability cache. Savepoint cleanup retains
+  terminal release evidence on the original failure and marks the transaction rollback-only, preventing partial
+  commits when the application handles the body failure or completion is waiting for an admitted participant's
+  cleanup, without publishing interruption inside the closure. Rejected late public mutations remain blocked.
+- Notification supervision restores wrapped interruption after session cleanup and before retry admission,
+  including receive, setup, reconciliation, and connection-disposal failures. Ordinary connection failures remain
+  eligible for the configured reconnection policy.
 - Completion observers and metrics callbacks preserve interruption that was pending on entry, including
   when diagnostic work consumes the flag while blocking. This keeps cancellation terminal for retries even
   when the original business exception carries no interruption cause.
@@ -54,6 +65,26 @@ All notable changes to Pyranid will be documented in this file.
   hanging cleanup or replacing the primary failure. Reachable interrupt evidence restores thread interruption,
   including failures introduced by connection cleanup or post-transaction hooks. An interrupted thread cannot
   admit another retry, including when the backoff is zero or a retry-policy callback sets the interrupt flag.
+- Parameter binding classifies an unsupported-feature report without recursing, so a cyclic driver chain or a
+  throwing SQLState or message accessor surfaces the driver's own failure instead of a `StackOverflowError`.
+  That classifier retains its inspected exception edges and SQLState and message rules.
+- Parameter metadata and SQL NULL compatibility fallbacks propagate transaction rollback, connection failure,
+  cancellation, and unsafe outcome evidence instead of hiding it and potentially committing only later work.
+  Unreadable failure graphs also propagate; ordinary unavailable metadata and non-terminal type compatibility
+  failures retain their fallback behavior. Cancellation restoration remains at the existing transaction boundary.
+- Typed and untyped temporal `setObject` fallbacks apply the same terminal-failure guard before accepting
+  unsupported-feature evidence. A capability detail in a rollback exception chain, or an unsupported-feature
+  exception carrying interruption, can no longer hide the failure and allow later work to commit.
+- Transaction exception normalization retains the original JDBC failure and its interruption evidence when a
+  diagnostic accessor throws. Savepoint failure cleanup preserves the business failure and still attempts release
+  after rollback fails, including when drivers reuse a failure instance.
+- Mapping and instance-provider callbacks, driver-value extraction, connection acquisition and validation,
+  and database-type detection retain original failures when diagnostic accessors throw. Reachable cancellation
+  evidence survives these wrappers, preventing an extra transaction retry or a cleared interrupt on raw-connection,
+  metadata, and health-check exits.
+- BLOB and CLOB materialization preserves the original failure when reading, closing the stream or reader, and
+  freeing owned JDBC resources throw the same instance. Fatal errors remain errors and do not enter the transaction
+  retry policy; distinct cleanup failures remain suppressed and later owned resources are still released.
 - Resource cleanup continues when drivers reuse the same exception instance across failures. The original
   operation failure is retained, and later arrays, result sets, statements, and connections are still released.
 - Removing a post-transaction hook makes bounded progress when its equality comparison adds or removes
@@ -83,9 +114,49 @@ All notable changes to Pyranid will be documented in this file.
   is released when the scope returns or throws. Manually managed savepoints still require caller coordination.
 - Statement diagnostics and metrics retain preparation, execution, and mapping time when the corresponding
   operation fails, including failed stream opening and iteration.
+- Raw-connection, metadata, and health-check entry points restore reachable interrupt evidence from the failure they
+  propagate when no transaction is open on the calling thread, including a cancelled connection checkout and a
+  failure introduced or replaced by closing the borrowed connection. These entry points do not restore the flag
+  inside a transaction; transaction completion restores reachable evidence from a failure that escapes the closure.
+  A caller that handles cancellation inside the closure decides whether to re-interrupt the thread. Failure-path
+  dialect detection preserves a pending interrupt outside a transaction. Its existing behavior inside a transaction
+  is unchanged: cancellation consumed by swallowed detection failures can still be lost. This remains a limitation,
+  rather than a rule for other diagnostics, which continue to preserve already-pending interruption.
+- DuckDB vector parameters release the SQL ARRAY the bind creates: through the statement's deferred cleanup
+  once the bind succeeds, and before the failure propagates when the bind itself fails, matching SQL ARRAY
+  and STRUCT parameters. A driver that returns no ARRAY from `createArrayOf` still binds.
+- Chunked batches release each chunk's freeable parameter resources after the chunk executes and its batch and
+  parameter slots are cleared, including a trailing partial chunk. When the driver supports clearing parameter slots,
+  `batchChunkSize` therefore bounds retained SQL ARRAY resources for vector, SQL ARRAY, and SQL STRUCT parameters.
+  If `clearParameters()` throws `SQLFeatureNotSupportedException`, `UnsupportedOperationException`, or
+  `AbstractMethodError`, resources stay queued and that resource-retention bound does not apply. Other reset
+  failures, including transaction rollback, connection failure, and cancellation, propagate instead of being swallowed
+  and allowing later chunks to execute or report success.
+  Failed chunks release their resources during batch unwind or statement cleanup; when an earlier release failed,
+  the unwind drain can run before the statement closes. A parameter-release failure alone leaves remaining chunks
+  to execute, never replaces a statement failure, and retains the earliest release failure when several releases
+  fail. Streamed statements release parameter resources after the cursor and statement close, because the streamed
+  execution can still consume parameter values while delivering rows. If closing the cursor or statement and
+  releasing a parameter both fail, the close failure is primary and the release failure is suppressed onto it.
+- A savepoint-scope ownership conflict at transaction completion reports `ROLLED_BACK` instead of `IN_DOUBT`. The
+  guard refuses the commit before any physical commit is issued, so the rollback that follows is provable; the
+  connection is restored and released rather than aborted, and a conflict raised and handled by an independent
+  transaction inside a retried closure no longer fences a retry of a later failure. The conflict itself is still
+  never retried: the guard raises an `IllegalStateException` rather than a `DatabaseException`, so it leaves
+  `Database::transactionWithRetry(...)` without reaching the retry condition. The conflict still fails the
+  transaction with the same exception, and a rollback failure in the same scenario remains indeterminate and still
+  discards the connection. Because the guard now runs ahead of the physical commit attempt,
+  `MetricsCollector.didFailToCommitPhysicalTransaction(...)` no longer reports this conflict and
+  `MetricsCollector.Snapshot.physicalTransactionsCommitFailed()` no longer counts it - commit-failure metrics count
+  only a failed commit attempt. Because the outcome is no longer indeterminate,
+  `MetricsCollector.didExitTransactionClosure(...)` reports `TransactionClosureOutcome.ROLLED_BACK` rather than
+  `FAILED`, so `MetricsCollector.Snapshot.transactionClosuresRolledBack()` counts the conflict and
+  `transactionClosuresFailed()` does not.
 
 ### Migration Notes
 
+- Unsupported temporal-binding messages or capability details no longer override rollback, connection, cancellation,
+  or unreadable failure evidence. Such failures now propagate instead of silently choosing another setter.
 - JDBC drivers remain application-selected. The refreshed test dependencies do not force application
   driver upgrades. Applications adopting MariaDB Connector/J 4.0 should review its verified TLS default,
   stricter JDBC savepoint/query behavior, and streaming LOB modes. New DuckDB 2.0 database files use a
@@ -104,6 +175,13 @@ All notable changes to Pyranid will be documented in this file.
   durable delivery or a continuing health signal. Keep independent reconciliation polling and make it idempotent.
 - Elapsed timing includes consumer time while a cursor remains open and ends at early closure. Existing
   phase timings and OpenTelemetry `db.client.operation.duration` retain their previous meanings.
+- `Database::useRawConnection(...)`, `Database::readDatabaseMetaData(...)`, and `Database::performHealthCheck(...)`
+  now restore thread interruption before throwing when no transaction is open on the calling thread. An application
+  that catches one of these failures outside a transaction and carries on therefore runs with the interrupt flag set
+  where 4.7.x left it clear. What that costs depends on the code that follows: a later `transactionWithRetry(...)`
+  admits no second attempt, while a driver that consumes a pending interrupt during its own connection checkout
+  clears the flag silently instead. Call `Thread.interrupted()` before continuing if the cancellation was expected
+  and handled. Inside a transaction nothing changes; these entry points restore no flag there, in 4.8.0 as in 4.7.x.
 - JDBC work from another thread during `Transaction::withSavepoint(...)` now fails before reaching the driver.
   Coordinate that work after the savepoint scope ends. As before, an exception escaping `Database::participate(...)`
   marks the transaction rollback-only; handle an expected ownership conflict inside the participating callback

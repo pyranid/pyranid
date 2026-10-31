@@ -159,6 +159,8 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 		try {
 			return this.executor.connections.dialect(requireNonNull(this.connection));
 		} catch (DatabaseException e) {
+			if (JdbcFallbacks.isTerminal(e))
+				throw e;
 			return this.executor.connections.cachedType().dialect();
 		}
 	}
@@ -275,8 +277,6 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 		Throwable cleanupFailure = null;
 
 		try {
-			cleanupFailure = closeStatementContextResources(this.statementContext, cleanupFailure);
-
 			if (this.resultSet != null) {
 				try {
 					this.resultSet.close();
@@ -292,6 +292,10 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 					cleanupFailure = appendCleanupFailure(cleanupFailure, cleanupException);
 				}
 			}
+
+			// After the cursor and statement, never before: a streamed execution is still consuming the values it
+			// was given as parameters while it delivers rows.
+			cleanupFailure = closeStatementContextResources(this.statementContext, cleanupFailure);
 
 			cleanupFailure = completeDialectStreamingConnectionIfNeeded(cleanupFailure);
 

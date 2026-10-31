@@ -165,7 +165,9 @@ final class TransactionCoordinator {
 					try {
 						transaction.commit();
 					} catch (RuntimeException | Error e) {
-						commitFailed = true;
+						// The savepoint-ownership guard refuses the commit before issuing it, so nothing committed and the rollback
+						// below proves the outcome. Every other commit failure leaves the outcome unknown.
+						commitFailed = !transaction.didSkipCommitForSavepointScopeConflict(e);
 						throw e;
 					}
 					committed = true;
@@ -454,7 +456,8 @@ final class TransactionCoordinator {
 		try {
 			connection.abort(Runnable::run);
 		} catch (SQLException e) {
-			throw new DatabaseException("Unable to abort database connection", e);
+			throw DatabaseException.wrapSafely("Unable to abort database connection", e,
+					DatabaseDialect.forExceptionCause(e));
 		}
 	}
 

@@ -98,7 +98,26 @@ interface DatabaseDialect {
 										@NonNull BindingPreference bindingPreference,
 										@Nullable Integer fallbackSqlType) throws SQLException;
 
+	/**
+	 * Binds a vector parameter, or a typed SQL NULL when {@code elements} is null. A dialect that does not
+	 * support vectors throws {@link IllegalArgumentException} instead of binding.
+	 * <p>
+	 * An implementation that creates a freeable JDBC resource to carry the value (for example a
+	 * {@code java.sql.Array}) owns it: a driver may read that resource only at execute time, so release on
+	 * success belongs on {@code statementContext} as deferred cleanup, never inline. A resource that never
+	 * reached the statement must be released before the bind failure propagates. A chunked batch releases per
+	 * chunk once execution, batch clearing, and parameter-slot clearing succeed, including a trailing partial chunk.
+	 * If parameter-slot clearing throws {@link java.sql.SQLFeatureNotSupportedException},
+	 * {@link UnsupportedOperationException}, or {@link AbstractMethodError}, resources stay queued, so the chunk
+	 * size does not bound resource retention in that case. Terminal evidence in these exceptions, including
+	 * rollback or cancellation, still propagates. Other reset failures propagate. Failed chunks
+	 * release resources during batch unwind or statement cleanup; an earlier cleanup failure can make the unwind
+	 * drain run before statement close. A streamed statement releases after both the cursor and statement close,
+	 * because execution can keep consuming parameter values while delivering rows. Unchunked statements release
+	 * deferred parameter resources after statement close.
+	 */
 	void bindVector(@NonNull PreparedStatement preparedStatement,
+									@NonNull StatementContext<?> statementContext,
 									@NonNull Integer parameterIndex,
 									double @Nullable [] elements,
 									@Nullable Integer fallbackSqlType) throws SQLException;

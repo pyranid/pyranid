@@ -19,6 +19,7 @@ package com.pyranid;
 import org.hsqldb.jdbc.JDBCDataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 
 import javax.sql.DataSource;
 import java.lang.reflect.InvocationTargetException;
@@ -297,6 +298,343 @@ class TransactionInterruptionTests {
 		assertEquals(1, fixture.closes.get());
 	}
 
+	@Test
+	void rawConnectionEntryPointsRestoreCallbackInterruptionLikeTransactions() {
+		InterruptedException cancelled = new InterruptedException("callback cancelled");
+		// A metadata reader and a health check can only surface cancellation inside a driver SQLException.
+		SQLException driverCancelled = new SQLException("statement cancelled", "57014", cancelled);
+		Fixture fixture = new Fixture(null), healthCheckFixture = new Fixture(null, null, driverCancelled);
+		List<Executable> entryPoints = List.of(
+				() -> fixture.database.useRawConnection(connection -> { throw cancelled; }),
+				() -> fixture.database.useRawConnection(Connection.class, connection -> { throw cancelled; }),
+				() -> fixture.database.readDatabaseMetaData(databaseMetaData -> { throw driverCancelled; }),
+				() -> healthCheckFixture.database.performHealthCheck(Duration.ofSeconds(1)),
+				() -> fixture.database.transaction(() -> fixture.database.useRawConnection(connection -> { throw cancelled; })));
+
+		for (Executable entryPoint : entryPoints) {
+			try {
+				DatabaseException thrown = assertThrows(DatabaseException.class, entryPoint);
+				assertEquals(1, ThrowableGraph.inspect(thrown, current -> current == cancelled ? 1 : 0, 0));
+				assertTrue(Thread.currentThread().isInterrupted());
+			} finally { Thread.interrupted(); }
+		}
+		assertEquals(4, fixture.closes.get());
+		assertEquals(1, fixture.rollbacks.get());
+		assertEquals(1, healthCheckFixture.closes.get());
+		assertTrue(fixture.database.currentTransaction().isEmpty());
+	}
+
+	@Test
+	void rawConnectionCleanupInterruptionRestoresFlagWithoutChangingTheFailure() {
+		// Both iterations run outside a transaction; the flag selects the entry point that would participate in one
+		// from the one that never does, so both exercise the borrowed-connection cleanup path.
+		for (boolean transactionAwareEntryPoint : List.of(true, false)) {
+			for (boolean failBody : List.of(false, true)) {
+				SQLException cleanup = new SQLException("close interrupted", new InterruptedException("release cancelled"));
+				Fixture fixture = new Fixture(cleanup);
+				RuntimeException primary = failBody ? new IllegalStateException("body failed") : null;
+				try {
+					DatabaseException thrown = assertThrows(DatabaseException.class, () -> {
+						if (transactionAwareEntryPoint)
+							fixture.database.useRawConnection(connection -> {
+								if (primary != null) throw primary;
+								return Optional.of(1);
+							});
+						else
+							fixture.database.readDatabaseMetaData(databaseMetaData -> { if (primary != null) throw primary; });
+					});
+					if (failBody) {
+						assertSame(primary, thrown.getCause());
+						assertSame(cleanup, thrown.getSuppressed()[0].getCause());
+					} else {
+						// Cleanup replaces the operation's result here, so it is the only carrier of cancellation.
+						assertSame(cleanup, thrown.getCause());
+						assertEquals(0, thrown.getSuppressed().length);
+					}
+					assertEquals(1, fixture.closes.get());
+					assertTrue(Thread.currentThread().isInterrupted());
+				} finally { Thread.interrupted(); }
+			}
+		}
+	}
+
+	@Test
+	void rawConnectionAcquisitionInterruptionIsRestored() {
+		for (boolean participating : List.of(true, false)) {
+			SQLException cancelled = new SQLException("checkout cancelled", new InterruptedException("borrow cancelled"));
+			Fixture fixture = new Fixture(null, cancelled, null);
+			try {
+				DatabaseException thrown = assertThrows(DatabaseException.class, () -> {
+					if (participating) fixture.database.useRawConnection(connection -> Optional.of(1));
+					else fixture.database.readDatabaseMetaData(databaseMetaData -> {});
+				});
+				assertEquals("Unable to acquire database connection", thrown.getMessage());
+				assertSame(cancelled, thrown.getCause());
+				assertEquals(0, fixture.closes.get());
+				assertTrue(Thread.currentThread().isInterrupted());
+			} finally { Thread.interrupted(); }
+		}
+	}
+
+	@Test
+	void rawConnectionSuccessDoesNotFabricateInterruption() {
+		Fixture fixture = new Fixture(null);
+		assertEquals(Optional.of(1), fixture.database.useRawConnection(connection -> Optional.of(1)));
+		fixture.database.readDatabaseMetaData(databaseMetaData -> assertNotNull(databaseMetaData.getDatabaseProductName()));
+		// Evidence-driven restoration must never publish cancellation the application never requested.
+		assertFalse(Thread.currentThread().isInterrupted());
+		assertEquals(2, fixture.closes.get());
+	}
+
+	@Test
+	void rawConnectionFailureDiagnosticsCannotConsumePendingInterrupt() {
+		AtomicInteger detections = new AtomicInteger();
+		JDBCDataSource source = new JDBCDataSource();
+		source.setUrl("jdbc:hsqldb:mem:raw_connection_diagnostics_" + UUID.randomUUID());
+		source.setUser("sa"); source.setPassword("");
+		DataSource wrapped = (DataSource) Proxy.newProxyInstance(DataSource.class.getClassLoader(), new Class<?>[]{DataSource.class},
+				(proxy, method, args) -> {
+					Object value = invoke(source, method, args);
+					if (value instanceof Connection connection)
+						return Proxy.newProxyInstance(Connection.class.getClassLoader(), new Class<?>[]{Connection.class},
+								(connectionProxy, operation, parameters) -> {
+									if (operation.getName().equals("getMetaData")) {
+										detections.incrementAndGet();
+										Thread.interrupted();
+										throw new SQLException("metadata read cancelled");
+									}
+									return invoke(connection, operation, parameters);
+								});
+					return value;
+				});
+		// No explicit database type, so failure diagnostics attempt dialect detection over this connection.
+		Database database = Database.withDataSource(wrapped).build();
+		IllegalStateException primary = new IllegalStateException("no interrupt evidence");
+		try {
+			DatabaseException thrown = assertThrows(DatabaseException.class,
+					() -> database.useRawConnection(connection -> {
+						Thread.currentThread().interrupt();
+						throw primary;
+					}));
+			assertSame(primary, thrown.getCause());
+			assertEquals(1, detections.get());
+			assertEquals(0, ThrowableGraph.inspect(thrown, current -> current instanceof InterruptedException ? 1 : 0, 0));
+			assertTrue(Thread.currentThread().isInterrupted());
+		} finally { Thread.interrupted(); }
+	}
+
+	@Test
+	void swallowedRawConnectionCancellationLeavesEnclosingTransactionCommittable() {
+		Fixture fixture = new Fixture(null);
+		fixture.database.query("CREATE TABLE committed_work (id INT)").execute();
+
+		fixture.database.transaction(() -> {
+			fixture.database.query("INSERT INTO committed_work (id) VALUES (1)").execute();
+			Transaction transaction = fixture.database.currentTransaction().orElseThrow();
+			assertThrows(IllegalStateException.class, () -> transaction.withSavepoint(() -> {
+				fixture.database.query("INSERT INTO committed_work (id) VALUES (2)").execute();
+				// The caller handles this cancellation report and keeps the transaction, so publishing the interrupt here
+				// would abort the savepoint rollback and release that lockConnectionInterruptibly guards.
+				assertThrows(DatabaseException.class, () -> fixture.database.useRawConnection(connection -> {
+					throw new InterruptedException("callback cancelled");
+				}));
+				throw new IllegalStateException("business rollback");
+			}));
+		});
+
+		boolean interrupted = Thread.interrupted();
+		assertEquals(List.of(1), fixture.database.query("SELECT id FROM committed_work ORDER BY id").executeForList(Integer.class));
+		assertFalse(interrupted);
+	}
+
+	@Test
+	void swallowedMetadataCancellationLeavesLaterSavepointWorkCommittable() {
+		Fixture fixture = new Fixture(null);
+		fixture.database.query("CREATE TABLE committed_work (id INT)").execute();
+
+		fixture.database.transaction(() -> {
+			fixture.database.query("INSERT INTO committed_work (id) VALUES (1)").execute();
+			Transaction transaction = fixture.database.currentTransaction().orElseThrow();
+			// readDatabaseMetaData never participates, so it borrows its own connection while this transaction is open.
+			assertThrows(DatabaseException.class, () -> fixture.database.readDatabaseMetaData(databaseMetaData -> {
+				throw new SQLException("statement cancelled", "57014", new InterruptedException("callback cancelled"));
+			}));
+			transaction.withSavepoint(() -> {
+				fixture.database.query("INSERT INTO committed_work (id) VALUES (2)").execute();
+			});
+		});
+
+		boolean interrupted = Thread.interrupted();
+		assertEquals(List.of(1, 2), fixture.database.query("SELECT id FROM committed_work ORDER BY id").executeForList(Integer.class));
+		assertFalse(interrupted);
+	}
+
+	@Test
+	void rawConnectionInterruptRestoreIsScopedToOperationsOutsideATransaction() {
+		Fixture fixture = new Fixture(null);
+		try {
+			assertThrows(DatabaseException.class, () -> fixture.database.useRawConnection(connection -> {
+				throw new InterruptedException("callback cancelled");
+			}));
+			// With no transaction open, this operation's own failure is the only carrier of the cancellation.
+			assertTrue(Thread.currentThread().isInterrupted());
+		} finally { Thread.interrupted(); }
+
+		fixture.database.transaction(() -> {
+			assertThrows(DatabaseException.class, () -> fixture.database.useRawConnection(connection -> {
+				throw new InterruptedException("callback cancelled");
+			}));
+			assertThrows(DatabaseException.class, () -> fixture.database.readDatabaseMetaData(databaseMetaData -> {
+				throw new SQLException("statement cancelled", "57014", new InterruptedException("callback cancelled"));
+			}));
+			// Inside a transaction a failure the caller handles restores nothing; only one that exits the closure does.
+			assertFalse(Thread.currentThread().isInterrupted());
+		});
+		assertFalse(Thread.currentThread().isInterrupted());
+	}
+
+	@Test
+	void statementFailureDiagnosticsCannotConsumePendingInterrupt() {
+		AtomicInteger detections = new AtomicInteger();
+		JDBCDataSource source = new JDBCDataSource();
+		source.setUrl("jdbc:hsqldb:mem:statement_diagnostics_" + UUID.randomUUID());
+		source.setUser("sa"); source.setPassword("");
+		DataSource wrapped = (DataSource) Proxy.newProxyInstance(DataSource.class.getClassLoader(), new Class<?>[]{DataSource.class},
+				(proxy, method, args) -> {
+					Object value = invoke(source, method, args);
+					if (value instanceof Connection connection)
+						return Proxy.newProxyInstance(Connection.class.getClassLoader(), new Class<?>[]{Connection.class},
+								(connectionProxy, operation, parameters) -> {
+									// HSQLDB consumes a pending interrupt during its own connection checkout, so publish it after.
+									if (operation.getName().equals("prepareStatement")) {
+										Thread.currentThread().interrupt();
+										throw new SQLException("statement failed");
+									}
+									if (operation.getName().equals("getMetaData")) {
+										detections.incrementAndGet();
+										Thread.interrupted();
+										throw new SQLException("metadata read cancelled");
+									}
+									return invoke(connection, operation, parameters);
+								});
+					return value;
+				});
+		// No explicit database type, so failure diagnostics attempt dialect detection over this connection.
+		Database database = Database.withDataSource(wrapped).build();
+		try {
+			DatabaseException thrown = assertThrows(DatabaseException.class,
+					() -> database.query("SELECT id FROM any_table").executeForList(Integer.class));
+			assertEquals(1, detections.get());
+			assertEquals(0, ThrowableGraph.inspect(thrown, current -> current instanceof InterruptedException ? 1 : 0, 0));
+			assertTrue(Thread.currentThread().isInterrupted());
+		} finally { Thread.interrupted(); }
+	}
+
+	@Test
+	void statementFailureDiagnosticsInsideATransactionDoNotPublishInterrupt() {
+		AtomicInteger detections = new AtomicInteger();
+		Database database = Database.withDataSource(cancellationReportingDataSource(detections, "57014")).build();
+		database.query("CREATE TABLE committed_work (id INT)").execute();
+
+		database.transaction(() -> {
+			Transaction transaction = database.currentTransaction().orElseThrow();
+			assertThrows(DatabaseException.class, () -> database.query(
+					"SELECT id FROM committed_work WHERE 'CANCEL_ME' = 'CANCEL_ME'").executeForList(Integer.class));
+			// The caller handles this cancellation report and keeps the transaction, so publishing the flag that the
+			// swallowed detection attempt consumed would abort the statement and savepoint paths that follow.
+			assertTrue(detections.get() > 0);
+			assertFalse(Thread.currentThread().isInterrupted());
+			database.query("INSERT INTO committed_work (id) VALUES (1)").execute();
+			transaction.withSavepoint(() -> database.query("INSERT INTO committed_work (id) VALUES (2)").execute());
+		});
+
+		boolean interrupted = Thread.interrupted();
+		assertEquals(List.of(1, 2), database.query("SELECT id FROM committed_work ORDER BY id").executeForList(Integer.class));
+		assertFalse(interrupted);
+	}
+
+	@Test
+	void rawConnectionFailureDiagnosticsInsideATransactionDoNotPublishInterrupt() {
+		AtomicInteger detections = new AtomicInteger();
+		Database database = Database.withDataSource(cancellationReportingDataSource(detections, "57014")).build();
+		database.query("CREATE TABLE committed_work (id INT)").execute();
+
+		database.transaction(() -> {
+			Transaction transaction = database.currentTransaction().orElseThrow();
+			assertThrows(DatabaseException.class, () -> database.useRawConnection(connection -> {
+				connection.nativeSQL("x");
+				return Optional.empty();
+			}));
+			// useRawConnection participates, so detection runs over this transaction's own connection.
+			assertTrue(detections.get() > 0);
+			assertFalse(Thread.currentThread().isInterrupted());
+			database.query("INSERT INTO committed_work (id) VALUES (1)").execute();
+			transaction.withSavepoint(() -> database.query("INSERT INTO committed_work (id) VALUES (2)").execute());
+		});
+
+		boolean interrupted = Thread.interrupted();
+		assertEquals(List.of(1, 2), database.query("SELECT id FROM committed_work ORDER BY id").executeForList(Integer.class));
+		assertFalse(interrupted);
+	}
+
+	@Test
+	void retryConditionStillSeesAFailureWhoseDriverReportedCancellation() {
+		AtomicInteger detections = new AtomicInteger(), attempts = new AtomicInteger(), conditions = new AtomicInteger();
+		Database database = Database.withDataSource(cancellationReportingDataSource(detections, "40001")).build();
+		database.query("CREATE TABLE retried_work (id INT)").execute();
+		RetryPolicy policy = RetryPolicy.ofMaxAttempts(2, RetryPolicy.Backoff.fixed(Duration.ZERO), failure -> {
+			conditions.incrementAndGet();
+			return true;
+		});
+
+		TransactionRetryResult<Void> result = database.transactionWithRetry(policy, () -> {
+			if (attempts.incrementAndGet() == 1)
+				database.query("SELECT id FROM retried_work WHERE 'CANCEL_ME' = 'CANCEL_ME'").executeForList(Integer.class);
+			else
+				database.query("INSERT INTO retried_work (id) VALUES (2)").execute();
+		});
+
+		// A retry-unsafe outcome is the only reason to skip the condition, and this SQLState 40001 failure carries no
+		// such outcome, so the condition is what decides it. The second attempt pins pre-existing behaviour rather than
+		// a goal of this release: the driver's metadata read consumes the flag it set, nothing republishes it, and the
+		// retry decision therefore sees an uninterrupted thread here as it did before the no-transaction gates existed.
+		assertEquals(1, conditions.get());
+		assertEquals(2, attempts.get());
+		assertEquals(2, result.getAttemptCount());
+		assertTrue(detections.get() > 0);
+		assertEquals(List.of(2), database.query("SELECT id FROM retried_work ORDER BY id").executeForList(Integer.class));
+		assertFalse(Thread.currentThread().isInterrupted());
+	}
+
+	// A driver that reports cancellation the way NIO-channel drivers do: it interrupts the caller and throws, carrying
+	// no InterruptedException. Its metadata read consumes the pending flag and then fails, so failure-path dialect
+	// detection never caches a dialect and re-attempts on every later failure.
+	private static DataSource cancellationReportingDataSource(AtomicInteger detections, String sqlState) {
+		JDBCDataSource source = new JDBCDataSource();
+		source.setUrl("jdbc:hsqldb:mem:cancellation_reporting_" + UUID.randomUUID());
+		source.setUser("sa"); source.setPassword("");
+		return (DataSource) Proxy.newProxyInstance(DataSource.class.getClassLoader(), new Class<?>[]{DataSource.class},
+				(proxy, method, args) -> {
+					Object value = invoke(source, method, args);
+					if (value instanceof Connection connection)
+						return Proxy.newProxyInstance(Connection.class.getClassLoader(), new Class<?>[]{Connection.class},
+								(connectionProxy, operation, parameters) -> {
+									if (operation.getName().equals("nativeSQL") || (operation.getName().equals("prepareStatement")
+											&& String.valueOf(parameters[0]).contains("CANCEL_ME"))) {
+										Thread.currentThread().interrupt();
+										throw new SQLException("statement cancelled", sqlState);
+									}
+									if (operation.getName().equals("getMetaData")) {
+										detections.incrementAndGet();
+										Thread.interrupted();
+										throw new SQLException("metadata read cancelled");
+									}
+									return invoke(connection, operation, parameters);
+								});
+					return value;
+				});
+	}
+
 	private static RetryExecutor executor(RetryExecutor.Sleeper sleeper) {
 		return new RetryExecutor(() -> 0, sleeper);
 	}
@@ -307,15 +645,21 @@ class TransactionInterruptionTests {
 		private final AtomicReference<TransactionCompletion> observed = new AtomicReference<>();
 
 		private Fixture(SQLException closeFailure) {
+			this(closeFailure, null, null);
+		}
+
+		private Fixture(SQLException closeFailure, SQLException connectionFailure, SQLException healthCheckFailure) {
 			JDBCDataSource source = new JDBCDataSource();
 			source.setUrl("jdbc:hsqldb:mem:transaction_interruption_" + UUID.randomUUID());
 			source.setUser("sa"); source.setPassword("");
 			DataSource wrapped = (DataSource) Proxy.newProxyInstance(DataSource.class.getClassLoader(), new Class<?>[]{DataSource.class},
 					(proxy, method, args) -> {
+						if (connectionFailure != null && method.getName().equals("getConnection")) throw connectionFailure;
 						Object value = invoke(source, method, args);
 						if (value instanceof Connection connection)
 							return Proxy.newProxyInstance(Connection.class.getClassLoader(), new Class<?>[]{Connection.class},
 									(connectionProxy, operation, parameters) -> {
+										if (healthCheckFailure != null && operation.getName().equals("isValid")) throw healthCheckFailure;
 										Object result = invoke(connection, operation, parameters);
 										if (operation.getName().equals("rollback")) this.rollbacks.incrementAndGet();
 										if (operation.getName().equals("close")) {

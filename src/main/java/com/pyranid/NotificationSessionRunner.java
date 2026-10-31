@@ -522,7 +522,8 @@ final class NotificationSessionRunner {
 		if (throwable instanceof Error error)
 			throw error;
 
-		throw new DatabaseException("Notification session failed", throwable);
+		throw DatabaseException.wrapSafely("Notification session failed", throwable,
+				DatabaseDialect.forExceptionCause(throwable));
 	}
 
 	@Nullable

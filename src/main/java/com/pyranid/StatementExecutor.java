@@ -76,8 +76,17 @@ final class StatementExecutor {
 
 	void warmDatabaseTypeCacheForMetricsIfNeeded(StatementContext<?> context) {
 		if (!this.metricsCollectorDispatcher.isEnabled()) return;
-		try { context.getDatabaseType(); }
-		catch (Throwable failure) { Logger.getLogger(Database.class.getName()).log(Level.FINE, "Unable to warm database type cache for metrics", failure); }
+		try {
+			context.getDatabaseType();
+		} catch (Throwable failure) {
+			if (JdbcFallbacks.isTerminal(failure)) {
+				if (failure instanceof Error error) throw error;
+				if (failure instanceof RuntimeException runtime) throw runtime;
+				throw DatabaseException.wrapSafely("Unable to determine database type for metrics", failure,
+						DatabaseDialect.forExceptionCause(failure));
+			}
+			Logger.getLogger(Database.class.getName()).log(Level.FINE, "Unable to warm database type cache for metrics", failure);
+		}
 	}
 
 	/**
@@ -393,9 +402,13 @@ final class StatementExecutor {
 			setExecuteLargeUpdateSupported(DatabaseOperationSupportStatus.YES);
 			return result;
 		} catch (SQLFeatureNotSupportedException | UnsupportedOperationException | AbstractMethodError e) {
+			if (JdbcFallbacks.isTerminal(e))
+				throw e;
 			setExecuteLargeUpdateSupported(DatabaseOperationSupportStatus.NO);
 			return (long) preparedStatement.executeUpdate();
 		} catch (SQLException e) {
+			if (JdbcFallbacks.isTerminal(e))
+				throw e;
 			if (isUnsupportedSqlFeature(e)) {
 				setExecuteLargeUpdateSupported(DatabaseOperationSupportStatus.NO);
 				return (long) preparedStatement.executeUpdate();
@@ -769,24 +782,38 @@ final class StatementExecutor {
 				long startTime = nanoTime();
 				int currentBatchSize = 0;
 				List<Long> result = new ArrayList<>(parameterGroups.size());
+				Throwable chunkCleanupFailure = null;
 
-				for (List<Object> parameterGroup : parameterGroups) {
-					if (parameterGroup.size() > 0)
-						performPreparedStatementBinding(statementContext, preparedStatement, parameterGroup);
+				try {
+					for (List<Object> parameterGroup : parameterGroups) {
+						if (parameterGroup.size() > 0)
+							performPreparedStatementBinding(statementContext, preparedStatement, parameterGroup);
 
-					preparedStatement.addBatch();
-					++currentBatchSize;
+						preparedStatement.addBatch();
+						++currentBatchSize;
 
-					if (currentBatchSize == effectiveBatchChunkSize) {
-						result.addAll(executePreparedStatementBatch(preparedStatement));
-						preparedStatement.clearBatch();
-						currentBatchSize = 0;
+						if (currentBatchSize == effectiveBatchChunkSize) {
+							result.addAll(executePreparedStatementBatch(preparedStatement));
+							chunkCleanupFailure = releaseChunkParameterResources(statementContext, preparedStatement, chunkCleanupFailure);
+							currentBatchSize = 0;
+						}
 					}
-				}
 
-				if (currentBatchSize > 0) {
-					result.addAll(executePreparedStatementBatch(preparedStatement));
-					preparedStatement.clearBatch();
+					// The trailing partial chunk releases on the same terms as a full one; leaving it to statement exit
+					// would make per-chunk release depend on whether batchChunkSize happens to divide the batch.
+					if (currentBatchSize > 0) {
+						result.addAll(executePreparedStatementBatch(preparedStatement));
+						chunkCleanupFailure = releaseChunkParameterResources(statementContext, preparedStatement, chunkCleanupFailure);
+					}
+				} finally {
+					if (chunkCleanupFailure != null) {
+						// A failing chunk must not discard a release failure from a chunk that already succeeded, and the
+						// statement's own drain keeps the first failure it sees. Draining what a failing chunk left queued
+						// here, with the earlier failure as the seed, keeps that failure primary; re-queueing it behind
+						// those entries instead would let a later release displace it.
+						chunkCleanupFailure = closeStatementContextResources(statementContext, chunkCleanupFailure);
+						statementContext.addCleanupOperation(rethrowingCleanupOperation(chunkCleanupFailure));
+					}
 				}
 
 				resultHolder.value = result;
@@ -812,6 +839,67 @@ final class StatementExecutor {
 		return new DatabaseOperationResult(executionDuration, null, statementResult);
 	}
 
+	/**
+	 * Releases what a chunk's parameter groups bound, now that the execution which consumed their values has
+	 * completed: the statement's batch and then its parameter slots, so the statement holds none of the chunk's
+	 * values, and only afterwards the deferred cleanup registered for those groups. Deferred cleanup is registered
+	 * per parameter group, so draining only at statement exit would hold every chunk's freeable resources and leave
+	 * {@code batchChunkSize} bounding the JDBC batch alone.
+	 * <p>
+	 * A release failure accumulates into the returned value rather than propagating, so the chunks after this one
+	 * still execute. If a driver explicitly does not support clearing parameter slots, this method leaves the
+	 * deferred cleanup queued. Other reset failures propagate so transaction rollback, cancellation, and connection
+	 * failures cannot disappear while later chunks continue executing.
+	 */
+	@Nullable
+	private static Throwable releaseChunkParameterResources(@NonNull StatementContext<?> statementContext,
+																													@NonNull PreparedStatement preparedStatement,
+																													@Nullable Throwable chunkCleanupFailure) throws SQLException {
+		requireNonNull(statementContext);
+		requireNonNull(preparedStatement);
+
+		preparedStatement.clearBatch();
+
+		if (statementContext.getCleanupOperations().isEmpty())
+			return chunkCleanupFailure;
+
+		// clearBatch discards the driver's copies of this chunk's commands, but the values the chunk's last group
+		// bound stay in the statement's parameter slots until clearParameters - a driver free to read a slot again
+		// must not find a released resource there.
+		try {
+			preparedStatement.clearParameters();
+		} catch (SQLFeatureNotSupportedException | UnsupportedOperationException | AbstractMethodError e) {
+			if (JdbcFallbacks.isTerminal(e))
+				throw e;
+			// An explicitly unsupported reset falls back to deferred release. Do not extend this catch to all
+			// SQLExceptions: a reset can report cancellation or a rolled-back transaction, and continuing would
+			// hide the failure and could commit only the chunks that follow it.
+			return chunkCleanupFailure;
+		}
+
+		return closeStatementContextResources(statementContext, chunkCleanupFailure);
+	}
+
+	/**
+	 * Re-queues a cleanup failure the caller already accumulated, so the statement's own cleanup drain
+	 * accounts for it exactly as it accounts for a release that fails there: suppressed onto the statement's
+	 * failure when there is one, and the exit failure only when there is none.
+	 */
+	@NonNull
+	private static AutoCloseable rethrowingCleanupOperation(@NonNull Throwable cleanupFailure) {
+		requireNonNull(cleanupFailure);
+
+		return () -> {
+			if (cleanupFailure instanceof Exception exception)
+				throw exception;
+
+			if (cleanupFailure instanceof Error error)
+				throw error;
+
+			throw new RuntimeException(cleanupFailure);
+		};
+	}
+
 	@NonNull
 	private List<Long> executePreparedStatementBatch(@NonNull PreparedStatement preparedStatement) throws SQLException {
 		requireNonNull(preparedStatement);
@@ -835,10 +923,14 @@ final class StatementExecutor {
 			setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.YES);
 			return Arrays.stream(resultArray).boxed().collect(Collectors.toList());
 		} catch (SQLFeatureNotSupportedException | UnsupportedOperationException | AbstractMethodError e) {
+			if (JdbcFallbacks.isTerminal(e))
+				throw e;
 			setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.NO);
 			int[] resultArray = preparedStatement.executeBatch();
 			return Arrays.stream(resultArray).asLongStream().boxed().collect(Collectors.toList());
 		} catch (SQLException e) {
+			if (JdbcFallbacks.isTerminal(e))
+				throw e;
 			if (!isUnsupportedSqlFeature(e))
 				throw e;
 
@@ -913,6 +1005,8 @@ final class StatementExecutor {
 					try {
 						preparedStatement.setNull(parameterIndex, sqlType);
 					} catch (SQLException | AbstractMethodError e) {
+						if (JdbcFallbacks.isTerminal(e))
+							throw e;
 						if (sqlType == Types.NULL)
 							throw e;
 

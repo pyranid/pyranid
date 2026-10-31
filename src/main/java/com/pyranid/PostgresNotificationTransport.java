@@ -311,16 +311,16 @@ final class PostgresNotificationTransport implements NotificationTransport {
 		requireNonNull(connection);
 		requireNonNull(exception);
 
-		if (hasConnectionSqlState(exception))
-			return true;
-
 		try {
-			return connection.isClosed();
-		} catch (SQLException closedCheckFailure) {
-			if (closedCheckFailure != exception)
-				exception.addSuppressed(closedCheckFailure);
+			if (hasConnectionSqlState(exception))
+				return true;
 
-			return hasConnectionSqlState(closedCheckFailure);
+			return connection.isClosed();
+		} catch (Throwable diagnosticFailure) {
+			// Classification must not replace a receive failure, including while restoring a timeout in
+			// finally. If exception metadata or connection health is unreadable, disposal must fail closed.
+			ThrowableGraph.retainInspectionFailure(exception, diagnosticFailure);
+			return true;
 		}
 	}
 

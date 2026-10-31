@@ -93,6 +93,11 @@ public final class Transaction {
 	private volatile CompletionPhase completionPhase;
 	@NonNull
 	private final AtomicBoolean commitSerializationFailure;
+	// Written only by the ownership guard that runs ahead of the JDBC commit, so completion can prove the conflict it is
+	// handling preceded any commit attempt. Holds the instance rather than a flag so a conflict raised anywhere else can
+	// never be mistaken for this one.
+	@Nullable
+	private volatile SavepointScopeConflictException savepointScopeConflictBeforeCommit;
 	@NonNull
 	private volatile PhysicalTransactionBeginState physicalTransactionBeginState;
 	@Nullable
@@ -143,6 +148,7 @@ public final class Transaction {
 		this.lifecycleLock = new ReentrantLock();
 		this.completionPhase = CompletionPhase.ACTIVE;
 		this.commitSerializationFailure = new AtomicBoolean(false);
+		this.savepointScopeConflictBeforeCommit = null;
 		this.physicalTransactionBeginState = PhysicalTransactionBeginState.NOT_STARTED;
 		this.physicalTransactionBeginFailure = null;
 		this.physicalRollbackPermitted = false;
@@ -241,6 +247,8 @@ public final class Transaction {
 	 * If {@code transactionalOperation} completes successfully, the savepoint is released when the driver supports release.
 	 * If an exception bubbles out, Pyranid rolls back to the savepoint, attempts to release it, and preserves cleanup failures
 	 * as suppressed exceptions on the thrown exception.
+	 * If rollback cleanup fails or release cleanup reports a terminal failure, the surrounding transaction is marked
+	 * rollback-only even when the caller handles the body failure.
 	 * <p>
 	 * Nested savepoint usage should be stack-like: finish inner savepoints before manually releasing or rolling back outer
 	 * savepoints.
@@ -269,6 +277,8 @@ public final class Transaction {
 	 * If {@code transactionalOperation} completes successfully, the savepoint is released when the driver supports release.
 	 * If an exception bubbles out, Pyranid rolls back to the savepoint, attempts to release it, and preserves cleanup failures
 	 * as suppressed exceptions on the thrown exception.
+	 * If rollback cleanup fails or release cleanup reports a terminal failure, the surrounding transaction is marked
+	 * rollback-only even when the caller handles the body failure.
 	 * <p>
 	 * Nested savepoint usage should be stack-like: finish inner savepoints before manually releasing or rolling back outer
 	 * savepoints.
@@ -480,13 +490,17 @@ public final class Transaction {
 				return;
 			}
 
+			// The public connection accessor rejects COMPLETING. Internal completion owns the existing handle, so it applies
+			// the savepoint-scope guard itself. The guard runs outside the physical commit attempt below because a conflict
+			// raised here proves nothing was committed, which is what lets completion report a rollback instead of an
+			// indeterminate outcome, and because commit-failure metrics must count only a failed commit attempt.
+			assertSavepointScopeAccessBeforeCommit();
+
 			LOGGER.finer("Committing transaction...");
 
 			long startTime = nanoTime();
 
 			try {
-				// The public connection accessor rejects COMPLETING. Internal completion owns the existing handle.
-				assertSavepointScopeAccess();
 				requireNonNull(this.connection).commit();
 				getMetricsCollectorDispatcher().didCommitPhysicalTransaction(this, getDatabaseType(), Duration.ofNanos(nanoTime() - startTime));
 				LOGGER.finer("Transaction committed.");
@@ -513,10 +527,22 @@ public final class Transaction {
 		return this.commitSerializationFailure.get();
 	}
 
+	boolean didSkipCommitForSavepointScopeConflict(@NonNull Throwable commitFailure) {
+		requireNonNull(commitFailure);
+
+		// Identity, never type or message: a conflict raised anywhere a JDBC commit could already have been issued must stay
+		// indeterminate, and a hostile throwable's accessors are never consulted.
+		return this.savepointScopeConflictBeforeCommit == commitFailure;
+	}
+
 	void rollback() {
 		getConnectionLock().lock();
 
 		try {
+			// Deliberately no savepoint-scope guard, unlike commit(): completion must always be able to discard work. A
+			// rollback cannot publish another participant's partial work, and that participant's next JDBC call is rejected
+			// once completion has marked this transaction completed.
+
 			if (!hasConnection()) {
 				LOGGER.finer("Transaction has no connection, so nothing to roll back");
 				return;
@@ -910,6 +936,18 @@ public final class Transaction {
 		}
 	}
 
+
+	/** An admitted savepoint cleanup can fail while completion waits for its connection lease. */
+	private void markRollbackOnlyForCleanupFailure() {
+		this.lifecycleLock.lock();
+		try {
+			if (this.completionPhase != CompletionPhase.COMPLETED)
+				this.rollbackOnly.set(true);
+		} finally {
+			this.lifecycleLock.unlock();
+		}
+	}
+
 	private void enterSavepointScope() {
 		lockConnectionInterruptibly("run a savepoint operation");
 
@@ -941,6 +979,17 @@ public final class Transaction {
 					"Transaction %s has an active savepoint scope on another thread; JDBC work must wait until that scope finishes", id()));
 	}
 
+	// Commit's guard has its own call site so the recorded conflict is itself proof of ordering: this runs before the JDBC
+	// commit is issued and nowhere else. A conflict from any other path leaves the field untouched.
+	private void assertSavepointScopeAccessBeforeCommit() {
+		try {
+			assertSavepointScopeAccess();
+		} catch (SavepointScopeConflictException e) {
+			this.savepointScopeConflictBeforeCommit = e;
+			throw e;
+		}
+	}
+
 	private void releaseSavepointAfterSuccess(@NonNull Savepoint savepoint) {
 		requireNonNull(savepoint);
 		lockConnectionInterruptibly("release a savepoint");
@@ -949,6 +998,8 @@ public final class Transaction {
 			getConnection().releaseSavepoint(savepoint);
 			getMetricsCollectorDispatcher().didReleaseSavepoint(this, getDatabaseType());
 		} catch (SQLFeatureNotSupportedException e) {
+			if (JdbcFallbacks.isTerminal(e))
+				throw databaseException("Unable to release savepoint", e);
 			// Some drivers support rollback-to-savepoint but not release; successful closures should still succeed.
 		} catch (SQLException e) {
 			throw databaseException("Unable to release savepoint", e);
@@ -970,8 +1021,9 @@ public final class Transaction {
 			getConnection().rollback(savepoint);
 			getMetricsCollectorDispatcher().didRollbackToSavepoint(this, getDatabaseType());
 		} catch (Throwable rollbackException) {
-			markRollbackOnlyIfActive();
-			primary.addSuppressed(databaseException("Unable to roll back to savepoint", rollbackException));
+			markRollbackOnlyForCleanupFailure();
+			if (primary != rollbackException)
+				Database.appendCleanupFailure(primary, databaseException("Unable to roll back to savepoint", rollbackException));
 		} finally {
 			if (rollbackConnectionLockAcquired)
 				getConnectionLock().unlock();
@@ -985,9 +1037,19 @@ public final class Transaction {
 			getConnection().releaseSavepoint(savepoint);
 			getMetricsCollectorDispatcher().didReleaseSavepoint(this, getDatabaseType());
 		} catch (SQLFeatureNotSupportedException e) {
+			if (JdbcFallbacks.isTerminal(e)) {
+				// A caller may handle the body failure. Terminal release evidence must still prevent
+				// committing later work after a rollback or loss of the surrounding transaction.
+				markRollbackOnlyForCleanupFailure();
+				if (primary != e)
+					Database.appendCleanupFailure(primary, databaseException("Unable to release savepoint", e));
+			}
 			// Some drivers support rollback-to-savepoint but not release.
 		} catch (Throwable releaseException) {
-			primary.addSuppressed(databaseException("Unable to release savepoint", releaseException));
+			if (JdbcFallbacks.isTerminal(releaseException))
+				markRollbackOnlyForCleanupFailure();
+			if (primary != releaseException)
+				Database.appendCleanupFailure(primary, databaseException("Unable to release savepoint", releaseException));
 		} finally {
 			if (releaseConnectionLockAcquired)
 				getConnectionLock().unlock();
@@ -1037,6 +1099,13 @@ public final class Transaction {
 		try {
 			this.databaseType = requireNonNull(this.databaseTypeResolver.apply(connection));
 		} catch (Throwable t) {
+			if (JdbcFallbacks.isTerminal(t)) {
+				if (t instanceof Error error)
+					throw error;
+				if (t instanceof RuntimeException runtimeException)
+					throw runtimeException;
+				throw databaseException("Unable to determine database type from transaction connection", t);
+			}
 			LOGGER.log(Level.FINE, "Unable to determine database type from transaction connection", t);
 		}
 	}
@@ -1049,7 +1118,9 @@ public final class Transaction {
 		DatabaseDialect databaseDialect = getDatabaseType() == DatabaseType.GENERIC
 				? DatabaseDialect.forExceptionCause(cause)
 				: getDatabaseType().dialect();
-		return new DatabaseException(message, cause, databaseDialect);
+		// Driver metadata is diagnostic: a broken accessor must not replace interruption or stop cleanup.
+		return cause == null ? new DatabaseException(message, null, databaseDialect)
+				: DatabaseException.wrapSafely(message, cause, databaseDialect);
 	}
 
 	@NonNull

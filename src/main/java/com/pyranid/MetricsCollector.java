@@ -253,6 +253,11 @@ public interface MetricsCollector {
 
 	/**
 	 * Called after Pyranid fails to commit a physical JDBC transaction.
+	 * <p>
+	 * Reported when Pyranid's physical commit attempt fails: the JDBC commit call itself, or the success handling that
+	 * immediately follows it. It does not establish that the driver never received the commit, nor that the commit did not
+	 * succeed. A completion that refuses the commit before issuing it, such as a savepoint-scope ownership conflict, still
+	 * fails the transaction without reaching this callback.
 	 *
 	 * @param transaction      transaction whose commit failed
 	 * @param databaseType     database type known at commit time

@@ -216,6 +216,11 @@ final class PostgresDriverSupport {
 		try {
 			return connection.isWrapperFor(driverConnectionApi);
 		} catch (SQLException | RuntimeException | AbstractMethodError e) {
+			if (JdbcFallbacks.isTerminal(e)) {
+				if (e instanceof RuntimeException runtimeException) throw runtimeException;
+				if (e instanceof Error error) throw error;
+				throw DatabaseException.wrapSafely("Unable to identify PostgreSQL driver", e, DatabaseDialect.forExceptionCause(e));
+			}
 			return false;
 		}
 	}
@@ -273,9 +278,10 @@ final class PostgresDriverSupport {
 			if (targetException instanceof Error error)
 				throw error;
 
-			throw new DatabaseException("Unable to extract PostgreSQL PGobject value", targetException);
+			throw DatabaseException.wrapSafely("Unable to extract PostgreSQL PGobject value", targetException,
+					DatabaseDialect.forExceptionCause(targetException));
 		} catch (IllegalAccessException | IllegalArgumentException e) {
-			throw new DatabaseException("Unable to extract PostgreSQL PGobject value", e);
+			throw DatabaseException.wrapSafely("Unable to extract PostgreSQL PGobject value", e, DatabaseDialect.forExceptionCause(e));
 		}
 	}
 

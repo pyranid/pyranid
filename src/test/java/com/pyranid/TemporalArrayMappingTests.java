@@ -418,12 +418,9 @@ class TemporalArrayMappingTests {
 	@Test
 	void unsupportedPlainTimeReaderFailsBuiltInMappingWithoutChangingNativeOrCustomResults() throws Exception {
 		java.sql.Time raw = java.sql.Time.valueOf("12:34:56");
-		SQLException brokenMetadata = new SQLFeatureNotSupportedException("typed getter unavailable") {
-			@Override public String getSQLState() { throw new IllegalStateException("unreadable SQLState"); }
-		};
 		for (Throwable unsupported : List.of(new SQLFeatureNotSupportedException("typed getter unavailable"),
 				new SQLException("typed getter unavailable", "0A000"), new SQLException("typed getter unavailable", "HYC00"),
-				new UnsupportedOperationException("typed getter unavailable"), new AbstractMethodError("typed getter unavailable"), brokenMetadata)) {
+				new UnsupportedOperationException("typed getter unavailable"), new AbstractMethodError("typed getter unavailable"))) {
 			List<String> events = new ArrayList<>();
 			DatabaseException failure = assertThrows(DatabaseException.class, () -> mapArray(ResultSetMapper.withDefaultConfiguration(),
 					ZoneId.of("UTC"), timeArray(new java.sql.Time[]{raw}, new Object[]{null}, Types.TIME, "time",
@@ -446,6 +443,40 @@ class TemporalArrayMappingTests {
 			assertArrayEquals(new LocalTime[]{supplied}, mapArray(custom, ZoneId.of("UTC"), timeArray(
 					new java.sql.Time[]{raw}, new Object[]{null}, Types.TIME, "time", new ArrayList<>(), "root",
 					unsupported, null, null), LocalTime[].class));
+		}
+	}
+
+	@Test
+	void unreadableTimeReaderFailureCannotBypassNativeOrCustomMapping() {
+		java.sql.Time raw = java.sql.Time.valueOf("12:34:56");
+		for (boolean cached : new boolean[]{false, true}) {
+			for (String mapping : List.of("builtIn", "native", "custom")) {
+				SQLException original = new SQLFeatureNotSupportedException("typed getter unavailable") {
+					@Override public String getSQLState() { throw new IllegalStateException("unreadable SQLState"); }
+				};
+				AtomicInteger customCalls = new AtomicInteger();
+				ResultSetMapper.Builder builder = ResultSetMapper.withPlanCachingEnabled(cached);
+				if (mapping.equals("custom")) builder.customColumnMappers(List.of(new CustomColumnMapper() {
+					@Override public Boolean appliesTo(TargetType type) { return type.getRawClass() == LocalTime[].class; }
+					@Override public MappingResult map(StatementContext<?> context, ResultSet rows, Object value,
+							TargetType target, Integer column, String label, InstanceProvider provider) {
+						customCalls.incrementAndGet();
+						return MappingResult.of(new LocalTime[]{LocalTime.parse("12:34:56.123456789")});
+					}
+				}));
+				ResultSetMapper mapper = builder.build();
+				Class<?> target = mapping.equals("native") ? Map.class : LocalTime[].class;
+				Class<? extends Throwable> expected = mapping.equals("builtIn") ? DatabaseException.class : SQLException.class;
+				List<String> events = new ArrayList<>();
+
+				Throwable thrown = assertThrows(expected, () -> mapArray(mapper, ZoneId.of("UTC"), timeArray(
+						new java.sql.Time[]{raw}, new Object[]{null}, Types.TIME, "time", events, "root",
+						original, null, null), target), mapping + " cached=" + cached);
+
+				assertTrue(thrown == original || thrown.getCause() == original);
+				assertEquals(0, customCalls.get(), "Unreadable failure evidence must be rejected before custom mapping");
+				assertEquals(List.of("root:close", "root:free"), events);
+			}
 		}
 	}
 

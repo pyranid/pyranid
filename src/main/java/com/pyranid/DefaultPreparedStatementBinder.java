@@ -39,10 +39,13 @@ import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Currency;
 import java.util.Date;
+import java.util.Deque;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -50,6 +53,7 @@ import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.Set;
 import java.util.TimeZone;
 import java.util.UUID;
 
@@ -311,7 +315,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			Optional<ParameterSqlType> sqlTypeOptional = elements == null && databaseDialect.supportsVector()
 					? determineParameterSqlType(parameterSqlTypeResolver, parameterIndex)
 					: Optional.empty();
-			databaseDialect.bindVector(preparedStatement, parameterIndex, elements,
+			databaseDialect.bindVector(preparedStatement, statementContext, parameterIndex, elements,
 					sqlTypeOptional.map(ParameterSqlType::getSqlType).orElse(null));
 
 			return;
@@ -496,36 +500,113 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		try {
 			preparedStatement.setObject(parameterIndex, parameter);
 			return true;
-		} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
+		} catch (AbstractMethodError e) {
+			if (JdbcFallbacks.isTerminal(e))
+				throw e;
 			return false;
 		} catch (SQLException e) {
-			if (isUnsupportedSqlFeature(e))
+			rethrowTerminalBindingFailure(e);
+			if (e instanceof SQLFeatureNotSupportedException || isUnsupportedSqlFeature(e))
 				return false;
 			throw e;
 		}
 	}
 
-	private static boolean isUnsupportedSqlFeature(@NonNull SQLException e) {
+	/**
+	 * Whether a failed bind looks like an unsupported driver feature rather than a real statement error:
+	 * a {@code 0A}-class or {@code HYC00} SQLState, or an unsupported-sounding message, on any
+	 * {@link SQLException} reachable through next-exception and {@link SQLException} cause edges.
+	 */
+	private static boolean isUnsupportedSqlFeature(@NonNull SQLException e) throws SQLException {
 		requireNonNull(e);
 
-		String sqlState = e.getSQLState();
+		// Drivers hand back self-referential chains - SQLException#setNextException(this) CASes next = this -
+		// so walk against an identity visited set instead of recursing: a StackOverflowError raised here
+		// escapes as an Error, hiding the driver failure from retry classification and terminal-failure scans.
+		Set<SQLException> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+		Deque<SQLException> pending = new ArrayDeque<>();
+		pending.add(e);
+
+		while (!pending.isEmpty()) {
+			SQLException current = pending.removeFirst();
+
+			if (!visited.add(current))
+				continue;
+
+			if (hasUnsupportedSqlFeatureEvidence(current, e))
+				return true;
+
+			SQLException next = unsupportedSqlFeatureNextException(current, e);
+			if (next != null)
+				pending.add(next);
+
+			// Deliberately only next-exception and SQLException-cause edges, the graph this classification has
+			// always inspected: a suppressed cleanup failure ("array free is not supported") must not reclassify
+			// the bind, and an SQLException behind a non-SQLException cause must not start a fallback bind.
+			if (unsupportedSqlFeatureCause(current, e) instanceof SQLException causeSqlException)
+				pending.add(causeSqlException);
+		}
+
+		return false;
+	}
+
+	/** Preserve the original bind failure if a driver cannot expose its classification. */
+	private static boolean hasUnsupportedSqlFeatureEvidence(@NonNull SQLException e,
+			@NonNull SQLException operationFailure) throws SQLException {
+		requireNonNull(e);
+
+		String sqlState;
+
+		try {
+			sqlState = e.getSQLState();
+		} catch (Throwable unreadableSqlState) {
+			ThrowableGraph.retainInspectionFailure(operationFailure, unreadableSqlState);
+			throw operationFailure;
+		}
+
 		if (sqlState != null && (sqlState.startsWith("0A") || "HYC00".equals(sqlState)))
 			return true;
 
-		SQLException next = e.getNextException();
-		if (next != null && isUnsupportedSqlFeature(next))
-			return true;
+		String message;
 
-		Throwable cause = e.getCause();
-		if (cause instanceof SQLException se && isUnsupportedSqlFeature(se))
-			return true;
+		try {
+			message = e.getMessage();
+		} catch (Throwable unreadableMessage) {
+			ThrowableGraph.retainInspectionFailure(operationFailure, unreadableMessage);
+			throw operationFailure;
+		}
 
-		String message = e.getMessage();
 		if (message == null)
 			return false;
 
 		String lower = message.toLowerCase(Locale.ROOT);
 		return lower.contains("not supported") || lower.contains("not implemented") || lower.contains("unsupported");
+	}
+
+	@Nullable
+	private static SQLException unsupportedSqlFeatureNextException(@NonNull SQLException e,
+			@NonNull SQLException operationFailure) throws SQLException {
+		requireNonNull(e);
+
+		try {
+			return e.getNextException();
+		} catch (Throwable unreadableChain) {
+			ThrowableGraph.retainInspectionFailure(operationFailure, unreadableChain);
+			throw operationFailure;
+		}
+	}
+
+	@Nullable
+	private static Throwable unsupportedSqlFeatureCause(@NonNull SQLException e,
+			@NonNull SQLException operationFailure) throws SQLException {
+		requireNonNull(e);
+
+		try {
+			return e.getCause();
+		} catch (Throwable unreadableChain) {
+			ThrowableGraph.retainInspectionFailure(operationFailure, unreadableChain);
+			throw operationFailure;
+		}
 	}
 
 	/**
@@ -562,10 +643,13 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		try {
 			preparedStatement.setObject(parameterIndex, parameter, sqlType);
 			return true;
-		} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
+		} catch (AbstractMethodError e) {
+			if (JdbcFallbacks.isTerminal(e))
+				throw e;
 			return false;
 		} catch (SQLException e) {
-			if (isUnsupportedSqlFeature(e))
+			rethrowTerminalBindingFailure(e);
+			if (e instanceof SQLFeatureNotSupportedException || isUnsupportedSqlFeature(e))
 				return false;
 			throw e;
 		}
@@ -613,14 +697,20 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 				try {
 					typeName = parameterMetaData.getParameterTypeName(parameterIndex);
-				} catch (SQLFeatureNotSupportedException | AbstractMethodError ignored) {
-				} catch (SQLException ignored) {
+				} catch (AbstractMethodError failure) {
+					if (JdbcFallbacks.isTerminal(failure))
+						throw failure;
+				} catch (SQLException failure) {
+					rethrowTerminalBindingFailure(failure);
 				}
 
 				return Optional.of(new ParameterSqlType(sqlType, typeName));
-			} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
+			} catch (AbstractMethodError e) {
+				if (JdbcFallbacks.isTerminal(e))
+					throw e;
 				return Optional.empty();
 			} catch (SQLException e) {
+				rethrowTerminalBindingFailure(e);
 				return Optional.empty();
 			}
 		}
@@ -632,9 +722,12 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 				try {
 					this.parameterMetaData = this.preparedStatement.getParameterMetaData();
-				} catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
+				} catch (AbstractMethodError e) {
+					if (JdbcFallbacks.isTerminal(e))
+						throw e;
 					this.parameterMetaData = null;
 				} catch (SQLException e) {
+					rethrowTerminalBindingFailure(e);
 					this.parameterMetaData = null;
 				}
 			}
@@ -695,6 +788,12 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 	}
 
+	/** Compatibility fallbacks must not hide a driver rollback, lost connection, or cancellation. */
+	static void rethrowTerminalBindingFailure(@NonNull SQLException failure) throws SQLException {
+		if (JdbcFallbacks.isTerminal(failure))
+			throw failure;
+	}
+
 	static void setNullWithFallback(@NonNull PreparedStatement preparedStatement,
 																	@NonNull Integer parameterIndex,
 																	@NonNull Integer primarySqlType,
@@ -711,6 +810,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 				preparedStatement.setNull(parameterIndex, primarySqlType, typeName);
 				return;
 			} catch (SQLException e) {
+				rethrowTerminalBindingFailure(e);
 				lastException = e;
 			}
 		}
@@ -719,6 +819,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			preparedStatement.setNull(parameterIndex, primarySqlType);
 			return;
 		} catch (SQLException e) {
+			rethrowTerminalBindingFailure(e);
 			lastException = e;
 		}
 
@@ -727,6 +828,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 				preparedStatement.setNull(parameterIndex, fallbackSqlType);
 				return;
 			} catch (SQLException e) {
+				rethrowTerminalBindingFailure(e);
 				lastException = e;
 			}
 		}
@@ -736,6 +838,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 				preparedStatement.setNull(parameterIndex, Types.NULL);
 				return;
 			} catch (SQLException e) {
+				rethrowTerminalBindingFailure(e);
 				lastException = e;
 			}
 		}

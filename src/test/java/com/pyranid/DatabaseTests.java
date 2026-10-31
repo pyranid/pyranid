@@ -35,6 +35,7 @@ import java.lang.reflect.Proxy;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
+import java.sql.Array;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -1371,6 +1372,418 @@ public class DatabaseTests {
 		Assertions.assertEquals(List.of(2, 2, 1), executedChunkSizes);
 		Assertions.assertEquals(1, largeBatchCalls.get());
 		Assertions.assertEquals(3, batchCalls.get());
+	}
+
+	@Test
+	public void testExecuteBatchChunkingReleasesEachChunksParameterResources() {
+		for (boolean vector : new boolean[]{true, false}) {
+			AtomicInteger createdArrays = new AtomicInteger();
+			AtomicInteger freedArrays = new AtomicInteger();
+			AtomicInteger pendingBatchSize = new AtomicInteger();
+			List<Integer> unfreedArraysWhenChunkExecuted = new ArrayList<>();
+			Connection[] connection = new Connection[1];
+
+			PreparedStatement preparedStatement = (PreparedStatement) Proxy.newProxyInstance(
+					PreparedStatement.class.getClassLoader(),
+					new Class<?>[]{PreparedStatement.class},
+					(proxy, method, args) -> {
+						String name = method.getName();
+						if ("getConnection".equals(name))
+							return connection[0];
+						if ("addBatch".equals(name)) {
+							pendingBatchSize.incrementAndGet();
+							return null;
+						}
+						if ("executeLargeBatch".equals(name)) {
+							unfreedArraysWhenChunkExecuted.add(createdArrays.get() - freedArrays.get());
+							long[] updateCounts = new long[pendingBatchSize.getAndSet(0)];
+							Arrays.fill(updateCounts, 1L);
+							return updateCounts;
+						}
+						return defaultValue(method.getReturnType());
+					});
+
+			connection[0] = (Connection) Proxy.newProxyInstance(
+					Connection.class.getClassLoader(),
+					new Class<?>[]{Connection.class},
+					(proxy, method, args) -> {
+						String name = method.getName();
+						if ("prepareStatement".equals(name))
+							return preparedStatement;
+						if ("createArrayOf".equals(name)) {
+							createdArrays.incrementAndGet();
+							return (Array) Proxy.newProxyInstance(Array.class.getClassLoader(), new Class<?>[]{Array.class},
+									(arrayProxy, arrayMethod, arrayArgs) -> {
+										if ("free".equals(arrayMethod.getName()))
+											freedArrays.incrementAndGet();
+										return defaultValue(arrayMethod.getReturnType());
+									});
+						}
+						return defaultValue(method.getReturnType());
+					});
+
+			Database db = Database.withDataSource(dataSourceForConnection(connection[0]))
+					.databaseType(vector ? DatabaseType.DUCK_DB : DatabaseType.GENERIC)
+					.build();
+
+			Object parameter = vector
+					? Parameters.vectorOfDoubles(new double[]{0.25, 0.5})
+					: Parameters.sqlArrayOf("DOUBLE", List.of(0.25, 0.5));
+			Map<String, Object> parameterGroup = Map.of("embedding", parameter);
+
+			List<Long> result = db.query("INSERT INTO t (embedding) VALUES (:embedding)")
+					.batchChunkSize(2)
+					.executeBatch(List.of(parameterGroup, parameterGroup, parameterGroup,
+							parameterGroup, parameterGroup, parameterGroup));
+
+			Assertions.assertEquals(List.of(1L, 1L, 1L, 1L, 1L, 1L), result);
+			Assertions.assertEquals(6, createdArrays.get(), "vector=" + vector);
+			// batchChunkSize bounds the freeable parameter resources the statement holds, not just the JDBC
+			// batch: each chunk executes holding its own arrays and nothing from the chunks before it
+			Assertions.assertEquals(List.of(2, 2, 2), unfreedArraysWhenChunkExecuted, "vector=" + vector);
+			Assertions.assertEquals(6, freedArrays.get(), "vector=" + vector);
+		}
+	}
+
+	@Test
+	public void testChunkedBatchArrayReleaseFailureDoesNotAbandonRemainingChunks() {
+		for (boolean statementAlsoFails : new boolean[]{false, true}) {
+			SQLException freeFailure = new SQLException("driver lost the array while freeing it", "08006");
+			SQLException executionFailure = new SQLException("chunk rejected", "42000");
+			AtomicInteger createdArrays = new AtomicInteger();
+			AtomicInteger freedArrays = new AtomicInteger();
+			AtomicInteger pendingBatchSize = new AtomicInteger();
+			List<Integer> executedChunkSizes = new ArrayList<>();
+			Connection[] connection = new Connection[1];
+
+			PreparedStatement preparedStatement = (PreparedStatement) Proxy.newProxyInstance(
+					PreparedStatement.class.getClassLoader(),
+					new Class<?>[]{PreparedStatement.class},
+					(proxy, method, args) -> {
+						String name = method.getName();
+						if ("getConnection".equals(name))
+							return connection[0];
+						if ("addBatch".equals(name)) {
+							pendingBatchSize.incrementAndGet();
+							return null;
+						}
+						if ("executeLargeBatch".equals(name)) {
+							int chunkSize = pendingBatchSize.getAndSet(0);
+							executedChunkSizes.add(chunkSize);
+
+							if (statementAlsoFails && executedChunkSizes.size() == 3)
+								throw executionFailure;
+
+							long[] updateCounts = new long[chunkSize];
+							Arrays.fill(updateCounts, 1L);
+							return updateCounts;
+						}
+						return defaultValue(method.getReturnType());
+					});
+
+			connection[0] = (Connection) Proxy.newProxyInstance(
+					Connection.class.getClassLoader(),
+					new Class<?>[]{Connection.class},
+					(proxy, method, args) -> {
+						String name = method.getName();
+						if ("prepareStatement".equals(name))
+							return preparedStatement;
+						if ("createArrayOf".equals(name)) {
+							createdArrays.incrementAndGet();
+							return (Array) Proxy.newProxyInstance(Array.class.getClassLoader(), new Class<?>[]{Array.class},
+									(arrayProxy, arrayMethod, arrayArgs) -> {
+										if (!"free".equals(arrayMethod.getName()))
+											return defaultValue(arrayMethod.getReturnType());
+
+										if (freedArrays.incrementAndGet() == 1)
+											throw freeFailure;
+
+										return null;
+									});
+						}
+						return defaultValue(method.getReturnType());
+					});
+
+			Database db = Database.withDataSource(dataSourceForConnection(connection[0]))
+					.databaseType(DatabaseType.DUCK_DB)
+					.build();
+
+			Map<String, Object> parameterGroup = Map.of("embedding", Parameters.vectorOfDoubles(new double[]{0.25, 0.5}));
+			Query query = db.query("INSERT INTO t (embedding) VALUES (:embedding)")
+					.batchChunkSize(2);
+			List<Map<String, Object>> parameterGroups = List.of(parameterGroup, parameterGroup, parameterGroup,
+					parameterGroup, parameterGroup, parameterGroup);
+
+			RuntimeException thrown = Assertions.assertThrows(RuntimeException.class,
+					() -> query.executeBatch(parameterGroups));
+
+			if (statementAlsoFails) {
+				Assertions.assertInstanceOf(DatabaseException.class, thrown);
+				Assertions.assertSame(executionFailure, thrown.getCause(),
+						"A failed release must not replace the statement's own failure");
+				Assertions.assertArrayEquals(new Throwable[]{freeFailure}, thrown.getSuppressed());
+			} else {
+				Assertions.assertSame(freeFailure, thrown.getCause());
+			}
+
+			Assertions.assertEquals(List.of(2, 2, 2), executedChunkSizes,
+					"A release failure in an early chunk must not abandon the chunks after it");
+			Assertions.assertEquals(6, createdArrays.get());
+			Assertions.assertEquals(6, freedArrays.get());
+		}
+	}
+
+	@Test
+	public void testChunkedBatchReleasesTheTrailingPartialChunkAtItsOwnExecution() {
+		for (int[] shape : new int[][]{{5, 2}, {7, 3}, {6, 2}}) {
+			int groups = shape[0];
+			int chunkSize = shape[1];
+			AtomicInteger pendingBatchSize = new AtomicInteger();
+			List<String> events = new ArrayList<>();
+			Connection[] connection = new Connection[1];
+
+			PreparedStatement preparedStatement = (PreparedStatement) Proxy.newProxyInstance(
+					PreparedStatement.class.getClassLoader(),
+					new Class<?>[]{PreparedStatement.class},
+					(proxy, method, args) -> {
+						String name = method.getName();
+						if ("getConnection".equals(name))
+							return connection[0];
+						if ("addBatch".equals(name)) {
+							pendingBatchSize.incrementAndGet();
+							return null;
+						}
+						if ("executeLargeBatch".equals(name)) {
+							long[] updateCounts = new long[pendingBatchSize.getAndSet(0)];
+							Arrays.fill(updateCounts, 1L);
+							events.add("execute(" + updateCounts.length + ")");
+							return updateCounts;
+						}
+						if ("clearBatch".equals(name) || "clearParameters".equals(name) || "close".equals(name)) {
+							events.add(name);
+							return null;
+						}
+						return defaultValue(method.getReturnType());
+					});
+
+			connection[0] = (Connection) Proxy.newProxyInstance(
+					Connection.class.getClassLoader(),
+					new Class<?>[]{Connection.class},
+					(proxy, method, args) -> {
+						String name = method.getName();
+						if ("prepareStatement".equals(name))
+							return preparedStatement;
+						if ("createArrayOf".equals(name))
+							return (Array) Proxy.newProxyInstance(Array.class.getClassLoader(), new Class<?>[]{Array.class},
+									(arrayProxy, arrayMethod, arrayArgs) -> {
+										if ("free".equals(arrayMethod.getName())) {
+											events.add("free");
+											return null;
+										}
+										return defaultValue(arrayMethod.getReturnType());
+									});
+						return defaultValue(method.getReturnType());
+					});
+
+			Database db = Database.withDataSource(dataSourceForConnection(connection[0]))
+					.databaseType(DatabaseType.DUCK_DB)
+					.build();
+
+			Map<String, Object> parameterGroup = Map.of("embedding", Parameters.vectorOfDoubles(new double[]{0.25, 0.5}));
+			List<Map<String, Object>> parameterGroups = new ArrayList<>();
+			for (int i = 0; i < groups; ++i)
+				parameterGroups.add(parameterGroup);
+
+			db.query("INSERT INTO t (embedding) VALUES (:embedding)")
+					.batchChunkSize(chunkSize)
+					.executeBatch(parameterGroups);
+
+			// Every chunk releases at its own execution, the trailing partial chunk on the same terms as a full one,
+			// and the statement is closed holding nothing left to release. Each chunk's slots are cleared before its
+			// arrays are freed, so no parameter slot refers to a released array.
+			List<String> expectedEvents = new ArrayList<>();
+			for (int remaining = groups; remaining > 0; remaining -= chunkSize) {
+				int executed = Math.min(remaining, chunkSize);
+				expectedEvents.add("execute(" + executed + ")");
+				expectedEvents.add("clearBatch");
+				expectedEvents.add("clearParameters");
+				for (int i = 0; i < executed; ++i)
+					expectedEvents.add("free");
+			}
+			expectedEvents.add("close");
+
+			Assertions.assertEquals(expectedEvents, events, "groups=" + groups + " chunkSize=" + chunkSize);
+		}
+	}
+
+	@Test
+	public void testChunkedBatchCompletesWhenTheDriverDoesNotSupportClearParameters() {
+		// clearParameters is the precondition for per-chunk release, not work the batch asked for, so a driver that
+		// explicitly does not support it falls back to deferred release instead of failing an otherwise valid batch.
+		List<Throwable> clearParametersFailures = List.of(
+				new java.sql.SQLFeatureNotSupportedException("clearParameters is not implemented"),
+				new UnsupportedOperationException("clearParameters is not implemented"),
+				new AbstractMethodError("clearParameters"));
+
+		for (Throwable clearParametersFailure : clearParametersFailures) {
+			String label = clearParametersFailure.getClass().getSimpleName();
+			AtomicInteger pendingBatchSize = new AtomicInteger();
+			List<String> events = new ArrayList<>();
+			Connection[] connection = new Connection[1];
+
+			PreparedStatement preparedStatement = (PreparedStatement) Proxy.newProxyInstance(
+					PreparedStatement.class.getClassLoader(),
+					new Class<?>[]{PreparedStatement.class},
+					(proxy, method, args) -> {
+						String name = method.getName();
+						if ("getConnection".equals(name))
+							return connection[0];
+						if ("addBatch".equals(name)) {
+							pendingBatchSize.incrementAndGet();
+							return null;
+						}
+						if ("executeLargeBatch".equals(name)) {
+							long[] updateCounts = new long[pendingBatchSize.getAndSet(0)];
+							Arrays.fill(updateCounts, 1L);
+							events.add("execute(" + updateCounts.length + ")");
+							return updateCounts;
+						}
+						if ("clearParameters".equals(name)) {
+							events.add(name);
+							throw clearParametersFailure;
+						}
+						if ("clearBatch".equals(name) || "close".equals(name)) {
+							events.add(name);
+							return null;
+						}
+						return defaultValue(method.getReturnType());
+					});
+
+			connection[0] = (Connection) Proxy.newProxyInstance(
+					Connection.class.getClassLoader(),
+					new Class<?>[]{Connection.class},
+					(proxy, method, args) -> {
+						String name = method.getName();
+						if ("prepareStatement".equals(name))
+							return preparedStatement;
+						if ("createArrayOf".equals(name))
+							return (Array) Proxy.newProxyInstance(Array.class.getClassLoader(), new Class<?>[]{Array.class},
+									(arrayProxy, arrayMethod, arrayArgs) -> {
+										if ("free".equals(arrayMethod.getName())) {
+											events.add("free");
+											return null;
+										}
+										return defaultValue(arrayMethod.getReturnType());
+									});
+						return defaultValue(method.getReturnType());
+					});
+
+			Database db = Database.withDataSource(dataSourceForConnection(connection[0]))
+					.databaseType(DatabaseType.DUCK_DB)
+					.build();
+
+			Map<String, Object> parameterGroup = Map.of("embedding", Parameters.vectorOfDoubles(new double[]{0.25, 0.5}));
+			List<Map<String, Object>> parameterGroups = List.of(parameterGroup, parameterGroup, parameterGroup,
+					parameterGroup, parameterGroup, parameterGroup);
+
+			List<Long> result = db.query("INSERT INTO t (embedding) VALUES (:embedding)")
+					.batchChunkSize(2)
+					.executeBatch(parameterGroups);
+
+			Assertions.assertEquals(List.of(1L, 1L, 1L, 1L, 1L, 1L), result, label);
+			// Every chunk still executes and reports its rows. Nothing is freed while a parameter slot could still
+			// refer to it: all six arrays are freed by the statement's own drain, after the statement is closed.
+			Assertions.assertEquals(List.of("execute(2)", "clearBatch", "clearParameters",
+					"execute(2)", "clearBatch", "clearParameters",
+					"execute(2)", "clearBatch", "clearParameters",
+					"close", "free", "free", "free", "free", "free", "free"), events, label);
+		}
+	}
+
+	@Test
+	public void testChunkedBatchReportsTheEarliestArrayReleaseFailure() {
+		SQLException firstFreeFailure = new SQLException("driver lost the first chunk's array", "08006");
+		SQLException lastFreeFailure = new SQLException("driver lost the trailing chunk's array", "08006");
+		SQLException executionFailure = new SQLException("trailing chunk rejected", "42000");
+		AtomicInteger createdArrays = new AtomicInteger();
+		AtomicInteger freedArrays = new AtomicInteger();
+		AtomicInteger pendingBatchSize = new AtomicInteger();
+		AtomicInteger executedChunks = new AtomicInteger();
+		Connection[] connection = new Connection[1];
+
+		PreparedStatement preparedStatement = (PreparedStatement) Proxy.newProxyInstance(
+				PreparedStatement.class.getClassLoader(),
+				new Class<?>[]{PreparedStatement.class},
+				(proxy, method, args) -> {
+					String name = method.getName();
+					if ("getConnection".equals(name))
+						return connection[0];
+					if ("addBatch".equals(name)) {
+						pendingBatchSize.incrementAndGet();
+						return null;
+					}
+					if ("executeLargeBatch".equals(name)) {
+						int chunkSize = pendingBatchSize.getAndSet(0);
+
+						// The trailing chunk fails, so its array is still queued when the batch unwinds
+						if (executedChunks.incrementAndGet() == 3)
+							throw executionFailure;
+
+						long[] updateCounts = new long[chunkSize];
+						Arrays.fill(updateCounts, 1L);
+						return updateCounts;
+					}
+					return defaultValue(method.getReturnType());
+				});
+
+		connection[0] = (Connection) Proxy.newProxyInstance(
+				Connection.class.getClassLoader(),
+				new Class<?>[]{Connection.class},
+				(proxy, method, args) -> {
+					String name = method.getName();
+					if ("prepareStatement".equals(name))
+						return preparedStatement;
+					if ("createArrayOf".equals(name)) {
+						int arrayIndex = createdArrays.incrementAndGet();
+						return (Array) Proxy.newProxyInstance(Array.class.getClassLoader(), new Class<?>[]{Array.class},
+								(arrayProxy, arrayMethod, arrayArgs) -> {
+									if (!"free".equals(arrayMethod.getName()))
+										return defaultValue(arrayMethod.getReturnType());
+
+									freedArrays.incrementAndGet();
+
+									if (arrayIndex == 1)
+										throw firstFreeFailure;
+									if (arrayIndex == 5)
+										throw lastFreeFailure;
+
+									return null;
+								});
+					}
+					return defaultValue(method.getReturnType());
+				});
+
+		Database db = Database.withDataSource(dataSourceForConnection(connection[0]))
+				.databaseType(DatabaseType.DUCK_DB)
+				.build();
+
+		Map<String, Object> parameterGroup = Map.of("embedding", Parameters.vectorOfDoubles(new double[]{0.25, 0.5}));
+		Query query = db.query("INSERT INTO t (embedding) VALUES (:embedding)")
+				.batchChunkSize(2);
+		List<Map<String, Object>> parameterGroups = List.of(parameterGroup, parameterGroup, parameterGroup,
+				parameterGroup, parameterGroup);
+
+		DatabaseException thrown = Assertions.assertThrows(DatabaseException.class,
+				() -> query.executeBatch(parameterGroups));
+
+		Assertions.assertSame(executionFailure, thrown.getCause(),
+				"A failed release must not replace the statement's own failure");
+		// First-failure-wins across chunks: the earliest release failure is the cleanup failure the statement
+		// reports, and a later chunk's release failure is suppressed onto it rather than displacing it
+		Assertions.assertArrayEquals(new Throwable[]{firstFreeFailure}, thrown.getSuppressed());
+		Assertions.assertArrayEquals(new Throwable[]{lastFreeFailure}, firstFreeFailure.getSuppressed());
+		Assertions.assertEquals(5, createdArrays.get());
+		Assertions.assertEquals(5, freedArrays.get());
 	}
 
 	@Test

@@ -67,7 +67,8 @@ final class StatementExecution {
 			try {
 				this.connection = this.connections.acquire();
 			} catch (SQLException e) {
-				DatabaseException wrapped = new DatabaseException("Unable to acquire database connection", e);
+				DatabaseException wrapped = DatabaseException.wrapSafely("Unable to acquire database connection", e,
+						DatabaseDialect.forExceptionCause(e));
 				acquisitionFailed(wrapped);
 				throw wrapped;
 			} catch (RuntimeException e) {

@@ -33,8 +33,10 @@ import java.sql.Types;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.time.OffsetTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.logging.Logger;
 
 import static com.pyranid.AmbiguousTimestampBindingStrategy.TIMESTAMP_WITHOUT_TIME_ZONE;
@@ -168,6 +170,182 @@ public class TemporalParameterBindingTests {
 		}
 	}
 
+	@Test
+	public void cyclicBindFailureSurfacesDriverFailureInsteadOfStackOverflow() {
+		LocalDateTime localDateTime = LocalDateTime.parse("2020-01-02T03:04:05");
+
+		// SQLException#setNextException(this) CASes next = this, so a driver chain can loop back on itself.
+		SQLException selfReferential = new SQLException("connection reset by peer", "08006");
+		selfReferential.setNextException(selfReferential);
+
+		SQLException head = new SQLException("connection reset by peer", "08006");
+		SQLException detail = new SQLException("detail", "08006");
+		head.setNextException(detail);
+		detail.setNextException(head);
+
+		SQLException selfCause = new SQLException("connection reset by peer", "08006") {
+			@Override
+			public Throwable getCause() {
+				return this;
+			}
+		};
+
+		for (SQLException cyclicFailure : List.of(selfReferential, head, selfCause)) {
+			BindingCapture capture = new BindingCapture();
+			capture.setObjectFailure = cyclicFailure;
+
+			DatabaseException thrown = Assertions.assertThrows(DatabaseException.class, () ->
+					database(capture, ZoneId.of("America/New_York"), null)
+							.query("UPDATE t SET created_at=:createdAt")
+							.bind("createdAt", localDateTime)
+							.execute());
+
+			Assertions.assertSame(cyclicFailure, thrown.getCause());
+			Assertions.assertNull(capture.methodName);
+		}
+	}
+
+	@Test
+	public void cyclicUnsupportedFeatureBindFailureStillFallsBack() {
+		LocalDateTime localDateTime = LocalDateTime.parse("2020-01-02T03:04:05");
+		SQLException head = new SQLException("typed bind failed", "22007");
+		SQLException unsupported = new SQLException("detail", "0A000");
+		head.setNextException(unsupported);
+		unsupported.setNextException(head);
+
+		BindingCapture capture = new BindingCapture();
+		capture.setObjectFailure = head;
+
+		database(capture, ZoneId.of("America/New_York"), null)
+				.query("UPDATE t SET created_at=:createdAt")
+				.bind("createdAt", localDateTime)
+				.execute();
+
+		Assertions.assertEquals("setTimestamp", capture.methodName);
+		Assertions.assertEquals(java.sql.Timestamp.valueOf(localDateTime), capture.value);
+	}
+
+	@Test
+	public void unreadableBindFailureAccessorsPreserveDriverFailure() {
+		LocalDateTime localDateTime = LocalDateTime.parse("2020-01-02T03:04:05");
+
+		SQLException throwingSqlState = new SQLException("driver rejected the bind") {
+			@Override
+			public String getSQLState() {
+				throw new AssertionError("broken SQLState accessor");
+			}
+		};
+
+		SQLException throwingMessage = new SQLException(null, "08006") {
+			@Override
+			public String getMessage() {
+				throw new IllegalStateException("broken message accessor");
+			}
+		};
+
+		SQLException throwingNextException = new SQLException("driver rejected the bind", "08006") {
+			@Override
+			public SQLException getNextException() {
+				throw new IllegalStateException("broken next-exception accessor");
+			}
+		};
+
+		SQLException throwingCause = new SQLException("driver rejected the bind", "08006") {
+			@Override
+			public Throwable getCause() {
+				throw new IllegalStateException("broken cause accessor");
+			}
+		};
+
+		for (SQLException unreadableFailure : List.of(throwingSqlState, throwingMessage, throwingNextException, throwingCause)) {
+			BindingCapture capture = new BindingCapture();
+			capture.setObjectFailure = unreadableFailure;
+
+			DatabaseException thrown = Assertions.assertThrows(DatabaseException.class, () ->
+					database(capture, ZoneId.of("America/New_York"), null)
+							.query("UPDATE t SET created_at=:createdAt")
+							.bind("createdAt", localDateTime)
+							.execute());
+
+			Assertions.assertSame(unreadableFailure, thrown.getCause());
+			Assertions.assertNull(capture.methodName);
+		}
+	}
+
+	@Test
+	public void unreadableSqlStateCannotBeOverriddenByUnsupportedFeatureMessage() {
+		LocalDateTime localDateTime = LocalDateTime.parse("2020-01-02T03:04:05");
+		BindingCapture capture = new BindingCapture();
+		capture.setObjectFailure = new SQLException("typed setObject is not supported") {
+			@Override
+			public String getSQLState() {
+				throw new AssertionError("broken SQLState accessor");
+			}
+		};
+
+		// An unreadable classification cannot establish that fallback is safe, even if the message suggests it.
+		DatabaseException thrown = Assertions.assertThrows(DatabaseException.class, () ->
+				database(capture, ZoneId.of("America/New_York"), null)
+						.query("UPDATE t SET created_at=:createdAt")
+						.bind("createdAt", localDateTime)
+						.execute());
+
+		Assertions.assertSame(capture.setObjectFailure, thrown.getCause());
+		Assertions.assertNull(capture.methodName);
+	}
+
+	@Test
+	public void suppressedAndNonSqlCauseEvidenceDoNotTriggerFallback() {
+		LocalDateTime localDateTime = LocalDateTime.parse("2020-01-02T03:04:05");
+
+		// Pins the inspected graph: widening it to suppressed exceptions or through a non-SQLException cause
+		// would let unrelated evidence swallow the driver's bind failure and write a differently-typed value.
+		SQLException suppressedEvidence = new SQLException("connection reset by peer", "08006");
+		suppressedEvidence.addSuppressed(new SQLException("array free is not supported", "0A000"));
+
+		SQLException nonSqlCauseEvidence = new SQLException("connection reset by peer", "08006",
+				new RuntimeException("wrapper", new SQLException("not supported", "0A000")));
+
+		for (SQLException failure : List.of(suppressedEvidence, nonSqlCauseEvidence)) {
+			BindingCapture capture = new BindingCapture();
+			capture.setObjectFailure = failure;
+
+			DatabaseException thrown = Assertions.assertThrows(DatabaseException.class, () ->
+					database(capture, ZoneId.of("America/New_York"), null)
+							.query("UPDATE t SET created_at=:createdAt")
+							.bind("createdAt", localDateTime)
+							.execute());
+
+			Assertions.assertSame(failure, thrown.getCause());
+			Assertions.assertNull(capture.methodName);
+		}
+	}
+
+	@Test
+	public void cyclicUnsupportedFeatureBindFailureFallsBackThroughUntypedSetObject() {
+		// OffsetTime tries the typed bind, then the untyped bind, then the string form, so one bind reaches
+		// both trySetObject overloads and both of their classification calls.
+		OffsetTime offsetTime = OffsetTime.parse("03:04:05-03:00");
+		// Benign message evidence must permit fallback even when its outgoing chain is cyclic.
+		// The old recursive walk followed that chain before checking this message and overflowed instead.
+		// Connection-failure states must instead veto fallback, so use a generic driver error here.
+		SQLException unsupported = new SQLException("TIME WITH TIME ZONE is not supported", "HY000");
+		SQLException detail = new SQLException("detail", "HY000");
+		unsupported.setNextException(detail);
+		detail.setNextException(unsupported);
+
+		BindingCapture capture = new BindingCapture();
+		capture.setObjectFailure = unsupported;
+
+		database(capture, ZoneId.of("America/New_York"), null)
+				.query("UPDATE t SET started_at=:startedAt")
+				.bind("startedAt", offsetTime)
+				.execute();
+
+		Assertions.assertEquals("setString", capture.methodName);
+		Assertions.assertEquals(offsetTime.toString(), capture.value);
+	}
+
 	@NonNull
 	private Database database(@NonNull BindingCapture capture,
 														@NonNull ZoneId zone,
@@ -264,6 +442,9 @@ public class TemporalParameterBindingTests {
 					if ("getParameterMetaData".equals(name))
 						return parameterMetaData(capture);
 					if ("setObject".equals(name)) {
+						if (capture.setObjectFailure != null)
+							throw capture.setObjectFailure;
+
 						capture.methodName = "setObject";
 						capture.parameterIndex = (Integer) args[0];
 						capture.value = args[1];
@@ -275,6 +456,12 @@ public class TemporalParameterBindingTests {
 						capture.parameterIndex = (Integer) args[0];
 						capture.value = args[1];
 						capture.sqlType = Types.TIMESTAMP;
+						return null;
+					}
+					if ("setString".equals(name)) {
+						capture.methodName = "setString";
+						capture.parameterIndex = (Integer) args[0];
+						capture.value = args[1];
 						return null;
 					}
 					if ("executeLargeUpdate".equals(name))
@@ -338,6 +525,8 @@ public class TemporalParameterBindingTests {
 	}
 
 	private static final class BindingCapture {
+		@Nullable
+		private SQLException setObjectFailure;
 		@Nullable
 		private Integer parameterSqlType;
 		@Nullable

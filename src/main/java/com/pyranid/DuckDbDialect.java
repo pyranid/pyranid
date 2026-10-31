@@ -316,10 +316,12 @@ final class DuckDbDialect extends GenericDialect {
 
 	@Override
 	public void bindVector(@NonNull PreparedStatement preparedStatement,
+												 @NonNull StatementContext<?> statementContext,
 												 @NonNull Integer parameterIndex,
 												 double @Nullable [] elements,
 												 @Nullable Integer fallbackSqlType) throws SQLException {
 		requireNonNull(preparedStatement);
+		requireNonNull(statementContext);
 		requireNonNull(parameterIndex);
 
 		if (elements == null) {
@@ -336,7 +338,30 @@ final class DuckDbDialect extends GenericDialect {
 		// on INSERT. Comparison contexts such as array_cosine_distance(...) require an explicit cast of the
 		// parameter, e.g. CAST(? AS FLOAT[3]).
 		Array sqlArray = preparedStatement.getConnection().createArrayOf("DOUBLE", boxedElements);
-		preparedStatement.setObject(parameterIndex, sqlArray);
+
+		// A driver is free to hand back no array at all; there is nothing to release, and a bound method
+		// reference to free() on it would fail a bind that otherwise succeeds.
+		if (sqlArray == null) {
+			preparedStatement.setObject(parameterIndex, null);
+			return;
+		}
+
+		try {
+			preparedStatement.setObject(parameterIndex, sqlArray);
+		} catch (SQLException | RuntimeException | Error e) {
+			// The bind was rejected, so release the array here rather than leave it unowned
+			try {
+				sqlArray.free();
+			} catch (Throwable cleanupFailure) {
+				Database.appendCleanupFailure(e, cleanupFailure);
+			}
+
+			throw e;
+		}
+
+		// Deferred, not inline: the driver may read the array only at execute time. Registered after the bind
+		// returns so the inline release above runs only when the statement does not hold the array.
+		statementContext.addCleanupOperation(sqlArray::free);
 	}
 
 	@NonNull
@@ -488,7 +513,7 @@ final class DuckDbDialect extends GenericDialect {
 			attributesByName = extracted;
 		} catch (ReflectiveOperationException | RuntimeException e) {
 			Throwable cause = e instanceof java.lang.reflect.InvocationTargetException ite ? ite.getTargetException() : e;
-			throw new DatabaseException("Unable to extract DuckDB STRUCT attributes", cause);
+			throw DatabaseException.wrapSafely("Unable to extract DuckDB STRUCT attributes", cause, DatabaseDialect.forExceptionCause(cause), null);
 		}
 
 		Map<String, Object> unwrappedAttributesByName = new LinkedHashMap<>(attributesByName.size());
@@ -499,6 +524,12 @@ final class DuckDbDialect extends GenericDialect {
 			try {
 				resources.registerStructType(unwrappedAttributesByName, ((Struct) duckDbStruct).getSQLTypeName());
 			} catch (SQLException | UnsupportedOperationException | AbstractMethodError unsupportedMetadata) {
+				if (JdbcFallbacks.isTerminal(unsupportedMetadata)) {
+					if (unsupportedMetadata instanceof Error error) throw error;
+					if (unsupportedMetadata instanceof RuntimeException runtimeException) throw runtimeException;
+					throw DatabaseException.wrapSafely("Unable to determine DuckDB STRUCT type", unsupportedMetadata,
+							DatabaseDialect.forExceptionCause(unsupportedMetadata));
+				}
 				// Preserve legacy conversion when the driver cannot supply STRUCT attribute types.
 			}
 		}
@@ -588,7 +619,7 @@ final class DuckDbDialect extends GenericDialect {
 				Object values = DefaultResultSetMapper.extractSqlArrayResultSetValue(sqlArray, resources);
 				return values instanceof Object[] elements ? unwrapArrayElements(elements, materializeLobs, resources) : values;
 			} catch (SQLException failure) {
-				throw new DatabaseException("Unable to extract DuckDB STRUCT list attribute", failure);
+				throw DatabaseException.wrapSafely("Unable to extract DuckDB STRUCT list attribute", failure, DatabaseDialect.forExceptionCause(failure));
 			}
 		}
 
@@ -599,15 +630,22 @@ final class DuckDbDialect extends GenericDialect {
 			arrayValue = sqlArray.getArray();
 		} catch (SQLException e) {
 			thrown = e;
-			throw new DatabaseException("Unable to extract DuckDB STRUCT list attribute", e);
+			throw DatabaseException.wrapSafely("Unable to extract DuckDB STRUCT list attribute", e, DatabaseDialect.forExceptionCause(e));
+		} catch (RuntimeException | Error e) {
+			thrown = e;
+			throw e;
 		} finally {
 			try {
 				sqlArray.free();
-			} catch (SQLException e) {
+			} catch (SQLException | RuntimeException | Error e) {
 				if (thrown != null)
-					thrown.addSuppressed(e);
+					Database.appendCleanupFailure(thrown, e);
+				else if (e instanceof SQLException sqlException)
+					throw DatabaseException.wrapSafely("Unable to release DuckDB STRUCT list attribute", sqlException, DatabaseDialect.forExceptionCause(sqlException));
+				else if (e instanceof Error error)
+					throw error;
 				else
-					throw new DatabaseException("Unable to release DuckDB STRUCT list attribute", e);
+					throw (RuntimeException) e;
 			}
 		}
 
@@ -637,7 +675,7 @@ final class DuckDbDialect extends GenericDialect {
 			return blob.getBytes(1, (int) length);
 		} catch (SQLException e) {
 			thrown = e;
-			throw new DatabaseException("Unable to extract DuckDB BLOB value", e);
+			throw DatabaseException.wrapSafely("Unable to extract DuckDB BLOB value", e, DatabaseDialect.forExceptionCause(e));
 		} catch (DatabaseException e) {
 			thrown = e;
 			throw e;
@@ -646,9 +684,9 @@ final class DuckDbDialect extends GenericDialect {
 				blob.free();
 			} catch (SQLException e) {
 				if (thrown != null)
-					thrown.addSuppressed(e);
+					Database.appendCleanupFailure(thrown, e);
 				else
-					throw new DatabaseException("Unable to release DuckDB BLOB value", e);
+					throw DatabaseException.wrapSafely("Unable to release DuckDB BLOB value", e, DatabaseDialect.forExceptionCause(e));
 			}
 		}
 	}

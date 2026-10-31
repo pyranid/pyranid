@@ -14,6 +14,7 @@ package com.pyranid;
 import org.jspecify.annotations.Nullable;
 
 import java.io.ByteArrayOutputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.Reader;
@@ -177,13 +178,27 @@ final class MappingResources implements AutoCloseable {
 		try {
 			if (raw instanceof Blob blob && binary) {
 				own(blob);
-				try (InputStream input = blob.getBinaryStream()) {
+				InputStream input = blob.getBinaryStream();
+				Throwable primary = null;
+				try {
 					value = readBytes(input, location, byteLimit);
+				} catch (IOException | RuntimeException | Error failure) {
+					primary = failure;
+					throw failure;
+				} finally {
+					closeStream(input, primary);
 				}
 			} else if (raw instanceof Clob clob && character) {
 				own(clob);
-				try (Reader reader = clob.getCharacterStream()) {
+				Reader reader = clob.getCharacterStream();
+				Throwable primary = null;
+				try {
 					value = readCharacters(reader, location, characterLimit);
+				} catch (IOException | RuntimeException | Error failure) {
+					primary = failure;
+					throw failure;
+				} finally {
+					closeStream(reader, primary);
 				}
 			} else if (raw instanceof byte[] bytes && binary) {
 				checkLength(bytes.length, byteLimit, location, "byte[]", "bytes");
@@ -191,11 +206,23 @@ final class MappingResources implements AutoCloseable {
 				checkLength(string.length(), characterLimit, location, "String", "UTF-16 code units");
 			}
 		} catch (SQLException | IOException failure) {
-			throw new DatabaseException("Unable to materialize LOB at " + location + " as " + target.getTypeName(), failure);
+			throw DatabaseException.wrapSafely("Unable to materialize LOB at " + location + " as " + target.getTypeName(),
+					failure, DatabaseDialect.forExceptionCause(failure));
 		}
 		if (this.materialized == null) this.materialized = new IdentityHashMap<>();
 		this.materialized.put(raw, value);
 		return value;
+	}
+
+	/** Driver streams can rethrow their read failure from close; never self-suppress it. */
+	private static void closeStream(@Nullable Closeable stream, @Nullable Throwable primary) throws IOException {
+		if (stream == null) return;
+		try {
+			stream.close();
+		} catch (IOException | RuntimeException | Error failure) {
+			if (primary == null) throw failure;
+			if (primary != failure) primary.addSuppressed(failure);
+		}
 	}
 
 	/** Native Map/Object targets keep dialect normalization without changing the typed LOB policy. */
@@ -312,7 +339,12 @@ final class MappingResources implements AutoCloseable {
 
 	@Override
 	public void close() throws SQLException {
-		Throwable primary = null;
+		close(null);
+	}
+
+	/** Retains a mapping failure while releasing every owned LOB, including reused driver failures. */
+	void close(@Nullable Throwable primary) throws SQLException {
+		Throwable cleanupFailure = null;
 		try {
 			if (this.owned != null) {
 				for (Object resource : this.owned) {
@@ -320,8 +352,9 @@ final class MappingResources implements AutoCloseable {
 						if (resource instanceof Blob blob) blob.free();
 						else if (resource instanceof Clob clob) clob.free();
 					} catch (SQLException | RuntimeException | Error failure) {
-						if (primary == null) primary = failure;
-						else if (failure != primary) primary.addSuppressed(failure);
+						if (failure == primary) continue;
+						if (cleanupFailure == null) cleanupFailure = failure;
+						else if (failure != cleanupFailure) cleanupFailure.addSuppressed(failure);
 					}
 				}
 			}
@@ -335,8 +368,12 @@ final class MappingResources implements AutoCloseable {
 			this.opaqueBorrow = false;
 			this.inUse = false;
 		}
-		if (primary instanceof SQLException sql) throw sql;
-		if (primary instanceof RuntimeException runtime) throw runtime;
-		if (primary instanceof Error error) throw error;
+		if (primary != null) {
+			if (cleanupFailure != null) primary.addSuppressed(cleanupFailure);
+			return;
+		}
+		if (cleanupFailure instanceof SQLException sql) throw sql;
+		if (cleanupFailure instanceof RuntimeException runtime) throw runtime;
+		if (cleanupFailure instanceof Error error) throw error;
 	}
 }

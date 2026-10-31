@@ -46,11 +46,19 @@ final class TransactionRetrySafety {
 	}
 
 	static Scope isolate() {
+		return isolate(true);
+	}
+
+	// Preserve already-pending interruption across diagnostics by default, including inside a transaction.
+	// Failure-path dialect detection alone opts out under an ambient transaction to retain existing handling of
+	// cancellation caught inside the closure. Cancellation consumed there remains a known limitation; this opt-out
+	// is not a general rule for transaction diagnostics.
+	static Scope isolate(boolean shouldPreserveInterrupt) {
 		TransactionRetrySafety previous = CURRENT.get();
-		boolean interrupted = Thread.currentThread().isInterrupted();
+		boolean interrupted = shouldPreserveInterrupt && Thread.currentThread().isInterrupted();
 		if (previous == null && !interrupted) return null;
-		// Diagnostics must not consume cancellation or contribute independent transaction outcomes.
-		// Preserve the no-allocation fast path when neither kind of state needs protection.
+		// Diagnostics must not consume cancellation the caller still needs, nor contribute independent transaction
+		// outcomes. Preserve the no-allocation fast path when neither kind of state needs protection.
 		if (previous != null) CURRENT.remove();
 		return new Scope(null, previous, interrupted);
 	}

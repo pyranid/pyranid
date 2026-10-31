@@ -22,7 +22,9 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Types;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -139,6 +141,104 @@ class CleanupIdentityTests {
 			assertArrayEquals(new Throwable[0], shared.getSuppressed());
 			assertEquals(1, fixture.connections.get());
 		}
+	}
+
+	@Test
+	void parameterArraysAreReleasedAfterTheStreamCursorAndStatement() {
+		List<String> releaseOrder = new ArrayList<>();
+		Connection[] connection = new Connection[1];
+		ResultSetMetaData metadata = proxy(ResultSetMetaData.class, (method, args) -> switch (method.getName()) {
+			case "getColumnCount" -> 1;
+			case "getColumnLabel", "getColumnName" -> "value";
+			case "getColumnType" -> Types.INTEGER;
+			case "getColumnTypeName" -> "INTEGER";
+			default -> zero(method.getReturnType());
+		});
+		AtomicInteger rows = new AtomicInteger();
+		ResultSet result = proxy(ResultSet.class, (method, args) -> switch (method.getName()) {
+			case "getMetaData" -> metadata;
+			case "next" -> rows.getAndIncrement() == 0;
+			case "getInt", "getObject" -> 7;
+			case "close" -> { releaseOrder.add("cursor"); yield null; }
+			default -> zero(method.getReturnType());
+		});
+		PreparedStatement statement = proxy(PreparedStatement.class, (method, args) -> switch (method.getName()) {
+			case "getConnection" -> connection[0];
+			case "executeQuery" -> result;
+			case "close" -> { releaseOrder.add("statement"); yield null; }
+			default -> zero(method.getReturnType());
+		});
+		connection[0] = proxy(Connection.class, (method, args) -> switch (method.getName()) {
+			case "prepareStatement" -> statement;
+			case "createArrayOf" -> proxy(java.sql.Array.class, (arrayMethod, arrayArgs) -> {
+				if (arrayMethod.getName().equals("free")) {
+					releaseOrder.add("array");
+					return null;
+				}
+				return zero(arrayMethod.getReturnType());
+			});
+			case "getAutoCommit" -> true;
+			default -> zero(method.getReturnType());
+		});
+		DataSource source = proxy(DataSource.class, (method, args) -> method.getName().equals("getConnection")
+				? connection[0] : zero(method.getReturnType()));
+		Database database = Database.withDataSource(source).databaseType(DatabaseType.DUCK_DB).build();
+
+		assertEquals(Optional.of(7), database.query("SELECT 7 AS value WHERE :embedding IS NOT NULL")
+				.bind("embedding", Parameters.vectorOfDoubles(new double[]{0.25, 0.5}))
+				.fetchStream(Integer.class, stream -> stream.findFirst()));
+
+		// A parameter resource is released after the statement that was handed it, never before
+		assertEquals(List.of("cursor", "statement", "array"), releaseOrder);
+	}
+
+	@Test
+	void aStreamCursorCloseFailureOutranksAParameterReleaseFailure() {
+		SQLException cursorFailure = new SQLException("driver lost the cursor while closing it", "08006");
+		SQLException arrayFailure = new SQLException("driver lost the array while freeing it", "08006");
+		Connection[] connection = new Connection[1];
+		ResultSetMetaData metadata = proxy(ResultSetMetaData.class, (method, args) -> switch (method.getName()) {
+			case "getColumnCount" -> 1;
+			case "getColumnLabel", "getColumnName" -> "value";
+			case "getColumnType" -> Types.INTEGER;
+			case "getColumnTypeName" -> "INTEGER";
+			default -> zero(method.getReturnType());
+		});
+		AtomicInteger rows = new AtomicInteger();
+		ResultSet result = proxy(ResultSet.class, (method, args) -> switch (method.getName()) {
+			case "getMetaData" -> metadata;
+			case "next" -> rows.getAndIncrement() == 0;
+			case "getInt", "getObject" -> 7;
+			case "close" -> throw cursorFailure;
+			default -> zero(method.getReturnType());
+		});
+		PreparedStatement statement = proxy(PreparedStatement.class, (method, args) -> switch (method.getName()) {
+			case "getConnection" -> connection[0];
+			case "executeQuery" -> result;
+			default -> zero(method.getReturnType());
+		});
+		connection[0] = proxy(Connection.class, (method, args) -> switch (method.getName()) {
+			case "prepareStatement" -> statement;
+			case "createArrayOf" -> proxy(java.sql.Array.class, (arrayMethod, arrayArgs) -> {
+				if (arrayMethod.getName().equals("free")) throw arrayFailure;
+				return zero(arrayMethod.getReturnType());
+			});
+			case "getAutoCommit" -> true;
+			default -> zero(method.getReturnType());
+		});
+		DataSource source = proxy(DataSource.class, (method, args) -> method.getName().equals("getConnection")
+				? connection[0] : zero(method.getReturnType()));
+		Database database = Database.withDataSource(source).databaseType(DatabaseType.DUCK_DB).build();
+
+		RuntimeException thrown = assertThrows(RuntimeException.class,
+				() -> database.query("SELECT 7 AS value WHERE :embedding IS NOT NULL")
+						.bind("embedding", Parameters.vectorOfDoubles(new double[]{0.25, 0.5}))
+						.fetchStream(Integer.class, stream -> stream.findFirst()));
+
+		// Cleanup runs in release order and keeps the first failure, so closing the cursor - which happens
+		// before a parameter resource may be released - is what reports, and the release is suppressed onto it
+		assertSame(cursorFailure, thrown.getCause());
+		assertArrayEquals(new Throwable[]{arrayFailure}, cursorFailure.getSuppressed());
 	}
 
 	private static final class Fixture {

@@ -274,6 +274,9 @@ public final class NotificationSupervisor {
 				return null;
 			} catch (DatabaseException failure) {
 				noteFailure(attempt, failure);
+				// The session has finished cleanup. A driver can consume interruption and retain it only
+				// in a receive or cleanup failure, so recover that evidence before admitting another attempt.
+				Database.restoreInterruptIfNeeded(failure);
 				if (stopping() || Thread.currentThread().isInterrupted()
 						|| attempt.unexpectedCallbackFailure || this.retryCondition == null
 						|| containsTerminalFailure(failure))

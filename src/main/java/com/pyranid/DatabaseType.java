@@ -93,7 +93,8 @@ public enum DatabaseType {
 		try (Connection connection = dataSource.getConnection()) {
 			return fromConnection(connection);
 		} catch (SQLException e) {
-			throw new DatabaseException("Unable to connect to database to determine its type", e);
+			throw DatabaseException.wrapSafely("Unable to connect to database to determine its type", e,
+					DatabaseDialect.forExceptionCause(e));
 		}
 	}
 
@@ -168,17 +169,20 @@ public enum DatabaseType {
 
 			return DatabaseType.GENERIC;
 		} catch (SQLException e) {
-			throw new DatabaseException("Unable to inspect database metadata to determine its type", e);
+			throw DatabaseException.wrapSafely("Unable to inspect database metadata to determine its type", e,
+					DatabaseDialect.forExceptionCause(e));
 		}
 	}
 
 	@Nullable
-	private static String databaseProductVersion(@NonNull DatabaseMetaData databaseMetaData) {
+	private static String databaseProductVersion(@NonNull DatabaseMetaData databaseMetaData) throws SQLException {
 		requireNonNull(databaseMetaData);
 
 		try {
 			return databaseMetaData.getDatabaseProductVersion();
 		} catch (SQLException e) {
+			if (JdbcFallbacks.isTerminal(e))
+				throw e;
 			return null;
 		}
 	}
