@@ -31,6 +31,18 @@ All notable changes to Pyranid will be documented in this file.
 
 ### Fixed
 
+- Legacy JDBC `AbstractMethodError` binding fallbacks and PostgreSQL wrapper discovery apply the terminal-failure
+  veto before continuing, so rollback and cancellation evidence cannot disappear behind an unavailable capability.
+  Bare legacy capability signals retain their fallback behavior.
+- Operation guards retain failures raised by diagnostic accessors, including one-shot interruption and unsafe
+  transaction outcomes. Binding classification fails closed when an accessor fails, before later unsupported-feature
+  evidence can authorize fallback. Retention is deferred and identity-deduplicated; ordinary evidence inspection
+  and observer isolation remain unchanged, and guards do not publish interruption inside a transaction.
+- Native DuckDB nested ARRAY extraction preserves unchecked and fatal read failures when array cleanup also fails,
+  including reused exception instances. Cleanup-only failures retain their existing identity and retry behavior.
+- PostgreSQL notification capability classification retains the original JDBC failure when SQLState or connection
+  health inspection fails. Timeout restoration also preserves an already-pending receive failure, so diagnostic
+  failures cannot erase cancellation evidence and admit another reconnect.
 - Optional JDBC fallbacks reject terminal rollback, connection, cancellation, fatal-error, and unsafe-outcome
   evidence before continuing. This covers chunk parameter resets, large update/batch execution, temporal reads,
   ARRAY/STRUCT metadata, TIME-array reader fallback, database-type discovery and metrics cache warming, and
