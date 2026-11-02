@@ -211,6 +211,10 @@
 						<additionalOption>-Xdoclint:-html</additionalOption>
 					</additionalOptions>
 					<linksource>true</linksource>
+					<links>
+						<link>https://javadoc.io/static/org.jspecify/jspecify/1.0.1/</link>
+						<link>https://javadoc.io/static/com.google.code.findbugs/jsr305/3.0.2/</link>
+					</links>
 					<show>public</show>
 					<bottom><![CDATA[Copyright 2015-2022 <a href="https://www.xmog.com" target="_blank">Transmogrify LLC</a>, 2022-2026 <a href="https://www.revetware.com" target="_blank">Revetware LLC</a>.]]></bottom>
 					<source>17</source>
