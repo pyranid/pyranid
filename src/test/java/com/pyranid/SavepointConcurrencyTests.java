@@ -214,7 +214,7 @@ public class SavepointConcurrencyTests {
 		Database setupDatabase = database(source);
 		List<String> events = Collections.synchronizedList(new ArrayList<>());
 		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
-		Database database = Database.withDataSource(completionEventRecordingDataSource(source, events, false))
+		Database database = Database.with(completionEventRecordingDataSource(source, events, false), DatabaseType.GENERIC)
 				.metricsCollector(metricsCollector)
 				.build();
 		List<TransactionResult> hookResults = Collections.synchronizedList(new ArrayList<>());
@@ -277,7 +277,7 @@ public class SavepointConcurrencyTests {
 		JDBCDataSource source = dataSource();
 		Database setupDatabase = database(source);
 		List<String> events = Collections.synchronizedList(new ArrayList<>());
-		Database database = Database.withDataSource(completionEventRecordingDataSource(source, events, true)).build();
+		Database database = Database.with(completionEventRecordingDataSource(source, events, true), DatabaseType.GENERIC).build();
 		List<TransactionResult> hookResults = Collections.synchronizedList(new ArrayList<>());
 		CountDownLatch scopeEntered = new CountDownLatch(1);
 		CountDownLatch completionFinished = new CountDownLatch(1);
@@ -373,7 +373,7 @@ public class SavepointConcurrencyTests {
 	}
 
 	private static Database database(DataSource source) {
-		Database database = Database.withDataSource(source).build();
+		Database database = Database.with(source, DatabaseType.GENERIC).build();
 		database.query("CREATE TABLE events (id INT)").execute();
 		return database;
 	}

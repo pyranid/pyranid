@@ -95,14 +95,12 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 		long startTime = nanoTime();
 		this.openStartTime = startTime;
 		this.executor.getMetricsCollectorDispatcher().willOpenStream(this.statementContext);
-		StatementConnections.MetadataScope metadataScope = null;
 		try {
 			this.connection = this.lease.acquire("open a stream on the transaction connection");
-			metadataScope = this.lease.metadataScope();
 			startTime = nanoTime();
 
 			try {
-				this.databaseStreamDialect = databaseDialectForStreamingConnection();
+				this.databaseStreamDialect = this.executor.connections.dialect();
 				this.databaseStreamState = this.databaseStreamDialect.configureStreamingConnection(requireNonNull(this.connection), this.lease.transactional());
 
 				this.preparedStatement = this.databaseStreamDialect.prepareStreamingStatement(requireNonNull(this.connection), this.statementContext);
@@ -121,14 +119,13 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 			} finally {
 				this.executionDuration = Duration.ofNanos(nanoTime() - startTime);
 			}
-			this.executor.warmDatabaseTypeCacheForMetricsIfNeeded(this.statementContext);
 			this.executor.getMetricsCollectorDispatcher().didOpenStream(this.statementContext, Duration.ofNanos(nanoTime() - this.openStartTime));
 		} catch (DatabaseException e) {
 			DatabaseException wrapped = databaseExceptionWithStatementContext(this.statementContext, e);
 			this.exception = wrapped;
 			this.thrown = wrapped;
 			this.openFailed = true;
-			this.executor.getMetricsCollectorDispatcher().didFailToOpenStream(this.statementContext, this.executor.connections.cachedType(),
+			this.executor.getMetricsCollectorDispatcher().didFailToOpenStream(this.statementContext, this.executor.connections.databaseType(),
 					Duration.ofNanos(nanoTime() - this.openStartTime), wrapped);
 			close();
 			throw wrapped;
@@ -137,7 +134,7 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 			this.exception = wrapped;
 			this.thrown = wrapped;
 			this.openFailed = true;
-			this.executor.getMetricsCollectorDispatcher().didFailToOpenStream(this.statementContext, this.executor.connections.cachedType(),
+			this.executor.getMetricsCollectorDispatcher().didFailToOpenStream(this.statementContext, this.executor.connections.databaseType(),
 					Duration.ofNanos(nanoTime() - this.openStartTime), wrapped);
 			close();
 			throw wrapped;
@@ -145,23 +142,10 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 			this.exception = databaseExceptionWithStatementContext(this.statementContext, e);
 			this.thrown = e;
 			this.openFailed = true;
-			this.executor.getMetricsCollectorDispatcher().didFailToOpenStream(this.statementContext, this.executor.connections.cachedType(),
+			this.executor.getMetricsCollectorDispatcher().didFailToOpenStream(this.statementContext, this.executor.connections.databaseType(),
 					Duration.ofNanos(nanoTime() - this.openStartTime), e);
 			close();
 			throw e;
-		} finally {
-			if (metadataScope != null) metadataScope.close();
-		}
-	}
-
-	@NonNull
-	private DatabaseDialect databaseDialectForStreamingConnection() {
-		try {
-			return this.executor.connections.dialect(requireNonNull(this.connection));
-		} catch (DatabaseException e) {
-			if (JdbcFallbacks.isTerminal(e))
-				throw e;
-			return this.executor.connections.cachedType().dialect();
 		}
 	}
 
@@ -215,7 +199,6 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 
 		this.hasNextEvaluated = false;
 		long startTime = nanoTime();
-		StatementConnections.MetadataScope metadataScope = this.lease.metadataScope();
 
 		try {
 			T value;
@@ -256,8 +239,6 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 			this.iterationThrowable = e;
 			close();
 			throw e;
-		} finally {
-			metadataScope.close();
 		}
 	}
 
@@ -319,7 +300,7 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 			} else {
 				Throwable statementThrowable = this.thrown == null ? this.exception : this.thrown;
 				this.executor.getMetricsCollectorDispatcher().didFailToExecuteStatement(this.statementContext, statementLog,
-						this.executor.connections.cachedType(), requireNonNull(statementThrowable));
+						this.executor.connections.databaseType(), requireNonNull(statementThrowable));
 			}
 
 			try {

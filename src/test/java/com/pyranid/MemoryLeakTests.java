@@ -71,7 +71,7 @@ public class MemoryLeakTests {
 				.planCacheCapacity(PLAN_CACHE_CAPACITY)
 				.build();
 
-		Database db = Database.withDataSource(ds)
+		Database db = Database.with(ds, DatabaseType.GENERIC)
 				.resultSetMapper(mapper)
 				.build();
 
@@ -113,8 +113,7 @@ public class MemoryLeakTests {
 			};
 			ResultSetMapper mapper = ResultSetMapper.withCustomColumnMappers(List.of(customMapper))
 					.planCachingEnabled(cached).planCacheCapacity(PLAN_CACHE_CAPACITY).build();
-			Database database = Database.withDataSource(createInMemoryDataSource("loader_reclamation_" + cached))
-					.databaseType(DatabaseType.GENERIC).resultSetMapper(mapper).build();
+			Database database = Database.with(createInMemoryDataSource("loader_reclamation_" + cached), DatabaseType.GENERIC).resultSetMapper(mapper).build();
 
 			try {
 				// A separate method ensures class tokens, reflection objects, rows, contexts and cursors leave the stack

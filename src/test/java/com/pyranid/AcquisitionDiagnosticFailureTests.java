@@ -47,7 +47,7 @@ class AcquisitionDiagnosticFailureTests {
 	void rawMetadataAndHealthCheckoutRetainCancellationDespiteBrokenDiagnostics() {
 		for (String accessor : ACCESSORS) {
 			for (String entry : List.of("raw", "typedRaw", "metadata", "health")) {
-				Fixture fixture = new Fixture(true, null);
+				Fixture fixture = new Fixture(null);
 				SQLException original = cancellation(accessor);
 				fixture.checkoutFailure = original;
 				try {
@@ -75,7 +75,7 @@ class AcquisitionDiagnosticFailureTests {
 	@Test
 	void healthValidationRetainsCancellationAndClosesTheBorrowedConnection() {
 		for (String accessor : ACCESSORS) {
-			Fixture fixture = new Fixture(true, null);
+			Fixture fixture = new Fixture(null);
 			SQLException original = cancellation(accessor);
 			fixture.healthFailure = original;
 			try {
@@ -107,7 +107,7 @@ class AcquisitionDiagnosticFailureTests {
 						observed.set(failure);
 					}
 				};
-				Fixture fixture = new Fixture(true, collector);
+				Fixture fixture = new Fixture(collector);
 				SQLException original = cancellation(accessor);
 				fixture.checkoutFailure = original;
 
@@ -129,8 +129,8 @@ class AcquisitionDiagnosticFailureTests {
 
 	@Test
 	void freshMetadataCheckoutCancellationExitingATransactionCannotAdmitAnotherAttempt() {
-		Fixture fixture = new Fixture(true, null);
-		Database inspection = Database.withDataSource(fixture.nativeSource).databaseType(DatabaseType.GENERIC).build();
+		Fixture fixture = new Fixture(null);
+		Database inspection = Database.with(fixture.nativeSource, DatabaseType.GENERIC).build();
 		inspection.query("CREATE TABLE work (id INT PRIMARY KEY)").execute();
 		SQLException original = cancellation("sqlState");
 		AtomicInteger attempts = new AtomicInteger(), conditions = new AtomicInteger();
@@ -159,38 +159,8 @@ class AcquisitionDiagnosticFailureTests {
 	}
 
 	@Test
-	void databaseTypeDetectionRetainsFailureContextAndClosesItsCandidate() throws SQLException {
-		for (String accessor : ACCESSORS) {
-			for (String entry : List.of("source", "connection", "database")) {
-				Fixture fixture = new Fixture(false, null);
-				SQLException original = cancellation(accessor);
-				fixture.metadataFailure = original;
-
-				DatabaseException thrown = assertThrows(DatabaseException.class, () -> {
-					switch (entry) {
-						case "source" -> DatabaseType.fromDataSource(fixture.source);
-						case "connection" -> {
-							try (Connection connection = fixture.source.getConnection()) {
-								DatabaseType.fromConnection(connection);
-							}
-						}
-						case "database" -> fixture.database.getDatabaseType();
-					}
-				});
-
-				assertTrue(contains(thrown, original), entry + " " + accessor);
-				assertTrue(thrown.getMessage().contains(entry.equals("database")
-						? "Unable to determine database type automatically" : "Unable to inspect database metadata"));
-				assertEquals(1, fixture.connections.get());
-				assertEquals(1, fixture.closes.get());
-				assertFalse(Thread.currentThread().isInterrupted());
-			}
-		}
-	}
-
-	@Test
 	void malformedAbortDiagnosticsDoNotReplaceCommitFailureOrEraseCleanupCancellation() {
-		Fixture fixture = new Fixture(true, null);
+		Fixture fixture = new Fixture(null);
 		SQLException commit = new SQLException("commit outcome unknown", "08006");
 		SQLException abort = cancellation("sqlState");
 		fixture.commitFailure = commit;
@@ -211,7 +181,7 @@ class AcquisitionDiagnosticFailureTests {
 
 	@Test
 	void successfulRawMetadataAndHealthCallsDoNotFabricateInterruption() {
-		Fixture fixture = new Fixture(true, null);
+		Fixture fixture = new Fixture(null);
 		assertEquals(Optional.of(7), fixture.database.useRawConnection(connection -> Optional.of(7)));
 		fixture.database.readDatabaseMetaData(metadata -> assertNotNull(metadata.getDatabaseProductName()));
 		fixture.database.performHealthCheck(Duration.ofSeconds(1));
@@ -255,9 +225,9 @@ class AcquisitionDiagnosticFailureTests {
 		private final Database database;
 		private final AtomicInteger connections = new AtomicInteger(), closes = new AtomicInteger();
 		private final AtomicInteger commits = new AtomicInteger(), rollbacks = new AtomicInteger(), aborts = new AtomicInteger();
-		private SQLException checkoutFailure, healthFailure, metadataFailure, commitFailure, abortFailure;
+		private SQLException checkoutFailure, healthFailure, commitFailure, abortFailure;
 
-		private Fixture(boolean explicitType, MetricsCollector collector) {
+		private Fixture(MetricsCollector collector) {
 			this.nativeSource.setUrl("jdbc:hsqldb:mem:acquisition_diagnostics_" + UUID.randomUUID());
 			this.nativeSource.setUser("sa");
 			this.nativeSource.setPassword("");
@@ -273,7 +243,6 @@ class AcquisitionDiagnosticFailureTests {
 				return proxy(Connection.class, (operation, parameters) -> {
 					String name = operation.getName();
 					if (name.equals("isValid") && this.healthFailure != null) throw this.healthFailure;
-					if (name.equals("getMetaData") && this.metadataFailure != null) throw this.metadataFailure;
 					if (name.equals("commit")) {
 						this.commits.incrementAndGet();
 						if (this.commitFailure != null) throw this.commitFailure;
@@ -289,8 +258,7 @@ class AcquisitionDiagnosticFailureTests {
 					return value;
 				});
 			});
-			Database.Builder builder = Database.withDataSource(this.source);
-			if (explicitType) builder.databaseType(DatabaseType.GENERIC);
+			Database.Builder builder = Database.with(this.source, DatabaseType.GENERIC);
 			if (collector != null) builder.metricsCollector(collector);
 			this.database = builder.build();
 		}

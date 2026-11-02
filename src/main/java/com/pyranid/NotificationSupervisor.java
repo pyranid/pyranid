@@ -23,19 +23,27 @@ import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
 import java.sql.SQLFeatureNotSupportedException;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.LongSupplier;
+import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Predicate;
 
 import static java.util.Objects.requireNonNull;
@@ -45,14 +53,17 @@ import static java.util.Objects.requireNonNull;
  * <p>
  * The supervisor registers its channels, reconciles authoritative state, then reconciles once per nonempty
  * notification batch. A selected retry opens a new session and repeats initial reconciliation. Notifications
- * remain lossy hints: applications needing progress without a notification must poll durable state on an
- * independent worker. Reconciliation must be bounded, repeatable, and safe alongside such polling.
+ * remain lossy hints: enable {@link Builder#pollEvery(Duration)} for independent durable-state polling.
+ * Managed reconciliation is serialized and coalesces requests, and must be bounded and repeatable.
  * <p>
- * This class creates no threads or executors and never closes the caller's executor or data source. The supplied
- * executor must dispatch asynchronously. A listener needs a session-affine source and holds one connection;
- * ordinary reconciliation queries acquire their own connections. See {@link Database#withNotificationSession}.
+ * {@link #start()} creates managed workers using named daemon threads by default; customize their creation with
+ * {@link Builder#threadFactory(Function)}. Call {@link #requestShutdown()} and await shutdown for orderly cleanup.
+ * The advanced {@link #start(Executor)} mode uses an application-owned asynchronous executor with synchronous
+ * reconciliation and does not support polling or managed thread factories. The data source is always caller-owned.
+ * A listener needs a session-affine source and holds one connection; ordinary reconciliation queries acquire their
+ * own connections. See {@link Database#withNotificationSession}.
  * <p>
- * Completion-stage views cannot be used to cancel or complete this supervisor. Use {@link #requestStop()} to
+ * Completion-stage views cannot be used to cancel or complete this supervisor. Use {@link #requestShutdown()} to
  * stop it. Stage continuations may run on the completing thread: keep them short or use asynchronous continuations.
  * Neither a receive timeout nor an {@link State#ACTIVE} snapshot proves that the physical connection is healthy.
  *
@@ -62,6 +73,7 @@ import static java.util.Objects.requireNonNull;
 @ThreadSafe
 public final class NotificationSupervisor {
 	private static final Duration RECEIVE_INTERVAL = Duration.ofSeconds(30);
+	private static final AtomicLong SUPERVISOR_IDS = new AtomicLong();
 	private final ReentrantLock lifecycleLock = new ReentrantLock();
 	private final SessionAttempt sessionAttempt;
 	private final Runnable reconciler;
@@ -70,10 +82,15 @@ public final class NotificationSupervisor {
 	private final long stabilityWindowNanos;
 	private final LongSupplier nanoTime;
 	private final Sleeper sleeper;
+	private final @Nullable Duration pollInterval;
+	private final Function<? super ThreadRole, ? extends ThreadFactory> threadFactories;
+	private final boolean customThreadFactories;
+	private final boolean customReconciliationFailureObserver;
+	private final Consumer<? super Throwable> reconciliationFailureObserver;
 	private final CompletableFuture<Void> ready = new CompletableFuture<>();
-	private final CompletableFuture<Result> terminated = new CompletableFuture<>();
+	private final CompletableFuture<ShutdownResult> terminated = new CompletableFuture<>();
 	private final CompletionStage<Void> readyView = this.ready.minimalCompletionStage();
-	private final CompletionStage<Result> terminatedView = this.terminated.minimalCompletionStage();
+	private final CompletionStage<ShutdownResult> terminatedView = this.terminated.minimalCompletionStage();
 	// All mutable lifecycle fields are guarded by lifecycleLock.
 	private State state = State.NEW;
 	private @Nullable Thread worker;
@@ -82,6 +99,13 @@ public final class NotificationSupervisor {
 	private boolean everReady;
 	private long attemptNumber;
 	private @Nullable Throwable lastFailure;
+	private @Nullable Managed managed;
+	private @Nullable Instant lastSuccessfulReconciliation;
+	private @Nullable Throwable lastReconciliationFailure;
+	private boolean reconciliationRunning;
+	private @Nullable Throwable shutdownInterruptFailure;
+	private boolean legacyCompleting;
+	private @Nullable Thread legacyCompletingThread;
 
 	private NotificationSupervisor(Builder builder, SessionAttempt sessionAttempt,
 			LongSupplier nanoTime, Sleeper sleeper) {
@@ -92,6 +116,39 @@ public final class NotificationSupervisor {
 		this.stabilityWindowNanos = saturatedNanos(builder.stabilityWindow);
 		this.nanoTime = requireNonNull(nanoTime);
 		this.sleeper = requireNonNull(sleeper);
+		this.pollInterval = builder.pollInterval;
+		this.customThreadFactories = builder.threadFactories != null;
+		long supervisorId = SUPERVISOR_IDS.incrementAndGet();
+		this.threadFactories = builder.threadFactories != null ? builder.threadFactories : role -> task -> {
+			Thread thread = new Thread(task, "pyranid-notifications-" + supervisorId + "-"
+					+ role.name().toLowerCase(java.util.Locale.ROOT));
+			thread.setDaemon(true);
+			return thread;
+		};
+		this.customReconciliationFailureObserver = builder.reconciliationFailureObserver != null;
+		this.reconciliationFailureObserver = builder.reconciliationFailureObserver != null
+				? builder.reconciliationFailureObserver : failure -> {};
+	}
+
+	/**
+	 * Starts this single-use supervisor using its own listener and reconciliation workers.
+	 * Factories are resolved and threads validated before any work is allowed to begin. The default workers
+	 * are named daemon threads; explicit shutdown is still required for orderly resource cleanup.
+	 * @throws IllegalStateException if already started/stopped or a factory returns an invalid thread
+	 */
+	public void start() {
+		Managed runtime;
+		this.lifecycleLock.lock();
+		try {
+			if (this.state != State.NEW)
+				throw new IllegalStateException("Notification supervisor has already been started or stopped");
+			this.state = State.STARTING;
+			runtime = new Managed();
+			this.managed = runtime;
+		} finally {
+			this.lifecycleLock.unlock();
+		}
+		runtime.start();
 	}
 
 	/**
@@ -110,14 +167,16 @@ public final class NotificationSupervisor {
 	 * <p>
 	 * Inline execution, including a caller-runs rejection policy, is rejected before any JDBC or reconciliation work.
 	 * A later queued invocation on the submitting thread is allowed. The executor must eventually run an accepted
-	 * task; silently discarded tasks cannot be detected. Calling {@link #requestStop()} still terminates a queued task.
+	 * task; silently discarded tasks cannot be detected. Calling {@link #requestShutdown()} still terminates a queued task.
 	 *
 	 * @param executor asynchronous executor with capacity for a long-lived listener
-	 * @throws IllegalStateException if this supervisor has already been started or stopped
+	 * @throws IllegalStateException if already started/stopped, or managed-worker options are configured
 	 * @throws RejectedExecutionException if the executor rejects submission or executes inline
 	 */
 	public void start(@NonNull Executor executor) {
 		requireNonNull(executor);
+		if (this.pollInterval != null || this.customThreadFactories || this.customReconciliationFailureObserver)
+			throw new IllegalStateException("Polling, thread factories and failure observers require managed start()");
 		this.lifecycleLock.lock();
 		try {
 			if (this.state != State.NEW)
@@ -154,35 +213,56 @@ public final class NotificationSupervisor {
 	/**
 	 * Requests cooperative stop without waiting for listener I/O or cleanup. Repeated requests are harmless.
 	 * <p>
-	 * A stop before worker entry prevents JDBC work. A running worker is interrupted. A decoded nonempty batch still
-	 * receives one final bounded reconciliation, with an already-observed interrupt temporarily cleared and restored.
-	 * Arbitrary JDBC I/O cannot be forcibly bounded: wait on {@link #termination()} with an application deadline.
+	 * A shutdown before worker entry prevents listener JDBC work. A running listener is interrupted. Polling is
+	 * cancelled, but a decoded nonempty batch still receives one final bounded reconciliation, with an already-observed
+	 * interrupt temporarily cleared and restored. Managed reconciliation is drained without interrupting user work.
+	 * If listener interruption is rejected, polling cancellation and shutdown publication still proceed; the
+	 * interruption failure is retained in the shutdown result while listener cleanup awaits cooperative progress.
+	 * Arbitrary JDBC I/O cannot be forcibly bounded: wait on {@link #awaitShutdownAsync()} with an application deadline.
 	 */
-	public void requestStop() {
+	public void requestShutdown() {
 		CancellationException cancellation = null;
-		Result result = null;
+		ShutdownResult result = null;
+		Managed runtime;
 		this.lifecycleLock.lock();
 		try {
 			if (this.state == State.TERMINATED || this.stopRequested)
 				return;
 			this.stopRequested = true;
+			runtime = this.managed;
 			if (!this.readinessDecided) {
 				this.readinessDecided = true;
 				cancellation = cancelledBeforeReadiness();
 			}
-			if (this.worker == null) {
+			if (this.worker == null && runtime == null && !this.legacyCompleting) {
 				this.state = State.TERMINATED;
-				result = new Result(null, true);
+				result = new ShutdownResult(null, true);
 			} else {
 				this.state = State.STOPPING;
 				// Keep interrupt delivery inside the unregister handshake: the thread must not be reused first.
-				this.worker.interrupt();
+				if (this.worker != null) {
+					try {
+						this.worker.interrupt();
+					} catch (RuntimeException | Error failure) {
+						if (runtime != null)
+							rememberManagedFailure(runtime, failure);
+						else {
+							this.shutdownInterruptFailure = failure;
+							this.lastFailure = failure;
+						}
+					}
+				}
 			}
 		} finally {
 			this.lifecycleLock.unlock();
 		}
+		if (runtime != null)
+			runtime.reconciliation.stopPolling();
 		if (cancellation != null)
 			this.ready.completeExceptionally(cancellation);
+		if (runtime != null) {
+			completeManagedIfFinished(runtime);
+		}
 		if (result != null)
 			this.terminated.complete(result);
 	}
@@ -192,7 +272,7 @@ public final class NotificationSupervisor {
 	 * <p>
 	 * Retryable startup failures leave this pending. Terminal failure or stop before readiness completes it
 	 * exceptionally. Later outages do not undo successful readiness; inspect {@link #snapshot()} and
-	 * {@link #termination()} separately. Timing out while waiting does not request stop.
+	 * {@link #awaitShutdownAsync()} separately. Timing out while waiting does not request stop.
 	 *
 	 * @return first-readiness stage
 	 */
@@ -204,14 +284,43 @@ public final class NotificationSupervisor {
 	/**
 	 * Gets a read-only stage that completes normally with the terminal result, including any terminal failure.
 	 * <p>
-	 * Completion means session cleanup has finished and no more supervisor JDBC or reconciliation work can occur.
-	 * It does not mean that a caller's synchronous stage continuation has returned or that the executor has terminated.
+	 * Completion means session cleanup and managed reconciliation have finished, including partial-start cleanup,
+	 * and no more supervisor JDBC or reconciliation work can occur. It does not mean that a caller's synchronous
+	 * stage continuation has returned, that a worker's uncaught-exception handler has returned, or that an
+	 * application-owned executor has terminated.
 	 *
 	 * @return terminal-result stage
 	 */
 	@NonNull
-	public CompletionStage<Result> termination() {
+	public CompletionStage<ShutdownResult> awaitShutdownAsync() {
 		return this.terminatedView;
+	}
+
+	/**
+	 * Waits interruptibly for listener cleanup and all managed reconciliation work to finish.
+	 * Interruption cancels only this wait; it does not request shutdown. Do not call from a supervisor callback.
+	 * @return the shutdown result, including any terminal failure
+	 * @throws InterruptedException if this waiting thread is interrupted
+	 * @throws IllegalStateException if called by a supervisor worker, which cannot wait for itself
+	 */
+	@NonNull
+	public ShutdownResult awaitShutdown() throws InterruptedException {
+		this.lifecycleLock.lock();
+		try {
+			Thread current = Thread.currentThread();
+			if (current == this.worker || current == this.legacyCompletingThread || (this.managed != null
+					&& (current == this.managed.listener || current == this.managed.reconciliationThread
+					|| current == this.managed.completingThread
+					|| (this.managed.initializing && current == this.managed.initializingThread))))
+				throw new IllegalStateException("A supervisor worker cannot await its own shutdown");
+		} finally {
+			this.lifecycleLock.unlock();
+		}
+		try {
+			return this.terminated.get();
+		} catch (ExecutionException impossible) {
+			throw new IllegalStateException("Shutdown result completed exceptionally", impossible.getCause());
+		}
 	}
 
 	/**
@@ -223,7 +332,13 @@ public final class NotificationSupervisor {
 	public Snapshot snapshot() {
 		this.lifecycleLock.lock();
 		try {
-			return new Snapshot(this.state, this.attemptNumber, this.everReady, this.lastFailure);
+			NotificationReconciler.Snapshot reconciliation = this.managed == null
+					? null : this.managed.reconciliation.snapshot();
+			return new Snapshot(this.state, this.attemptNumber, this.everReady, this.lastFailure,
+					reconciliation == null ? this.lastSuccessfulReconciliation : reconciliation.lastSuccessTime(),
+					reconciliation == null ? this.lastReconciliationFailure : reconciliation.lastFailure(),
+					reconciliation == null ? this.reconciliationRunning : reconciliation.running(),
+					reconciliation != null && reconciliation.pending());
 		} finally {
 			this.lifecycleLock.unlock();
 		}
@@ -232,7 +347,8 @@ public final class NotificationSupervisor {
 	private void runWorker() {
 		this.lifecycleLock.lock();
 		try {
-			if (this.state == State.TERMINATED || this.stopRequested || this.worker != null)
+			if (this.state == State.TERMINATED || this.stopRequested || this.worker != null
+					|| (this.managed != null && this.managed.failure != null))
 				return;
 			this.worker = Thread.currentThread();
 		} finally {
@@ -257,7 +373,8 @@ public final class NotificationSupervisor {
 		while (true) {
 			this.lifecycleLock.lock();
 			try {
-				if (this.stopRequested || Thread.currentThread().isInterrupted())
+				if (this.stopRequested || (this.managed != null && this.managed.failure != null)
+						|| Thread.currentThread().isInterrupted())
 					return previousFailure;
 				this.state = State.STARTING;
 				if (this.attemptNumber < Long.MAX_VALUE)
@@ -271,15 +388,15 @@ public final class NotificationSupervisor {
 				throw new IllegalStateException("Notification session returned unexpectedly");
 			} catch (InterruptedException interrupted) {
 				Thread.currentThread().interrupt();
-				return null;
+				return legacyFailureOnCancellation(interrupted);
 			} catch (DatabaseException failure) {
 				noteFailure(attempt, failure);
-				// The session has finished cleanup. A driver can consume interruption and retain it only
-				// in a receive or cleanup failure, so recover that evidence before admitting another attempt.
-				Database.restoreInterruptIfNeeded(failure);
+				// Cleanup has finished. Classification must retain accessor failures before any scan
+				// can consume one-shot fatal/cancellation evidence and make a later retry look safe.
+				boolean terminalFailure = inspectTerminalFailure(failure);
 				if (stopping() || Thread.currentThread().isInterrupted()
 						|| attempt.unexpectedCallbackFailure || this.retryCondition == null
-						|| containsTerminalFailure(failure))
+						|| terminalFailure)
 					return failure;
 				if (attempt.readySince != null
 						&& attempt.failedAt - attempt.readySince >= this.stabilityWindowNanos)
@@ -322,15 +439,63 @@ public final class NotificationSupervisor {
 		}
 	}
 
-	private static boolean containsTerminalFailure(Throwable failure) {
-		// Fatal errors and unreadable graphs remain terminal even inside connection cleanup failures.
-		if (ThrowableGraph.inspect(failure, current -> current instanceof Error ? 1 : 0, 1) != 0)
-			return true;
-		// Unsupported abort/close operations do not imply that notification receive is unavailable.
-		// Prune only those explicit cleanup branches; wrapped or suppressed receive failures still count.
-		return ThrowableGraph.inspect(failure, current -> current instanceof NotificationReceiveUnsupportedException
-				|| current instanceof UnsupportedOperationException || current instanceof SQLFeatureNotSupportedException ? 1 : 0,
-				1, current -> !(current instanceof NotificationConnectionCleanupException)) != 0;
+	@Nullable
+	private Throwable legacyFailureOnCancellation(InterruptedException interrupted) {
+		Throwable unrecovered;
+		this.lifecycleLock.lock();
+		try {
+			unrecovered = this.managed == null ? this.lastReconciliationFailure : null;
+		} finally {
+			this.lifecycleLock.unlock();
+		}
+		try {
+			// Successful passes clear the field. Cancellation after one must not resurrect an older
+			// recovered failure, but an interrupted retry still needs its unrecovered failure retained.
+			return unrecovered == null ? null
+					: NotificationReconciler.retainUnrecoveredFailure(interrupted, unrecovered);
+		} finally {
+			// Foreign diagnostic accessors may consume interruption during aggregation.
+			if (!Thread.currentThread().isInterrupted())
+				Thread.currentThread().interrupt();
+		}
+	}
+
+	/** Retains retry-decision diagnostics and restores interruption without changing ordinary pure graph scans. */
+	private static boolean inspectTerminalFailure(Throwable failure) {
+		final int interrupted = 1;
+		final int terminal = 2;
+		final int unreadable = 4;
+		int evidence = Thread.currentThread().isInterrupted() ? interrupted : 0;
+		// Fatal errors and cancellation count even inside connection cleanup failures.
+		evidence |= ThrowableGraph.inspectRetainingFailures(failure,
+				current -> (current instanceof InterruptedException || Thread.currentThread().isInterrupted() ? interrupted : 0)
+						| (current instanceof Error ? terminal : 0),
+				unreadable, current -> true, interrupted);
+		// Preserve status observed between scans before another foreign accessor can consume it.
+		if (Thread.currentThread().isInterrupted())
+			evidence |= interrupted;
+		// Unsupported optional abort/close does not mean notification receive is unavailable. Keep
+		// this scan retaining as well: an accessor may fail only on this later inspection.
+		evidence |= ThrowableGraph.inspectRetainingFailures(failure,
+				current -> (current instanceof InterruptedException || Thread.currentThread().isInterrupted() ? interrupted : 0)
+						| (current instanceof NotificationReceiveUnsupportedException || current instanceof UnsupportedOperationException
+						|| current instanceof SQLFeatureNotSupportedException ? terminal : 0),
+				unreadable, current -> !(current instanceof NotificationConnectionCleanupException), interrupted);
+		if (Thread.currentThread().isInterrupted())
+			evidence |= interrupted;
+		if ((evidence & unreadable) != 0) {
+			// Retained diagnostics are appended after each traversal. Inspect their cancellation
+			// causes too, but keep the unreadable veto even if the graph has since become readable.
+			evidence |= ThrowableGraph.inspectRetainingFailures(failure,
+					current -> (current instanceof InterruptedException || Thread.currentThread().isInterrupted() ? interrupted : 0)
+							| (current instanceof Error ? terminal : 0),
+					unreadable, current -> true, interrupted);
+			if (Thread.currentThread().isInterrupted())
+				evidence |= interrupted;
+		}
+		if ((evidence & interrupted) != 0)
+			Thread.currentThread().interrupt();
+		return (evidence & (terminal | unreadable)) != 0;
 	}
 
 	private void consume(HintSession session, Attempt attempt) throws InterruptedException {
@@ -341,7 +506,8 @@ public final class NotificationSupervisor {
 			boolean publishReadiness;
 			this.lifecycleLock.lock();
 			try {
-				if (this.stopRequested || Thread.currentThread().isInterrupted())
+				if (this.stopRequested || (this.managed != null && this.managed.failure != null)
+						|| Thread.currentThread().isInterrupted())
 					throw new InterruptedException();
 				attempt.readySince = this.nanoTime.getAsLong();
 				this.state = State.ACTIVE;
@@ -383,13 +549,53 @@ public final class NotificationSupervisor {
 		}
 	}
 
-	private void reconcile(Attempt attempt) {
+	private void reconcile(Attempt attempt) throws InterruptedException {
 		attempt.phase = FailurePhase.RECONCILE;
+		Managed runtime;
+		this.lifecycleLock.lock();
 		try {
-			this.reconciler.run();
+			runtime = this.managed;
+			if (runtime == null)
+				this.reconciliationRunning = true;
+		} finally {
+			this.lifecycleLock.unlock();
+		}
+		try {
+			if (runtime != null)
+				runtime.reconciliation.reconcileAndAwait();
+			else {
+				this.reconciler.run();
+				// Match managed reconciliation: restoring cancellation and returning is not a successful pass.
+				if (Thread.currentThread().isInterrupted())
+					throw new InterruptedException();
+				this.lifecycleLock.lock();
+				try {
+					this.lastSuccessfulReconciliation = Instant.now();
+					this.lastReconciliationFailure = null;
+				} finally {
+					this.lifecycleLock.unlock();
+				}
+			}
 		} catch (RuntimeException | Error failure) {
 			attempt.unexpectedCallbackFailure = !(failure instanceof DatabaseException);
+			if (runtime == null) {
+				this.lifecycleLock.lock();
+				try {
+					this.lastReconciliationFailure = failure;
+				} finally {
+					this.lifecycleLock.unlock();
+				}
+			}
 			throw failure;
+		} finally {
+			if (runtime == null) {
+				this.lifecycleLock.lock();
+				try {
+					this.reconciliationRunning = false;
+				} finally {
+					this.lifecycleLock.unlock();
+				}
+			}
 		}
 	}
 
@@ -411,7 +617,7 @@ public final class NotificationSupervisor {
 	private boolean stopping() {
 		this.lifecycleLock.lock();
 		try {
-			return this.stopRequested;
+			return this.stopRequested || (this.managed != null && this.managed.failure != null);
 		} finally {
 			this.lifecycleLock.unlock();
 		}
@@ -423,21 +629,66 @@ public final class NotificationSupervisor {
 	}
 
 	private void finish(@Nullable Throwable failure) {
-		Throwable readinessFailure = null;
-		Result result;
+		Managed runtime;
+		Throwable unrecovered;
 		this.lifecycleLock.lock();
 		try {
-			if (this.state == State.TERMINATED)
+			runtime = this.managed;
+			unrecovered = runtime == null ? this.lastReconciliationFailure : null;
+			if (runtime != null) {
+				this.worker = null;
+				rememberManagedFailure(runtime, failure);
+				this.state = State.STOPPING;
+			}
+		} finally {
+			this.lifecycleLock.unlock();
+		}
+		if (runtime != null) {
+			runtime.reconciliation.stop();
+			return;
+		}
+		if (failure != null && unrecovered != null && Thread.currentThread().isInterrupted()) {
+			try {
+				// Session cleanup may promote cancellation to a database exception or error. Keep
+				// the unresolved reconciliation failure regardless of that terminal exception shape.
+				failure = NotificationReconciler.retainUnrecoveredFailure(failure, unrecovered);
+			} finally {
+				if (!Thread.currentThread().isInterrupted())
+					Thread.currentThread().interrupt();
+			}
+		}
+		List<Throwable> failures = new ArrayList<>();
+		this.lifecycleLock.lock();
+		try {
+			if (this.state == State.TERMINATED || this.legacyCompleting)
 				return;
 			this.worker = null;
-			this.state = State.TERMINATED;
+			this.legacyCompleting = true;
+			this.legacyCompletingThread = Thread.currentThread();
+			this.state = State.STOPPING;
 			if (failure != null)
-				this.lastFailure = failure;
+				failures.add(failure);
+			if (this.shutdownInterruptFailure != null)
+				failures.add(this.shutdownInterruptFailure);
+		} finally {
+			this.lifecycleLock.unlock();
+		}
+		// Exception accessors are application/driver code and must not run under the lifecycle lock.
+		Throwable terminalFailure = aggregateFailures(failures);
+		Throwable readinessFailure = null;
+		ShutdownResult result;
+		this.lifecycleLock.lock();
+		try {
+			this.state = State.TERMINATED;
+			this.legacyCompleting = false;
+			this.legacyCompletingThread = null;
+			if (terminalFailure != null)
+				this.lastFailure = terminalFailure;
 			if (!this.readinessDecided) {
 				this.readinessDecided = true;
-				readinessFailure = failure == null ? cancelledBeforeReadiness() : failure;
+				readinessFailure = terminalFailure == null ? cancelledBeforeReadiness() : terminalFailure;
 			}
-			result = new Result(failure, this.stopRequested);
+			result = new ShutdownResult(terminalFailure, this.stopRequested);
 		} finally {
 			this.lifecycleLock.unlock();
 		}
@@ -455,6 +706,253 @@ public final class NotificationSupervisor {
 			return duration.toNanos();
 		} catch (ArithmeticException overflow) {
 			return Long.MAX_VALUE;
+		}
+	}
+
+	// Called only with lifecycleLock held. Record identities without invoking exception accessors.
+	private void rememberManagedFailure(Managed runtime, @Nullable Throwable failure) {
+		if (failure == null)
+			return;
+		for (Throwable existing : runtime.failures)
+			if (existing == failure)
+				return;
+		runtime.failures.add(failure);
+		if (runtime.failure == null)
+			runtime.failure = failure;
+		this.lastFailure = runtime.failure;
+	}
+
+	@Nullable
+	private static Throwable aggregateFailures(List<Throwable> failures) {
+		Throwable primary = null;
+		for (Throwable failure : failures) {
+			if (primary == null) {
+				primary = failure;
+			} else if (primary != failure) {
+				Throwable previous = primary;
+				// Replace a primary only when the new graph demonstrably retains it. Unreadable diagnostics
+				// must not masquerade as reachability evidence and erase the original failure.
+				if (ThrowableGraph.inspect(failure, current -> current == previous ? 1 : 0, 0) != 0)
+					primary = failure;
+				else if (ThrowableGraph.inspect(previous, current -> current == failure ? 1 : 0, 0) == 0)
+					previous.addSuppressed(failure);
+			}
+		}
+		return primary;
+	}
+
+	private void managedFailure(Managed runtime, Throwable failure) {
+		this.lifecycleLock.lock();
+		try {
+			rememberManagedFailure(runtime, failure);
+			if (this.state != State.TERMINATED)
+				this.state = State.STOPPING;
+			if (this.worker != null) {
+				try {
+					this.worker.interrupt();
+				} catch (RuntimeException | Error interruptFailure) {
+					rememberManagedFailure(runtime, interruptFailure);
+				}
+			}
+		} finally {
+			this.lifecycleLock.unlock();
+		}
+		runtime.reconciliation.stopPolling();
+	}
+
+	private void completeManagedIfFinished(Managed runtime) {
+		List<Throwable> failures;
+		this.lifecycleLock.lock();
+		try {
+			if (runtime.initializing || !runtime.listenerDone || !runtime.reconciliationDone
+					|| runtime.completing || this.state == State.TERMINATED)
+				return;
+			this.worker = null;
+			runtime.completing = true;
+			runtime.completingThread = Thread.currentThread();
+			failures = List.copyOf(runtime.failures);
+		} finally {
+			this.lifecycleLock.unlock();
+		}
+		// Both workers have finished. A diagnostic accessor may call lifecycle methods, or block,
+		// without holding up shutdown requests/status reads or allowing premature completion.
+		Throwable terminalFailure = aggregateFailures(failures);
+		Throwable readinessFailure = null;
+		ShutdownResult result;
+		this.lifecycleLock.lock();
+		try {
+			runtime.failure = terminalFailure;
+			runtime.completingThread = null;
+			this.state = State.TERMINATED;
+			if (terminalFailure != null)
+				this.lastFailure = terminalFailure;
+			if (!this.readinessDecided) {
+				this.readinessDecided = true;
+				readinessFailure = terminalFailure == null ? cancelledBeforeReadiness() : terminalFailure;
+			}
+			result = new ShutdownResult(terminalFailure, this.stopRequested);
+		} finally {
+			this.lifecycleLock.unlock();
+		}
+		if (readinessFailure != null)
+			this.ready.completeExceptionally(readinessFailure);
+		this.terminated.complete(result);
+	}
+
+	/** All mutable fields except the startup latch are guarded by lifecycleLock. */
+	private final class Managed {
+		private final Thread initializingThread = Thread.currentThread();
+		private final CountDownLatch launch = new CountDownLatch(1);
+		private final NotificationReconciler reconciliation = new NotificationReconciler(
+				NotificationSupervisor.this.reconciler, NotificationSupervisor.this.pollInterval,
+				NotificationSupervisor.this.nanoTime, failure -> {
+			boolean terminalFailure = inspectTerminalFailure(failure);
+			boolean recoverable = failure instanceof DatabaseException && !Thread.currentThread().isInterrupted()
+					&& !terminalFailure;
+			if (!recoverable) {
+				// Publish the terminal decision before the engine wakes its failed waiter. A later
+				// readable scan on the listener must not undo an earlier unreadable-graph veto.
+				NotificationSupervisor.this.lifecycleLock.lock();
+				try {
+					rememberManagedFailure(this, failure);
+					if (NotificationSupervisor.this.state != State.TERMINATED)
+						NotificationSupervisor.this.state = State.STOPPING;
+				} finally {
+					NotificationSupervisor.this.lifecycleLock.unlock();
+				}
+			}
+			return recoverable;
+		}, failure -> {
+			NotificationSupervisor.this.lifecycleLock.lock();
+			try {
+				NotificationSupervisor.this.lastFailure = failure;
+			} finally {
+				NotificationSupervisor.this.lifecycleLock.unlock();
+			}
+			NotificationSupervisor.this.reconciliationFailureObserver.accept(failure);
+		}, failure -> managedFailure(this, failure));
+		private @Nullable Thread listener;
+		private @Nullable Thread reconciliationThread;
+		private boolean initializing = true;
+		private boolean launchAllowed;
+		private boolean listenerDone = true;
+		private boolean reconciliationDone = true;
+		private @Nullable Throwable failure;
+		private final List<Throwable> failures = new ArrayList<>();
+		private boolean completing;
+		private @Nullable Thread completingThread;
+
+		private void start() {
+			Throwable startupFailure = null;
+			try {
+				// Resolve both factories first: a bad mapping cannot leave partially created workers.
+				ThreadFactory listenerFactory = requireNonNull(threadFactories.apply(ThreadRole.LISTENER),
+						"Listener thread factory");
+				ThreadFactory reconciliationFactory = requireNonNull(threadFactories.apply(ThreadRole.RECONCILIATION),
+						"Reconciliation thread factory");
+				if (!stopping()) {
+					Thread listenerThread = requireNonNull(listenerFactory.newThread(() -> enter(true)), "Listener thread");
+					lifecycleLock.lock();
+					try {
+						this.listener = listenerThread;
+						this.listenerDone = listenerThread.getState() == Thread.State.NEW
+								|| listenerThread.getState() == Thread.State.TERMINATED;
+					} finally {
+						lifecycleLock.unlock();
+					}
+					Thread reconcilerThread = requireNonNull(reconciliationFactory.newThread(() -> enter(false)),
+							"Reconciliation thread");
+					if (listenerThread == reconcilerThread)
+						throw new IllegalStateException("Thread factories must return distinct, unstarted threads");
+					lifecycleLock.lock();
+					try {
+						this.reconciliationThread = reconcilerThread;
+						this.reconciliationDone = reconcilerThread.getState() == Thread.State.NEW
+								|| reconcilerThread.getState() == Thread.State.TERMINATED;
+					} finally {
+						lifecycleLock.unlock();
+					}
+					if (listenerThread.getState() != Thread.State.NEW
+							|| reconcilerThread.getState() != Thread.State.NEW)
+						throw new IllegalStateException("Thread factories must return distinct, unstarted threads");
+					lifecycleLock.lock();
+					try {
+						this.listener = listenerThread;
+						this.reconciliationThread = reconcilerThread;
+						this.listenerDone = false;
+						this.reconciliationDone = false;
+					} finally {
+						lifecycleLock.unlock();
+					}
+					if (!stopping()) {
+						reconcilerThread.start();
+						if (reconcilerThread.getState() == Thread.State.NEW)
+							throw new IllegalStateException("Reconciliation thread did not start");
+						listenerThread.start();
+						if (listenerThread.getState() == Thread.State.NEW)
+							throw new IllegalStateException("Listener thread did not start");
+					}
+				}
+			} catch (RuntimeException | Error observed) {
+				startupFailure = observed;
+				managedFailure(this, observed);
+			} finally {
+				lifecycleLock.lock();
+				try {
+					this.initializing = false;
+					this.launchAllowed = startupFailure == null && !stopRequested;
+					this.listenerDone |= this.listener == null || this.listener.getState() == Thread.State.NEW;
+					this.reconciliationDone |= this.reconciliationThread == null
+							|| this.reconciliationThread.getState() == Thread.State.NEW;
+				} finally {
+					lifecycleLock.unlock();
+				}
+				if (!this.launchAllowed)
+					this.reconciliation.stop();
+				this.launch.countDown();
+				completeManagedIfFinished(this);
+			}
+			if (startupFailure instanceof RuntimeException runtime)
+				throw runtime;
+			if (startupFailure instanceof Error error)
+				throw error;
+		}
+
+		private void enter(boolean listenerWorker) {
+			if (Thread.currentThread() == this.initializingThread)
+				throw new IllegalStateException("A thread factory must not execute its task inline");
+			boolean interrupted = false;
+			try {
+				while (true) {
+					try {
+						this.launch.await();
+						break;
+					} catch (InterruptedException ignored) {
+						interrupted = true;
+					}
+				}
+				if (interrupted)
+					Thread.currentThread().interrupt();
+				if (this.launchAllowed) {
+					if (listenerWorker)
+						runWorker();
+					else
+						this.reconciliation.run();
+				}
+			} finally {
+				if (listenerWorker)
+					this.reconciliation.stop();
+				lifecycleLock.lock();
+				try {
+					if (listenerWorker)
+						this.listenerDone = true;
+					else
+						this.reconciliationDone = true;
+				} finally {
+					lifecycleLock.unlock();
+				}
+				completeManagedIfFinished(this);
+			}
 		}
 	}
 
@@ -495,6 +993,9 @@ public final class NotificationSupervisor {
 		private @Nullable Predicate<? super RetryFailure> retryCondition;
 		private RetryPolicy.@Nullable Backoff backoff;
 		private Duration stabilityWindow = Duration.ofMinutes(1);
+		private @Nullable Duration pollInterval;
+		private @Nullable Function<? super ThreadRole, ? extends ThreadFactory> threadFactories;
+		private @Nullable Consumer<? super Throwable> reconciliationFailureObserver;
 
 		private Builder(Database database) {
 			this.database = database;
@@ -517,7 +1018,8 @@ public final class NotificationSupervisor {
 		}
 
 		/**
-		 * Sets bounded, repeatable reconciliation, called after registration and each nonempty batch.
+		 * Sets bounded, repeatable reconciliation, requested after registration and each nonempty batch.
+		 * Managed workers also serve optional polling; requests share a successful pass begun after each request.
 		 * @param reconciler application operation that reads or claims authoritative durable state
 		 * @return this builder
 		 */
@@ -528,11 +1030,52 @@ public final class NotificationSupervisor {
 		}
 
 		/**
+		 * Enables an immediate poll and subsequent fixed-delay reconciliation independent of listener I/O/backoff.
+		 * Recoverable database failures are retried by later polls without reconnecting the listener.
+		 * @param interval positive delay after a pass before the next periodic pass
+		 * @return this builder
+		 */
+		@NonNull
+		public Builder pollEvery(@NonNull Duration interval) {
+			requireNonNull(interval);
+			if (interval.isZero() || interval.isNegative())
+				throw new IllegalArgumentException("Poll interval must be positive");
+			this.pollInterval = interval;
+			return this;
+		}
+
+		/**
+		 * Customizes managed workers by logical role. The function is resolved at start, not per task, and must
+		 * return non-null factories producing distinct new, unstarted threads. The supervisor owns those workers.
+		 * @param factoryForRole role-to-factory mapping; omit this setting to use named daemon workers
+		 * @return this builder
+		 */
+		@NonNull
+		public Builder threadFactory(@NonNull Function<? super ThreadRole, ? extends ThreadFactory> factoryForRole) {
+			this.threadFactories = requireNonNull(factoryForRole);
+			return this;
+		}
+
+		/**
+		 * Observes recoverable managed reconciliation failures. Runs on the reconciliation worker, outside locks;
+		 * it must be bounded and must not await shutdown. An observer failure terminates the supervisor.
+		 * @param observer failure observer
+		 * @return this builder
+		 */
+		@NonNull
+		public Builder onReconciliationFailure(@NonNull Consumer<? super Throwable> observer) {
+			this.reconciliationFailureObserver = requireNonNull(observer);
+			return this;
+		}
+
+		/**
 		 * Enables explicit retry classification and backoff, including during startup.
 		 * <p>
 		 * A retryable startup failure leaves first readiness pending. Reconciliation failures are offered to the policy
 		 * only when they are {@link DatabaseException}s. Unsupported capabilities, other application exceptions, errors,
 		 * and failures in the policy terminate. Stop or interruption prevents retries and preserves observed failures.
+		 * With managed polling enabled, recoverable reconciliation failures await the next poll instead of reconnecting;
+		 * listener open/receive/cleanup failures still use this policy.
 		 * @param condition decides whether a database failure is retryable
 		 * @param backoff chooses a nonnegative delay after each selected failure
 		 * @param stabilityWindow positive established-session duration needed to reset consecutive failure escalation
@@ -573,6 +1116,12 @@ public final class NotificationSupervisor {
 			if (this.channels == null || this.reconciler == null)
 				throw new IllegalStateException("Notification supervisor requires channels and reconciliation");
 		}
+	}
+
+	/** Logical managed-worker responsibility, without a guaranteed thread count or per-task classification. */
+	public enum ThreadRole {
+		/** Blocking notification registration, receive and reconnect. */ LISTENER,
+		/** Serialized durable-state reconciliation and its periodic polling. */ RECONCILIATION
 	}
 
 	/** Locally observed lifecycle state; no state certifies physical-connection health. */
@@ -626,12 +1175,22 @@ public final class NotificationSupervisor {
 		private final long attemptNumber;
 		private final boolean everReady;
 		private final @Nullable Throwable lastFailure;
+		private final @Nullable Instant lastSuccessfulReconciliation;
+		private final @Nullable Throwable lastReconciliationFailure;
+		private final boolean reconciliationRunning;
+		private final boolean reconciliationPending;
 
-		private Snapshot(State state, long attemptNumber, boolean everReady, @Nullable Throwable lastFailure) {
+		private Snapshot(State state, long attemptNumber, boolean everReady, @Nullable Throwable lastFailure,
+				@Nullable Instant lastSuccessfulReconciliation, @Nullable Throwable lastReconciliationFailure,
+				boolean reconciliationRunning, boolean reconciliationPending) {
 			this.state = state;
 			this.attemptNumber = attemptNumber;
 			this.everReady = everReady;
 			this.lastFailure = lastFailure;
+			this.lastSuccessfulReconciliation = lastSuccessfulReconciliation;
+			this.lastReconciliationFailure = lastReconciliationFailure;
+			this.reconciliationRunning = reconciliationRunning;
+			this.reconciliationPending = reconciliationPending;
 		}
 
 		/** @return observed lifecycle state */
@@ -642,15 +1201,27 @@ public final class NotificationSupervisor {
 		@NonNull public Boolean isEverReady() { return this.everReady; }
 		/** @return most recently observed failure, if any */
 		@NonNull public Optional<Throwable> getLastFailure() { return Optional.ofNullable(this.lastFailure); }
+		/** @return last successful pass time, including independent polls */
+		@NonNull public Optional<Instant> getLastSuccessfulReconciliation() {
+			return Optional.ofNullable(this.lastSuccessfulReconciliation);
+		}
+		/** @return current reconciliation failure, cleared by a successful pass */
+		@NonNull public Optional<Throwable> getLastReconciliationFailure() {
+			return Optional.ofNullable(this.lastReconciliationFailure);
+		}
+		/** @return whether a reconciliation pass is executing */
+		@NonNull public Boolean isReconciliationRunning() { return this.reconciliationRunning; }
+		/** @return whether reconciliation has pending requests or is awaiting a retry */
+		@NonNull public Boolean isReconciliationPending() { return this.reconciliationPending; }
 	}
 
 	/** Terminal lifecycle result. A stop-correlated failure is retained rather than treated as success. */
 	@ThreadSafe
-	public static final class Result {
+	public static final class ShutdownResult {
 		private final @Nullable Throwable failure;
 		private final boolean stopRequested;
 
-		private Result(@Nullable Throwable failure, boolean stopRequested) {
+		private ShutdownResult(@Nullable Throwable failure, boolean stopRequested) {
 			this.failure = failure;
 			this.stopRequested = stopRequested;
 		}
@@ -658,6 +1229,6 @@ public final class NotificationSupervisor {
 		/** @return terminal failure, empty for clean cooperative stop */
 		@NonNull public Optional<Throwable> getFailure() { return Optional.ofNullable(this.failure); }
 		/** @return whether stop was requested before termination, without attributing a failure to that request */
-		@NonNull public Boolean isStopRequested() { return this.stopRequested; }
+		@NonNull public Boolean isShutdownRequested() { return this.stopRequested; }
 	}
 }

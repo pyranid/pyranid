@@ -48,8 +48,7 @@ class TemporalArrayMappingIntegrationIT {
 		OffsetDateTime zoned = OffsetDateTime.parse("2024-01-02T12:34:56.123456+05:45");
 		for (boolean cached : new boolean[]{false, true}) {
 			for (ZoneId zone : List.of(ZoneId.of("UTC"), ZoneId.of("Asia/Kathmandu"))) {
-				Database database = Database.withDataSource(new AbstractPortableJdbcIntegrationTests.DriverManagerDataSource("jdbc:duckdb:", null, null))
-						.databaseType(DatabaseType.DUCK_DB).timeZone(zone)
+				Database database = Database.with(new AbstractPortableJdbcIntegrationTests.DriverManagerDataSource("jdbc:duckdb:", null, null), DatabaseType.DUCK_DB).timeZone(zone)
 						.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(cached).build()).build();
 				for (boolean withZone : new boolean[]{false, true}) {
 					String literal = withZone ? "TIMESTAMPTZ '2024-01-02 12:34:56.123456+05:45'" : "TIMESTAMP '2024-01-02 12:34:56.123456'";
@@ -88,8 +87,7 @@ class TemporalArrayMappingIntegrationIT {
 		OffsetDateTime zoned = OffsetDateTime.parse("2024-07-01T12:30:00.123456+05:45");
 		for (boolean cached : new boolean[]{false, true}) {
 			for (ZoneId zone : List.of(ZoneId.of("UTC"), ZoneId.of("America/New_York"))) {
-				Database database = Database.withDataSource(new AbstractPortableJdbcIntegrationTests.DriverManagerDataSource("jdbc:duckdb:", null, null))
-						.databaseType(DatabaseType.DUCK_DB).timeZone(zone)
+				Database database = Database.with(new AbstractPortableJdbcIntegrationTests.DriverManagerDataSource("jdbc:duckdb:", null, null), DatabaseType.DUCK_DB).timeZone(zone)
 						.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(cached).build()).build();
 				for (boolean withZone : new boolean[]{false, true}) {
 					String literal = withZone ? "TIMESTAMPTZ '2024-07-01 12:30:00.123456+05:45'" : "TIMESTAMP '2024-07-01 12:30:00.123456'";

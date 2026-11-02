@@ -171,8 +171,7 @@ public class DuckDbIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 	@Test
 	public void testDuckDbSqlStructParameterNormalizesTemporalAndHugeintAttributes() {
 		ZoneId databaseTimeZone = ZoneId.of("Asia/Tokyo");
-		Database db = Database.withDataSource(dataSource())
-				.databaseType(DatabaseType.DUCK_DB)
+		Database db = Database.with(dataSource(), DatabaseType.DUCK_DB)
 				.timeZone(databaseTimeZone)
 				.build();
 		String table = "pyranid_duckdb_struct_parameter_normalization";
@@ -615,8 +614,7 @@ public class DuckDbIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 	@Test
 	public void testDuckDbSqlArrayElementsNormalizeDriverUnsupportedTypes() {
 		ZoneId databaseTimeZone = ZoneId.of("Asia/Tokyo");
-		Database db = Database.withDataSource(dataSource())
-				.databaseType(DatabaseType.DUCK_DB)
+		Database db = Database.with(dataSource(), DatabaseType.DUCK_DB)
 				.timeZone(databaseTimeZone)
 				.build();
 		String table = "pyranid_duckdb_array_normalization_items";
@@ -916,8 +914,7 @@ public class DuckDbIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 	@Timeout(value = 10, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
 	public void testDuckDbWriteWriteConflictClassifiesAsSerializationFailure() {
 		Database db = database();
-		Database otherDb = Database.withDataSource(new DriverManagerDataSource(jdbcUrl(), null, null))
-				.databaseType(DatabaseType.DUCK_DB)
+		Database otherDb = Database.with(new DriverManagerDataSource(jdbcUrl(), null, null), DatabaseType.DUCK_DB)
 				.build();
 		String table = "pyranid_duckdb_conflict_items";
 		recreateTable(db, table, "CREATE TABLE " + table + " ("

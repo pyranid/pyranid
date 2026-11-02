@@ -231,7 +231,7 @@ class LobFailureCleanupTests {
 					});
 				});
 			});
-			this.database = Database.withDataSource(wrapped).databaseType(DatabaseType.GENERIC).resultSetMapper(this.mapper).build();
+			this.database = Database.with(wrapped, DatabaseType.GENERIC).resultSetMapper(this.mapper).build();
 		}
 
 		private void read(boolean stream) {

@@ -69,7 +69,7 @@ public class MappingShapeBenchmark {
 				}
 			}));
 			this.mapper = builder.build();
-			Database database = Database.withDataSource(BenchmarkSupport.throwingDataSource()).databaseType(DatabaseType.GENERIC).build();
+			Database database = Database.with(BenchmarkSupport.throwingDataSource(), DatabaseType.GENERIC).build();
 			this.context = context(database, this.target);
 			this.rows = new ResultSet[scenario.endsWith("-churn") ? 128 : 1];
 			for (int schema = 0; schema < rows.length; schema++) {

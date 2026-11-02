@@ -77,8 +77,7 @@ public class RawConnectionOperationTests {
 		AtomicInteger managedCloseCount = new AtomicInteger();
 		VendorConnection vendorConnection = vendorConnection();
 		Connection managedConnection = managedConnectionWrapper(vendorConnection, managedCloseCount);
-		Database database = Database.withDataSource(dataSource(managedConnection))
-				.databaseType(DatabaseType.GENERIC)
+		Database database = Database.with(dataSource(managedConnection), DatabaseType.GENERIC)
 				.build();
 
 		Optional<String> result = database.useRawConnection(VendorConnection.class, connection -> {
@@ -184,8 +183,7 @@ public class RawConnectionOperationTests {
 		dataSource.setUrl("jdbc:hsqldb:mem:" + name);
 		dataSource.setUser("sa");
 		dataSource.setPassword("");
-		return Database.withDataSource(dataSource)
-				.databaseType(DatabaseType.GENERIC)
+		return Database.with(dataSource, DatabaseType.GENERIC)
 				.build();
 	}
 

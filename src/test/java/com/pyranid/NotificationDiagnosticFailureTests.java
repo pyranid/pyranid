@@ -220,7 +220,7 @@ class NotificationDiagnosticFailureTests {
 						this.checkouts.incrementAndGet();
 						return connection();
 					});
-			Database database = Database.withDataSource(source).databaseType(DatabaseType.POSTGRESQL).build();
+			Database database = Database.with(source, DatabaseType.POSTGRESQL).build();
 			return NotificationSupervisor.withDatabase(database).channels(Set.of("diagnostic_failure_test")).reconcile(() -> {})
 					.retry(failure -> this.policyCalls.incrementAndGet() < 2, (attempt, failure) -> {
 						this.backoffCalls.incrementAndGet();
@@ -299,7 +299,7 @@ class NotificationDiagnosticFailureTests {
 				thread.start();
 			});
 			try {
-				NotificationSupervisor.Result result = supervisor.termination().toCompletableFuture().get(5, TimeUnit.SECONDS);
+				NotificationSupervisor.ShutdownResult result = supervisor.awaitShutdownAsync().toCompletableFuture().get(5, TimeUnit.SECONDS);
 				worker.get().join(5_000);
 				assertFalse(worker.get().isAlive(), "Worker must exit after session cleanup");
 				Throwable failure = result.getFailure().orElseThrow();
@@ -308,7 +308,7 @@ class NotificationDiagnosticFailureTests {
 				assertSame(failure, supervisor.snapshot().getLastFailure().orElseThrow());
 				return failure;
 			} finally {
-				supervisor.requestStop();
+				supervisor.requestShutdown();
 				worker.get().join(5_000);
 				assertFalse(worker.get().isAlive(), "Worker leaked from test");
 			}

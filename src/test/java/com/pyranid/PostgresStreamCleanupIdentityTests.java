@@ -91,7 +91,7 @@ class PostgresStreamCleanupIdentityTests {
 				if (method.getName().equals("getConnection")) return connection;
 				throw new AssertionError("Unexpected data source method: " + method.getName());
 			});
-			this.database = Database.withDataSource(source).databaseType(DatabaseType.POSTGRESQL).build();
+			this.database = Database.with(source, DatabaseType.POSTGRESQL).build();
 		}
 	}
 

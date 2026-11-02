@@ -2,12 +2,17 @@
 
 All notable changes to Pyranid will be documented in this file.
 
-## 4.8.0-SNAPSHOT
+## 4.8.0
 
 ### Added
 
-- Core `NotificationSupervisor` provides application-executor-owned listener startup, readiness, reconnection,
-  reconciliation, cooperative stop, and termination. It creates no threads or fallback scheduler.
+- Core `NotificationSupervisor.start()` provides managed listener startup, readiness, reconnection, serialized
+  reconciliation, cooperative shutdown, and completion, using named daemon threads by default. Building starts no work.
+  Optional `pollEvery(Duration)` starts independent reconciliation polling immediately; polling is disabled by default.
+- `NotificationSupervisor.Builder.threadFactory(Function<ThreadRole, ThreadFactory>)` customizes managed workers
+  through nested `NotificationSupervisor.ThreadRole.LISTENER` and `RECONCILIATION` roles. Both factories resolve
+  at startup before threads are created. `onReconciliationFailure(...)` observes recoverable reconciliation failures
+  when polling is enabled, and snapshots expose the last success, current reconciliation failure, and running/pending work.
 - `TransactionOptions.completionObserver(...)` reports immutable `TransactionCompletion` records after cleanup
   and post-transaction hooks, with correlated scope IDs, database outcome, and the final throwable.
 - `RetryPolicy.Backoff.fullJitter(...)` and optional `withMaxElapsedTime(...)` retry budgets. Defaults are unchanged;
@@ -19,18 +24,52 @@ All notable changes to Pyranid will be documented in this file.
 
 ### Changed
 
+- **Breaking:** `Database.with(dataSource, databaseType)` is the sole database builder entry point. Both
+  arguments are required and non-null. Removed `Database.withDataSource(...)`, `Database.Builder.databaseType(...)`,
+  and the public `DatabaseType.fromDataSource(...)` / `fromConnection(...)` detection helpers. Database type and
+  dialect are fixed at construction; automatic metadata-based detection and its connection checkouts are removed.
+- Binary and source JARs include the Apache 2.0 `LICENSE` file.
 - Refreshed stable Maven build/test tools, JDBC drivers, and GitHub Actions. Integration tests now use
-  DuckDB JDBC 2.0.0.0, MariaDB Connector/J 4.0.0, and MySQL Connector/J 26.10.0. Java 17 and Maven 3.9
+  DuckDB JDBC 2.0.0.1, SQLite JDBC 3.54.1.0, Oracle JDBC 23.26.4.0.0, MariaDB Connector/J 4.0.0,
+  and MySQL Connector/J 26.10.0. Java 17 and Maven 3.9
   remain the minimum build versions; core still declares zero runtime dependencies.
+- Pinned Maven lifecycle plugin versions and upgraded Maven Enforcer to 3.7.0.
 - SQL compilation, query preparation, statement/stream execution, transaction coordination, retries, and
   notification session handling have dedicated internal components. Statements and streams share connection
   ownership and release logic; stream resources still close at exhaustion or explicit early closure.
 - Cached and uncached typed row mapping share the same plan compiler and execution path. Cache configuration
   changes retention, not conversion behavior. Scalar, record, and JavaBean conversions share built-in rules.
-- API compatibility now compares against the verified 4.7.0 release, without the old 4.7.0 exclusions.
+- API compatibility now compares against the verified 4.7.0 release. Only the four deliberate method removals
+  above are excluded; the old 4.7.0 exclusions have been removed.
 
 ### Fixed
 
+- Scalar `LocalDate` results from zoned timestamps use the configured database time zone, matching `java.sql.Date`,
+  record, and JavaBean targets.
+- SQLite timestamp text with the default JDBC date string format is parsed strictly without losing fractional
+  seconds. With that default configuration, explicit offsets are preserved for
+  `OffsetDateTime` and identify the instant for `Instant`; local date/time targets use the configured database zone.
+  Zone-less text uses that zone. Explicit custom JDBC date string formats retain driver conversion semantics,
+  including their validation and precision limits; numeric timestamp storage also retains driver semantics.
+- `NotificationSupervisor.Snapshot.isReconciliationRunning()` and `isReconciliationPending()` return
+  non-null boxed `Boolean` values, matching the public API's nullness convention before their first release.
+- Notification retry classification retains diagnostic-accessor failures and rejects unreadable exception graphs
+  in both managed polling and listener retries, including one-shot fatal or interruption evidence.
+- Legacy notification shutdown preserves an unrecovered reconciliation failure when listener cleanup wraps
+  cancellation in a `DatabaseException`, alongside the cleanup and interruption evidence.
+- Decoded notification batches are admitted before cancellable reconciliation waits, so a shutdown racing worker
+  admission cannot discard the final batch's reconciliation.
+- Managed notification shutdown retains an unrecovered reconciliation failure even when the listener has already
+  finished and the final pass is draining, or later cancellation interrupts recovery. A later successful pass clears
+  an earlier recoverable failure.
+- A reconciliation callback that returns with its worker interrupted cannot publish successful readiness or
+  advance the last-success timestamp, in either managed or legacy executor mode.
+- A fatal managed failure recorded before first readiness prevents readiness publication, including when listener
+  interruption is rejected; it cannot be overwritten by an `ACTIVE` transition.
+- Rejected listener interruption cannot skip polling cancellation or readiness publication. The interruption
+  failure is retained in the shutdown result while remaining cleanup continues cooperatively.
+- Managed notification failure aggregation inspects exception graphs outside the lifecycle lock, keeping shutdown
+  requests and status reads available while custom or driver diagnostic accessors block.
 - Legacy JDBC `AbstractMethodError` binding fallbacks and PostgreSQL wrapper discovery apply the terminal-failure
   veto before continuing, so rollback and cancellation evidence cannot disappear behind an unavailable capability.
   Bare legacy capability signals retain their fallback behavior.
@@ -45,7 +84,7 @@ All notable changes to Pyranid will be documented in this file.
   failures cannot erase cancellation evidence and admit another reconnect.
 - Optional JDBC fallbacks reject terminal rollback, connection, cancellation, fatal-error, and unsafe-outcome
   evidence before continuing. This covers chunk parameter resets, large update/batch execution, temporal reads,
-  ARRAY/STRUCT metadata, TIME-array reader fallback, database-type discovery and metrics cache warming, and
+  ARRAY/STRUCT metadata, TIME-array reader fallback, and
   optional savepoint release. Benign unsupported features retain their compatibility behavior; failures cannot
   silently discard earlier transaction work or poison the execution capability cache. Savepoint cleanup retains
   terminal release evidence on the original failure and marks the transaction rollback-only, preventing partial
@@ -90,10 +129,9 @@ All notable changes to Pyranid will be documented in this file.
 - Transaction exception normalization retains the original JDBC failure and its interruption evidence when a
   diagnostic accessor throws. Savepoint failure cleanup preserves the business failure and still attempts release
   after rollback fails, including when drivers reuse a failure instance.
-- Mapping and instance-provider callbacks, driver-value extraction, connection acquisition and validation,
-  and database-type detection retain original failures when diagnostic accessors throw. Reachable cancellation
-  evidence survives these wrappers, preventing an extra transaction retry or a cleared interrupt on raw-connection,
-  metadata, and health-check exits.
+- Mapping and instance-provider callbacks, driver-value extraction, and connection acquisition and validation
+  retain original failures when diagnostic accessors throw. Reachable cancellation evidence survives these wrappers,
+  preventing an extra transaction retry or a cleared interrupt on raw-connection, metadata, and health-check exits.
 - BLOB and CLOB materialization preserves the original failure when reading, closing the stream or reader, and
   freeing owned JDBC resources throw the same instance. Fatal errors remain errors and do not enter the transaction
   retry policy; distinct cleanup failures remain suppressed and later owned resources are still released.
@@ -130,10 +168,8 @@ All notable changes to Pyranid will be documented in this file.
   propagate when no transaction is open on the calling thread, including a cancelled connection checkout and a
   failure introduced or replaced by closing the borrowed connection. These entry points do not restore the flag
   inside a transaction; transaction completion restores reachable evidence from a failure that escapes the closure.
-  A caller that handles cancellation inside the closure decides whether to re-interrupt the thread. Failure-path
-  dialect detection preserves a pending interrupt outside a transaction. Its existing behavior inside a transaction
-  is unchanged: cancellation consumed by swallowed detection failures can still be lost. This remains a limitation,
-  rather than a rule for other diagnostics, which continue to preserve already-pending interruption.
+  A caller that handles cancellation inside the closure decides whether to re-interrupt the thread. Diagnostics
+  preserve already-pending interruption.
 - DuckDB vector parameters release the SQL ARRAY the bind creates: through the statement's deferred cleanup
   once the bind succeeds, and before the failure propagates when the bind itself fails, matching SQL ARRAY
   and STRUCT parameters. A driver that returns no ARRAY from `createArrayOf` still binds.
@@ -167,6 +203,18 @@ All notable changes to Pyranid will be documented in this file.
 
 ### Migration Notes
 
+- Replace `Database.withDataSource(source).databaseType(type).build()` with
+  `Database.with(source, type).build()`. Calls that previously omitted the type must now specify it;
+  `DatabaseType.GENERIC` is an explicit choice for a database without dedicated dialect support. Remove calls to
+  `DatabaseType.fromDataSource(...)` / `fromConnection(...)` and obtain the database type from application
+  configuration. Recompile consumers against 4.8.0 because these public API removals are binary-incompatible.
+- Dialect-sensitive SQL, including `ARRAY[:a, :b]` and `arr[:i]`, uses the configured type from the outset.
+  Building a `Database` and reading its type do not acquire connections. Use `performHealthCheck(...)`
+  when an explicit connectivity check is needed.
+- `transactionWithRetry(...)` checks only the innermost ambient transaction for an identical `DataSource` instance.
+  Different `Database` wrappers over that source share the guard. An inner transaction on another source can hide an
+  older matching transaction, in which case retries run in a new independent transaction and do not restart either
+  surrounding transaction. This existing runtime behavior is unchanged.
 - Unsupported temporal-binding messages or capability details no longer override rollback, connection, cancellation,
   or unreadable failure evidence. Such failures now propagate instead of silently choosing another setter.
 - JDBC drivers remain application-selected. The refreshed test dependencies do not force application
@@ -183,8 +231,19 @@ All notable changes to Pyranid will be documented in this file.
   the value. Custom column mapper order, handled-null semantics, and nested-attribute behavior are unchanged.
 - Completion observer failures are contained. Existing post-transaction business hooks still propagate;
   a committed transaction can therefore report `COMMITTED` with a failure. Observe each retry attempt separately.
-- Notification readiness means registration plus initial reconciliation succeeded at least once. It is not
-  durable delivery or a continuing health signal. Keep independent reconciliation polling and make it idempotent.
+- Notification readiness means registration plus a fresh initial reconciliation succeeded at least once. It is not
+  durable delivery or a continuing health signal. Enable `pollEvery(...)` for independent fallback polling and keep
+  reconciliation bounded and idempotent. Managed reconciliation runs on a dedicated serialized worker; requests
+  arriving during a pass coalesce into a follow-up. With polling enabled, recoverable reconciliation
+  `DatabaseException`s are observed and retried by later polls without reconnecting a healthy listener. Without
+  polling, reconciliation failures retain the configured listener-retry behavior. Unexpected application failures,
+  fatal errors, and reconciliation-failure observer failures remain terminal.
+- `NotificationSupervisor.start(Executor)` retains the legacy application-owned executor and synchronous listener
+  reconciliation behavior. It rejects `pollEvery(...)`, custom `threadFactory(...)`, and
+  `onReconciliationFailure(...)` configuration; use `start()` for managed workers.
+  Always call `requestShutdown()` and `awaitShutdown()` for orderly managed shutdown. `awaitShutdownAsync()`
+  exposes the same `ShutdownResult` for asynchronous or deadline-limited waiting. A wait timeout does not
+  force-cancel blocked JDBC work, and daemon threads do not replace cleanup. Data sources remain caller-owned.
 - Elapsed timing includes consumer time while a cursor remains open and ends at early closure. Existing
   phase timings and OpenTelemetry `db.client.operation.duration` retain their previous meanings.
 - `Database::useRawConnection(...)`, `Database::readDatabaseMetaData(...)`, and `Database::performHealthCheck(...)`

@@ -86,8 +86,7 @@ public class RowPlanCacheBenchmark {
 
 		@Setup(Level.Trial)
 		public void setup() throws SQLException {
-			Database database = Database.withDataSource(BenchmarkSupport.throwingDataSource())
-					.databaseType(DatabaseType.GENERIC)
+			Database database = Database.with(BenchmarkSupport.throwingDataSource(), DatabaseType.GENERIC)
 					.build();
 
 			cachedMapper = ResultSetMapper.withPlanCachingEnabled(true)

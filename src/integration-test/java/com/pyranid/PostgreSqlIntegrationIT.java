@@ -72,7 +72,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 	public void timestampArraysPreserveZonedInstantsAndZoneLessWallClockValues() {
 		for (boolean cached : new boolean[]{false, true}) {
 			for (ZoneId zone : List.of(ZoneId.of("UTC"), ZoneId.of("Asia/Kathmandu"))) {
-				Database database = Database.withDataSource(dataSource()).databaseType(DatabaseType.POSTGRESQL)
+				Database database = Database.with(dataSource(), DatabaseType.POSTGRESQL)
 						.timeZone(zone).resultSetMapper(ResultSetMapper.withPlanCachingEnabled(cached).build()).build();
 				for (boolean withZone : new boolean[]{false, true}) {
 					String literal = withZone ? "TIMESTAMPTZ '2024-01-02 12:34:56.123456+05:45'"
@@ -99,7 +99,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 	public void nestedLegacyDateArraysMatchScalarTimestampConversions() {
 		for (boolean cached : new boolean[]{false, true}) {
 			for (ZoneId zone : List.of(ZoneId.of("UTC"), ZoneId.of("Asia/Kathmandu"))) {
-				Database database = Database.withDataSource(dataSource()).databaseType(DatabaseType.POSTGRESQL)
+				Database database = Database.with(dataSource(), DatabaseType.POSTGRESQL)
 						.timeZone(zone).resultSetMapper(ResultSetMapper.withPlanCachingEnabled(cached).build()).build();
 				String literal = "TIMESTAMP '2024-01-02 12:34:56.123456'";
 				java.util.Date expected = database.query("SELECT " + literal).fetchObject(java.util.Date.class).orElseThrow();
@@ -114,7 +114,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 	@Test
 	public void zonedTimeScalarsAndArraysRetainOriginalOffsetAndMicroseconds() {
 		for (boolean cached : new boolean[]{false, true}) {
-			Database database = Database.withDataSource(dataSource()).databaseType(DatabaseType.POSTGRESQL)
+			Database database = Database.with(dataSource(), DatabaseType.POSTGRESQL)
 					.timeZone(ZoneId.of("UTC")).resultSetMapper(ResultSetMapper.withPlanCachingEnabled(cached).build()).build();
 			for (String value : List.of("12:34:56.123456+05:45", "01:02:03.987654-04:30", "23:59:59.999999Z")) {
 				String literal = "TIMETZ '" + value + "'";
@@ -153,7 +153,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 	public void plainTimeArraysPreserveFractionalSecondsLikeScalars() {
 		for (boolean cached : new boolean[]{false, true}) {
 			for (ZoneId zone : List.of(ZoneId.of("UTC"), ZoneId.of("Asia/Kathmandu"))) {
-				Database database = Database.withDataSource(dataSource()).databaseType(DatabaseType.POSTGRESQL)
+				Database database = Database.with(dataSource(), DatabaseType.POSTGRESQL)
 						.timeZone(zone).resultSetMapper(ResultSetMapper.withPlanCachingEnabled(cached).build()).build();
 				for (String value : List.of("12:34:56.123456", "00:00:00.000001", "23:59:59.999999")) {
 					java.time.LocalTime expected = java.time.LocalTime.parse(value);
@@ -184,7 +184,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 	@Test
 	public void plainTimeArraysPreserveEndOfDayLikeScalarDriverReads() {
 		for (boolean cached : new boolean[]{false, true}) {
-			Database database = Database.withDataSource(dataSource()).databaseType(DatabaseType.POSTGRESQL)
+			Database database = Database.with(dataSource(), DatabaseType.POSTGRESQL)
 					.timeZone(ZoneId.of("UTC")).resultSetMapper(ResultSetMapper.withPlanCachingEnabled(cached).build()).build();
 			java.time.LocalTime expected = java.time.LocalTime.MAX;
 			Assertions.assertEquals(expected, database.query("SELECT TIME '24:00:00'").fetchObject(java.time.LocalTime.class).orElseThrow());
@@ -201,7 +201,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 	public void zonedTimeScalarLocalTimeMatchesRecordBeanAndArray() {
 		for (boolean cached : new boolean[]{false, true}) {
 			for (ZoneId zone : List.of(ZoneId.of("UTC"), ZoneId.of("Asia/Kathmandu"))) {
-				Database database = Database.withDataSource(dataSource()).databaseType(DatabaseType.POSTGRESQL)
+				Database database = Database.with(dataSource(), DatabaseType.POSTGRESQL)
 						.timeZone(zone).resultSetMapper(ResultSetMapper.withPlanCachingEnabled(cached).build()).build();
 				for (String value : List.of("12:34:56.123456+05:45", "01:02:03.987654-04:30", "23:59:59.999999Z")) {
 					String sql = "SELECT TIMETZ '" + value + "' AS value";
@@ -231,8 +231,8 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 			.withPassword("pyranid");
 
 	@Test
-	public void testPostgreSqlDatabaseTypeDetection() {
-		Database db = Database.withDataSource(dataSource()).build();
+	public void testConfiguredPostgreSqlDatabaseType() {
+		Database db = Database.with(dataSource(), DatabaseType.POSTGRESQL).build();
 
 		Assertions.assertEquals(DatabaseType.POSTGRESQL, db.getDatabaseType());
 	}
@@ -240,8 +240,8 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 	@Test
 	public void testNotificationSupervisorReconcilesCommittedStateAndClosesItsListener() throws Exception {
 		TrackingNotificationDataSource listenerSource = new TrackingNotificationDataSource(dataSource());
-		Database listenerDatabase = Database.withDataSource(listenerSource).databaseType(DatabaseType.POSTGRESQL).build();
-		Database applicationDatabase = Database.withDataSource(dataSource()).databaseType(DatabaseType.POSTGRESQL).build();
+		Database listenerDatabase = Database.with(listenerSource, DatabaseType.POSTGRESQL).build();
+		Database applicationDatabase = Database.with(dataSource(), DatabaseType.POSTGRESQL).build();
 		String suffix = UUID.randomUUID().toString().replace("-", "");
 		String table = "supervisor_state_" + suffix;
 		String channel = "supervisor_hint_" + suffix;
@@ -249,7 +249,6 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 		applicationDatabase.query("INSERT INTO " + table + " VALUES (0)").execute();
 		AtomicInteger observed = new AtomicInteger(-1);
 		CountDownLatch changed = new CountDownLatch(1);
-		ExecutorService executor = Executors.newSingleThreadExecutor();
 		NotificationSupervisor supervisor = NotificationSupervisor.withDatabase(listenerDatabase)
 				.channels(Set.of(channel)).reconcile(() -> {
 			int version = applicationDatabase.query("SELECT version FROM " + table).fetchObject(Integer.class).orElseThrow();
@@ -258,7 +257,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 				changed.countDown();
 		}).build();
 		try {
-			supervisor.start(executor);
+			supervisor.start();
 			supervisor.firstReady().toCompletableFuture().get(10, TimeUnit.SECONDS);
 			Assertions.assertEquals(0, observed.get());
 			applicationDatabase.transaction(() -> {
@@ -267,13 +266,11 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 			});
 			Assertions.assertTrue(changed.await(10, TimeUnit.SECONDS), "Notification did not trigger reconciliation");
 		} finally {
-			supervisor.requestStop();
+			supervisor.requestShutdown();
 			try {
-				Assertions.assertTrue(supervisor.termination().toCompletableFuture()
+				Assertions.assertTrue(supervisor.awaitShutdownAsync().toCompletableFuture()
 						.get(10, TimeUnit.SECONDS).getFailure().isEmpty());
 			} finally {
-				executor.shutdownNow();
-				Assertions.assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS));
 				applicationDatabase.query("DROP TABLE " + table).execute();
 			}
 		}
@@ -284,8 +281,8 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 	@Test
 	public void testNotificationSupervisorReconnectReconcilesStateWithoutAnotherHint() throws Exception {
 		TrackingNotificationDataSource listenerSource = new TrackingNotificationDataSource(dataSource());
-		Database listenerDatabase = Database.withDataSource(listenerSource).databaseType(DatabaseType.POSTGRESQL).build();
-		Database applicationDatabase = Database.withDataSource(dataSource()).databaseType(DatabaseType.POSTGRESQL).build();
+		Database listenerDatabase = Database.with(listenerSource, DatabaseType.POSTGRESQL).build();
+		Database applicationDatabase = Database.with(dataSource(), DatabaseType.POSTGRESQL).build();
 		String suffix = UUID.randomUUID().toString().replace("-", "");
 		String table = "supervisor_reconnect_" + suffix;
 		String channel = "supervisor_reconnect_hint_" + suffix;
@@ -294,7 +291,6 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 		AtomicInteger reconciliations = new AtomicInteger();
 		CountDownLatch recovered = new CountDownLatch(1);
 		AtomicReference<NotificationSupervisor.FailurePhase> failedPhase = new AtomicReference<>();
-		ExecutorService executor = Executors.newSingleThreadExecutor();
 		NotificationSupervisor supervisor = NotificationSupervisor.withDatabase(listenerDatabase)
 				.channels(Set.of(channel)).reconcile(() -> {
 			int version = applicationDatabase.query("SELECT version FROM " + table).fetchObject(Integer.class).orElseThrow();
@@ -307,7 +303,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 					&& failure.getPhase() == NotificationSupervisor.FailurePhase.RECEIVE;
 		}, RetryPolicy.Backoff.fixed(Duration.ZERO), Duration.ofMinutes(1)).build();
 		try {
-			supervisor.start(executor);
+			supervisor.start();
 			supervisor.firstReady().toCompletableFuture().get(10, TimeUnit.SECONDS);
 			int originalBackend = listenerSource.backendPid.get();
 			// No NOTIFY: registration-time reconciliation must recover this durable change.
@@ -321,13 +317,11 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 			Assertions.assertEquals(2L, supervisor.snapshot().getAttemptNumber());
 			Assertions.assertNotEquals(originalBackend, listenerSource.backendPid.get());
 		} finally {
-			supervisor.requestStop();
+			supervisor.requestShutdown();
 			try {
-				Assertions.assertTrue(supervisor.termination().toCompletableFuture()
+				Assertions.assertTrue(supervisor.awaitShutdownAsync().toCompletableFuture()
 						.get(10, TimeUnit.SECONDS).getFailure().isEmpty());
 			} finally {
-				executor.shutdownNow();
-				Assertions.assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS));
 				applicationDatabase.query("DROP TABLE " + table).execute();
 			}
 		}
@@ -337,12 +331,51 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 	}
 
 	@Test
+	public void testManagedSupervisorPollsCommittedStateWithoutAnyNotification() throws Exception {
+		TrackingNotificationDataSource listenerSource = new TrackingNotificationDataSource(dataSource());
+		Database listenerDatabase = Database.with(listenerSource, DatabaseType.POSTGRESQL).build();
+		Database applicationDatabase = Database.with(dataSource(), DatabaseType.POSTGRESQL).build();
+		String suffix = UUID.randomUUID().toString().replace("-", "");
+		String table = "supervisor_poll_" + suffix;
+		applicationDatabase.query("CREATE TABLE " + table + " (version INTEGER NOT NULL)").execute();
+		applicationDatabase.query("INSERT INTO " + table + " VALUES (0)").execute();
+		AtomicInteger observed = new AtomicInteger(-1);
+		CountDownLatch changed = new CountDownLatch(1);
+		NotificationSupervisor supervisor = NotificationSupervisor.withDatabase(listenerDatabase)
+				.channels(Set.of("supervisor_poll_hint_" + suffix)).pollEvery(Duration.ofMillis(50)).reconcile(() -> {
+			int version = applicationDatabase.query("SELECT version FROM " + table).fetchObject(Integer.class).orElseThrow();
+			observed.set(version);
+			if (version == 2)
+				changed.countDown();
+		}).build();
+		try {
+			supervisor.start();
+			supervisor.firstReady().toCompletableFuture().get(10, TimeUnit.SECONDS);
+			Assertions.assertEquals(0, observed.get());
+			// No NOTIFY and no reconnect: independent polling must discover the committed change.
+			applicationDatabase.transaction(() -> applicationDatabase
+					.query("UPDATE " + table + " SET version = 2").execute());
+			Assertions.assertTrue(changed.await(10, TimeUnit.SECONDS), "Independent polling did not refresh durable state");
+			Assertions.assertEquals(1L, supervisor.snapshot().getAttemptNumber());
+			Assertions.assertEquals(1, listenerSource.connectionCheckouts.get());
+			Assertions.assertTrue(supervisor.snapshot().getLastSuccessfulReconciliation().isPresent());
+		} finally {
+			supervisor.requestShutdown();
+			try {
+				Assertions.assertTrue(supervisor.awaitShutdownAsync().toCompletableFuture()
+						.get(10, TimeUnit.SECONDS).getFailure().isEmpty());
+			} finally {
+				applicationDatabase.query("DROP TABLE " + table).execute();
+			}
+		}
+		Assertions.assertEquals(List.of("close"), listenerSource.lifecycleEvents);
+	}
+
+	@Test
 	public void testNotificationDeliveryCommitRollbackPayloadsAndChannels() throws InterruptedException {
-		Database listenerDatabase = Database.withDataSource(dataSource())
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database listenerDatabase = Database.with(dataSource(), DatabaseType.POSTGRESQL)
 				.build();
-		Database applicationDatabase = Database.withDataSource(dataSource())
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database applicationDatabase = Database.with(dataSource(), DatabaseType.POSTGRESQL)
 				.build();
 		String suffix = UUID.randomUUID().toString().replace("-", "");
 		String firstChannel = "pyranid_first_" + suffix;
@@ -415,11 +448,9 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 
 	@Test
 	public void testMixedCaseNotificationChannelUsesExactQuotedIdentity() throws InterruptedException {
-		Database listenerDatabase = Database.withDataSource(dataSource())
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database listenerDatabase = Database.with(dataSource(), DatabaseType.POSTGRESQL)
 				.build();
-		Database applicationDatabase = Database.withDataSource(dataSource())
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database applicationDatabase = Database.with(dataSource(), DatabaseType.POSTGRESQL)
 				.build();
 		String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
 		String mixedCaseChannel = "OrderChanged" + suffix;
@@ -445,12 +476,10 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 		CountingDataSource listenerDataSource = new CountingDataSource(dataSource());
 		MetricsCollector applicationMetrics = MetricsCollector.inMemoryInstance();
 		MetricsCollector listenerMetrics = MetricsCollector.inMemoryInstance();
-		Database applicationDatabase = Database.withDataSource(applicationDataSource)
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database applicationDatabase = Database.with(applicationDataSource, DatabaseType.POSTGRESQL)
 				.metricsCollector(applicationMetrics)
 				.build();
-		Database listenerDatabase = Database.withDataSource(listenerDataSource)
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database listenerDatabase = Database.with(listenerDataSource, DatabaseType.POSTGRESQL)
 				.metricsCollector(listenerMetrics)
 				.build();
 		String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
@@ -507,11 +536,9 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 	@Test
 	public void testNotificationCommittedWhileCallbackEntryReconciliationIsBlockedIsDeliveredAfterward()
 			throws Exception {
-		Database listenerDatabase = Database.withDataSource(dataSource())
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database listenerDatabase = Database.with(dataSource(), DatabaseType.POSTGRESQL)
 				.build();
-		Database applicationDatabase = Database.withDataSource(dataSource())
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database applicationDatabase = Database.with(dataSource(), DatabaseType.POSTGRESQL)
 				.build();
 		String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
 		String table = "pyranid_notify_order_" + suffix;
@@ -562,11 +589,9 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 	@Test
 	public void testNotificationReceiveRejectsAmbientTransactionsAtPostgreSqlIsolationLevels()
 			throws InterruptedException {
-		Database listenerDatabase = Database.withDataSource(dataSource())
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database listenerDatabase = Database.with(dataSource(), DatabaseType.POSTGRESQL)
 				.build();
-		Database applicationDatabase = Database.withDataSource(dataSource())
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database applicationDatabase = Database.with(dataSource(), DatabaseType.POSTGRESQL)
 				.build();
 		String channel = "pyranid_ambient_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
 
@@ -600,12 +625,10 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 	public void testTerminatedListenerBackendFailsOnceAndAbortsWithoutReacquisition() {
 		TrackingNotificationDataSource listenerDataSource = new TrackingNotificationDataSource(dataSource());
 		RecordingNotificationMetrics metrics = new RecordingNotificationMetrics();
-		Database listenerDatabase = Database.withDataSource(listenerDataSource)
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database listenerDatabase = Database.with(listenerDataSource, DatabaseType.POSTGRESQL)
 				.metricsCollector(metrics)
 				.build();
-		Database applicationDatabase = Database.withDataSource(dataSource())
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database applicationDatabase = Database.with(dataSource(), DatabaseType.POSTGRESQL)
 				.build();
 		String channel = "pyranid_terminate_"
 				+ UUID.randomUUID().toString().replace("-", "").substring(0, 16);
@@ -643,8 +666,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 			throws InterruptedException {
 		TrackingNotificationDataSource listenerDataSource = new TrackingNotificationDataSource(dataSource());
 		RecordingNotificationMetrics metrics = new RecordingNotificationMetrics();
-		Database listenerDatabase = Database.withDataSource(listenerDataSource)
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database listenerDatabase = Database.with(listenerDataSource, DatabaseType.POSTGRESQL)
 				.metricsCollector(metrics)
 				.build();
 		String channel = "pyranid_interrupt_"
@@ -686,8 +708,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 				"Virtual threads require JDK 21 or newer");
 		TrackingNotificationDataSource listenerDataSource = new TrackingNotificationDataSource(dataSource());
 		RecordingNotificationMetrics metrics = new RecordingNotificationMetrics();
-		Database listenerDatabase = Database.withDataSource(listenerDataSource)
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database listenerDatabase = Database.with(listenerDataSource, DatabaseType.POSTGRESQL)
 				.metricsCollector(metrics)
 				.build();
 		String channel = "pyranid_virtual_interrupt_"
@@ -753,12 +774,10 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 
 	@Test
 	public void testCrossDatabaseNotificationSessionGuardRejectsBeforeListenerCheckout() {
-		Database applicationDatabase = Database.withDataSource(dataSource())
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database applicationDatabase = Database.with(dataSource(), DatabaseType.POSTGRESQL)
 				.build();
 		CountingDataSource listenerDataSource = new CountingDataSource(dataSource());
-		Database listenerDatabase = Database.withDataSource(listenerDataSource)
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database listenerDatabase = Database.with(listenerDataSource, DatabaseType.POSTGRESQL)
 				.build();
 		AtomicBoolean applicationStatementExecuted = new AtomicBoolean(false);
 
@@ -781,8 +800,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 	@Test
 	public void testFetchStreamConfiguresPostgreSqlCursorOutsideTransaction() {
 		TrackingPostgreSqlStreamDataSource trackingDataSource = new TrackingPostgreSqlStreamDataSource(dataSource());
-		Database db = Database.withDataSource(trackingDataSource)
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database db = Database.with(trackingDataSource, DatabaseType.POSTGRESQL)
 				.build();
 		AtomicBoolean sawAutoCommitDisabled = new AtomicBoolean(false);
 
@@ -803,8 +821,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 	@Test
 	public void testFetchStreamUsesPostgreSqlCursorFetchSizeWhenDatabaseDefaultIsZero() {
 		TrackingPostgreSqlStreamDataSource trackingDataSource = new TrackingPostgreSqlStreamDataSource(dataSource());
-		Database db = Database.withDataSource(trackingDataSource)
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database db = Database.with(trackingDataSource, DatabaseType.POSTGRESQL)
 				.fetchSize(0)
 				.build();
 
@@ -821,8 +838,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 	@Test
 	public void testFetchStreamHonorsQueryFetchSizeForPostgreSqlCursorOutsideTransaction() {
 		TrackingPostgreSqlStreamDataSource trackingDataSource = new TrackingPostgreSqlStreamDataSource(dataSource());
-		Database db = Database.withDataSource(trackingDataSource)
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database db = Database.with(trackingDataSource, DatabaseType.POSTGRESQL)
 				.build();
 
 		List<Integer> values = db.query("SELECT generate_series(1, 3)")
@@ -838,7 +854,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 
 	@Test
 	public void testJsonbParameterAndReturningRoundTrip() {
-		Database db = Database.withDataSource(dataSource()).build();
+		Database db = Database.with(dataSource(), DatabaseType.POSTGRESQL).build();
 
 		db.query("CREATE TABLE IF NOT EXISTS pyranid_jsonb_test (id BIGSERIAL PRIMARY KEY, payload JSONB NOT NULL)")
 				.execute();
@@ -898,8 +914,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 
 	@Test
 	public void testJsonbQuestionMarkOperatorsRoundTrip() {
-		Database db = Database.withDataSource(dataSource())
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database db = Database.with(dataSource(), DatabaseType.POSTGRESQL)
 				.build();
 
 		db.query("CREATE TABLE IF NOT EXISTS pyranid_jsonb_operator_test (id BIGSERIAL PRIMARY KEY, payload JSONB NOT NULL)")
@@ -930,7 +945,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 
 	@Test
 	public void testTextArrayParameterAndReturningRoundTrip() {
-		Database db = Database.withDataSource(dataSource()).build();
+		Database db = Database.with(dataSource(), DatabaseType.POSTGRESQL).build();
 
 		db.query("CREATE TABLE IF NOT EXISTS pyranid_array_test (id BIGSERIAL PRIMARY KEY, tags TEXT[] NOT NULL)")
 				.execute();
@@ -946,7 +961,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 	@Test
 	public void testJsonbAndTextArrayResultMapping() {
 		for (Boolean planCachingEnabled : List.of(false, true)) {
-			Database db = Database.withDataSource(dataSource())
+			Database db = Database.with(dataSource(), DatabaseType.POSTGRESQL)
 					.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(planCachingEnabled).build())
 					.build();
 
@@ -986,8 +1001,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 
 	@Test
 	public void testPgvectorParameterAndReadBackRoundTrip() {
-		Database db = Database.withDataSource(dataSource())
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database db = Database.with(dataSource(), DatabaseType.POSTGRESQL)
 				.build();
 
 		db.query("CREATE EXTENSION IF NOT EXISTS vector").execute();
@@ -1041,7 +1055,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 
 	@Test
 	public void testTimestampAndTimestampWithTimeZoneRoundTrip() {
-		Database db = Database.withDataSource(dataSource())
+		Database db = Database.with(dataSource(), DatabaseType.POSTGRESQL)
 				.timeZone(ZoneId.of("UTC"))
 				.build();
 		Instant instant = Instant.parse("2020-01-02T03:04:05.123456Z");
@@ -1089,7 +1103,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 
 	@Test
 	public void testPostgreSqlExceptionMetadataExtraction() {
-		Database db = Database.withDataSource(dataSource()).build();
+		Database db = Database.with(dataSource(), DatabaseType.POSTGRESQL).build();
 
 		db.query("CREATE TABLE IF NOT EXISTS pyranid_unique_test (id BIGSERIAL PRIMARY KEY, email TEXT UNIQUE)")
 				.execute();
@@ -1114,7 +1128,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 		// A SecureParameter value must be scrubbed from every Pyranid-rendered diagnostic surface while the
 		// raw driver exception remains intact as the cause.
 		String secret = "leak-test@secret.example";
-		Database db = Database.withDataSource(dataSource()).build();
+		Database db = Database.with(dataSource(), DatabaseType.POSTGRESQL).build();
 
 		db.query("CREATE TABLE IF NOT EXISTS pyranid_secure_leak_test (id BIGSERIAL PRIMARY KEY, email TEXT UNIQUE)")
 				.execute();
@@ -1151,7 +1165,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 	public void testStatementLogScrubbedAgainstRealDriverMessage() {
 		String secret = "statement-log-leak@secret.example";
 		java.util.concurrent.atomic.AtomicReference<StatementLog<?>> loggedStatementLog = new java.util.concurrent.atomic.AtomicReference<>();
-		Database db = Database.withDataSource(dataSource())
+		Database db = Database.with(dataSource(), DatabaseType.POSTGRESQL)
 				.statementLogger(loggedStatementLog::set)
 				.build();
 
@@ -1179,7 +1193,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 	public void testMapRowValuesUnwrapDriverObjects() {
 		// PGobject-wrapped columns (JSONB, vector) must surface in map rows as their String form,
 		// matching record/bean mapping - never as raw org.postgresql.util.PGobject
-		Database db = Database.withDataSource(dataSource()).build();
+		Database db = Database.with(dataSource(), DatabaseType.POSTGRESQL).build();
 
 		java.util.Map row = db.query("SELECT '{\"a\":1}'::jsonb AS payload, 42 AS n FROM (VALUES (0)) AS t(x)")
 				.fetchObject(Query.mapRowType())
@@ -1193,7 +1207,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 
 	@Test
 	public void testMapRowTargetThroughDmlReturning() {
-		Database db = Database.withDataSource(dataSource()).build();
+		Database db = Database.with(dataSource(), DatabaseType.POSTGRESQL).build();
 
 		db.query("CREATE TABLE IF NOT EXISTS pyranid_map_returning (id BIGSERIAL PRIMARY KEY, MixedCaseName TEXT)")
 				.execute();
@@ -1211,8 +1225,7 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 
 	@Test
 	public void testTransactionWithRetryRecoversFromSerializationConflict() throws Exception {
-		Database db = Database.withDataSource(dataSource())
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database db = Database.with(dataSource(), DatabaseType.POSTGRESQL)
 				.build();
 		String table = "pyranid_retry_serialization_conflict";
 		db.query("DROP TABLE IF EXISTS " + table).execute();

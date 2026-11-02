@@ -67,11 +67,9 @@ public final class Database {
 	@NonNull
 	private final DataSource dataSource;
 	@NonNull
-	private final AtomicReference<@Nullable DatabaseType> databaseType;
+	private final DatabaseType databaseType;
 	@NonNull
-	private final AtomicReference<@Nullable DatabaseDialect> databaseDialect;
-	@NonNull
-	private final ThreadLocal<Connection> databaseTypeDetectionConnectionHolder;
+	private final DatabaseDialect databaseDialect;
 	@NonNull
 	private final ZoneId timeZone;
 	@NonNull
@@ -104,9 +102,8 @@ public final class Database {
 		requireNonNull(builder);
 
 		this.dataSource = requireNonNull(builder.dataSource);
-		this.databaseType = new AtomicReference<>(builder.databaseType);
-		this.databaseDialect = new AtomicReference<>(builder.databaseType == null ? null : builder.databaseType.dialect());
-		this.databaseTypeDetectionConnectionHolder = new ThreadLocal<>();
+		this.databaseType = builder.databaseType;
+		this.databaseDialect = this.databaseType.dialect();
 		this.timeZone = builder.timeZone == null ? ZoneId.systemDefault() : builder.timeZone;
 		this.ambiguousTimestampBindingStrategy = builder.ambiguousTimestampBindingStrategy == null
 				? AmbiguousTimestampBindingStrategy.TIMESTAMP_WITH_TIME_ZONE
@@ -118,7 +115,7 @@ public final class Database {
 		this.parameterRedactor = builder.parameterRedactor == null ? ParameterRedactor.none() : builder.parameterRedactor;
 		this.metricsCollectorDispatcher = new MetricsCollectorDispatcher(builder.metricsCollector);
 		this.transactions = new TransactionCoordinator(this.dataSource, this.metricsCollectorDispatcher,
-				this::peekDatabaseType, this::getDatabaseType);
+				this.databaseType);
 		this.queryTimeout = validateQueryTimeout(builder.queryTimeout);
 		this.fetchSize = validateNonNegativeStatementSetting("fetchSize", builder.fetchSize);
 		this.maxRows = validateNonNegativeStatementSetting("maxRows", builder.maxRows);
@@ -132,20 +129,23 @@ public final class Database {
 		this.defaultIdGenerator = new AtomicLong();
 		this.statementExecutor = new StatementExecutor(this, this.instanceProvider, this.resultSetMapper, preparedStatementBinder,
 				statementLogger, this.metricsCollectorDispatcher, new StatementConnections(this.dataSource,
-				this::currentTransactionForDatabaseOperation, Database::closeConnection, this.databaseTypeDetectionConnectionHolder,
-				this::getDatabaseDialect, this::peekDatabaseType));
+				this::currentTransactionForDatabaseOperation, connection -> closeConnection(connection, this.databaseDialect),
+				this.databaseType, this.databaseDialect));
 	}
 
 	/**
-	 * Provides a {@link Database} builder for the given {@link DataSource}.
+	 * Provides a {@link Database} builder for the given {@link DataSource} and database type.
+	 * <p>
+	 * Neither creating the builder nor calling {@link Builder#build()} acquires a connection or inspects JDBC metadata.
 	 *
 	 * @param dataSource data source used to create the {@link Database} builder
+	 * @param databaseType database type to use; choose {@link DatabaseType#GENERIC} for a database without dedicated handling
 	 * @return a {@link Database} builder
+	 * @since 4.8.0
 	 */
 	@NonNull
-	public static Builder withDataSource(@NonNull DataSource dataSource) {
-		requireNonNull(dataSource);
-		return new Builder(dataSource);
+	public static Builder with(@NonNull DataSource dataSource, @NonNull DatabaseType databaseType) {
+		return new Builder(dataSource, databaseType);
 	}
 
 	/**
@@ -276,8 +276,10 @@ public final class Database {
 	 * Unlike {@link #transaction(TransactionalOperation)} and related transaction methods, retrying methods return
 	 * {@link TransactionRetryResult} so callers can inspect failures that were recovered before success.
 	 * <p>
-	 * This method fails fast if called inside an active transaction for this {@code Database}. Retrying a nested unit cannot
-	 * restart the outer transaction safely.
+	 * This method rejects a call when the innermost ambient transaction on the calling thread uses the same
+	 * {@link DataSource} instance, including across different {@code Database} wrappers. Only that innermost transaction
+	 * is checked. If a transaction on another source hides an older matching transaction, this method starts an independent
+	 * retrying transaction; retries do not restart either surrounding transaction.
 	 *
 	 * @param retryPolicy           retry policy to apply
 	 * @param transactionalOperation the operation to perform transactionally
@@ -317,8 +319,10 @@ public final class Database {
 	 * Unlike {@link #transaction(TransactionOptions, TransactionalOperation)} and related transaction methods, retrying
 	 * methods return {@link TransactionRetryResult} so callers can inspect failures that were recovered before success.
 	 * <p>
-	 * This method fails fast if called inside an active transaction for this {@code Database}. Retrying a nested unit cannot
-	 * restart the outer transaction safely.
+	 * This method rejects a call when the innermost ambient transaction on the calling thread uses the same
+	 * {@link DataSource} instance, including across different {@code Database} wrappers. Only that innermost transaction
+	 * is checked. If a transaction on another source hides an older matching transaction, this method starts an independent
+	 * retrying transaction; retries do not restart either surrounding transaction.
 	 *
 	 * @param retryPolicy           retry policy to apply
 	 * @param transactionOptions     options to apply to each transaction attempt
@@ -361,8 +365,10 @@ public final class Database {
 	 * Unlike {@link #transaction(ReturningTransactionalOperation)} and related transaction methods, retrying methods return
 	 * {@link TransactionRetryResult} so callers can inspect failures that were recovered before success.
 	 * <p>
-	 * This method fails fast if called inside an active transaction for this {@code Database}. Retrying a nested unit cannot
-	 * restart the outer transaction safely.
+	 * This method rejects a call when the innermost ambient transaction on the calling thread uses the same
+	 * {@link DataSource} instance, including across different {@code Database} wrappers. Only that innermost transaction
+	 * is checked. If a transaction on another source hides an older matching transaction, this method starts an independent
+	 * retrying transaction; retries do not restart either surrounding transaction.
 	 *
 	 * @param retryPolicy           retry policy to apply
 	 * @param transactionalOperation the operation to perform transactionally
@@ -402,8 +408,10 @@ public final class Database {
 	 * retrying methods return {@link TransactionRetryResult} so callers can inspect failures that were recovered before
 	 * success.
 	 * <p>
-	 * This method fails fast if called inside an active transaction for this {@code Database}. Retrying a nested unit cannot
-	 * restart the outer transaction safely.
+	 * This method rejects a call when the innermost ambient transaction on the calling thread uses the same
+	 * {@link DataSource} instance, including across different {@code Database} wrappers. Only that innermost transaction
+	 * is checked. If a transaction on another source hides an older matching transaction, this method starts an independent
+	 * retrying transaction; retries do not restart either surrounding transaction.
 	 *
 	 * @param retryPolicy           retry policy to apply
 	 * @param transactionOptions     options to apply to each transaction attempt
@@ -426,13 +434,14 @@ public final class Database {
 		return RetryExecutor.DEFAULT.execute(retryPolicy, () -> transaction(transactionOptions, transactionalOperation));
 	}
 
-	static void closeConnection(@NonNull Connection connection) {
+	static void closeConnection(@NonNull Connection connection, @NonNull DatabaseDialect databaseDialect) {
 		requireNonNull(connection);
+		requireNonNull(databaseDialect);
 
 		try {
 			connection.close();
 		} catch (SQLException e) {
-			throw DatabaseException.wrapSafely("Unable to close database connection", e, DatabaseDialect.forExceptionCause(e));
+			throw DatabaseException.wrapSafely("Unable to close database connection", e, databaseDialect);
 		}
 	}
 
@@ -498,7 +507,7 @@ public final class Database {
 		String diagnosticMessage = format("%s [%s]",
 				boundedDiagnosticMessage(scrubbedMessage), statementDiagnostic.diagnostic());
 		DatabaseException databaseException = DatabaseException.wrapSafely(diagnosticMessage, cause,
-				databaseDialectForException(statementContext, cause), diagnosticRedactor);
+				statementContext.getDatabaseDialect(), diagnosticRedactor);
 		databaseException.markStatementDiagnosticsApplied();
 
 		if (statementDiagnostic.parameterRenderingFailure() != null)
@@ -524,48 +533,10 @@ public final class Database {
 	}
 
 	@NonNull
-	private static DatabaseDialect databaseDialectForException(@NonNull StatementContext<?> statementContext,
-																														 @NonNull Throwable cause) {
-		requireNonNull(statementContext);
+	private DatabaseException databaseExceptionWithRawConnectionContext(@NonNull Exception cause) {
 		requireNonNull(cause);
-
-		// Detection can read metadata over the wire and its failure is swallowed here. A driver that reports
-		// cancellation by interrupting the caller and throwing leaves no InterruptedException in the failure, and
-		// restoreInterruptIfNeeded reads only that graph, so outside a transaction the flag is the sole evidence of
-		// cancellation. Inside one, this scope publishes no flag of its own, and a flag it consumes is unrecoverable.
-		try (var ignoredScope = TransactionRetrySafety.isolate(!hasAmbientTransaction())) {
-			return statementContext.getDatabaseDialect();
-		} catch (Throwable ignored) {
-			return DatabaseDialect.forExceptionCause(cause);
-		}
-	}
-
-	@NonNull
-	private DatabaseException databaseExceptionWithRawConnectionContext(@Nullable Connection connection,
-																																			@NonNull Exception cause) {
-		requireNonNull(cause);
-
 		return DatabaseException.wrapSafely(DatabaseException.messageSafely(cause, "Database operation failed"),
-				cause, databaseDialectForRawConnectionException(connection, cause));
-	}
-
-	@NonNull
-	private DatabaseDialect databaseDialectForRawConnectionException(@Nullable Connection connection,
-																																	@NonNull Throwable cause) {
-		requireNonNull(cause);
-
-		if (connection != null) {
-			// Detection reads metadata over this connection and its failure is swallowed here. restoreInterruptIfNeeded
-			// reads the throwable graph rather than the flag, so a flag this attempt consumes is unrecoverable; restoring
-			// it is scoped to operations outside a transaction.
-			try (var ignoredScope = TransactionRetrySafety.isolate(!hasAmbientTransaction())) {
-				return getDatabaseDialect(connection);
-			} catch (Throwable ignored) {
-				// Fall through to cause-based classification below.
-			}
-		}
-
-		return DatabaseDialect.forExceptionCause(cause);
+				cause, this.databaseDialect);
 	}
 
 	@NonNull
@@ -821,7 +792,7 @@ public final class Database {
 				valid = connection.isValid(timeoutSeconds);
 			} catch (SQLException e) {
 				throw DatabaseException.wrapSafely("Unable to perform database health check", e,
-						DatabaseDialect.forExceptionCause(e));
+						this.databaseDialect);
 			}
 
 			if (!valid)
@@ -1293,14 +1264,13 @@ public final class Database {
 	 * Reports whether the configured database dialect and currently loadable runtime adapter expose the APIs required
 	 * to attempt a notification-listening session.
 	 * <p>
-	 * This method resolves the full database type. If it has not been configured or cached, resolution may acquire a
-	 * metadata connection and may throw {@link DatabaseException}. It does not verify whether notifications are enabled
-	 * or supported by the current server version or configuration, acquire a listener session, inspect pool or proxy mode,
+	 * This method uses the configured database type without acquiring a connection or inspecting JDBC metadata.
+	 * It does not verify whether notifications are enabled or supported by the current server version or configuration,
+	 * acquire a listener session, inspect pool or proxy mode,
 	 * prove backend-session affinity, unwrap a physical listener connection, or emit notification-session lifecycle
 	 * metrics.
 	 *
 	 * @return true if notification listening can be attempted with the current dialect and runtime
-	 * @throws DatabaseException if automatic database-type detection fails
 	 * @since 4.6.0
 	 */
 	@NonNull
@@ -1377,71 +1347,19 @@ public final class Database {
 	}
 
 	/**
-	 * Gets the database type for this database.
-	 * <p>
-	 * If {@link Builder#databaseType(DatabaseType)} was not configured and the database type has not already been detected,
-	 * this method may acquire a connection and inspect {@link DatabaseMetaData}.  Configure an explicit database type to avoid
-	 * runtime detection.
+	 * Gets the database type configured when this database was built.
 	 *
-	 * @return the database type
-	 * @throws DatabaseException if automatic database type detection fails
+	 * @return the configured database type
 	 * @since 3.0.0
 	 */
 	@NonNull
 	public DatabaseType getDatabaseType() {
-		return getDatabaseType(this.databaseTypeDetectionConnectionHolder.get());
-	}
-
-	@NonNull
-	DatabaseType peekDatabaseType() {
-		DatabaseType cachedDatabaseType = this.databaseType.get();
-		return cachedDatabaseType == null ? DatabaseType.GENERIC : cachedDatabaseType;
+		return this.databaseType;
 	}
 
 	@NonNull
 	DatabaseDialect getDatabaseDialect() {
-		return getDatabaseDialect(this.databaseTypeDetectionConnectionHolder.get());
-	}
-
-	@NonNull
-	DatabaseDialect getDatabaseDialect(@Nullable Connection connection) {
-		DatabaseDialect cachedDatabaseDialect = this.databaseDialect.get();
-
-		if (cachedDatabaseDialect != null)
-			return cachedDatabaseDialect;
-
-		DatabaseDialect detectedDatabaseDialect = getDatabaseType(connection).dialect();
-
-		if (this.databaseDialect.compareAndSet(null, detectedDatabaseDialect))
-			return detectedDatabaseDialect;
-
-		return requireNonNull(this.databaseDialect.get());
-	}
-
-	@NonNull
-	DatabaseType getDatabaseType(@Nullable Connection connection) {
-		DatabaseType cachedDatabaseType = this.databaseType.get();
-
-		if (cachedDatabaseType != null)
-			return cachedDatabaseType;
-
-		DatabaseType detectedDatabaseType;
-
-		try {
-			detectedDatabaseType = connection == null
-					? DatabaseType.fromDataSource(getDataSource())
-					: DatabaseType.fromConnection(connection);
-		} catch (DatabaseException e) {
-			throw DatabaseException.wrapSafely(format(
-					"Unable to determine database type automatically. Configure %s.%s(%s) explicitly to avoid runtime detection.",
-					Builder.class.getSimpleName(), "databaseType", DatabaseType.class.getSimpleName()), e,
-					DatabaseDialect.forExceptionCause(e), null);
-		}
-
-		if (this.databaseType.compareAndSet(null, detectedDatabaseType))
-			return detectedDatabaseType;
-
-		return this.databaseType.get();
+		return this.databaseDialect;
 	}
 
 	/**
@@ -1507,7 +1425,7 @@ public final class Database {
 						connection = getDataSource().getConnection();
 					} catch (SQLException e) {
 						throw DatabaseException.wrapSafely("Unable to acquire database connection", e,
-								DatabaseDialect.forExceptionCause(e));
+								this.databaseDialect);
 					}
 				}
 
@@ -1519,7 +1437,7 @@ public final class Database {
 				thrown = e;
 				throw e;
 			} catch (Exception e) {
-				DatabaseException wrapped = databaseExceptionWithRawConnectionContext(connection, e);
+				DatabaseException wrapped = databaseExceptionWithRawConnectionContext(e);
 				thrown = wrapped;
 				throw wrapped;
 			} finally {
@@ -1529,7 +1447,7 @@ public final class Database {
 					// If this was a single-shot operation (not in a transaction), close the connection
 					if (connection != null && !transaction.isPresent()) {
 						try {
-							closeConnection(connection);
+							closeConnection(connection, this.databaseDialect);
 						} catch (Throwable cleanupException) {
 							cleanupFailure = cleanupException;
 						}
@@ -1582,9 +1500,9 @@ public final class Database {
 				throw e;
 			} catch (Exception e) {
 				DatabaseException wrapped = acquiredConnection
-						? databaseExceptionWithRawConnectionContext(connection, e)
+						? databaseExceptionWithRawConnectionContext(e)
 						: DatabaseException.wrapSafely("Unable to acquire database connection", e,
-								DatabaseDialect.forExceptionCause(e));
+								this.databaseDialect);
 				thrown = wrapped;
 				throw wrapped;
 			} finally {
@@ -1592,7 +1510,7 @@ public final class Database {
 
 				if (connection != null) {
 					try {
-						closeConnection(connection);
+						closeConnection(connection, this.databaseDialect);
 					} catch (Throwable cleanupException) {
 						if (thrown != null) {
 							appendCleanupFailure(thrown, cleanupException);
@@ -1663,8 +1581,8 @@ public final class Database {
 	public static class Builder {
 		@NonNull
 		private final DataSource dataSource;
-		@Nullable
-		private DatabaseType databaseType;
+		@NonNull
+		private final DatabaseType databaseType;
 		@Nullable
 		private ZoneId timeZone;
 		@Nullable
@@ -1690,30 +1608,14 @@ public final class Database {
 		@Nullable
 		private Integer parsedSqlCacheCapacity;
 
-		private Builder(@NonNull DataSource dataSource) {
+		private Builder(@NonNull DataSource dataSource, @NonNull DatabaseType databaseType) {
 			this.dataSource = requireNonNull(dataSource);
-			this.databaseType = null;
+			this.databaseType = requireNonNull(databaseType);
 			this.metricsCollector = null;
 			this.queryTimeout = null;
 			this.fetchSize = null;
 			this.maxRows = null;
 			this.parsedSqlCacheCapacity = null;
-		}
-
-		/**
-		 * Overrides automatic database type detection.
-		 * <p>
-		 * If {@code null}, the database type is detected lazily when database-type-specific behavior is first needed.
-		 * Supplying a non-null value avoids automatic detection and its metadata lookup entirely.
-		 *
-		 * @param databaseType the database type to use (null to enable auto-detection)
-		 * @return this {@code Builder}, for chaining
-		 * @since 4.0.0
-		 */
-		@NonNull
-		public Builder databaseType(@Nullable DatabaseType databaseType) {
-			this.databaseType = databaseType;
-			return this;
 		}
 
 		/**

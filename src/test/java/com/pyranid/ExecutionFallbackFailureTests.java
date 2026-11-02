@@ -253,7 +253,7 @@ class ExecutionFallbackFailureTests {
 			JDBCDataSource source = new JDBCDataSource();
 			source.setUrl("jdbc:hsqldb:mem:execution_fallback_" + UUID.randomUUID());
 			source.setUser("sa"); source.setPassword("");
-			this.inspection = Database.withDataSource(source).databaseType(DatabaseType.GENERIC).build();
+			this.inspection = Database.with(source, DatabaseType.GENERIC).build();
 			this.inspection.query("CREATE TABLE work (id INT PRIMARY KEY)").execute();
 			AtomicBoolean armed = new AtomicBoolean(true);
 			DataSource wrapped = proxy(DataSource.class, (method, args) -> {
@@ -284,7 +284,7 @@ class ExecutionFallbackFailureTests {
 				});
 				return handle[0];
 			});
-			this.database = Database.withDataSource(wrapped).databaseType(DatabaseType.GENERIC).build();
+			this.database = Database.with(wrapped, DatabaseType.GENERIC).build();
 		}
 
 		private void work(int offset) {

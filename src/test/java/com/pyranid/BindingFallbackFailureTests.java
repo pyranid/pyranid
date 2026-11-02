@@ -236,7 +236,7 @@ class BindingFallbackFailureTests {
 			source.setUrl("jdbc:hsqldb:mem:binding_fallback_" + UUID.randomUUID());
 			source.setUser("sa");
 			source.setPassword("");
-			this.inspectionDatabase = Database.withDataSource(source).databaseType(DatabaseType.GENERIC).build();
+			this.inspectionDatabase = Database.with(source, DatabaseType.GENERIC).build();
 			this.inspectionDatabase.query("CREATE TABLE binding_work (id INT PRIMARY KEY, value_text VARCHAR(40))").execute();
 			AtomicBoolean armed = new AtomicBoolean(true);
 			DataSource wrapped = proxy(DataSource.class, (method, args) -> {
@@ -282,8 +282,7 @@ class BindingFallbackFailureTests {
 				});
 			});
 			// DuckDB's dialect enables the supported STRUCT binding path; storage remains HSQLDB behind the proxy.
-			this.database = Database.withDataSource(wrapped)
-					.databaseType(shape == Shape.STRUCT ? DatabaseType.DUCK_DB : DatabaseType.GENERIC).build();
+			this.database = Database.with(wrapped, shape == Shape.STRUCT ? DatabaseType.DUCK_DB : DatabaseType.GENERIC).build();
 		}
 
 		private void fail(Connection connection, SQLException failure, boolean rollback) throws SQLException {

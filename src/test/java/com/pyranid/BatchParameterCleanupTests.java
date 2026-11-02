@@ -305,7 +305,7 @@ class BatchParameterCleanupTests {
 			source.setUrl("jdbc:hsqldb:mem:batch_parameter_cleanup_" + UUID.randomUUID());
 			source.setUser("sa");
 			source.setPassword("");
-			this.inspectionDatabase = Database.withDataSource(source).databaseType(DatabaseType.GENERIC).build();
+			this.inspectionDatabase = Database.with(source, DatabaseType.GENERIC).build();
 			this.inspectionDatabase.query("CREATE TABLE batch_work (id INT PRIMARY KEY, values_array INTEGER ARRAY)").execute();
 			DataSource wrapped = proxy(DataSource.class, (method, args) -> {
 				Object result = invoke(source, method, args);
@@ -354,7 +354,7 @@ class BatchParameterCleanupTests {
 				});
 				return handle[0];
 			});
-			this.database = Database.withDataSource(wrapped).databaseType(DatabaseType.GENERIC).build();
+			this.database = Database.with(wrapped, DatabaseType.GENERIC).build();
 		}
 
 		private List<Long> executeBatch() {

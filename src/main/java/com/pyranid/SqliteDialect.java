@@ -19,7 +19,14 @@ package com.pyranid;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
+import java.lang.reflect.InvocationTargetException;
+import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 
 import static java.util.Objects.requireNonNull;
@@ -56,6 +63,84 @@ final class SqliteDialect extends UuidStringDialect {
 			"SQLITE_LOCKED_VTAB");
 
 	private SqliteDialect() {}
+
+	/** Reads the existing SQLite connection's timestamp format without acquiring or closing a JDBC resource. */
+	@Nullable
+	static String configuredDateStringFormat(@NonNull ResultSet resultSet) throws SQLException {
+		requireNonNull(resultSet);
+		try {
+			Statement statement = resultSet.getStatement();
+			if (statement == null) return null;
+			Connection connection = statement.getConnection();
+			if (connection == null) return null;
+
+			Class<?> nativeType = null;
+			for (Class<?> type = connection.getClass(); type != null; type = type.getSuperclass()) {
+				if (type.getName().equals("org.sqlite.SQLiteConnection")) {
+					nativeType = type;
+					break;
+				}
+			}
+			Object nativeConnection = nativeType == null ? null : connection;
+			if (nativeType == null) {
+				for (ClassLoader loader : sqliteClassLoaders(connection)) {
+					Class<?> candidate;
+					try {
+						candidate = Class.forName("org.sqlite.SQLiteConnection", false, loader);
+					} catch (ClassNotFoundException unavailable) {
+						if (JdbcFallbacks.isTerminal(unavailable)) throw sqliteFormatFailure(unavailable);
+						continue;
+					}
+					try {
+						if (!connection.isWrapperFor(candidate)) continue;
+						Object unwrapped = connection.unwrap(candidate);
+						if (!candidate.isInstance(unwrapped)) continue;
+						nativeType = candidate;
+						nativeConnection = unwrapped;
+						break;
+					} catch (SQLException | UnsupportedOperationException | AbstractMethodError unavailable) {
+						if (JdbcFallbacks.isTerminal(unavailable)) throw sqliteFormatFailure(unavailable);
+					}
+				}
+			}
+			if (nativeType == null) return null;
+			java.lang.reflect.Method configReader = nativeType.getMethod("getConnectionConfig");
+			Object config = configReader.invoke(nativeConnection);
+			if (config == null) return null;
+			java.lang.reflect.Method formatReader = configReader.getReturnType().getMethod("getDateStringFormat");
+			if (formatReader.getReturnType() != String.class) return null;
+			return (String) formatReader.invoke(config);
+		} catch (InvocationTargetException reflected) {
+			Throwable target = reflected.getTargetException();
+			if ((target instanceof UnsupportedOperationException || target instanceof AbstractMethodError)
+					&& !JdbcFallbacks.isTerminal(target)) return null;
+			throw sqliteFormatFailure(target);
+		} catch (NoSuchMethodException | IllegalAccessException | SecurityException
+				| SQLFeatureNotSupportedException | UnsupportedOperationException | AbstractMethodError unavailable) {
+			if (JdbcFallbacks.isTerminal(unavailable)) throw sqliteFormatFailure(unavailable);
+			return null;
+		}
+	}
+
+	private static List<ClassLoader> sqliteClassLoaders(Connection connection) throws SQLException {
+		List<ClassLoader> loaders = new ArrayList<>(3);
+		for (ClassLoader loader : new ClassLoader[]{connection.getClass().getClassLoader(), SqliteDialect.class.getClassLoader()})
+			if (loader != null && !loaders.contains(loader)) loaders.add(loader);
+		try {
+			ClassLoader context = Thread.currentThread().getContextClassLoader();
+			if (context != null && !loaders.contains(context)) loaders.add(context);
+		} catch (SecurityException unavailable) {
+			if (JdbcFallbacks.isTerminal(unavailable)) throw sqliteFormatFailure(unavailable);
+		}
+		return loaders;
+	}
+
+	private static SQLException sqliteFormatFailure(Throwable failure) throws SQLException {
+		if (failure instanceof SQLException sqlFailure) throw sqlFailure;
+		if (failure instanceof RuntimeException runtimeFailure) throw runtimeFailure;
+		if (failure instanceof Error error) throw error;
+		return new SQLException("Unable to inspect SQLite timestamp format", failure);
+	}
 
 	@NonNull
 	@Override

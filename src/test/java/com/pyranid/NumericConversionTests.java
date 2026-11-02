@@ -35,7 +35,7 @@ import static java.util.Objects.requireNonNull;
 public class NumericConversionTests {
 	@Test
 	public void testBigintToIntegerOverflowThrows() {
-		Database db = Database.withDataSource(createInMemoryDataSource("numeric_int_overflow")).build();
+		Database db = Database.with(createInMemoryDataSource("numeric_int_overflow"), DatabaseType.GENERIC).build();
 
 		Assertions.assertThrows(DatabaseException.class, () ->
 				db.query("SELECT CAST(1099511627776 AS BIGINT) FROM (VALUES (0)) AS t(x)").fetchObject(Integer.class));
@@ -43,7 +43,7 @@ public class NumericConversionTests {
 
 	@Test
 	public void testFractionalNumericToBigIntegerThrows() {
-		Database db = Database.withDataSource(createInMemoryDataSource("numeric_bigint_fractional")).build();
+		Database db = Database.with(createInMemoryDataSource("numeric_bigint_fractional"), DatabaseType.GENERIC).build();
 
 		Assertions.assertThrows(DatabaseException.class, () ->
 				db.query("SELECT CAST(100.50 AS DECIMAL(10, 2)) FROM (VALUES (0)) AS t(x)").fetchObject(BigInteger.class));
@@ -51,7 +51,7 @@ public class NumericConversionTests {
 
 	@Test
 	public void testFractionalNumericBooleanIsTrueWhenNonZero() {
-		Database db = Database.withDataSource(createInMemoryDataSource("numeric_boolean_fractional")).build();
+		Database db = Database.with(createInMemoryDataSource("numeric_boolean_fractional"), DatabaseType.GENERIC).build();
 
 		Optional<Boolean> value = db.query("SELECT CAST(0.5 AS DECIMAL(10, 1)) FROM (VALUES (0)) AS t(x)")
 				.fetchObject(Boolean.class);
@@ -61,7 +61,7 @@ public class NumericConversionTests {
 
 	@Test
 	public void testFractionalNumericToCharacterThrows() {
-		Database db = Database.withDataSource(createInMemoryDataSource("numeric_char_fractional")).build();
+		Database db = Database.with(createInMemoryDataSource("numeric_char_fractional"), DatabaseType.GENERIC).build();
 
 		Assertions.assertThrows(DatabaseException.class, () ->
 				db.query("SELECT CAST(65.5 AS DECIMAL(10, 1)) FROM (VALUES (0)) AS t(x)").fetchObject(Character.class));
@@ -69,7 +69,7 @@ public class NumericConversionTests {
 
 	@Test
 	public void testOutOfRangeNumericToCharacterThrows() {
-		Database db = Database.withDataSource(createInMemoryDataSource("numeric_char_out_of_range")).build();
+		Database db = Database.with(createInMemoryDataSource("numeric_char_out_of_range"), DatabaseType.GENERIC).build();
 
 		Assertions.assertThrows(DatabaseException.class, () ->
 				db.query("SELECT 70000 FROM (VALUES (0)) AS t(x)").fetchObject(Character.class));
@@ -77,7 +77,7 @@ public class NumericConversionTests {
 
 	@Test
 	public void testNonFiniteDoubleToDoubleThrows() {
-		Database db = Database.withDataSource(createInMemoryDataSource("numeric_double_non_finite")).build();
+		Database db = Database.with(createInMemoryDataSource("numeric_double_non_finite"), DatabaseType.GENERIC).build();
 
 		Assertions.assertThrows(DatabaseException.class, () ->
 				db.query("SELECT :value FROM (VALUES (0)) AS t(x)")
@@ -87,7 +87,7 @@ public class NumericConversionTests {
 
 	@Test
 	public void testNonFiniteDoubleToFloatThrows() {
-		Database db = Database.withDataSource(createInMemoryDataSource("numeric_float_non_finite")).build();
+		Database db = Database.with(createInMemoryDataSource("numeric_float_non_finite"), DatabaseType.GENERIC).build();
 
 		Assertions.assertThrows(DatabaseException.class, () ->
 				db.query("SELECT :value FROM (VALUES (0)) AS t(x)")

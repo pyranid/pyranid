@@ -35,12 +35,12 @@ class StatementExecutionTests {
         AtomicInteger closes = new AtomicInteger();
         Connection connection = connection();
         DataSource source = source(connection);
-        Database database = Database.withDataSource(source).databaseType(DatabaseType.GENERIC).build();
+        Database database = Database.with(source, DatabaseType.GENERIC).build();
         StatementConnections connections = new StatementConnections(source, Optional::empty, value -> {
             assertSame(connection, value);
             closes.incrementAndGet();
             clock.addAndGet(20);
-        }, new ThreadLocal<>(), value -> GenericDialect.INSTANCE, () -> DatabaseType.GENERIC);
+        }, DatabaseType.GENERIC, GenericDialect.INSTANCE);
         StatementContext<Void> context = StatementContext.with(Statement.of("lease", "SELECT 1"), database).build();
         StatementExecution lease = new StatementExecution(context, connections, new MetricsCollectorDispatcher(new MetricsCollector() {
             @Override public void didReleaseStatementConnection(StatementContext<?> context, Duration held) {
@@ -76,10 +76,9 @@ class StatementExecutionTests {
                         }
                         return null;
                     });
-            Database database = Database.withDataSource(source).databaseType(DatabaseType.GENERIC).build();
+            Database database = Database.with(source, DatabaseType.GENERIC).build();
             StatementConnections connections = new StatementConnections(source, Optional::empty,
-                    value -> closes.incrementAndGet(), new ThreadLocal<>(), value -> GenericDialect.INSTANCE,
-                    () -> DatabaseType.GENERIC);
+                    value -> closes.incrementAndGet(), DatabaseType.GENERIC, GenericDialect.INSTANCE);
             StatementContext<Void> context = StatementContext.with(Statement.of("lease", "SELECT 1"), database).build();
             StatementExecution lease = new StatementExecution(context, connections,
                     new MetricsCollectorDispatcher(new MetricsCollector() {
@@ -110,33 +109,26 @@ class StatementExecutionTests {
     }
 
     @Test
-    void cleanupPreservesPrimaryFailureAndMetadataScopesRestoreOuterConnection() {
-        Connection outer = connection();
-        Connection inner = connection();
-        DataSource source = source(inner);
-        Database database = Database.withDataSource(source).databaseType(DatabaseType.GENERIC).build();
-        ThreadLocal<Connection> metadata = new ThreadLocal<>();
-        metadata.set(outer);
+    void cleanupPreservesPrimaryFailureAndReleasesConnectionOnlyOnce() {
+        Connection connection = connection();
+        DataSource source = source(connection);
+        Database database = Database.with(source, DatabaseType.GENERIC).build();
+        AtomicInteger releases = new AtomicInteger();
         RuntimeException cleanup = new RuntimeException("cleanup");
-        StatementConnections connections = new StatementConnections(source, Optional::empty, value -> { throw cleanup; },
-                metadata, value -> GenericDialect.INSTANCE, () -> DatabaseType.GENERIC);
+        StatementConnections connections = new StatementConnections(source, Optional::empty, value -> {
+            assertSame(connection, value);
+            releases.incrementAndGet();
+            throw cleanup;
+        }, DatabaseType.GENERIC, GenericDialect.INSTANCE);
         StatementContext<Void> context = StatementContext.with(Statement.of("lease", "SELECT 1"), database).build();
         StatementExecution lease = new StatementExecution(context, connections, new MetricsCollectorDispatcher(null));
         lease.acquire("test");
-        try (var scope = lease.metadataScope()) {
-            assertSame(inner, metadata.get());
-            try (var nested = connections.metadataScope(outer)) { assertSame(outer, metadata.get()); }
-            assertSame(inner, metadata.get());
-        }
-        assertSame(outer, metadata.get());
         AssertionError primary = new AssertionError("operation");
         assertSame(primary, lease.close(primary));
         assertArrayEquals(new Throwable[]{cleanup}, primary.getSuppressed());
         assertSame(primary, lease.close(primary));
         assertEquals(1, primary.getSuppressed().length);
-        metadata.remove();
-        try (var scope = connections.metadataScope(inner)) { assertSame(inner, metadata.get()); }
-        assertNull(metadata.get());
+        assertEquals(1, releases.get());
     }
 
     private static Connection connection() {

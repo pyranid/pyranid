@@ -46,8 +46,8 @@ public class TransactionCompletionSafetyTests {
 	public void pendingInterruptNormalClosureCommitsExactlyOnceAndPreservesFlag() {
 		DataSource delegate = createInMemoryDataSource("pending_interrupt_commit");
 		AtomicInteger commits = new AtomicInteger();
-		Database database = Database.withDataSource(completionCountingDataSource(delegate, commits, new AtomicInteger())).build();
-		Database setupDatabase = Database.withDataSource(delegate).build();
+		Database database = Database.with(completionCountingDataSource(delegate, commits, new AtomicInteger()), DatabaseType.GENERIC).build();
+		Database setupDatabase = Database.with(delegate, DatabaseType.GENERIC).build();
 		setupDatabase.query("CREATE TABLE events (id INT)").execute();
 
 		try {
@@ -69,8 +69,8 @@ public class TransactionCompletionSafetyTests {
 	public void pendingInterruptThrowingClosureRollsBackAndPreservesIdentityAndFlag() {
 		DataSource delegate = createInMemoryDataSource("pending_interrupt_throw");
 		AtomicInteger rollbacks = new AtomicInteger();
-		Database database = Database.withDataSource(completionCountingDataSource(delegate, new AtomicInteger(), rollbacks)).build();
-		Database setupDatabase = Database.withDataSource(delegate).build();
+		Database database = Database.with(completionCountingDataSource(delegate, new AtomicInteger(), rollbacks), DatabaseType.GENERIC).build();
+		Database setupDatabase = Database.with(delegate, DatabaseType.GENERIC).build();
 		setupDatabase.query("CREATE TABLE events (id INT)").execute();
 		IllegalStateException failure = new IllegalStateException("work failed");
 
@@ -97,8 +97,8 @@ public class TransactionCompletionSafetyTests {
 		DataSource delegate = createInMemoryDataSource("pending_interrupt_rollback_only");
 		AtomicInteger commits = new AtomicInteger();
 		AtomicInteger rollbacks = new AtomicInteger();
-		Database database = Database.withDataSource(completionCountingDataSource(delegate, commits, rollbacks)).build();
-		Database setupDatabase = Database.withDataSource(delegate).build();
+		Database database = Database.with(completionCountingDataSource(delegate, commits, rollbacks), DatabaseType.GENERIC).build();
+		Database setupDatabase = Database.with(delegate, DatabaseType.GENERIC).build();
 		setupDatabase.query("CREATE TABLE events (id INT)").execute();
 
 		try {
@@ -121,15 +121,15 @@ public class TransactionCompletionSafetyTests {
 	@Test
 	public void setAutoCommitBeginFailureSkipsIllegalRollbackAndRemainsRetryable() {
 		DataSource delegate = createInMemoryDataSource("begin_autocommit_failure_retry");
-		Database setupDatabase = Database.withDataSource(delegate).build();
+		Database setupDatabase = Database.with(delegate, DatabaseType.GENERIC).build();
 		setupDatabase.query("CREATE TABLE events (id INT)").execute();
 		AtomicInteger rollbackCallsOnFailedBegin = new AtomicInteger();
 		AtomicInteger aborts = new AtomicInteger();
 		AtomicInteger commits = new AtomicInteger();
 		AtomicInteger acquisitions = new AtomicInteger();
 		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
-		Database database = Database.withDataSource(autoCommitBeginFailingOnceDataSource(
-				delegate, rollbackCallsOnFailedBegin, aborts, commits, acquisitions))
+		Database database = Database.with(autoCommitBeginFailingOnceDataSource(
+				delegate, rollbackCallsOnFailedBegin, aborts, commits, acquisitions), DatabaseType.GENERIC)
 				.metricsCollector(metricsCollector)
 				.build();
 		AtomicInteger closureRuns = new AtomicInteger();
@@ -169,12 +169,12 @@ public class TransactionCompletionSafetyTests {
 	@Test
 	public void caughtUncheckedConnectionAcquisitionFailureRemainsRetryable() {
 		DataSource delegate = createInMemoryDataSource("caught_unchecked_begin_failure_retry");
-		Database setupDatabase = Database.withDataSource(delegate).build();
+		Database setupDatabase = Database.with(delegate, DatabaseType.GENERIC).build();
 		setupDatabase.query("CREATE TABLE events (id INT)").execute();
 		IllegalStateException acquisitionFailure = new IllegalStateException("connection unavailable");
 		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
-		Database database = Database.withDataSource(
-				runtimeConnectionAcquisitionFailingOnceDataSource(delegate, acquisitionFailure))
+		Database database = Database.with(
+				runtimeConnectionAcquisitionFailingOnceDataSource(delegate, acquisitionFailure), DatabaseType.GENERIC)
 				.metricsCollector(metricsCollector)
 				.build();
 		AtomicInteger closureRuns = new AtomicInteger();
@@ -216,12 +216,12 @@ public class TransactionCompletionSafetyTests {
 	@Test
 	public void rollbackFailureDuringBeginCleanupDoesNotMakeUnexposedWorkInDoubt() {
 		DataSource delegate = createInMemoryDataSource("begin_rollback_failure_retry");
-		Database setupDatabase = Database.withDataSource(delegate).build();
+		Database setupDatabase = Database.with(delegate, DatabaseType.GENERIC).build();
 		setupDatabase.query("CREATE TABLE events (id INT)").execute();
 		AtomicInteger beginCleanupRollbacks = new AtomicInteger();
 		AtomicInteger aborts = new AtomicInteger();
-		Database database = Database.withDataSource(isolationReadAndRollbackFailingOnceDataSource(
-				delegate, beginCleanupRollbacks, aborts)).build();
+		Database database = Database.with(isolationReadAndRollbackFailingOnceDataSource(
+				delegate, beginCleanupRollbacks, aborts), DatabaseType.GENERIC).build();
 		AtomicInteger closureRuns = new AtomicInteger();
 		AtomicInteger conditionCalls = new AtomicInteger();
 		List<TransactionResult> transactionResults = new ArrayList<>();
@@ -257,8 +257,8 @@ public class TransactionCompletionSafetyTests {
 		AtomicInteger aborts = new AtomicInteger();
 		AtomicInteger commits = new AtomicInteger();
 		AtomicInteger acquisitions = new AtomicInteger();
-		Database database = Database.withDataSource(autoCommitBeginFailingOnceDataSource(
-				delegate, rollbackCallsOnFailedBegin, aborts, commits, acquisitions)).build();
+		Database database = Database.with(autoCommitBeginFailingOnceDataSource(
+				delegate, rollbackCallsOnFailedBegin, aborts, commits, acquisitions), DatabaseType.GENERIC).build();
 		AtomicReference<DatabaseException> caughtFailure = new AtomicReference<>();
 		AtomicReference<DatabaseException> reentryFailure = new AtomicReference<>();
 		AtomicReference<TransactionResult> transactionResult = new AtomicReference<>();
@@ -291,12 +291,12 @@ public class TransactionCompletionSafetyTests {
 	@Test
 	public void rollbackFailureSkipsRestorationAbortsThenClosesAndReportsInDoubt() {
 		DataSource delegate = createInMemoryDataSource("rollback_failure_discard");
-		Database setupDatabase = Database.withDataSource(delegate).build();
+		Database setupDatabase = Database.with(delegate, DatabaseType.GENERIC).build();
 		setupDatabase.query("CREATE TABLE events (id INT)").execute();
 		List<String> events = new ArrayList<>();
 		AtomicInteger restorationCallsAfterFailure = new AtomicInteger();
 		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
-		Database database = Database.withDataSource(rollbackFailingDataSource(delegate, events, restorationCallsAfterFailure))
+		Database database = Database.with(rollbackFailingDataSource(delegate, events, restorationCallsAfterFailure), DatabaseType.GENERIC)
 				.metricsCollector(metricsCollector)
 				.build();
 		AtomicReference<TransactionResult> transactionResult = new AtomicReference<>();
@@ -328,9 +328,9 @@ public class TransactionCompletionSafetyTests {
 	@Test
 	public void retryableDatabaseFailureWithRollbackFailureIsNeverReplayed() {
 		DataSource delegate = createInMemoryDataSource("rollback_failure_no_retry");
-		Database setupDatabase = Database.withDataSource(delegate).build();
+		Database setupDatabase = Database.with(delegate, DatabaseType.GENERIC).build();
 		setupDatabase.query("CREATE TABLE events (id INT)").execute();
-		Database database = Database.withDataSource(rollbackFailingDataSource(delegate, new ArrayList<>(), new AtomicInteger())).build();
+		Database database = Database.with(rollbackFailingDataSource(delegate, new ArrayList<>(), new AtomicInteger()), DatabaseType.GENERIC).build();
 		AtomicInteger attempts = new AtomicInteger();
 		AtomicInteger conditionCalls = new AtomicInteger();
 		DatabaseException failure = new DatabaseException("retryable", new SQLException("serialization", "40001"));
@@ -356,10 +356,10 @@ public class TransactionCompletionSafetyTests {
 	@Test
 	public void sharedPrimaryAndRollbackFailureRetainsIdentityAndDiscardsConnection() {
 		DataSource delegate = createInMemoryDataSource("shared_primary_rollback_failure");
-		Database setupDatabase = Database.withDataSource(delegate).build();
+		Database setupDatabase = Database.with(delegate, DatabaseType.GENERIC).build();
 		setupDatabase.query("CREATE TABLE events (id INT)").execute();
 		DatabaseException failure = new DatabaseException("shared failure", new SQLException("serialization", "40001"));
-		Database database = Database.withDataSource(completionFailingDataSource(delegate, "rollback", failure)).build();
+		Database database = Database.with(completionFailingDataSource(delegate, "rollback", failure), DatabaseType.GENERIC).build();
 
 		DatabaseException thrown = Assertions.assertThrows(DatabaseException.class, () ->
 				database.transaction(() -> {
@@ -376,12 +376,12 @@ public class TransactionCompletionSafetyTests {
 	@Test
 	public void commitSerializationFailureWithSuccessfulRollbackIsRetried() {
 		DataSource delegate = createInMemoryDataSource("commit_serialization_retry");
-		Database setupDatabase = Database.withDataSource(delegate).build();
+		Database setupDatabase = Database.with(delegate, DatabaseType.GENERIC).build();
 		setupDatabase.query("CREATE TABLE events (id INT)").execute();
 		AtomicInteger commitAttempts = new AtomicInteger();
 		AtomicInteger aborts = new AtomicInteger();
 		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
-		Database database = Database.withDataSource(commitSerializationFailingOnceDataSource(delegate, commitAttempts, aborts, false))
+		Database database = Database.with(commitSerializationFailingOnceDataSource(delegate, commitAttempts, aborts, false), DatabaseType.GENERIC)
 				.metricsCollector(metricsCollector)
 				.build();
 		AtomicInteger closureRuns = new AtomicInteger();
@@ -418,11 +418,11 @@ public class TransactionCompletionSafetyTests {
 	@Test
 	public void commitSerializationFailureWithRollbackFailureIsNeverReplayed() {
 		DataSource delegate = createInMemoryDataSource("commit_serialization_rollback_failure");
-		Database setupDatabase = Database.withDataSource(delegate).build();
+		Database setupDatabase = Database.with(delegate, DatabaseType.GENERIC).build();
 		setupDatabase.query("CREATE TABLE events (id INT)").execute();
 		AtomicInteger commitAttempts = new AtomicInteger();
 		AtomicInteger aborts = new AtomicInteger();
-		Database database = Database.withDataSource(commitSerializationFailingOnceDataSource(delegate, commitAttempts, aborts, true)).build();
+		Database database = Database.with(commitSerializationFailingOnceDataSource(delegate, commitAttempts, aborts, true), DatabaseType.GENERIC).build();
 		AtomicInteger closureRuns = new AtomicInteger();
 		AtomicInteger conditionCalls = new AtomicInteger();
 		AtomicReference<TransactionResult> transactionResult = new AtomicReference<>();
@@ -451,9 +451,9 @@ public class TransactionCompletionSafetyTests {
 	@Test
 	public void commitAcknowledgementFailureThatPersistedWorkIsNeverReplayed() {
 		DataSource delegate = createInMemoryDataSource("commit_failure_no_retry");
-		Database setupDatabase = Database.withDataSource(delegate).build();
+		Database setupDatabase = Database.with(delegate, DatabaseType.GENERIC).build();
 		setupDatabase.query("CREATE TABLE events (id INT)").execute();
-		Database database = Database.withDataSource(commitAcknowledgementFailingDataSource(delegate)).build();
+		Database database = Database.with(commitAcknowledgementFailingDataSource(delegate), DatabaseType.GENERIC).build();
 		AtomicInteger attempts = new AtomicInteger();
 		AtomicInteger conditionCalls = new AtomicInteger();
 		RetryPolicy retryPolicy = RetryPolicy.ofMaxAttempts(3, RetryPolicy.Backoff.fixed(Duration.ZERO), exception -> {
@@ -487,10 +487,10 @@ public class TransactionCompletionSafetyTests {
 																						 @NonNull Throwable failure) {
 		String databaseName = format("unchecked_%s_%s", operation, failure instanceof Error ? "error" : "runtime");
 		DataSource delegate = createInMemoryDataSource(databaseName);
-		Database setupDatabase = Database.withDataSource(delegate).build();
+		Database setupDatabase = Database.with(delegate, DatabaseType.GENERIC).build();
 		setupDatabase.query("CREATE TABLE events (id INT)").execute();
 		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
-		Database database = Database.withDataSource(completionFailingDataSource(delegate, operation, failure))
+		Database database = Database.with(completionFailingDataSource(delegate, operation, failure), DatabaseType.GENERIC)
 				.metricsCollector(metricsCollector)
 				.build();
 

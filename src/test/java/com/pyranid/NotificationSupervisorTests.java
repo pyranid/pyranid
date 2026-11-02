@@ -20,9 +20,11 @@ import org.hsqldb.jdbc.JDBCDataSource;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.jspecify.annotations.NonNull;
 
 import javax.sql.DataSource;
 import java.lang.reflect.Proxy;
+import java.lang.reflect.Method;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -44,11 +46,23 @@ import java.util.concurrent.atomic.AtomicReference;
 /** Production lifecycle tests; clock, session and sleeper seams do not create JDBC connections. */
 @Timeout(10)
 public class NotificationSupervisorTests {
-	private static final Database DATABASE = Database.withDataSource((DataSource) Proxy.newProxyInstance(
+	private static final Database DATABASE = Database.with((DataSource) Proxy.newProxyInstance(
 			NotificationSupervisorTests.class.getClassLoader(), new Class<?>[]{DataSource.class},
-			(proxy, method, args) -> { throw new AssertionError("Unexpected data source call: " + method); }))
-			.databaseType(DatabaseType.POSTGRESQL).build();
+			(proxy, method, args) -> { throw new AssertionError("Unexpected data source call: " + method); }), DatabaseType.POSTGRESQL).build();
 	private static final DatabaseException FAILURE = new DatabaseException("listener failed");
+
+	@Test
+	public void snapshotFlagsKeepBoxedNonNullApiSignatures() throws Exception {
+		for (String name : List.of("isReconciliationRunning", "isReconciliationPending")) {
+			Method method = NotificationSupervisor.Snapshot.class.getMethod(name);
+			Assertions.assertEquals(Boolean.class, method.getReturnType(), name + " must retain its boxed API signature");
+			Assertions.assertNotNull(method.getAnnotatedReturnType().getAnnotation(NonNull.class),
+					name + " must declare a non-null result");
+		}
+		NotificationSupervisor.Snapshot snapshot = builder().build().snapshot();
+		Assertions.assertEquals(Boolean.FALSE, snapshot.isReconciliationRunning());
+		Assertions.assertEquals(Boolean.FALSE, snapshot.isReconciliationPending());
+	}
 
 	@Test
 	public void constructionIsLazyAndRequiresCompleteValidConfiguration() {
@@ -88,7 +102,7 @@ public class NotificationSupervisorTests {
 				});
 		AtomicInteger reconciliations = new AtomicInteger();
 		NotificationSupervisor supervisor = NotificationSupervisor.withDatabase(
-				Database.withDataSource(source).databaseType(DatabaseType.POSTGRESQL).build())
+				Database.with(source, DatabaseType.POSTGRESQL).build())
 				.channels(Set.of("job_ready")).reconcile(reconciliations::incrementAndGet).build();
 		Worker worker = start(supervisor);
 		Throwable terminal = result(supervisor).getFailure().orElseThrow();
@@ -135,9 +149,9 @@ public class NotificationSupervisorTests {
 			NotificationSupervisor supervisor = build(builder(), operation -> Assertions.fail("opened after stop"));
 			if (submitFirst)
 				supervisor.start(queued::set);
-			supervisor.requestStop();
-			supervisor.requestStop();
-			Assertions.assertTrue(result(supervisor).isStopRequested());
+			supervisor.requestShutdown();
+			supervisor.requestShutdown();
+			Assertions.assertTrue(result(supervisor).isShutdownRequested());
 			Assertions.assertTrue(result(supervisor).getFailure().isEmpty());
 			Assertions.assertInstanceOf(CancellationException.class, readinessFailure(supervisor));
 			Assertions.assertThrows(IllegalStateException.class, () -> supervisor.start(queued::set));
@@ -168,8 +182,8 @@ public class NotificationSupervisorTests {
 		submitter.start();
 		try {
 			await(submitting);
-			supervisor.requestStop();
-			Assertions.assertTrue(result(supervisor).isStopRequested());
+			supervisor.requestShutdown();
+			Assertions.assertTrue(result(supervisor).isShutdownRequested());
 			Assertions.assertInstanceOf(CancellationException.class, readinessFailure(supervisor));
 		} finally {
 			accepted.countDown();
@@ -258,9 +272,9 @@ public class NotificationSupervisorTests {
 		}), operation -> operation.perform(wait -> Assertions.fail("receive after startup cancellation")));
 		Worker worker = start(supervisor);
 		await(entered);
-		supervisor.requestStop();
+		supervisor.requestShutdown();
 		Assertions.assertInstanceOf(CancellationException.class, readinessFailure(supervisor));
-		Assertions.assertFalse(supervisor.termination().toCompletableFuture().isDone());
+		Assertions.assertFalse(supervisor.awaitShutdownAsync().toCompletableFuture().isDone());
 		release.countDown();
 		Assertions.assertTrue(result(supervisor).getFailure().isEmpty());
 		Assertions.assertFalse(supervisor.snapshot().isEverReady());
@@ -273,7 +287,7 @@ public class NotificationSupervisorTests {
 		for (boolean nonempty : new boolean[]{true, false}) {
 			JDBCDataSource source = new JDBCDataSource();
 			source.setUrl("jdbc:hsqldb:mem:supervisor_final_batch_" + nonempty);
-			Database workDatabase = Database.withDataSource(source).build();
+			Database workDatabase = Database.with(source, DatabaseType.GENERIC).build();
 			AtomicInteger reconciliations = new AtomicInteger();
 			NotificationSupervisor supervisor = build(builder().reconcile(() -> {
 				Assertions.assertFalse(Thread.currentThread().isInterrupted());
@@ -311,12 +325,12 @@ public class NotificationSupervisorTests {
 			}));
 			Worker worker = start(supervisor);
 			await(receiving);
-			supervisor.requestStop();
-			NotificationSupervisor.Result result = result(supervisor);
+			supervisor.requestShutdown();
+			NotificationSupervisor.ShutdownResult result = result(supervisor);
 			Assertions.assertEquals(failFinal, result.getFailure().isPresent());
 			if (failFinal)
 				Assertions.assertSame(FAILURE, result.getFailure().orElseThrow());
-			Assertions.assertTrue(result.isStopRequested());
+			Assertions.assertTrue(result.isShutdownRequested());
 			Assertions.assertEquals(2, reconciliations.get());
 			worker.join();
 		}
@@ -360,7 +374,7 @@ public class NotificationSupervisorTests {
 		supervisor.firstReady().toCompletableFuture().get(5, TimeUnit.SECONDS);
 		Assertions.assertTrue(supervisor.snapshot().isEverReady());
 		Assertions.assertEquals(NotificationSupervisor.State.BACKING_OFF, supervisor.snapshot().getState());
-		supervisor.requestStop();
+		supervisor.requestShutdown();
 		Assertions.assertSame(FAILURE, result(supervisor).getFailure().orElseThrow());
 		supervisor.firstReady().toCompletableFuture().get(5, TimeUnit.SECONDS);
 		worker.join();
@@ -567,18 +581,18 @@ public class NotificationSupervisorTests {
 		NotificationSupervisor supervisor = build(builder(), operation -> Assertions.fail());
 		CompletableFuture<Void> forgedReady = supervisor.firstReady().toCompletableFuture();
 		forgedReady.complete(null);
-		CompletableFuture<NotificationSupervisor.Result> cancelledTermination = supervisor.termination().toCompletableFuture();
+		CompletableFuture<NotificationSupervisor.ShutdownResult> cancelledTermination = supervisor.awaitShutdownAsync().toCompletableFuture();
 		cancelledTermination.cancel(true);
 		Assertions.assertFalse(supervisor.firstReady().toCompletableFuture().isDone());
-		Assertions.assertFalse(supervisor.termination().toCompletableFuture().isDone());
+		Assertions.assertFalse(supervisor.awaitShutdownAsync().toCompletableFuture().isDone());
 		AtomicReference<NotificationSupervisor.State> observed = new AtomicReference<>();
-		supervisor.termination().thenRun(() -> {
+		supervisor.awaitShutdownAsync().thenRun(() -> {
 			observed.set(supervisor.snapshot().getState());
-			supervisor.requestStop();
+			supervisor.requestShutdown();
 		});
-		supervisor.requestStop();
+		supervisor.requestShutdown();
 		Assertions.assertInstanceOf(CancellationException.class, readinessFailure(supervisor));
-		Assertions.assertTrue(result(supervisor).isStopRequested());
+		Assertions.assertTrue(result(supervisor).isShutdownRequested());
 		Assertions.assertEquals(NotificationSupervisor.State.TERMINATED, observed.get());
 	}
 
@@ -602,10 +616,10 @@ public class NotificationSupervisorTests {
 			CountDownLatch polled = new CountDownLatch(1);
 			poller.execute(polled::countDown);
 			await(polled);
-			supervisor.requestStop();
+			supervisor.requestShutdown();
 			await(cleanupEntered);
 			Assertions.assertEquals(NotificationSupervisor.State.STOPPING, supervisor.snapshot().getState());
-			Assertions.assertFalse(supervisor.termination().toCompletableFuture().isDone());
+			Assertions.assertFalse(supervisor.awaitShutdownAsync().toCompletableFuture().isDone());
 		} finally {
 			releaseCleanup.countDown();
 			poller.shutdownNow();
@@ -626,7 +640,7 @@ public class NotificationSupervisorTests {
 		try {
 			supervisor.start(executor);
 			await(receiving);
-			supervisor.requestStop();
+			supervisor.requestShutdown();
 			result(supervisor);
 			CountDownLatch nextTask = new CountDownLatch(1);
 			CountDownLatch release = new CountDownLatch(1);
@@ -636,7 +650,7 @@ public class NotificationSupervisorTests {
 			});
 			await(nextTask);
 			for (int i = 0; i < 1_000; i++)
-				supervisor.requestStop();
+				supervisor.requestShutdown();
 			release.countDown();
 			Assertions.assertTrue(next.get(5, TimeUnit.SECONDS));
 		} finally {
@@ -653,8 +667,8 @@ public class NotificationSupervisorTests {
 		return builder.build(attempt, System::nanoTime, delay -> {});
 	}
 
-	private static NotificationSupervisor.Result result(NotificationSupervisor supervisor) throws Exception {
-		return supervisor.termination().toCompletableFuture().get(5, TimeUnit.SECONDS);
+	private static NotificationSupervisor.ShutdownResult result(NotificationSupervisor supervisor) throws Exception {
+		return supervisor.awaitShutdownAsync().toCompletableFuture().get(5, TimeUnit.SECONDS);
 	}
 
 	private static Throwable readinessFailure(NotificationSupervisor supervisor) {

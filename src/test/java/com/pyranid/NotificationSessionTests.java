@@ -513,8 +513,7 @@ public class NotificationSessionTests {
 		dataSource.setUser("sa");
 		dataSource.setPassword("");
 
-		return Database.withDataSource(dataSource)
-				.databaseType(DatabaseType.POSTGRESQL)
+		return Database.with(dataSource, DatabaseType.POSTGRESQL)
 				.metricsCollector(requireNonNull(metricsCollector))
 				.build();
 	}

@@ -51,16 +51,25 @@ inspecting the generic interfaces of a callback implementation compiled against 
 fail on the new two-argument declaration. Recompile such implementations. Source that explicitly names the
 interface must add `Connection` as its first type argument.
 
-The comparison baseline is now the released 4.7.0 artifact. Its old exclusions have been removed, so all
-public members are gated against that release.
+The comparison baseline is now the released 4.7.0 artifact. Its old exclusions have been removed. The four
+intentional method removals listed below have narrowly scoped exclusions; all other public members are gated
+against that release.
 
-### Intentional behavior changes in 4.8.0
+### Intentional API and behavior changes in 4.8.0
 
-4.8.0 is an explicitly documented exception to the usual minor-release behavior expectation. Built-in LOB
-materialization now has per-value limits: 16 MiB binary and 8,388,608 UTF-16 code units for characters.
+4.8.0 is an explicitly documented exception to the usual minor-release compatibility expectation.
+`Database.with(dataSource, databaseType)` replaces `Database.withDataSource(dataSource)` and
+`Database.Builder.databaseType(...)`. Both arguments are required and must be non-null; the database type
+is fixed when the builder is created. Autodetection has been removed, including the public
+`DatabaseType.fromDataSource(...)` and `DatabaseType.fromConnection(...)` helpers. These four removed methods
+are excluded individually from japicmp. Update construction calls and recompile consumers against 4.8.0.
+Choose `DatabaseType.GENERIC` explicitly for a database without dedicated dialect support. Building a
+`Database` and reading its type do not acquire connections.
+
+Built-in LOB materialization now has per-value limits: 16 MiB binary and 8,388,608 UTF-16 code units for characters.
 Applications that require larger detached values must configure limits or call `unboundedLobMaterialization()`.
-The new APIs are additive; package-private execution and mapping internals have changed substantially and are
-not extension points. Existing custom mapping SPIs keep their ordering, null, and fallback contracts.
+The LOB configuration APIs are additive; package-private execution and mapping internals have changed
+substantially and are not extension points. Existing custom mapping SPIs keep their ordering, null, and fallback contracts.
 
 Java 17 remains the minimum runtime, and core retains zero runtime dependencies. Refer to the 4.8.0 changelog
 migration notes for LOB ownership, scoped savepoint thread ownership, timing semantics, and notification lifecycle.
@@ -78,8 +87,9 @@ The following intentional changes predate the current japicmp baseline and are k
 ## Database compatibility
 
 Pyranid has a first-class [`DatabaseType`](https://javadoc.pyranid.com/com/pyranid/DatabaseType.html) for the
-databases below. Everything else falls back to `GENERIC`, which still provides named parameters, result
-mapping, transactions, and batching, but classifies exceptions only by standard SQLState.
+databases below. Select the matching type when calling `Database.with(dataSource, databaseType)`. For other
+databases, select `GENERIC` explicitly; it still provides named parameters, result mapping, transactions, and
+batching, but classifies exceptions only by standard SQLState.
 
 | Database | `DatabaseType` | Integration leg |
 | --- | --- | --- |
@@ -93,11 +103,11 @@ mapping, transactions, and batching, but classifies exceptions only by standard 
 
 ### Wire-compatible databases
 
-Several databases speak another database's wire protocol and are therefore detected as that database.
+Several databases speak another database's wire protocol and can be configured with that database's type.
 Except for the scoped YugabyteDB smart-driver and notification coverage described below, Pyranid does not test
-these and makes no compatibility promise about them. Because detection is driven by JDBC metadata, they work to
-the extent that the detected dialect's assumptions hold. Treat the table as a starting point for your own
-verification rather than a support statement beyond those explicit YugabyteDB claims.
+these and makes no compatibility promise about them. They work to the extent that the configured dialect's
+assumptions hold. Treat the table as a starting point for your own verification rather than a support statement
+beyond those explicit YugabyteDB claims.
 
 The manual observations below were measured on **2026-08-29** against these versions. Except for the pinned
 YugabyteDB advisory leg, nothing re-verifies them automatically, so an entry is only as current as that date -
@@ -114,7 +124,7 @@ check your own versions before relying on it.
 | HSQLDB | 2.7.4 | bundled |
 | Apache Derby | 10.17.1.0 | bundled |
 
-| Database | Detected as | Observed behavior |
+| Database | Database type to configure | Observed behavior |
 | --- | --- | --- |
 | CockroachDB | `POSTGRESQL` | Constraint, timeout, generated-key, JSONB, and streaming behavior match PostgreSQL. Two divergences below. |
 | YugabyteDB | `POSTGRESQL` | Matches PostgreSQL for the behavior examined with either stock pgjdbc or the explicitly supported `com.yugabyte` smart driver. Notification availability depends on server version and configuration - see below. |
@@ -126,8 +136,8 @@ check your own versions before relying on it.
 
 #### StarRocks is not safe to use with Pyranid
 
-StarRocks reports itself as MySQL in every field Pyranid inspects, so it is detected as `MYSQL` and receives
-MySQL dialect behavior - but it does not honor the guarantees that implies. Observed: `Connection::rollback()`
+StarRocks uses the MySQL wire protocol, but configuring it as `MYSQL` does not give it MySQL transaction
+guarantees. Observed: `Connection::rollback()`
 is a no-op (the row survives a rolled-back transaction), and inserting a duplicate primary key raises no error
 at all (the row is silently upserted). Pyranid's closure-based transaction contract - the body throws, Pyranid
 rolls back, your data is untouched - therefore does not hold, and no exception is raised to warn you. Do not
@@ -137,7 +147,7 @@ that adopt the MySQL wire protocol without MySQL's transactional semantics.
 #### Divergences worth knowing
 
 * **CockroachDB has no `LISTEN`/`NOTIFY`.** `PostgresDialect` advertises notification support because the
-  database is detected as `POSTGRESQL`, so
+  database is configured as `POSTGRESQL`, so
   [`Database::isNotificationListeningSupported()`](https://javadoc.pyranid.com/com/pyranid/Database.html#isNotificationListeningSupported())
   can report that the dialect and driver adapter are available. Registration and sending fail at runtime.
   As of 4.7.0 Pyranid translates CockroachDB's `42601`/`42883` failures on its own generated notification SQL
@@ -156,7 +166,7 @@ that adopt the MySQL wire protocol without MySQL's transactional semantics.
   disabled"). Pyranid reports that failure on its own generated notification SQL as
   `UnsupportedOperationException`; the message describes the feature as unavailable in the current server
   version or configuration rather than unimplemented. `isNotificationListeningSupported()` checks only the
-  configured/detected dialect and loadable driver adapter, not the YugabyteDB flag. See YugabyteDB's
+  configured dialect and loadable driver adapter, not the YugabyteDB flag. See YugabyteDB's
   [`LISTEN`/`NOTIFY` documentation](https://docs.yugabyte.com/stable/api/ysql/the-sql-language/statements/cmd_listen_notify/).
 * **The YugabyteDB smart driver is explicitly supported as of 4.7.0.** Earlier releases referred to
   `org.postgresql.util.PGobject`, `PSQLException`, `PGConnection` and `PGNotification` by name, so on the
@@ -187,7 +197,7 @@ Maven Enforcer `bannedDependencies` rule and visible in the published POM. Compi
 `provided` scope and never required for ordinary runtime use. The PostgreSQL driver is used for optional rich
 error metadata and notification receive; PostgreSQL notification sending remains pure SQL.
 
-The current tested DuckDB JDBC driver version is **2.0.0.0**. Pyranid uses it only in test scope and does not force
+The current tested DuckDB JDBC driver version is **2.0.0.1**. Pyranid uses it only in test scope and does not force
 it onto application classpaths; applications that connect to DuckDB must provide the driver themselves. Newly
 created DuckDB 2.0 databases use a format older DuckDB drivers cannot read. See the
 [DuckDB migration guide](https://www.duckdb.org/docs/2.0/operations_manual/migration) before upgrading

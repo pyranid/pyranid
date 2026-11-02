@@ -89,7 +89,7 @@ class MappingEngineTests {
 				new java.math.BigInteger("1000"), new java.math.BigDecimal("1000.25"), new byte[]{1, 2}};
 		for (DatabaseType databaseType : DatabaseType.values()) {
 			JDBCDataSource source = new JDBCDataSource();
-			Database database = Database.withDataSource(source).databaseType(databaseType).build();
+			Database database = Database.with(source, databaseType).build();
 			StatementContext<Object> context = StatementContext.with(Statement.of("identity", "SELECT value"), database).build();
 			for (Object value : values) {
 				assertSame(value, context.getDatabaseDialect().unwrapResultSetValue(value), databaseType.toString());
@@ -117,6 +117,6 @@ class MappingEngineTests {
 		JDBCDataSource source = new JDBCDataSource();
 		source.setUrl("jdbc:hsqldb:mem:mapping_engine");
 		source.setUser("sa");
-		return Database.withDataSource(source).databaseType(DatabaseType.GENERIC).timeZone(zone).resultSetMapper(mapper).build();
+		return Database.with(source, DatabaseType.GENERIC).timeZone(zone).resultSetMapper(mapper).build();
 	}
 }

@@ -58,8 +58,7 @@ public class YugabyteNotificationIT {
 					"The advisory leg must exercise YugabyteDB's smart driver, not stock pgjdbc");
 		}
 
-		Database database = Database.withDataSource(dataSource)
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database database = Database.with(dataSource, DatabaseType.POSTGRESQL)
 				.build();
 		String suffix = UUID.randomUUID().toString().replace("-", "");
 		String table = "pyranid_yb_json_" + suffix;

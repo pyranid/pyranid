@@ -6,6 +6,41 @@ We require all contributors to electronically sign the below License Agreement a
 
 Please direct any questions to [legal@revetware.com](mailto:legal@revetware.com).
 
+## Development Verification
+
+Run the local verification checks from the `pyranid/` project directory:
+
+```bash
+mvn -q verify
+mvn -q -Pcoverage verify
+mvn -q javadoc:javadoc
+mvn -q -P integration verify
+mvn -q -P integration,it-mariadb -Dit.test=MariaDbIntegrationIT verify
+mvn -q -P integration,it-yugabyte -Dit.test=YugabyteNotificationIT verify
+```
+
+The `integration` Maven profile runs JDBC integration tests against PostgreSQL, MySQL, SQLite, and DuckDB. PostgreSQL and MySQL use Testcontainers and require a working local Docker environment; SQLite and DuckDB run in-process against temporary local database files. Add `it-mariadb`, `it-yugabyte`, `it-sqlserver`, or `it-oracle` for the optional MariaDB, YugabyteDB, SQL Server, and Oracle integration source sets. The YugabyteDB leg is advisory and enables its Early Access `LISTEN`/`NOTIFY` feature on both Masters and TServers. SQL Server requires the Microsoft container EULA; the test container calls [`MSSQLServerContainer::acceptLicense()`](https://javadoc.io/doc/org.testcontainers/testcontainers-mssqlserver/2.0.5/org/testcontainers/containers/MSSQLServerContainer.html#acceptLicense()), and CI/local runs should provide `ACCEPT_EULA=Y` when required by the environment. The default Docker image tags are `pgvector/pgvector:pg17`, `mysql:8.4`, `mariadb:11.4`, `yugabytedb/yugabyte:2026.1.1.1-b2`, `mcr.microsoft.com/mssql/server:2022-CU26-ubuntu-22.04`, and `gvenzl/oracle-free:23-slim-faststart`. They can be overridden with `-Dpostgres.integration.image=...`, `-Dmysql.integration.image=...`, `-Dmariadb.integration.image=...`, `-Dyugabyte.integration.image=...`, `-Dsqlserver.integration.image=...`, and `-Doracle.integration.image=...`. PostgreSQL image overrides must include the `vector` extension.
+
+The portable integration suites cover named binding, repeated parameters, `IN` expansion, null binding/mapping, numeric and temporal conversions, JDBC-generated keys, transaction commit/rollback, transaction options where supported, batch chunking, streaming, guarded raw connection access, statement row limits, health checks, SQL ARRAY guards, and exception wrapping/classification. Vendor suites add coverage for PostgreSQL JSONB, SQL arrays, UUIDs, `RETURNING`, temporal binding/mapping, pgvector binding/read-back, and exception metadata; YugabyteDB smart-driver JSONB binding plus enabled notification send/receive; MySQL/MariaDB JSON, UUID strings, unsigned numerics, streaming, and MariaDB `INSERT ... RETURNING`; SQLite `RETURNING`, UUID text, and decimal text precision; DuckDB STRUCT-to-record mapping (nested records, record lists, map rows), native UUID, `HUGEINT`, JSON, BLOB, vector binding with `array_cosine_distance`, SQL ARRAY round trips, sequence-backed `RETURNING`, the generated-key guard, and write-write conflict classification; SQL Server `OUTPUT`, trigger-safe `OUTPUT INTO`, `MERGE ... OUTPUT`, `uniqueidentifier`, and `datetimeoffset`; and Oracle explicit generated-key columns, UUID `RAW(16)`, empty-string-as-null, timestamp-with-time-zone, and `NUMBER` mapping.
+
+SQL ARRAY integration coverage includes ordinary one-dimensional arrays on PostgreSQL and DuckDB, and multidimensional binding on DuckDB.
+
+Cache-sensitive changes should also be checked with the JMH benchmark profile:
+
+```bash
+mvn -q -P benchmarks test-compile exec:exec
+```
+
+The `benchmarks` profile adds JMH only to the test classpath and compiles benchmark sources from `src/jmh/java`; it does not add runtime dependencies to the published Pyranid artifact. Override the default JMH arguments with `-Djmh.args="..."`, and add a thread setting such as `-t 8` when you want to stress shared-cache contention.
+
+The long-running heap-stability test is opt-in and is also available through the CI workflow's manual trigger:
+
+```bash
+mvn -q -Dpyranid.stress=true -Dtest=MemoryStabilityStressTests test
+```
+
+For release preparation and publishing, see [RELEASING.md](RELEASING.md).
+
 ## Pyranid Contributor License Agreement
 
 Thank you for your interest in contributing to Pyranid ("We" or "Us").

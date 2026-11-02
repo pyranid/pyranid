@@ -63,7 +63,7 @@ public class SecureParameterTests {
 	@Test
 	public void testStatementContextMasksSecureAndSkipsRedactor() {
 		AtomicInteger redactorCalls = new AtomicInteger();
-		Database db = Database.withDataSource(createInMemoryDataSource("secure_context_masks"))
+		Database db = Database.with(createInMemoryDataSource("secure_context_masks"), DatabaseType.GENERIC)
 				.parameterRedactor((statementContext, parameterIndex, parameter) -> {
 					redactorCalls.incrementAndGet();
 					return format("<nonsecure:%s>", parameterIndex);
@@ -88,7 +88,7 @@ public class SecureParameterTests {
 
 	@Test
 	public void testRedactAllMasksNonSecureParameters() {
-		Database db = Database.withDataSource(createInMemoryDataSource("secure_redact_all"))
+		Database db = Database.with(createInMemoryDataSource("secure_redact_all"), DatabaseType.GENERIC)
 				.parameterRedactor(ParameterRedactor.redactAll())
 				.build();
 		StatementContext<?> statementContext = StatementContext.with(Statement.of("redact-all", "SELECT * FROM t WHERE email = ?"), db)
@@ -102,7 +102,7 @@ public class SecureParameterTests {
 
 	@Test
 	public void testDefaultRedactorLeavesNonSecureParametersVerbatim() {
-		Database db = Database.withDataSource(createInMemoryDataSource("secure_none_redactor")).build();
+		Database db = Database.with(createInMemoryDataSource("secure_none_redactor"), DatabaseType.GENERIC).build();
 		StatementContext<?> statementContext = StatementContext.with(Statement.of("none-redactor", "SELECT ?"), db)
 				.parameters("customer@example.com")
 				.build();
@@ -114,7 +114,7 @@ public class SecureParameterTests {
 	@Test
 	public void testOptionalSecureParameterMasksAndSkipsRedactor() {
 		AtomicInteger redactorCalls = new AtomicInteger();
-		Database db = Database.withDataSource(createInMemoryDataSource("secure_optional_display"))
+		Database db = Database.with(createInMemoryDataSource("secure_optional_display"), DatabaseType.GENERIC)
 				.parameterRedactor((statementContext, parameterIndex, parameter) -> {
 					redactorCalls.incrementAndGet();
 					return "<nonsecure>";
@@ -151,7 +151,7 @@ public class SecureParameterTests {
 				return "raw-secret";
 			}
 		};
-		Database db = Database.withDataSource(createInMemoryDataSource("secure_custom_tostring")).build();
+		Database db = Database.with(createInMemoryDataSource("secure_custom_tostring"), DatabaseType.GENERIC).build();
 		StatementContext<?> statementContext = StatementContext.with(Statement.of("secure-custom", "SELECT ?"), db)
 				.parameters(leakySecureParameter)
 				.build();
@@ -164,7 +164,7 @@ public class SecureParameterTests {
 	@Test
 	public void testRedactionFailuresAreFailFast() {
 		RuntimeException redactionFailure = new RuntimeException("redaction boom");
-		Database redactorDatabase = Database.withDataSource(createInMemoryDataSource("secure_redactor_failure"))
+		Database redactorDatabase = Database.with(createInMemoryDataSource("secure_redactor_failure"), DatabaseType.GENERIC)
 				.parameterRedactor((statementContext, parameterIndex, parameter) -> {
 					throw redactionFailure;
 				})
@@ -189,7 +189,7 @@ public class SecureParameterTests {
 				return null;
 			}
 		};
-		Database secureParameterDatabase = Database.withDataSource(createInMemoryDataSource("secure_mask_failure")).build();
+		Database secureParameterDatabase = Database.with(createInMemoryDataSource("secure_mask_failure"), DatabaseType.GENERIC).build();
 		StatementContext<?> secureParameterContext = StatementContext.with(Statement.of("mask-failure", "SELECT ?"), secureParameterDatabase)
 				.parameters(nullMask)
 				.build();
@@ -200,7 +200,7 @@ public class SecureParameterTests {
 	@Test
 	public void testNonBatchTopLevelListIsRedactedAsScalar() {
 		AtomicInteger redactorCalls = new AtomicInteger();
-		Database db = Database.withDataSource(createInMemoryDataSource("secure_top_level_list"))
+		Database db = Database.with(createInMemoryDataSource("secure_top_level_list"), DatabaseType.GENERIC)
 				.parameterRedactor((statementContext, parameterIndex, parameter) -> {
 					redactorCalls.incrementAndGet();
 					Assertions.assertEquals(0, parameterIndex);
@@ -220,7 +220,7 @@ public class SecureParameterTests {
 	public void testBatchDiagnosticsUseBoundedSummaryAndSkipRedactor() {
 		AtomicInteger redactorCalls = new AtomicInteger();
 		AtomicReference<StatementLog<?>> statementLogReference = new AtomicReference<>();
-		Database db = Database.withDataSource(createInMemoryDataSource("secure_batch_summary"))
+		Database db = Database.with(createInMemoryDataSource("secure_batch_summary"), DatabaseType.GENERIC)
 				.parameterRedactor((statementContext, parameterIndex, parameter) -> {
 					redactorCalls.incrementAndGet();
 					return "<nonsecure>";
@@ -252,7 +252,7 @@ public class SecureParameterTests {
 
 	@Test
 	public void testSecureScalarValuesBindLikeRawValues() {
-		Database db = Database.withDataSource(createInMemoryDataSource("secure_scalar_binding")).build();
+		Database db = Database.with(createInMemoryDataSource("secure_scalar_binding"), DatabaseType.GENERIC).build();
 
 		db.query("CREATE TABLE t (id INT, secret VARCHAR(255), maybe_null VARCHAR(255))").execute();
 		db.query("INSERT INTO t (id, secret, maybe_null) VALUES (:id, :secret, :maybeNull)")
@@ -272,7 +272,7 @@ public class SecureParameterTests {
 	@Test
 	public void testSecureInListExpandsAndMasksEachElement() {
 		AtomicReference<StatementLog<?>> statementLogReference = new AtomicReference<>();
-		Database db = Database.withDataSource(createInMemoryDataSource("secure_inlist"))
+		Database db = Database.with(createInMemoryDataSource("secure_inlist"), DatabaseType.GENERIC)
 				.statementLogger(statementLogReference::set)
 				.build();
 
@@ -299,7 +299,7 @@ public class SecureParameterTests {
 	@Test
 	public void testSecureInListInsideBatchBindsCorrectlyAndUsesBatchSummary() {
 		AtomicReference<StatementLog<?>> statementLogReference = new AtomicReference<>();
-		Database db = Database.withDataSource(createInMemoryDataSource("secure_batch_inlist"))
+		Database db = Database.with(createInMemoryDataSource("secure_batch_inlist"), DatabaseType.GENERIC)
 				.statementLogger(statementLogReference::set)
 				.build();
 
@@ -344,7 +344,7 @@ public class SecureParameterTests {
 				preparedStatement.setString(parameterIndex, (String) parameter);
 			}
 		};
-		Database db = Database.withDataSource(createInMemoryDataSource("secure_custom_binder"))
+		Database db = Database.with(createInMemoryDataSource("secure_custom_binder"), DatabaseType.GENERIC)
 				.preparedStatementBinder(preparedStatementBinder)
 				.build();
 
@@ -372,7 +372,7 @@ public class SecureParameterTests {
 				return "<safe>";
 			}
 		};
-		Database db = Database.withDataSource(createInMemoryDataSource("secure_value_failure")).build();
+		Database db = Database.with(createInMemoryDataSource("secure_value_failure"), DatabaseType.GENERIC).build();
 
 		db.query("CREATE TABLE t (value VARCHAR(255))").execute();
 

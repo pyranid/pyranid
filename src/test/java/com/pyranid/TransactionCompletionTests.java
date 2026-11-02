@@ -353,7 +353,7 @@ public class TransactionCompletionTests {
 		JDBCDataSource dataSource = new JDBCDataSource();
 		dataSource.setUrl("jdbc:hsqldb:mem:completion_" + UUID.randomUUID());
 		dataSource.setUser("sa"); dataSource.setPassword("");
-		Database setup = Database.withDataSource(dataSource).databaseType(DatabaseType.GENERIC).build();
+		Database setup = Database.with(dataSource, DatabaseType.GENERIC).build();
 		setup.query("CREATE TABLE events (id INT)").execute();
 		DataSource wrapped = (DataSource) Proxy.newProxyInstance(DataSource.class.getClassLoader(), new Class<?>[]{DataSource.class},
 				(proxy, method, args) -> {
@@ -363,7 +363,7 @@ public class TransactionCompletionTests {
 								(connectionProxy, connectionMethod, connectionArgs) -> invocation.invoke(connection, connectionMethod, connectionArgs));
 					return value;
 				});
-		return new Fixture(Database.withDataSource(wrapped).databaseType(DatabaseType.GENERIC).build(), setup);
+		return new Fixture(Database.with(wrapped, DatabaseType.GENERIC).build(), setup);
 	}
 
 	private static Object invoke(Object target, Method method, Object[] args) throws Throwable {

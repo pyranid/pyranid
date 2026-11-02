@@ -228,7 +228,7 @@ class BindingCapabilityFailureTests {
 			JDBCDataSource source = new JDBCDataSource();
 			source.setUrl("jdbc:hsqldb:mem:binding_capability_" + UUID.randomUUID());
 			source.setUser("sa"); source.setPassword("");
-			this.inspection = Database.withDataSource(source).databaseType(DatabaseType.GENERIC).build();
+			this.inspection = Database.with(source, DatabaseType.GENERIC).build();
 			this.inspection.query("CREATE TABLE work(id INT PRIMARY KEY, value_integer INTEGER, value_timestamp TIMESTAMP, payload VARCHAR(100))").execute();
 			AtomicBoolean armed = new AtomicBoolean(true);
 			// A second visible loader exercises discovery fallback even when both supported drivers are on the IT classpath.
@@ -289,7 +289,7 @@ class BindingCapabilityFailureTests {
 				});
 				return handle[0];
 			});
-			this.database = Database.withDataSource(wrapped).databaseType(site == Site.UNTYPED ? DatabaseType.DUCK_DB
+			this.database = Database.with(wrapped, site == Site.UNTYPED ? DatabaseType.DUCK_DB
 					: site == Site.POSTGRES ? DatabaseType.POSTGRESQL : DatabaseType.GENERIC).build();
 		}
 

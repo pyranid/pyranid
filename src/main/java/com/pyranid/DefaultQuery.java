@@ -477,16 +477,7 @@ final class DefaultQuery implements Query {
 
 	@NonNull
 	private ParsedSql parsedSqlForDatabaseType() {
-		if (!this.parsedSqlVariants.requiresDatabaseType)
-			return this.parsedSqlVariants.standardParsedSql;
-
-		DatabaseType databaseType;
-		Optional<Transaction> transaction = this.database.currentTransactionForDatabaseOperation();
-
-		if (transaction.isPresent())
-			databaseType = this.database.getDatabaseType(transaction.get().getConnection());
-		else
-			databaseType = this.database.getDatabaseType();
+		DatabaseType databaseType = this.database.getDatabaseType();
 
 		if (databaseType == DatabaseType.MYSQL || databaseType == DatabaseType.MARIA_DB) {
 			if (this.parsedSqlVariants.mysqlParseFailureMessage != null)
@@ -523,7 +514,7 @@ final class DefaultQuery implements Query {
 		for (String bindingName : bindings.keySet())
 			if (!parsedSql.distinctParameterNames.contains(bindingName))
 				throw new IllegalArgumentException(format(
-						"Named parameter '%s' is not valid for the detected database SQL syntax. SQL: %s",
+						"Named parameter '%s' is not valid for the configured database SQL syntax. SQL: %s",
 						bindingName, this.originalSql));
 	}
 

@@ -292,7 +292,7 @@ class TransactionDiagnosticFailureTests {
 					return value;
 				});
 			});
-			this.database = Database.withDataSource(wrapped).databaseType(DatabaseType.GENERIC).build();
+			this.database = Database.with(wrapped, DatabaseType.GENERIC).build();
 		}
 
 		private void assertClosed() throws SQLException {

@@ -68,7 +68,7 @@ final class StatementExecution {
 				this.connection = this.connections.acquire();
 			} catch (SQLException e) {
 				DatabaseException wrapped = DatabaseException.wrapSafely("Unable to acquire database connection", e,
-						DatabaseDialect.forExceptionCause(e));
+						this.connections.dialect());
 				acquisitionFailed(wrapped);
 				throw wrapped;
 			} catch (RuntimeException e) {
@@ -79,11 +79,7 @@ final class StatementExecution {
 		this.acquisitionDuration = alreadyAcquired ? null : since(this.started);
 		if (this.transaction.isEmpty()) {
 			this.heldSince = this.clock.getAsLong();
-			if (this.metrics.isEnabled()) {
-				try (var ignored = this.connections.metadataScope(this.connection)) {
-					this.metrics.didAcquireStatementConnection(this.context, this.acquisitionDuration);
-				}
-			}
+			this.metrics.didAcquireStatementConnection(this.context, this.acquisitionDuration);
 		}
 		return this.connection;
 	}
@@ -92,14 +88,13 @@ final class StatementExecution {
 		this.acquisitionDuration = since(this.started);
         // No connection was acquired, so ownership has ended before terminal acquisition metrics.
         this.elapsedDuration = this.acquisitionDuration;
-		this.metrics.didFailToAcquireStatementConnection(this.context, this.connections.cachedType(),
+		this.metrics.didFailToAcquireStatementConnection(this.context, this.connections.databaseType(),
 				this.acquisitionDuration, failure);
 	}
 
 	boolean transactional() { return this.transaction.isPresent(); }
 	Duration acquisitionDuration() { return this.acquisitionDuration; }
 	Duration elapsedDuration() { return this.elapsedDuration; }
-	StatementConnections.MetadataScope metadataScope() { return this.connections.metadataScope(this.connection); }
 
 	void assertCloseThread() {
 		if (this.locked && !this.lock.isHeldByCurrentThread())

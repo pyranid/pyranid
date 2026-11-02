@@ -152,12 +152,12 @@ class NotificationSupervisorFatalFailureTests {
 		AtomicInteger reconciliations = new AtomicInteger();
 		NotificationSupervisor supervisor = fixture.builder().reconcile(() -> {
 			if (reconciliations.incrementAndGet() == 2)
-				reference.get().requestStop();
+				reference.get().requestShutdown();
 		}).build();
 		reference.set(supervisor);
-		NotificationSupervisor.Result result = fixture.run(supervisor);
+		NotificationSupervisor.ShutdownResult result = fixture.run(supervisor);
 		assertTrue(result.getFailure().isEmpty());
-		assertTrue(result.isStopRequested());
+		assertTrue(result.isShutdownRequested());
 		assertEquals(2, fixture.checkouts.get());
 		assertEquals(2, fixture.closes.get());
 		assertEquals(1, fixture.aborts.get());
@@ -230,7 +230,7 @@ class NotificationSupervisorFatalFailureTests {
 			primary.addSuppressed(diagnostic);
 			Fixture fixture = new Fixture(primary);
 			assertSame(primary, fixture.run(fixture.builder().build()).getFailure().orElseThrow());
-			assertArrayEquals(new Throwable[]{diagnostic}, primary.getSuppressed());
+			assertArrayEquals(new Throwable[]{diagnostic, inspectionFailure}, primary.getSuppressed());
 			fixture.assertFatalAttempt();
 		}
 	}
@@ -294,12 +294,12 @@ class NotificationSupervisorFatalFailureTests {
 		AtomicInteger reconciliations = new AtomicInteger();
 		NotificationSupervisor supervisor = fixture.builder().reconcile(() -> {
 			if (reconciliations.incrementAndGet() == 2)
-				reference.get().requestStop();
+				reference.get().requestShutdown();
 		}).build();
 		reference.set(supervisor);
-		NotificationSupervisor.Result result = fixture.run(supervisor);
+		NotificationSupervisor.ShutdownResult result = fixture.run(supervisor);
 		assertTrue(result.getFailure().isEmpty());
-		assertTrue(result.isStopRequested());
+		assertTrue(result.isShutdownRequested());
 		assertTrue(fixture.interruptedOnExit.get());
 		assertEquals(2, fixture.checkouts.get());
 		assertEquals(2, fixture.closes.get());
@@ -319,16 +319,16 @@ class NotificationSupervisorFatalFailureTests {
 		NotificationSupervisor supervisor = fixture.builder().retry(failure -> {
 			fixture.policyCalls.incrementAndGet();
 			assertSame(primary, failure.getException());
-			reference.get().requestStop();
+			reference.get().requestShutdown();
 			return true;
 		}, (attempt, failure) -> {
 			fixture.backoffCalls.incrementAndGet();
 			return Duration.ZERO;
 		}, Duration.ofSeconds(1)).build();
 		reference.set(supervisor);
-		NotificationSupervisor.Result result = fixture.run(supervisor);
+		NotificationSupervisor.ShutdownResult result = fixture.run(supervisor);
 		assertSame(primary, result.getFailure().orElseThrow());
-		assertTrue(result.isStopRequested());
+		assertTrue(result.isShutdownRequested());
 		assertTrue(fixture.interruptedOnExit.get());
 		assertEquals(1, fixture.checkouts.get());
 		assertEquals(1, fixture.policyCalls.get());
@@ -340,9 +340,9 @@ class NotificationSupervisorFatalFailureTests {
 		DatabaseException primary = new DatabaseException("receive");
 		Fixture fixture = new Fixture(primary);
 		fixture.interruptOnReceive = true;
-		NotificationSupervisor.Result result = fixture.run(fixture.builder().build());
+		NotificationSupervisor.ShutdownResult result = fixture.run(fixture.builder().build());
 		assertSame(primary, result.getFailure().orElseThrow());
-		assertFalse(result.isStopRequested());
+		assertFalse(result.isShutdownRequested());
 		assertTrue(fixture.interruptedOnExit.get());
 		fixture.assertFatalAttempt();
 	}
@@ -374,7 +374,7 @@ class NotificationSupervisorFatalFailureTests {
 						this.checkouts.incrementAndGet();
 						return connection();
 					});
-			Database database = Database.withDataSource(source).databaseType(DatabaseType.POSTGRESQL)
+			Database database = Database.with(source, DatabaseType.POSTGRESQL)
 					.metricsCollector(new MetricsCollector() {
 						@Override public void didLoseNotificationConnection(DatabaseType type, java.util.UUID id, Throwable failure) {
 							observedFailure.set(failure);
@@ -437,7 +437,7 @@ class NotificationSupervisorFatalFailureTests {
 					});
 		}
 
-		private NotificationSupervisor.Result run(NotificationSupervisor supervisor) throws Exception {
+		private NotificationSupervisor.ShutdownResult run(NotificationSupervisor supervisor) throws Exception {
 			AtomicReference<Thread> worker = new AtomicReference<>();
 			AtomicReference<Throwable> uncaught = new AtomicReference<>();
 			supervisor.start(command -> {
@@ -454,7 +454,7 @@ class NotificationSupervisorFatalFailureTests {
 				thread.start();
 			});
 			try {
-				NotificationSupervisor.Result result = supervisor.termination().toCompletableFuture().get(5, TimeUnit.SECONDS);
+				NotificationSupervisor.ShutdownResult result = supervisor.awaitShutdownAsync().toCompletableFuture().get(5, TimeUnit.SECONDS);
 				worker.get().join(5_000);
 				assertFalse(worker.get().isAlive(), "worker did not terminate");
 				if (result.getFailure().orElse(null) instanceof Error error)
@@ -463,7 +463,7 @@ class NotificationSupervisorFatalFailureTests {
 					assertNull(uncaught.get());
 				return result;
 			} finally {
-				supervisor.requestStop();
+				supervisor.requestShutdown();
 				worker.get().join(5_000);
 			}
 		}

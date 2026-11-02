@@ -565,7 +565,7 @@ class TemporalArrayMappingTests {
 		JDBCDataSource source = new JDBCDataSource();
 		source.setUrl("jdbc:hsqldb:mem:temporal_array_mapping");
 		source.setUser("sa");
-		return Database.withDataSource(source).databaseType(DatabaseType.GENERIC).timeZone(zone).resultSetMapper(mapper).build();
+		return Database.with(source, DatabaseType.GENERIC).timeZone(zone).resultSetMapper(mapper).build();
 	}
 
 	private static <T> T mapArray(ResultSetMapper mapper, ZoneId zone, Integer baseType, Object[] values, Class<T> target) throws SQLException {

@@ -163,6 +163,6 @@ public class YearAndYearMonthMappingTests {
 		dataSource.setUser("sa");
 		dataSource.setPassword("");
 
-		return Database.withDataSource(dataSource).build();
+		return Database.with(dataSource, DatabaseType.GENERIC).build();
 	}
 }

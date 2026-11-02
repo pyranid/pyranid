@@ -186,7 +186,7 @@ public class TransactionCompletionGuardTests {
 	private static Fixture fixture(ConnectionInvocation invocation) {
 		JDBCDataSource source = new JDBCDataSource(); source.setUrl("jdbc:hsqldb:mem:completion_guard_" + UUID.randomUUID());
 		source.setUser("sa"); source.setPassword("");
-		Database setup = Database.withDataSource(source).databaseType(DatabaseType.GENERIC).build();
+		Database setup = Database.with(source, DatabaseType.GENERIC).build();
 		setup.query("CREATE TABLE events (id INT)").execute();
 		DataSource wrapped = (DataSource) Proxy.newProxyInstance(DataSource.class.getClassLoader(), new Class<?>[]{DataSource.class},
 				(proxy, method, args) -> {
@@ -196,7 +196,7 @@ public class TransactionCompletionGuardTests {
 								(connectionProxy, connectionMethod, connectionArgs) -> invocation.invoke(connection, connectionMethod, connectionArgs));
 					return value;
 				});
-		return new Fixture(Database.withDataSource(wrapped).databaseType(DatabaseType.GENERIC).build(), setup);
+		return new Fixture(Database.with(wrapped, DatabaseType.GENERIC).build(), setup);
 	}
 	private static Object invoke(Object target, Method method, Object[] args) throws Throwable {
 		try { return method.invoke(target, args); } catch (InvocationTargetException failure) { throw failure.getCause(); }

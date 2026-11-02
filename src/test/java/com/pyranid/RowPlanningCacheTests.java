@@ -44,14 +44,14 @@ import static java.util.Objects.requireNonNull;
 public class RowPlanningCacheTests {
 	private Database db(boolean planCachingEnabled, String schema) {
 		DataSource ds = createInMemoryDataSource(schema);
-		return Database.withDataSource(ds)
+		return Database.with(ds, DatabaseType.GENERIC)
 				.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(planCachingEnabled).build())
 				.build();
 	}
 
 	private Database dbWithInstanceProvider(boolean planCachingEnabled, String schema, InstanceProvider ip) {
 		DataSource ds = createInMemoryDataSource(schema);
-		return Database.withDataSource(ds)
+		return Database.with(ds, DatabaseType.GENERIC)
 				.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(planCachingEnabled).build())
 				.instanceProvider(ip)
 				.build();
@@ -319,8 +319,7 @@ public class RowPlanningCacheTests {
 	@Test
 	public void testSchemaSignatureIsMemoizedPerResultSet_Planned() throws Exception {
 		DefaultResultSetMapper mapper = (DefaultResultSetMapper) ResultSetMapper.withPlanCachingEnabled(true).build();
-		Database db = Database.withDataSource(createInMemoryDataSource("schema_signature_memo"))
-				.databaseType(DatabaseType.GENERIC)
+		Database db = Database.with(createInMemoryDataSource("schema_signature_memo"), DatabaseType.GENERIC)
 				.build();
 		StatementContext<SignatureMemoRow> statementContext = StatementContext.<SignatureMemoRow>with(
 						Statement.of("schema-signature-memo", "SELECT id FROM t"), db)

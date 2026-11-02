@@ -445,8 +445,7 @@ public class StructResultSetMappingTests {
 					throw new UnsupportedOperationException("This test should not touch the DataSource");
 				});
 
-		return Database.withDataSource(dataSource)
-				.databaseType(DatabaseType.GENERIC)
+		return Database.with(dataSource, DatabaseType.GENERIC)
 				.build();
 	}
 

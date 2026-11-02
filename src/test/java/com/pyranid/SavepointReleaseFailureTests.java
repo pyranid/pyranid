@@ -347,7 +347,7 @@ class SavepointReleaseFailureTests {
 			nativeSource.setUrl("jdbc:hsqldb:mem:savepoint_release_fallback_" + UUID.randomUUID());
 			nativeSource.setUser("sa");
 			nativeSource.setPassword("");
-			this.inspection = Database.withDataSource(nativeSource).databaseType(DatabaseType.GENERIC).build();
+			this.inspection = Database.with(nativeSource, DatabaseType.GENERIC).build();
 			this.inspection.query("CREATE TABLE work (id INT PRIMARY KEY)").execute();
 			DataSource source = proxy(DataSource.class, (method, args) -> {
 				Object result = invoke(nativeSource, method, args);
@@ -365,7 +365,7 @@ class SavepointReleaseFailureTests {
 					return invoke(connection, operation, parameters);
 				});
 			});
-			this.database = Database.withDataSource(source).databaseType(DatabaseType.GENERIC).build();
+			this.database = Database.with(source, DatabaseType.GENERIC).build();
 		}
 
 		private void inSavepoint(TransactionalOperation operation) {

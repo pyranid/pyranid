@@ -272,7 +272,7 @@ public class TransactionRetrySafetyTests {
 				if (observeOnce.compareAndSet(true, false)) fixture.database.transaction(() -> insert(fixture));
 			}
 		};
-		Database database = Database.withDataSource(fixture.database.getDataSource()).databaseType(DatabaseType.GENERIC)
+		Database database = Database.with(fixture.database.getDataSource(), DatabaseType.GENERIC)
 				.metricsCollector(collector).build();
 		AtomicInteger attempts = new AtomicInteger(), policyCalls = new AtomicInteger();
 		DatabaseException firstFailure = new DatabaseException("safe rollback");
@@ -340,7 +340,7 @@ public class TransactionRetrySafetyTests {
 	private static Fixture fixture(ConnectionInvocation invocation) {
 		JDBCDataSource source = new JDBCDataSource();
 		source.setUrl("jdbc:hsqldb:mem:retry_safety_" + UUID.randomUUID()); source.setUser("sa"); source.setPassword("");
-		Database setup = Database.withDataSource(source).databaseType(DatabaseType.GENERIC).build();
+		Database setup = Database.with(source, DatabaseType.GENERIC).build();
 		setup.query("CREATE TABLE events (id INT)").execute();
 		DataSource wrapped = (DataSource) Proxy.newProxyInstance(DataSource.class.getClassLoader(), new Class<?>[]{DataSource.class},
 				(proxy, method, args) -> {
@@ -350,7 +350,7 @@ public class TransactionRetrySafetyTests {
 								(connectionProxy, connectionMethod, connectionArgs) -> invocation.invoke(connection, connectionMethod, connectionArgs));
 					return value;
 				});
-		return new Fixture(Database.withDataSource(wrapped).databaseType(DatabaseType.GENERIC).build(), setup);
+		return new Fixture(Database.with(wrapped, DatabaseType.GENERIC).build(), setup);
 	}
 	private static Object invoke(Object target, Method method, Object[] args) throws Throwable {
 		try { return method.invoke(target, args); }

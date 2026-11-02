@@ -201,7 +201,7 @@ class MappingOwnershipRegressionTests {
 	}
 
 	private static <T> T map(ResultSetMapper mapper, Class<T> target, ResultSet rs) throws SQLException {
-		Database database = Database.withDataSource(new JDBCDataSource()).databaseType(DatabaseType.GENERIC).resultSetMapper(mapper).build();
+		Database database = Database.with(new JDBCDataSource(), DatabaseType.GENERIC).resultSetMapper(mapper).build();
 		StatementContext<T> context = StatementContext.<T>with(Statement.of("ownership", "SELECT values"), database).resultSetRowType(target).build();
 		return mapper.map(context, rs, target, new InstanceProvider() {}).orElseThrow();
 	}

@@ -330,7 +330,7 @@ class LobResultSetMappingTests {
 		JDBCDataSource source = new JDBCDataSource();
 		source.setUrl("jdbc:hsqldb:mem:lob_mapping");
 		source.setUser("sa");
-		return Database.withDataSource(source).databaseType(DatabaseType.GENERIC).resultSetMapper(mapper).build();
+		return Database.with(source, DatabaseType.GENERIC).resultSetMapper(mapper).build();
 	}
 
 	private static <T> T map(ResultSetMapper mapper, Object raw, int jdbcType, Class<T> target) throws SQLException {

@@ -302,7 +302,7 @@ public class QuerySpiOverrideTests {
 		dataSource.setUrl("jdbc:hsqldb:mem:spi_logging");
 		dataSource.setUser("sa");
 		dataSource.setPassword("");
-		Database db = Database.withDataSource(dataSource)
+		Database db = Database.with(dataSource, DatabaseType.GENERIC)
 				.statementLogger(loggedStatementLog::set)
 				.build();
 
@@ -332,6 +332,6 @@ public class QuerySpiOverrideTests {
 		dataSource.setUser("sa");
 		dataSource.setPassword("");
 
-		return Database.withDataSource(dataSource).build();
+		return Database.with(dataSource, DatabaseType.GENERIC).build();
 	}
 }

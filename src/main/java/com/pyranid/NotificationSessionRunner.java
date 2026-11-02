@@ -328,7 +328,7 @@ final class NotificationSessionRunner {
 	@NonNull
 	static String notificationServerCapabilityUnavailableMessage(@NonNull DatabaseType databaseType) {
 		requireNonNull(databaseType);
-		return format("Database type %s is configured or detected, but LISTEN/NOTIFY is unavailable. "
+		return format("Database type %s is configured, but LISTEN/NOTIFY is unavailable. "
 				+ "It may be unsupported by the current server version or disabled in its current configuration.",
 				databaseType);
 	}

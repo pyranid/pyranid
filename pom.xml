@@ -3,7 +3,7 @@
 	<modelVersion>4.0.0</modelVersion>
 	<groupId>com.pyranid</groupId>
 	<artifactId>pyranid</artifactId>
-	<version>4.8.0-SNAPSHOT</version>
+	<version>4.8.0</version>
 	<packaging>jar</packaging>
 	<name>Pyranid</name>
 	<description>Pyranid is a zero-dependency JDBC interface for modern Java applications.</description>
@@ -48,9 +48,9 @@
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-		<project.build.outputTimestamp>2026-08-31T00:00:00Z</project.build.outputTimestamp>
+		<project.build.outputTimestamp>2026-11-01T00:00:00Z</project.build.outputTimestamp>
 		<junit.jupiter.version>6.1.3</junit.jupiter.version>
-		<maven.enforcer.plugin.version>3.6.3</maven.enforcer.plugin.version>
+		<maven.enforcer.plugin.version>3.7.0</maven.enforcer.plugin.version>
 		<maven.surefire.plugin.version>3.6.1</maven.surefire.plugin.version>
 		<maven.failsafe.plugin.version>3.6.1</maven.failsafe.plugin.version>
 		<maven.jar.plugin.version>3.5.1</maven.jar.plugin.version>
@@ -64,10 +64,10 @@
 		<testcontainers.version>2.0.5</testcontainers.version>
 		<mysql.connector.j.version>26.10.0</mysql.connector.j.version>
 		<mariadb.java.client.version>4.0.0</mariadb.java.client.version>
-		<sqlite.jdbc.version>3.53.4.0</sqlite.jdbc.version>
-		<duckdb.jdbc.version>2.0.0.0</duckdb.jdbc.version>
+		<sqlite.jdbc.version>3.54.1.0</sqlite.jdbc.version>
+		<duckdb.jdbc.version>2.0.0.1</duckdb.jdbc.version>
 		<mssql.jdbc.version>13.6.1.jre11</mssql.jdbc.version>
-		<ojdbc11.version>23.26.3.0.0</ojdbc11.version>
+		<ojdbc11.version>23.26.4.0.0</ojdbc11.version>
 		<slf4j.version>2.0.20</slf4j.version>
 		<postgres.integration.image>pgvector/pgvector:pg17</postgres.integration.image>
 		<pgbouncer.notification.topology.image>edoburu/pgbouncer:v1.25.2-p0</pgbouncer.notification.topology.image>
@@ -80,6 +80,36 @@
 	</properties>
 
 	<build>
+
+		<pluginManagement>
+			<plugins>
+				<plugin>
+					<groupId>org.apache.maven.plugins</groupId>
+					<artifactId>maven-clean-plugin</artifactId>
+					<version>3.5.0</version>
+				</plugin>
+				<plugin>
+					<groupId>org.apache.maven.plugins</groupId>
+					<artifactId>maven-resources-plugin</artifactId>
+					<version>3.5.0</version>
+				</plugin>
+				<plugin>
+					<groupId>org.apache.maven.plugins</groupId>
+					<artifactId>maven-install-plugin</artifactId>
+					<version>3.2.0</version>
+				</plugin>
+				<plugin>
+					<groupId>org.apache.maven.plugins</groupId>
+					<artifactId>maven-deploy-plugin</artifactId>
+					<version>3.2.0</version>
+				</plugin>
+				<plugin>
+					<groupId>org.apache.maven.plugins</groupId>
+					<artifactId>maven-site-plugin</artifactId>
+					<version>3.22.0</version>
+				</plugin>
+			</plugins>
+		</pluginManagement>
 		<plugins>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
@@ -166,6 +196,10 @@
 				<artifactId>maven-javadoc-plugin</artifactId>
 				<version>3.12.0</version>
 				<configuration>
+					<!-- Keep the published Javadoc URLs stable across JDKs. -->
+					<legacyMode>true</legacyMode>
+					<!-- Keep the font files referenced by the generated stylesheet. -->
+					<disableNoFonts>true</disableNoFonts>
 					<quiet>true</quiet>
 					<detectJavaApiLink>false</detectJavaApiLink>
 					<notimestamp>true</notimestamp>
@@ -211,6 +245,13 @@
 					<parameter>
 						<accessModifier>public</accessModifier>
 						<onlyModified>true</onlyModified>
+						<!-- Deliberate 4.8.0 removals; keep every other public member compatibility-gated. -->
+						<excludes>
+							<exclude>com.pyranid.Database#withDataSource(javax.sql.DataSource)</exclude>
+							<exclude>com.pyranid.Database$Builder#databaseType(com.pyranid.DatabaseType)</exclude>
+							<exclude>com.pyranid.DatabaseType#fromDataSource(javax.sql.DataSource)</exclude>
+							<exclude>com.pyranid.DatabaseType#fromConnection(java.sql.Connection)</exclude>
+						</excludes>
 					</parameter>
 					<breakBuildBasedOnSemanticVersioning>true</breakBuildBasedOnSemanticVersioning>
 					<breakBuildOnBinaryIncompatibleModifications>true</breakBuildOnBinaryIncompatibleModifications>

@@ -293,8 +293,7 @@ public class StatementFailureTimingTests {
 					});
 			DataSource dataSource = (DataSource) Proxy.newProxyInstance(DataSource.class.getClassLoader(), new Class<?>[]{DataSource.class},
 					(proxy, method, args) -> method.getName().equals("getConnection") ? this.connection : defaultValue(method.getReturnType()));
-			this.database = Database.withDataSource(dataSource)
-					.databaseType(databaseType)
+			this.database = Database.with(dataSource, databaseType)
 					.statementLogger(this.logs::add)
 					.metricsCollector(new MetricsCollector() {
 						@Override

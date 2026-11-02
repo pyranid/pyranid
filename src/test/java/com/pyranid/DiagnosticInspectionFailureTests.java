@@ -382,7 +382,7 @@ class DiagnosticInspectionFailureTests {
 			JDBCDataSource source = new JDBCDataSource();
 			source.setUrl("jdbc:hsqldb:mem:diagnostic_inspection_" + UUID.randomUUID());
 			source.setUser("sa"); source.setPassword("");
-			this.inspection = Database.withDataSource(source).databaseType(DatabaseType.GENERIC).build();
+			this.inspection = Database.with(source, DatabaseType.GENERIC).build();
 			this.inspection.query("CREATE TABLE work(id INT PRIMARY KEY, value_timestamp TIMESTAMP)").execute();
 			AtomicBoolean armed = new AtomicBoolean(failure != null);
 			DataSource wrapped = proxy(DataSource.class, (method, args) -> {
@@ -411,7 +411,7 @@ class DiagnosticInspectionFailureTests {
 					});
 				});
 			});
-			this.database = Database.withDataSource(wrapped).databaseType(untyped ? DatabaseType.DUCK_DB : DatabaseType.GENERIC).build();
+			this.database = Database.with(wrapped, untyped ? DatabaseType.DUCK_DB : DatabaseType.GENERIC).build();
 		}
 
 		private void executeStatements() {

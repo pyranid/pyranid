@@ -30,7 +30,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import static java.lang.String.format;
@@ -51,13 +50,9 @@ public final class StatementContext<T> {
 	@Nullable
 	private final Class<T> resultSetRowType;
 	@NonNull
-	private final Supplier<@NonNull DatabaseType> databaseTypeSupplier;
+	private final DatabaseType databaseType;
 	@NonNull
-	private final Supplier<@NonNull DatabaseDialect> databaseDialectSupplier;
-	@Nullable
-	private volatile DatabaseDialect databaseDialect;
-	@NonNull
-	private final Supplier<@NonNull DatabaseType> diagnosticDatabaseTypeSupplier;
+	private final DatabaseDialect databaseDialect;
 	@NonNull
 	private final ZoneId timeZone;
 	@NonNull
@@ -87,9 +82,8 @@ public final class StatementContext<T> {
 				? List.of()
 				: Collections.unmodifiableList(new ArrayList<>(builder.parameters));
 		this.resultSetRowType = builder.resultSetRowType;
-		this.databaseTypeSupplier = builder.databaseTypeSupplier;
-		this.databaseDialectSupplier = builder.databaseDialectSupplier;
-		this.diagnosticDatabaseTypeSupplier = builder.diagnosticDatabaseTypeSupplier;
+		this.databaseType = builder.databaseType;
+		this.databaseDialect = builder.databaseDialect;
 		this.timeZone = builder.timeZone;
 		this.ambiguousTimestampBindingStrategy = builder.ambiguousTimestampBindingStrategy;
 		this.parameterRedactor = builder.parameterRedactor;
@@ -110,7 +104,7 @@ public final class StatementContext<T> {
 
 	@Override
 	public int hashCode() {
-		return Objects.hash(getStatement(), getParameters(), getResultSetRowType(), getDiagnosticDatabaseType(), getTimeZone(), getAmbiguousTimestampBindingStrategy());
+		return Objects.hash(getStatement(), getParameters(), getResultSetRowType(), getDatabaseType(), getTimeZone(), getAmbiguousTimestampBindingStrategy());
 	}
 
 	@Override
@@ -126,7 +120,7 @@ public final class StatementContext<T> {
 		return Objects.equals(statementContext.getStatement(), getStatement())
 				&& Objects.equals(statementContext.getParameters(), getParameters())
 				&& Objects.equals(statementContext.getResultSetRowType(), getResultSetRowType())
-				&& Objects.equals(statementContext.getDiagnosticDatabaseType(), getDiagnosticDatabaseType())
+				&& Objects.equals(statementContext.getDatabaseType(), getDatabaseType())
 				&& Objects.equals(statementContext.getTimeZone(), getTimeZone())
 				&& Objects.equals(statementContext.getAmbiguousTimestampBindingStrategy(), getAmbiguousTimestampBindingStrategy());
 	}
@@ -145,7 +139,7 @@ public final class StatementContext<T> {
 		if (resultSetRowType != null)
 			components.add(format("resultSetRowType=%s", resultSetRowType));
 
-		components.add(format("databaseType=%s", getDiagnosticDatabaseType().name()));
+		components.add(format("databaseType=%s", getDatabaseType().name()));
 		components.add(format("timeZone=%s", getTimeZone().getId()));
 		components.add(format("ambiguousTimestampBindingStrategy=%s", getAmbiguousTimestampBindingStrategy().name()));
 
@@ -225,36 +219,19 @@ public final class StatementContext<T> {
 	}
 
 	/**
-	 * Gets the database type for this statement.
-	 * <p>
-	 * If automatic database type detection is enabled and the type has not already been detected, this method may acquire a
-	 * connection and inspect {@link java.sql.DatabaseMetaData}. Diagnostic methods such as {@link #toString()},
-	 * {@link #equals(Object)}, and {@link #hashCode()} use a non-detecting database-type value instead.
+	 * Gets the configured database type for this statement.
 	 *
-	 * @return the database type
-	 * @throws DatabaseException if automatic database type detection fails
+	 * @return the configured database type
 	 * @since 3.0.0
 	 */
 	@NonNull
 	public DatabaseType getDatabaseType() {
-		return this.databaseTypeSupplier.get();
+		return this.databaseType;
 	}
 
 	@NonNull
 	DatabaseDialect getDatabaseDialect() {
-		DatabaseDialect cachedDatabaseDialect = this.databaseDialect;
-
-		if (cachedDatabaseDialect != null)
-			return cachedDatabaseDialect;
-
-		DatabaseDialect databaseDialect = this.databaseDialectSupplier.get();
-		this.databaseDialect = databaseDialect;
-		return databaseDialect;
-	}
-
-	@NonNull
-	private DatabaseType getDiagnosticDatabaseType() {
-		return this.diagnosticDatabaseTypeSupplier.get();
+		return this.databaseDialect;
 	}
 
 	@NonNull
@@ -306,11 +283,9 @@ public final class StatementContext<T> {
 		@NonNull
 		private final Statement statement;
 		@NonNull
-		private final Supplier<@NonNull DatabaseType> databaseTypeSupplier;
+		private final DatabaseType databaseType;
 		@NonNull
-		private final Supplier<@NonNull DatabaseDialect> databaseDialectSupplier;
-		@NonNull
-		private final Supplier<@NonNull DatabaseType> diagnosticDatabaseTypeSupplier;
+		private final DatabaseDialect databaseDialect;
 		@NonNull
 		private final ZoneId timeZone;
 		@NonNull
@@ -331,9 +306,8 @@ public final class StatementContext<T> {
 			requireNonNull(database);
 
 			this.statement = statement;
-			this.databaseTypeSupplier = database::getDatabaseType;
-			this.databaseDialectSupplier = database::getDatabaseDialect;
-			this.diagnosticDatabaseTypeSupplier = database::peekDatabaseType;
+			this.databaseType = database.getDatabaseType();
+			this.databaseDialect = database.getDatabaseDialect();
 			this.timeZone = database.getTimeZone();
 			this.ambiguousTimestampBindingStrategy = database.getAmbiguousTimestampBindingStrategy();
 			this.parameterRedactor = database.getParameterRedactor();

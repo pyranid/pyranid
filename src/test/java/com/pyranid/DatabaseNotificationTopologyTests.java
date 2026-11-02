@@ -28,7 +28,6 @@ import java.io.PrintWriter;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.sql.Connection;
-import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.HashSet;
@@ -52,18 +51,15 @@ import static java.util.Objects.requireNonNull;
 @ThreadSafe
 public class DatabaseNotificationTopologyTests {
 	@Test
-	public void explicitAndAutomaticallyDetectedCapabilityReportWithoutListenerCheckout() {
-		SequenceDataSource explicitDataSource = new SequenceDataSource(List.of());
-		Database explicitPostgres = Database.withDataSource(explicitDataSource)
-				.databaseType(DatabaseType.POSTGRESQL)
-				.build();
+	public void configuredCapabilityReportsWithoutConnectionCheckout() {
+		for (DatabaseType databaseType : DatabaseType.values()) {
+			SequenceDataSource dataSource = new SequenceDataSource(List.of());
+			Database database = Database.with(dataSource, databaseType).build();
 
-		Assertions.assertTrue(explicitPostgres.isNotificationListeningSupported());
-		Assertions.assertEquals(0, explicitDataSource.checkouts());
-
-		assertAutomaticallyDetectedCapability("PostgreSQL", true);
-		assertAutomaticallyDetectedCapability("Oracle", false);
-		assertAutomaticallyDetectedCapability("Unknown database", false);
+			Assertions.assertEquals(databaseType == DatabaseType.POSTGRESQL, database.isNotificationListeningSupported());
+			Assertions.assertEquals(databaseType == DatabaseType.POSTGRESQL, database.isNotificationListeningSupported());
+			Assertions.assertEquals(0, dataSource.checkouts());
+		}
 	}
 
 	@Test
@@ -218,8 +214,7 @@ public class DatabaseNotificationTopologyTests {
 	@Test
 	public void anyDatabaseTransactionRejectsPublicSessionEntryBeforeCheckout() {
 		SequenceDataSource sharedDataSource = new SequenceDataSource(List.of());
-		Database transactionDatabase = Database.withDataSource(sharedDataSource)
-				.databaseType(DatabaseType.GENERIC)
+		Database transactionDatabase = Database.with(sharedDataSource, DatabaseType.GENERIC)
 				.build();
 		Database sameDataSourceListener = postgresDatabase(sharedDataSource, null);
 		SequenceDataSource differentDataSource = new SequenceDataSource(List.of());
@@ -236,24 +231,10 @@ public class DatabaseNotificationTopologyTests {
 		Assertions.assertEquals(0, differentDataSource.checkouts());
 	}
 
-	private static void assertAutomaticallyDetectedCapability(@NonNull String productName,
-			boolean expectedCapability) {
-		MetadataDataSource dataSource = new MetadataDataSource(productName);
-		Database database = Database.withDataSource(dataSource).build();
-
-		Assertions.assertEquals(expectedCapability, database.isNotificationListeningSupported());
-		Assertions.assertEquals(expectedCapability, database.isNotificationListeningSupported(),
-				"The cached database type should return the same capability");
-		Assertions.assertEquals(1, dataSource.checkouts(),
-				"Capability detection should acquire only the metadata connection");
-		Assertions.assertEquals(1, dataSource.closeCalls());
-	}
-
 	@NonNull
 	private static Database postgresDatabase(@NonNull DataSource dataSource,
 			MetricsCollector metricsCollector) {
-		Database.Builder builder = Database.withDataSource(requireNonNull(dataSource))
-				.databaseType(DatabaseType.POSTGRESQL);
+		Database.Builder builder = Database.with(requireNonNull(dataSource), DatabaseType.POSTGRESQL);
 
 		if (metricsCollector != null)
 			builder.metricsCollector(metricsCollector);
@@ -474,66 +455,4 @@ public class DatabaseNotificationTopologyTests {
 		}
 	}
 
-	private static final class MetadataDataSource extends BaseDataSource {
-		@NonNull
-		private final Connection connection;
-		@NonNull
-		private final AtomicInteger checkouts;
-		@NonNull
-		private final AtomicInteger closeCalls;
-
-		private MetadataDataSource(@NonNull String productName) {
-			this.checkouts = new AtomicInteger();
-			this.closeCalls = new AtomicInteger();
-			DatabaseMetaData metadata = metadata(productName);
-			this.connection = (Connection) Proxy.newProxyInstance(
-					DatabaseNotificationTopologyTests.class.getClassLoader(),
-					new Class<?>[]{Connection.class},
-					(proxy, method, args) -> {
-						if (method.getDeclaringClass() == Object.class)
-							return objectMethod(proxy, method, args, productName + "MetadataConnection");
-
-						return switch (method.getName()) {
-							case "getMetaData" -> metadata;
-							case "close" -> {
-								this.closeCalls.incrementAndGet();
-								yield null;
-							}
-							default -> defaultValue(method.getReturnType());
-						};
-					});
-		}
-
-		@NonNull
-		@Override
-		public Connection getConnection() {
-			this.checkouts.incrementAndGet();
-			return this.connection;
-		}
-
-		private int checkouts() {
-			return this.checkouts.get();
-		}
-
-		private int closeCalls() {
-			return this.closeCalls.get();
-		}
-
-		@NonNull
-		private static DatabaseMetaData metadata(@NonNull String productName) {
-			return (DatabaseMetaData) Proxy.newProxyInstance(
-					DatabaseNotificationTopologyTests.class.getClassLoader(),
-					new Class<?>[]{DatabaseMetaData.class},
-					(proxy, method, args) -> {
-						if (method.getDeclaringClass() == Object.class)
-							return objectMethod(proxy, method, args, productName + "Metadata");
-
-						return switch (method.getName()) {
-							case "getDatabaseProductName" -> productName;
-							case "getDatabaseProductVersion", "getURL", "getDriverName" -> null;
-							default -> defaultValue(method.getReturnType());
-						};
-					});
-		}
-	}
 }

@@ -34,6 +34,7 @@ import java.sql.SQLTransactionRollbackException;
 import java.sql.Struct;
 import java.sql.Time;
 import java.time.Duration;
+import java.time.DateTimeException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -66,6 +67,42 @@ class ReadFallbackFailureTests {
 				assertTrue(contains(thrown, original));
 				fixture.assertRolledBack(1);
 				assertFalse(Thread.currentThread().isInterrupted());
+			}
+		}
+	}
+
+	@Test
+	void sqliteRawTimestampRollbackCannotCommitOnlyLaterWork() {
+		for (boolean cached : new boolean[]{false, true}) {
+			for (boolean stream : new boolean[]{false, true}) {
+				SQLException original = new SQLTransactionRollbackException("raw timestamp getter rolled back", "40001");
+				Fixture fixture = new Fixture(Site.TEMPORAL, original, true, cached, true);
+
+				DatabaseException thrown = assertThrows(DatabaseException.class, () -> fixture.execute(stream));
+
+				assertTrue(contains(thrown, original));
+				fixture.assertRolledBack(1);
+				assertFalse(Thread.currentThread().isInterrupted());
+			}
+		}
+	}
+
+	@Test
+	void sqliteRawTimestampDateTimeFailuresRetainTerminalCauses() {
+		for (boolean cached : new boolean[]{false, true}) {
+			for (boolean stream : new boolean[]{false, true}) {
+				for (String kind : List.of("invalid", "cancelled", "fatal")) {
+					Throwable cause = kind.equals("cancelled") ? new InterruptedException("cancelled timestamp read")
+							: kind.equals("fatal") ? new AssertionError("fatal timestamp read") : null;
+					DateTimeException original = new DateTimeException("raw timestamp " + kind, cause);
+					Fixture fixture = new Fixture(Site.TEMPORAL, original, false, cached, true);
+
+					DatabaseException thrown = assertThrows(DatabaseException.class, () -> fixture.execute(stream));
+
+					assertTrue(contains(thrown, original), kind);
+					assertEquals(kind.equals("cancelled"), Thread.interrupted(), kind);
+					fixture.assertRolledBack(1);
+				}
 			}
 		}
 	}
@@ -251,6 +288,7 @@ class ReadFallbackFailureTests {
 		private final Site site;
 		private final Throwable failure;
 		private final boolean physicalRollback;
+		private final boolean rawTemporal;
 		private final AtomicBoolean faulted = new AtomicBoolean();
 		private final AtomicInteger commits = new AtomicInteger(), rollbacks = new AtomicInteger(), connectionsClosed = new AtomicInteger();
 		private final AtomicInteger reads = new AtomicInteger(), statementsClosed = new AtomicInteger(), rowsClosed = new AtomicInteger();
@@ -260,14 +298,19 @@ class ReadFallbackFailureTests {
 		private Connection nativeConnection;
 
 		private Fixture(Site site, Throwable failure, boolean physicalRollback, boolean cached) {
+			this(site, failure, physicalRollback, cached, false);
+		}
+
+		private Fixture(Site site, Throwable failure, boolean physicalRollback, boolean cached, boolean rawTemporal) {
 			this.site = site;
 			this.failure = failure;
 			this.physicalRollback = physicalRollback;
+			this.rawTemporal = rawTemporal;
 			JDBCDataSource source = new JDBCDataSource();
 			source.setUrl("jdbc:hsqldb:mem:read_fallback_" + UUID.randomUUID());
 			source.setUser("sa");
 			source.setPassword("");
-			this.inspection = Database.withDataSource(source).databaseType(DatabaseType.GENERIC).build();
+			this.inspection = Database.with(source, DatabaseType.GENERIC).build();
 			this.inspection.query("CREATE TABLE work (id INT PRIMARY KEY)").execute();
 			DataSource wrapped = proxy(DataSource.class, (method, arguments) -> {
 				Object value = invoke(source, method, arguments);
@@ -287,8 +330,9 @@ class ReadFallbackFailureTests {
 						return proxy(ResultSet.class, (rowOperation, rowParameters) -> {
 							String name = rowOperation.getName();
 							if (name.equals("close")) this.rowsClosed.incrementAndGet();
-							if (this.site == Site.TEMPORAL && name.equals("getObject") && rowParameters.length == 2
-									&& rowParameters[1] instanceof Class<?>) failOnce(connection);
+							if (this.site == Site.TEMPORAL && name.equals("getObject")
+									&& (this.rawTemporal ? rowParameters.length == 1
+									: rowParameters.length == 2 && rowParameters[1] instanceof Class<?>)) failOnce(connection);
 							Object rowValue = invoke(rows, rowOperation, rowParameters);
 							if (!(rowValue instanceof Array array)) return rowValue;
 							return wrapArray(array, connection);
@@ -296,7 +340,7 @@ class ReadFallbackFailureTests {
 					});
 				});
 			});
-			this.database = Database.withDataSource(wrapped).databaseType(DatabaseType.GENERIC)
+			this.database = Database.with(wrapped, rawTemporal ? DatabaseType.SQLITE : DatabaseType.GENERIC)
 					.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(cached).build()).build();
 		}
 

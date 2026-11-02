@@ -248,7 +248,7 @@ class ExecutionFailureCleanupTests {
 					});
 				});
 			});
-			this.database = Database.withDataSource(source).databaseType(DatabaseType.GENERIC).build();
+			this.database = Database.with(source, DatabaseType.GENERIC).build();
 		}
 
 		@Override public void close() throws Exception {

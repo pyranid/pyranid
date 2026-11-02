@@ -115,10 +115,10 @@ class NotificationCancellationFailureTests {
 		Fixture fixture = new Fixture(new SQLException("unused receive", "08006"));
 		fixture.interruptOnReceive = true;
 		fixture.emptyReceive = true;
-		NotificationSupervisor.Result result = fixture.run(fixture.builder().build());
+		NotificationSupervisor.ShutdownResult result = fixture.run(fixture.builder().build());
 
 		assertTrue(result.getFailure().isEmpty());
-		assertFalse(result.isStopRequested());
+		assertFalse(result.isShutdownRequested());
 		fixture.assertCancelled(1, 0);
 	}
 
@@ -184,7 +184,7 @@ class NotificationCancellationFailureTests {
 						if ("checkout".equals(this.setupPhase)) throw this.receiveFailure;
 						return connection();
 					});
-			Database database = Database.withDataSource(source).databaseType(DatabaseType.POSTGRESQL)
+			Database database = Database.with(source, DatabaseType.POSTGRESQL)
 					.metricsCollector(new MetricsCollector() {
 						@Override public void didLoseNotificationConnection(DatabaseType type, java.util.UUID id, Throwable failure) {
 							observedFailure.set(failure);
@@ -243,7 +243,7 @@ class NotificationCancellationFailureTests {
 					});
 		}
 
-		private NotificationSupervisor.Result run(NotificationSupervisor supervisor) throws Exception {
+		private NotificationSupervisor.ShutdownResult run(NotificationSupervisor supervisor) throws Exception {
 			AtomicReference<Thread> worker = new AtomicReference<>();
 			AtomicReference<Throwable> uncaught = new AtomicReference<>();
 			supervisor.start(command -> {
@@ -257,13 +257,13 @@ class NotificationCancellationFailureTests {
 				thread.start();
 			});
 			try {
-				NotificationSupervisor.Result result = supervisor.termination().toCompletableFuture().get(5, TimeUnit.SECONDS);
+				NotificationSupervisor.ShutdownResult result = supervisor.awaitShutdownAsync().toCompletableFuture().get(5, TimeUnit.SECONDS);
 				worker.get().join(5_000);
 				assertFalse(worker.get().isAlive(), "Worker must exit after session cleanup");
 				assertNull(uncaught.get());
 				return result;
 			} finally {
-				supervisor.requestStop();
+				supervisor.requestShutdown();
 				worker.get().join(5_000);
 				assertFalse(worker.get().isAlive(), "Worker leaked from test");
 			}

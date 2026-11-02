@@ -64,7 +64,6 @@ class LobMappingIntegrationIT {
 	}
 
 	private Database duckDb(ResultSetMapper mapper) {
-		return Database.withDataSource(new AbstractPortableJdbcIntegrationTests.DriverManagerDataSource("jdbc:duckdb:", null, null))
-				.databaseType(DatabaseType.DUCK_DB).resultSetMapper(mapper).build();
+		return Database.with(new AbstractPortableJdbcIntegrationTests.DriverManagerDataSource("jdbc:duckdb:", null, null), DatabaseType.DUCK_DB).resultSetMapper(mapper).build();
 	}
 }

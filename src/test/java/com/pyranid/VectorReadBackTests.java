@@ -152,6 +152,6 @@ public class VectorReadBackTests {
 		dataSource.setUser("sa");
 		dataSource.setPassword("");
 
-		return Database.withDataSource(dataSource).build();
+		return Database.with(dataSource, DatabaseType.GENERIC).build();
 	}
 }

@@ -13,7 +13,7 @@
 
 <pre>// Minimal setup, uses defaults
 DataSource dataSource = ...
-Database database = Database.withDataSource(dataSource).build();
+Database database = Database.with(dataSource, DatabaseType.POSTGRESQL).build();
 
 // Queries
 Optional&lt;Car&gt; specificCar = database.query("SELECT * FROM car WHERE id = :id")

@@ -27,8 +27,6 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Optional;
 import java.util.function.Consumer;
-import java.util.function.Function;
-import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -42,16 +40,14 @@ final class TransactionCoordinator {
 
 	private final DataSource dataSource;
 	private final MetricsCollectorDispatcher metrics;
-	private final Supplier<DatabaseType> cachedDatabaseType;
-	private final Function<Connection, DatabaseType> databaseTypeResolver;
+	private final DatabaseType databaseType;
 	private final Logger logger = Logger.getLogger(TransactionCoordinator.class.getName());
 
 	TransactionCoordinator(DataSource dataSource, MetricsCollectorDispatcher metrics,
-			Supplier<DatabaseType> cachedDatabaseType, Function<Connection, DatabaseType> databaseTypeResolver) {
+			DatabaseType databaseType) {
 		this.dataSource = requireNonNull(dataSource);
 		this.metrics = requireNonNull(metrics);
-		this.cachedDatabaseType = requireNonNull(cachedDatabaseType);
-		this.databaseTypeResolver = requireNonNull(databaseTypeResolver);
+		this.databaseType = requireNonNull(databaseType);
 	}
 
 	@NonNull
@@ -118,7 +114,7 @@ final class TransactionCoordinator {
 		requireNonNull(transactionalOperation);
 
 		Transaction transaction = new Transaction(dataSource, transactionOptions, this.metrics,
-				this.cachedDatabaseType.get(), this.databaseTypeResolver);
+				this.databaseType);
 		try (var ignored = transaction.retrySafety().activate()) {
 			return run(transaction, transactionOptions, transactionalOperation);
 		}
@@ -422,7 +418,7 @@ final class TransactionCoordinator {
 			}
 
 			try {
-				Database.closeConnection(connection);
+				Database.closeConnection(connection, this.databaseType.dialect());
 				this.metrics.didReleaseTransactionConnection(transaction, transaction.getDatabaseType(), heldDuration);
 			} catch (Throwable cleanupException) {
 				this.metrics.didFailToReleaseTransactionConnection(transaction, transaction.getDatabaseType(), heldDuration, cleanupException);
@@ -457,7 +453,7 @@ final class TransactionCoordinator {
 			connection.abort(Runnable::run);
 		} catch (SQLException e) {
 			throw DatabaseException.wrapSafely("Unable to abort database connection", e,
-					DatabaseDialect.forExceptionCause(e));
+					this.databaseType.dialect());
 		}
 	}
 

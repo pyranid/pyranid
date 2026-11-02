@@ -174,7 +174,7 @@ public class SqlServerIntegrationIT extends AbstractPortableJdbcIntegrationTests
 
 	@Test
 	public void testSqlServerDatetimeOffsetRoundTrip() {
-		Database db = Database.withDataSource(dataSource())
+		Database db = Database.with(dataSource(), DatabaseType.SQL_SERVER)
 				.timeZone(ZoneId.of("UTC"))
 				.build();
 		String table = "pyranid_sqlserver_temporal_items";

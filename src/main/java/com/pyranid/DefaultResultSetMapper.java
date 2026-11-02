@@ -25,10 +25,14 @@ import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
+import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
+import java.lang.reflect.TypeVariable;
+import java.lang.reflect.WildcardType;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
@@ -51,7 +55,10 @@ import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.time.temporal.TemporalAccessor;
+import java.time.temporal.TemporalQueries;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Currency;
@@ -384,7 +391,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		// JavaBean setters (preserve generics like List<UUID>)
 		for (WritableProperty writableProperty : determineWritableProperties(resultClass)) {
-			Type genericParameterType = writableProperty.getWriteMethod().getGenericParameterTypes()[0];
+			Type genericParameterType = setterMetadataMethod(writableProperty.getWriteMethod()).getGenericParameterTypes()[0];
 			types.put(writableProperty.getName(), TargetType.of(genericParameterType));
 		}
 
@@ -422,8 +429,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				return propertyNameComparison;
 
 			int declaringClassComparison = Integer.compare(
-					declaringClassDistance(resultClass, left.getWriteMethod().getDeclaringClass()),
-					declaringClassDistance(resultClass, right.getWriteMethod().getDeclaringClass()));
+					declaringClassDistance(resultClass, setterMetadataMethod(left.getWriteMethod()).getDeclaringClass()),
+					declaringClassDistance(resultClass, setterMetadataMethod(right.getWriteMethod()).getDeclaringClass()));
 			if (declaringClassComparison != 0)
 				return declaringClassComparison;
 
@@ -444,8 +451,6 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	private Optional<String> propertyNameForSetter(@NonNull Method method) {
 		requireNonNull(method);
 
-		if (method.isBridge() || method.isSynthetic())
-			return Optional.empty();
 		if (Modifier.isStatic(method.getModifiers()))
 			return Optional.empty();
 		if (!method.getName().startsWith("set") || method.getName().length() <= 3)
@@ -454,8 +459,67 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			return Optional.empty();
 		if (method.getReturnType() != Void.TYPE)
 			return Optional.empty();
+		if ((method.isBridge() || method.isSynthetic()) && visibilityBridgeTarget(method).isEmpty())
+			return Optional.empty();
 
 		return Optional.of(decapitalizeJavaBeansPropertyName(method.getName().substring(3)));
+	}
+
+	@NonNull
+	private Method setterMetadataMethod(@NonNull Method method) {
+		// javac's public visibility bridge is invocable, but erases parameterized setter metadata.
+		return visibilityBridgeTarget(method).orElse(method);
+	}
+
+	@NonNull
+	private Optional<Method> visibilityBridgeTarget(@NonNull Method method) {
+		requireNonNull(method);
+		if (!method.isBridge() || !method.isSynthetic() || !Modifier.isPublic(method.getModifiers())
+				|| !Modifier.isPublic(method.getDeclaringClass().getModifiers()))
+			return Optional.empty();
+
+		for (Class<?> ancestor = method.getDeclaringClass().getSuperclass(); ancestor != null; ancestor = ancestor.getSuperclass()) {
+			Method inherited;
+			try {
+				inherited = ancestor.getDeclaredMethod(method.getName(), method.getParameterTypes());
+			} catch (NoSuchMethodException ignored) {
+				continue;
+			}
+			if (inherited.isBridge() || inherited.isSynthetic())
+				continue;
+			if (Modifier.isPublic(ancestor.getModifiers()) || !Modifier.isPublic(inherited.getModifiers())
+					|| Modifier.isStatic(inherited.getModifiers()) || Modifier.isAbstract(inherited.getModifiers())
+					|| inherited.getReturnType() != method.getReturnType())
+				return Optional.empty();
+			// An erased generic bridge can cast Object to a narrower subclass parameter. Do not treat it as
+			// an Object property or guess unresolved superclass type arguments.
+			if (containsTypeVariable(inherited.getGenericParameterTypes()[0]))
+				return Optional.empty();
+			return Optional.of(inherited);
+		}
+		return Optional.empty();
+	}
+
+	private boolean containsTypeVariable(@Nullable Type type) {
+		if (type instanceof TypeVariable<?>)
+			return true;
+		if (type instanceof ParameterizedType parameterizedType) {
+			if (containsTypeVariable(parameterizedType.getOwnerType()))
+				return true;
+			for (Type argument : parameterizedType.getActualTypeArguments())
+				if (containsTypeVariable(argument))
+					return true;
+		} else if (type instanceof GenericArrayType arrayType) {
+			return containsTypeVariable(arrayType.getGenericComponentType());
+		} else if (type instanceof WildcardType wildcardType) {
+			for (Type bound : wildcardType.getUpperBounds())
+				if (containsTypeVariable(bound))
+					return true;
+			for (Type bound : wildcardType.getLowerBounds())
+				if (containsTypeVariable(bound))
+					return true;
+		}
+		return false;
 	}
 
 	@NonNull
@@ -1046,7 +1110,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		} else if (resultClass == Date.class || resultClass == Instant.class || resultClass == ZonedDateTime.class) {
 			value = TemporalReaders.asInstant(resultSet, 1, statementContext, resultSetMetaData);
 		} else if (resultClass == LocalDate.class) {
-			value = TemporalReaders.asLocalDate(resultSet, 1);
+			value = TemporalReaders.asLocalDate(resultSet, 1, statementContext, resultSetMetaData);
 		} else if (resultClass == LocalTime.class) {
 			value = TemporalReaders.asLocalTime(resultSet, 1, statementContext, resultSetMetaData);
 		} else if (resultClass == LocalDateTime.class) {
@@ -1056,13 +1120,13 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		} else if (resultClass == OffsetDateTime.class) {
 			value = TemporalReaders.asOffsetDateTime(resultSet, 1, statementContext, resultSetMetaData);
 		} else if (resultClass == java.sql.Timestamp.class) {
-			value = statementContext.getDatabaseDialect().isTimestampWithTimeZone(resultSetMetaData, 1)
+			value = statementContext.getDatabaseDialect() instanceof SqliteDialect
+					? TemporalReaders.readSqliteTimestamp(resultSet, statementContext, 1)
+					: statementContext.getDatabaseDialect().isTimestampWithTimeZone(resultSetMetaData, 1)
 					? TemporalReaders.asInstant(resultSet, 1, statementContext, true)
 					: TemporalReaders.asLocalDateTime(resultSet, 1, statementContext, false);
 		} else if (resultClass == java.sql.Date.class) {
-			value = statementContext.getDatabaseDialect().isTimestampWithTimeZone(resultSetMetaData, 1)
-					? TemporalReaders.asInstant(resultSet, 1, statementContext, true)
-					: TemporalReaders.asLocalDate(resultSet, 1);
+			value = TemporalReaders.asLocalDate(resultSet, 1, statementContext, resultSetMetaData);
 		} else if (resultClass == ZoneId.class || resultClass == TimeZone.class || resultClass == Locale.class
 				|| resultClass == Currency.class || resultClass == YearMonth.class) {
 			value = resultSet.getString(1);
@@ -1241,7 +1305,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		if (context.getDatabaseDialect().isTimestampWithTimeZone(metadata, column))
 			return (r, c, i) -> TemporalReaders.asOffsetDateTime(r, i, c, true);
 		if (jdbcType == Types.TIMESTAMP)
-			return (r, c, i) -> TemporalReaders.asLocalDateTime(r, i, c, false);
+			return (r, c, i) -> c.getDatabaseDialect() instanceof SqliteDialect
+					? TemporalReaders.readSqliteTimestamp(r, c, i) : TemporalReaders.asLocalDateTime(r, i, c, false);
 		if (jdbcType == Types.DATE)
 			return (r, c, i) -> TemporalReaders.asLocalDate(r, i);
 		if (TemporalReaders.isTimeWithTimeZone(metadata, column))
@@ -1321,7 +1386,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		return convertDetachedValue(statementContext, resultSetValue, targetType, resources);
 	}
 
-	/** Pure built-in conversion also serves scalar JDBC readers without forcing dialect detection. */
+	/** Pure built-in conversion also serves scalar JDBC readers without a statement context. */
 	@Nullable
 	private <T> Object convertDetachedValue(StatementContext<T> statementContext, @Nullable Object resultSetValue,
 			TargetType targetType, MappingResources resources) {
@@ -2660,6 +2725,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 	@ThreadSafe
 	protected static final class TemporalReaders {
+		private static final Pattern ISO_TIMESTAMP_SEPARATOR = Pattern.compile("[+-]?\\d{4,}-\\d{2}-\\d{2}[Tt]");
+		private static final String DEFAULT_SQLITE_TIMESTAMP_FORMAT = "yyyy-MM-dd HH:mm:ss.SSS";
+
 		private TemporalReaders() {}
 
 		public static boolean isTimeWithTimeZone(ResultSetMetaData md, int col) throws SQLException {
@@ -2696,6 +2764,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		public static Instant asInstant(ResultSet rs, int col, StatementContext<?> ctx, boolean withTz) throws SQLException {
+			if (ctx.getDatabaseDialect() instanceof SqliteDialect) {
+				Object value = readSqliteTimestamp(rs, ctx, col);
+				if (value == null) return null;
+				return value instanceof OffsetDateTime odt ? odt.toInstant()
+						: ((LocalDateTime) value).atZone(ctx.getTimeZone()).toInstant();
+			}
 			// Modern fast-path
 			if (withTz) {
 				OffsetDateTime odt = tryGet(rs, col, OffsetDateTime.class);
@@ -2747,6 +2821,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		public static OffsetDateTime asOffsetDateTime(ResultSet rs, int col, StatementContext<?> ctx, boolean withTz) throws SQLException {
+			if (ctx.getDatabaseDialect() instanceof SqliteDialect) {
+				Object value = readSqliteTimestamp(rs, ctx, col);
+				if (value == null) return null;
+				return value instanceof OffsetDateTime odt ? odt
+						: ((LocalDateTime) value).atZone(ctx.getTimeZone()).toOffsetDateTime();
+			}
 			if (withTz) {
 				OffsetDateTime got = tryGet(rs, col, OffsetDateTime.class);
 				if (got != null) return got;
@@ -2772,6 +2852,15 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		public static LocalDateTime asLocalDateTime(ResultSet rs, int col, StatementContext<?> ctx, boolean withTz) throws SQLException {
+			if (ctx.getDatabaseDialect() instanceof SqliteDialect) {
+				Object value = readSqliteTimestamp(rs, ctx, col);
+				return value instanceof OffsetDateTime odt
+						? odt.atZoneSameInstant(ctx.getTimeZone()).toLocalDateTime() : (LocalDateTime) value;
+			}
+			return asJdbcLocalDateTime(rs, col, ctx, withTz);
+		}
+
+		private static LocalDateTime asJdbcLocalDateTime(ResultSet rs, int col, StatementContext<?> ctx, boolean withTz) throws SQLException {
 			if (withTz) {
 				OffsetDateTime odt = tryGet(rs, col, OffsetDateTime.class);
 				if (odt != null) return odt.atZoneSameInstant(ctx.getTimeZone()).toLocalDateTime();
@@ -2807,6 +2896,46 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 			Timestamp ts = rs.getTimestamp(col);
 			return ts == null ? null : ts.toLocalDateTime();
+		}
+
+		/**
+		 * SQLite stores java.time timestamps as text. Its typed/classic getters can normalize invalid
+		 * dates or interpret a nanosecond fraction as milliseconds, so parse standard text strictly before
+		 * driver conversion. Explicit custom JDBC date formats take precedence and retain the driver's interpretation.
+		 * Keep an explicit offset until the target type is known: converting through
+		 * wall time would lose which occurrence of a daylight-saving overlap the value represents.
+		 */
+		@Nullable
+		private static Object readSqliteTimestamp(ResultSet rs, StatementContext<?> ctx, int col) throws SQLException {
+			Object raw = rs.getObject(col);
+			if (raw == null) return null;
+			if (raw instanceof String text) {
+				String normalized = text.trim();
+				String format = SqliteDialect.configuredDateStringFormat(rs);
+				if (format != null && !DEFAULT_SQLITE_TIMESTAMP_FORMAT.equals(format))
+					return asJdbcLocalDateTime(rs, col, ctx, false);
+				normalized = normalized.replace(' ', 'T');
+				if (!ISO_TIMESTAMP_SEPARATOR.matcher(normalized).lookingAt())
+					return LocalDate.parse(normalized).atStartOfDay();
+				TemporalAccessor parsed = DateTimeFormatter.ISO_DATE_TIME.parse(normalized);
+				LocalDateTime local = LocalDateTime.from(parsed);
+				ZoneOffset offset = parsed.query(TemporalQueries.offset());
+				return offset == null ? local : local.atOffset(offset);
+			}
+			// Numeric timestamp storage retains JDBC semantics and the driver's date configuration.
+			return asJdbcLocalDateTime(rs, col, ctx, false);
+		}
+
+		public static LocalDate asLocalDate(ResultSet rs, int col, StatementContext<?> ctx, ResultSetMetaData metadata) throws SQLException {
+			if (ctx.getDatabaseDialect().isTimestampWithTimeZone(metadata, col)) {
+				Instant value = asInstant(rs, col, ctx, true);
+				return value == null ? null : value.atZone(ctx.getTimeZone()).toLocalDate();
+			}
+			if (ctx.getDatabaseDialect() instanceof SqliteDialect && metadata.getColumnType(col) == Types.TIMESTAMP) {
+				LocalDateTime value = asLocalDateTime(rs, col, ctx, false);
+				return value == null ? null : value.toLocalDate();
+			}
+			return asLocalDate(rs, col);
 		}
 
 		public static LocalDate asLocalDate(ResultSet rs, int col) throws SQLException {

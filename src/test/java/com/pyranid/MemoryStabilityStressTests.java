@@ -75,7 +75,7 @@ public class MemoryStabilityStressTests {
 				.planCacheCapacity(PLAN_CACHE_CAPACITY)
 				.build();
 
-		Database db = Database.withDataSource(ds)
+		Database db = Database.with(ds, DatabaseType.GENERIC)
 				.resultSetMapper(mapper)
 				.build();
 

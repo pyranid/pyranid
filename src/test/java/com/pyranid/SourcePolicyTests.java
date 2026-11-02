@@ -126,11 +126,12 @@ public class SourcePolicyTests {
 	}
 
 	/**
-	 * Notification support is synchronous and caller-thread-owned. It must not grow a hidden listener,
-	 * reconnect, timer, scheduler, executor, or cleaner.
+	 * Core JDBC operations and low-level notification sessions stay synchronous and caller-thread-owned.
+	 * Only the explicitly started NotificationSupervisor may create managed background workers; its
+	 * lazy construction and worker shutdown are covered by NotificationSupervisorManagedTests.
 	 */
 	@Test
-	public void testMainSourceCreatesNoBackgroundWorkers() throws IOException {
+	public void testOnlyExplicitSupervisorCreatesBackgroundWorkers() throws IOException {
 		Path mainSourceRoot = Path.of("src", "main", "java");
 		Assertions.assertTrue(Files.isDirectory(mainSourceRoot),
 				"Main source root not found; test must run from the module root");
@@ -138,7 +139,9 @@ public class SourcePolicyTests {
 		List<String> violations = new ArrayList<>();
 
 		try (Stream<Path> paths = Files.walk(mainSourceRoot)) {
-			paths.filter(path -> path.toString().endsWith(".java")).forEach(path -> {
+			paths.filter(path -> path.toString().endsWith(".java"))
+					.filter(path -> !path.equals(mainSourceRoot.resolve(Path.of("com", "pyranid", "NotificationSupervisor.java"))))
+					.forEach(path -> {
 				String source;
 				try {
 					source = Files.readString(path);
@@ -155,8 +158,8 @@ public class SourcePolicyTests {
 		}
 
 		Assertions.assertTrue(violations.isEmpty(), () -> format(
-				"Pyranid must not create background threads, executors, timers, schedulers, or cleaners. "
-						+ "Notification supervision belongs to the application. Violations: %s", violations));
+				"Only the explicitly started NotificationSupervisor may create background workers. "
+						+ "Other core operations must stay caller-thread-owned. Violations: %s", violations));
 	}
 
 	/**

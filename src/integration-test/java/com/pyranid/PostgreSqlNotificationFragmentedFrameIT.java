@@ -94,11 +94,9 @@ public class PostgreSqlNotificationFragmentedFrameIT {
 	public void publicDrainSurvivesFragmentedNotificationFrameAndRetainsConnection() throws Exception {
 		try (ScriptedPostgreSqlProxy proxy = proxy()) {
 			CapturingDataSource listenerDataSource = listenerDataSource(proxy);
-			Database listenerDatabase = Database.withDataSource(listenerDataSource)
-					.databaseType(DatabaseType.POSTGRESQL)
+			Database listenerDatabase = Database.with(listenerDataSource, DatabaseType.POSTGRESQL)
 					.build();
-			Database applicationDatabase = Database.withDataSource(applicationDataSource())
-					.databaseType(DatabaseType.POSTGRESQL)
+			Database applicationDatabase = Database.with(applicationDataSource(), DatabaseType.POSTGRESQL)
 					.build();
 			String channel = channel("drain");
 			Notification expected = Notification.of(channel, "fragmented-drain");
@@ -164,11 +162,9 @@ public class PostgreSqlNotificationFragmentedFrameIT {
 	public void timedAwaitSurvivesFragmentAfterAccumulatedNotificationAndRetainsConnection() throws Exception {
 		try (ScriptedPostgreSqlProxy proxy = proxy()) {
 			CapturingDataSource listenerDataSource = listenerDataSource(proxy);
-			Database listenerDatabase = Database.withDataSource(listenerDataSource)
-					.databaseType(DatabaseType.POSTGRESQL)
+			Database listenerDatabase = Database.with(listenerDataSource, DatabaseType.POSTGRESQL)
 					.build();
-			Database applicationDatabase = Database.withDataSource(applicationDataSource())
-					.databaseType(DatabaseType.POSTGRESQL)
+			Database applicationDatabase = Database.with(applicationDataSource(), DatabaseType.POSTGRESQL)
 					.build();
 			String channel = channel("timed");
 			Notification accumulated = Notification.of(channel, "accumulated");

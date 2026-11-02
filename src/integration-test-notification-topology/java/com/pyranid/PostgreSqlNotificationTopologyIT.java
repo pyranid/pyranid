@@ -160,8 +160,7 @@ public class PostgreSqlNotificationTopologyIT {
 
 	@NonNull
 	private static Database database(@NonNull DataSource dataSource) {
-		return Database.withDataSource(dataSource)
-				.databaseType(DatabaseType.POSTGRESQL)
+		return Database.with(dataSource, DatabaseType.POSTGRESQL)
 				.build();
 	}
 

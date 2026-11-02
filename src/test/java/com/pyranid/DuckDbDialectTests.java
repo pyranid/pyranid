@@ -373,8 +373,7 @@ public class DuckDbDialectTests {
 					throw new UnsupportedOperationException("This test should not touch the DataSource");
 				});
 
-		Database db = Database.withDataSource(dataSource)
-				.databaseType(databaseType)
+		Database db = Database.with(dataSource, databaseType)
 				.build();
 
 		return StatementContext.<Long>with(Statement.of("duckdb-temporal-bind-test", "SELECT 1"), db)
@@ -408,8 +407,7 @@ public class DuckDbDialectTests {
 					throw new UnsupportedOperationException("This test should not touch the DataSource");
 				});
 
-		return Database.withDataSource(dataSource)
-				.databaseType(DatabaseType.DUCK_DB)
+		return Database.with(dataSource, DatabaseType.DUCK_DB)
 				.build();
 	}
 }

@@ -51,7 +51,7 @@ public class ExceptionSuppressionTests {
 			throw loggerFailure;
 		};
 
-		Database db = Database.withDataSource(createInMemoryDataSource("logger_suppressed"))
+		Database db = Database.with(createInMemoryDataSource("logger_suppressed"), DatabaseType.GENERIC)
 				.statementLogger(statementLogger)
 				.build();
 
@@ -65,7 +65,7 @@ public class ExceptionSuppressionTests {
 
 	@Test
 	public void testPostTransactionOperationExceptionSuppressedWhenOperationFails() {
-		Database db = Database.withDataSource(createInMemoryDataSource("txn_suppressed")).build();
+		Database db = Database.with(createInMemoryDataSource("txn_suppressed"), DatabaseType.GENERIC).build();
 		RuntimeException boom = new RuntimeException("boom");
 		RuntimeException postFailure = new RuntimeException("post");
 
@@ -87,7 +87,7 @@ public class ExceptionSuppressionTests {
 
 	@Test
 	public void testPostTransactionOperationExceptionThrownWhenOperationSucceeds() {
-		Database db = Database.withDataSource(createInMemoryDataSource("txn_post_failure_after_commit")).build();
+		Database db = Database.with(createInMemoryDataSource("txn_post_failure_after_commit"), DatabaseType.GENERIC).build();
 		RuntimeException postFailure = new RuntimeException("post");
 
 		db.query("CREATE TABLE t (id INT)").execute();
@@ -108,7 +108,7 @@ public class ExceptionSuppressionTests {
 
 	@Test
 	public void testPostTransactionOperationExceptionSuppressedWhenCommitIsInDoubt() {
-		Database db = Database.withDataSource(createCommitFailingDataSource("txn_post_failure_after_commit_failure")).build();
+		Database db = Database.with(createCommitFailingDataSource("txn_post_failure_after_commit_failure"), DatabaseType.GENERIC).build();
 		RuntimeException postFailure = new RuntimeException("post");
 
 		db.query("CREATE TABLE t (id INT)").execute();
@@ -130,7 +130,7 @@ public class ExceptionSuppressionTests {
 
 	@Test
 	public void testDatabaseExceptionIncludesStatementContextWithRedactedParameterValues() {
-		Database db = Database.withDataSource(createInMemoryDataSource("statement_context_diagnostics")).build();
+		Database db = Database.with(createInMemoryDataSource("statement_context_diagnostics"), DatabaseType.GENERIC).build();
 
 		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
 				db.query("SELECT :secret, :token FROM missing_table")
@@ -152,7 +152,7 @@ public class ExceptionSuppressionTests {
 
 	@Test
 	public void testDatabaseExceptionTruncatesLongParameterValues() {
-		Database db = Database.withDataSource(createInMemoryDataSource("statement_context_parameter_truncation")).build();
+		Database db = Database.with(createInMemoryDataSource("statement_context_parameter_truncation"), DatabaseType.GENERIC).build();
 		String longParameter = "x".repeat(1000);
 
 		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
@@ -172,7 +172,7 @@ public class ExceptionSuppressionTests {
 
 	@Test
 	public void testDatabaseExceptionTruncatesParameterListToTotalBudget() {
-		Database db = Database.withDataSource(createInMemoryDataSource("statement_context_parameter_list_truncation")).build();
+		Database db = Database.with(createInMemoryDataSource("statement_context_parameter_list_truncation"), DatabaseType.GENERIC).build();
 		StringBuilder sql = new StringBuilder("SELECT ");
 
 		for (int i = 0; i < 20; i++) {
@@ -202,7 +202,7 @@ public class ExceptionSuppressionTests {
 
 	@Test
 	public void testDatabaseExceptionMasksSecureInListValues() {
-		Database db = Database.withDataSource(createInMemoryDataSource("statement_context_secure_inlist_exception")).build();
+		Database db = Database.with(createInMemoryDataSource("statement_context_secure_inlist_exception"), DatabaseType.GENERIC).build();
 
 		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
 				db.query("SELECT * FROM missing_table WHERE token IN (:tokens)")
@@ -217,7 +217,7 @@ public class ExceptionSuppressionTests {
 
 	@Test
 	public void testDatabaseExceptionUsesBatchSummaryForBatchFailures() {
-		Database db = Database.withDataSource(createInMemoryDataSource("statement_context_batch_exception")).build();
+		Database db = Database.with(createInMemoryDataSource("statement_context_batch_exception"), DatabaseType.GENERIC).build();
 
 		db.query("CREATE TABLE batch_items (id INT PRIMARY KEY, token VARCHAR(255))").execute();
 
@@ -237,7 +237,7 @@ public class ExceptionSuppressionTests {
 	@Test
 	public void testDatabaseExceptionSuppressesParameterRenderingFailure() {
 		RuntimeException redactionFailure = new RuntimeException("redaction boom");
-		Database db = Database.withDataSource(createInMemoryDataSource("statement_context_redaction_failure"))
+		Database db = Database.with(createInMemoryDataSource("statement_context_redaction_failure"), DatabaseType.GENERIC)
 				.parameterRedactor((statementContext, parameterIndex, parameter) -> {
 					throw redactionFailure;
 				})
@@ -274,7 +274,7 @@ public class ExceptionSuppressionTests {
 				throw maskFailure;
 			}
 		};
-		Database db = Database.withDataSource(createInMemoryDataSource("statement_context_mask_failure")).build();
+		Database db = Database.with(createInMemoryDataSource("statement_context_mask_failure"), DatabaseType.GENERIC).build();
 
 		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
 				db.query("SELECT :token FROM missing_table")
@@ -308,7 +308,7 @@ public class ExceptionSuppressionTests {
 				return null;
 			}
 		};
-		Database db = Database.withDataSource(createInMemoryDataSource("statement_context_null_mask_failure")).build();
+		Database db = Database.with(createInMemoryDataSource("statement_context_null_mask_failure"), DatabaseType.GENERIC).build();
 
 		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
 				db.query("SELECT :token FROM missing_table")
@@ -332,7 +332,7 @@ public class ExceptionSuppressionTests {
 				throw new RuntimeException("toString boom");
 			}
 		};
-		Database db = Database.withDataSource(createInMemoryDataSource("statement_context_redaction_failure_to_string"))
+		Database db = Database.with(createInMemoryDataSource("statement_context_redaction_failure_to_string"), DatabaseType.GENERIC)
 				.parameterRedactor((statementContext, parameterIndex, parameter) -> {
 					throw redactionFailure;
 				})
@@ -357,7 +357,7 @@ public class ExceptionSuppressionTests {
 
 	@Test
 	public void testDatabaseExceptionTruncatesLongSqlInStatementContext() {
-		Database db = Database.withDataSource(createInMemoryDataSource("statement_context_truncation")).build();
+		Database db = Database.with(createInMemoryDataSource("statement_context_truncation"), DatabaseType.GENERIC).build();
 		StringBuilder sql = new StringBuilder("SELECT 1 FROM missing_table WHERE ");
 
 		for (int i = 0; i < 500; i++) {
@@ -379,8 +379,8 @@ public class ExceptionSuppressionTests {
 	@Test
 	public void testDatabaseExceptionTruncatesLongCauseMessage() {
 		String longMessage = "driver failure ".repeat(1000);
-		Database db = Database.withDataSource(new QueryThrowingDataSource(createInMemoryDataSource("long_cause_message"),
-				new SQLException(longMessage))).build();
+		Database db = Database.with(new QueryThrowingDataSource(createInMemoryDataSource("long_cause_message"),
+				new SQLException(longMessage)), DatabaseType.GENERIC).build();
 
 		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
 				db.query("SELECT 1 FROM (VALUES (0)) AS t(x)").fetchObject(Integer.class));
@@ -413,7 +413,7 @@ public class ExceptionSuppressionTests {
 		// (consistent with the DatabaseException/Error paths) so statement logs render scrubbed, redaction-aware
 		// diagnostics. The raw JDBC exception remains available via the wrapper's cause.
 		List<Exception> exceptions = new ArrayList<>();
-		Database db = Database.withDataSource(createInMemoryDataSource("statement_logger_raw_exception"))
+		Database db = Database.with(createInMemoryDataSource("statement_logger_raw_exception"), DatabaseType.GENERIC)
 				.statementLogger(statementLog -> statementLog.getException().ifPresent(exception -> exceptions.add((Exception) exception)))
 				.build();
 
@@ -431,7 +431,7 @@ public class ExceptionSuppressionTests {
 
 	@Test
 	public void testRollbackExceptionSuppressedWhenRuntimeExceptionThrown() {
-		Database db = Database.withDataSource(createRollbackFailingDataSource("rollback_runtime_suppressed")).build();
+		Database db = Database.with(createRollbackFailingDataSource("rollback_runtime_suppressed"), DatabaseType.GENERIC).build();
 		RuntimeException boom = new RuntimeException("boom");
 
 		RuntimeException ex = Assertions.assertThrows(RuntimeException.class, () -> {
@@ -447,7 +447,7 @@ public class ExceptionSuppressionTests {
 
 	@Test
 	public void testRollbackExceptionSuppressedWhenErrorThrown() {
-		Database db = Database.withDataSource(createRollbackFailingDataSource("rollback_error_suppressed")).build();
+		Database db = Database.with(createRollbackFailingDataSource("rollback_error_suppressed"), DatabaseType.GENERIC).build();
 		AssertionError boom = new AssertionError("boom");
 
 		AssertionError ex = Assertions.assertThrows(AssertionError.class, () -> {
@@ -463,7 +463,7 @@ public class ExceptionSuppressionTests {
 
 	@Test
 	public void testRollbackExceptionSuppressedWhenCheckedExceptionThrown() {
-		Database db = Database.withDataSource(createRollbackFailingDataSource("rollback_checked_suppressed")).build();
+		Database db = Database.with(createRollbackFailingDataSource("rollback_checked_suppressed"), DatabaseType.GENERIC).build();
 		Exception boom = new Exception("boom");
 
 		RuntimeException ex = Assertions.assertThrows(RuntimeException.class, () -> {

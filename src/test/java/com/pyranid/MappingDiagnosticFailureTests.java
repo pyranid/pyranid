@@ -294,7 +294,7 @@ class MappingDiagnosticFailureTests {
 				}
 			}));
 			this.mapper = builder.build();
-			this.database = Database.withDataSource(wrapped).databaseType(mode == Mode.POSTGRES ? DatabaseType.POSTGRESQL : DatabaseType.GENERIC)
+			this.database = Database.with(wrapped, mode == Mode.POSTGRES ? DatabaseType.POSTGRESQL : DatabaseType.GENERIC)
 					.resultSetMapper(this.mapper).build();
 		}
 

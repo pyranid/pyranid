@@ -276,10 +276,10 @@ public class TransactionRetryTests {
 	@Test
 	public void testTransactionWithRetryDoesNotReplayCommittedWorkWhenConnectionCloseFails() {
 		DataSource delegate = createInMemoryDataSource("retry_committed_close_failure");
-		Database setupDatabase = Database.withDataSource(delegate).build();
+		Database setupDatabase = Database.with(delegate, DatabaseType.GENERIC).build();
 		setupDatabase.query("CREATE TABLE events (id INT)").execute();
 
-		Database database = Database.withDataSource(closeFailingDataSource(delegate)).build();
+		Database database = Database.with(closeFailingDataSource(delegate), DatabaseType.GENERIC).build();
 		AtomicInteger attempts = new AtomicInteger();
 
 		DatabaseException thrown = Assertions.assertThrows(DatabaseException.class, () ->
@@ -347,7 +347,7 @@ public class TransactionRetryTests {
 	}
 
 	private Database database(String databaseName) {
-		return Database.withDataSource(createInMemoryDataSource(databaseName)).build();
+		return Database.with(createInMemoryDataSource(databaseName), DatabaseType.GENERIC).build();
 	}
 
 	private DataSource closeFailingDataSource(@NonNull DataSource delegate) {

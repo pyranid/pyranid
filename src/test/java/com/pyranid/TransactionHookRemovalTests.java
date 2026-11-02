@@ -206,7 +206,7 @@ public class TransactionHookRemovalTests {
 	private static Database database() {
 		JDBCDataSource source = new JDBCDataSource();
 		source.setUrl("jdbc:hsqldb:mem:hook_removal_" + UUID.randomUUID());
-		return Database.withDataSource(source).databaseType(DatabaseType.GENERIC).build();
+		return Database.with(source, DatabaseType.GENERIC).build();
 	}
 
 	private static Thread worker(Runnable operation, AtomicReference<Throwable> failure) {

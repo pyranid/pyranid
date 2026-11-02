@@ -109,7 +109,7 @@ abstract class AbstractPortableJdbcIntegrationTests {
 	protected abstract DataSource dataSource();
 
 	@Test
-	public void testDatabaseTypeDetectionUsesExpectedType() {
+	public void testConfiguredDatabaseTypeUsesExpectedType() {
 		Database db = database();
 
 		Assertions.assertEquals(expectedDatabaseType(), db.getDatabaseType());
@@ -697,13 +697,11 @@ abstract class AbstractPortableJdbcIntegrationTests {
 
 	@NonNull
 	protected Database database() {
-		return Database.withDataSource(dataSource()).build();
+		return Database.with(dataSource(), expectedDatabaseType()).build();
 	}
 
 	@NonNull
-	protected DatabaseType expectedDatabaseType() {
-		return DatabaseType.GENERIC;
-	}
+	protected abstract DatabaseType expectedDatabaseType();
 
 	@NonNull
 	protected DialectProfile dialectProfile() {

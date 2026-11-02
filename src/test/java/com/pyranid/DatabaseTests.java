@@ -389,8 +389,8 @@ public class DatabaseTests {
 		requireNonNull(lockWaitOperation);
 
 		DataSource dataSource = createInMemoryDataSource(databaseName);
-		Database db = Database.withDataSource(dataSource).build();
-		Transaction transaction = new Transaction(dataSource, TransactionOptions.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
+		Database db = Database.with(dataSource, DatabaseType.GENERIC).build();
+		Transaction transaction = new Transaction(dataSource, TransactionOptions.DEFAULT, db.getMetricsCollectorDispatcher(), db.getDatabaseType());
 		CountDownLatch started = new CountDownLatch(1);
 		AtomicReference<Throwable> thrown = new AtomicReference<>();
 		AtomicBoolean interruptFlagRestored = new AtomicBoolean(false);
@@ -441,7 +441,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testBasicQueries() {
-		Database database = Database.withDataSource(createInMemoryDataSource("testBasicQueries")).build();
+		Database database = Database.with(createInMemoryDataSource("testBasicQueries"), DatabaseType.GENERIC).build();
 
 		createTestSchema(database);
 
@@ -461,7 +461,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testFetchObjectTooManyRowsIncludesStatementDiagnostics() {
-		Database database = Database.withDataSource(createInMemoryDataSource("testFetchObjectTooManyRowsIncludesStatementDiagnostics")).build();
+		Database database = Database.with(createInMemoryDataSource("testFetchObjectTooManyRowsIncludesStatementDiagnostics"), DatabaseType.GENERIC).build();
 
 		createTestSchema(database);
 
@@ -481,7 +481,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testDatabaseColumnInheritance() {
-		Database database = Database.withDataSource(createInMemoryDataSource("testDatabaseColumnInheritance")).build();
+		Database database = Database.with(createInMemoryDataSource("testDatabaseColumnInheritance"), DatabaseType.GENERIC).build();
 
 		createTestSchema(database);
 
@@ -497,7 +497,7 @@ public class DatabaseTests {
 	@Test
 	public void testDatabaseColumnAliasesAreAdditiveWithAndWithoutRowPlanning() {
 		for (Boolean planCachingEnabled : List.of(false, true)) {
-			Database database = Database.withDataSource(createInMemoryDataSource("additive_aliases_" + planCachingEnabled))
+			Database database = Database.with(createInMemoryDataSource("additive_aliases_" + planCachingEnabled), DatabaseType.GENERIC)
 					.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(planCachingEnabled).build())
 					.build();
 
@@ -528,7 +528,7 @@ public class DatabaseTests {
 	@Test
 	public void testAcronymJavaBeanPropertyNames() {
 		for (Boolean planCachingEnabled : List.of(false, true)) {
-			Database database = Database.withDataSource(createInMemoryDataSource(format("testAcronymJavaBeanPropertyNames%s", planCachingEnabled)))
+			Database database = Database.with(createInMemoryDataSource(format("testAcronymJavaBeanPropertyNames%s", planCachingEnabled)), DatabaseType.GENERIC)
 					.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(planCachingEnabled).build())
 					.build();
 
@@ -542,7 +542,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testFetchStream() {
-		Database database = Database.withDataSource(createInMemoryDataSource("testFetchStream")).build();
+		Database database = Database.with(createInMemoryDataSource("testFetchStream"), DatabaseType.GENERIC).build();
 
 		createTestSchema(database);
 
@@ -558,7 +558,7 @@ public class DatabaseTests {
 	@Test
 	public void testFetchStreamClosesConnectionOutsideTransaction() {
 		TrackingDataSource dataSource = new TrackingDataSource(createInMemoryDataSource("testFetchStreamClosesConnection"));
-		Database database = Database.withDataSource(dataSource).build();
+		Database database = Database.with(dataSource, DatabaseType.GENERIC).build();
 
 		createTestSchema(database);
 				database.query("INSERT INTO employee VALUES (1, 'Employee One', 'employee-one@company.com', NULL)").execute();
@@ -578,7 +578,7 @@ public class DatabaseTests {
 	@Test
 	public void testFetchStreamKeepsConnectionOpenWithinTransaction() {
 		TrackingDataSource dataSource = new TrackingDataSource(createInMemoryDataSource("testFetchStreamInTxn"));
-		Database database = Database.withDataSource(dataSource).build();
+		Database database = Database.with(dataSource, DatabaseType.GENERIC).build();
 
 		createTestSchema(database);
 				database.query("INSERT INTO employee VALUES (1, 'Employee One', 'employee-one@company.com', NULL)").execute();
@@ -605,8 +605,7 @@ public class DatabaseTests {
 	public void testPostgreSqlStreamAbortsConnectionWhenAutoCommitRestoreFails() {
 		PostgreSqlStreamRestoreFailingDataSource dataSource =
 				new PostgreSqlStreamRestoreFailingDataSource(createInMemoryDataSource("testPostgreSqlStreamAbortOnRestoreFailure"));
-		Database database = Database.withDataSource(dataSource)
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database database = Database.with(dataSource, DatabaseType.POSTGRESQL)
 				.build();
 
 		database.query("CREATE TABLE t_pg_stream_abort (id INT)").execute();
@@ -627,8 +626,7 @@ public class DatabaseTests {
 	public void testMySqlStreamUsesForwardOnlyReadOnlyAndStreamingFetchSize() {
 		MySqlFamilyStreamTrackingDataSource dataSource =
 				new MySqlFamilyStreamTrackingDataSource(createInMemoryDataSource("testMySqlStream"));
-		Database database = Database.withDataSource(dataSource)
-				.databaseType(DatabaseType.MYSQL)
+		Database database = Database.with(dataSource, DatabaseType.MYSQL)
 				.build();
 
 		List<Integer> values = database.query("SELECT 1 FROM (VALUES (0)) AS t(x)")
@@ -649,8 +647,7 @@ public class DatabaseTests {
 	public void testMariaDbStreamUsesForwardOnlyReadOnlyWithoutMySqlFetchSize() {
 		MySqlFamilyStreamTrackingDataSource dataSource =
 				new MySqlFamilyStreamTrackingDataSource(createInMemoryDataSource("testMariaDbStream"));
-		Database database = Database.withDataSource(dataSource)
-				.databaseType(DatabaseType.MARIA_DB)
+		Database database = Database.with(dataSource, DatabaseType.MARIA_DB)
 				.build();
 
 		List<Integer> values = database.query("SELECT 1 FROM (VALUES (0)) AS t(x)")
@@ -671,8 +668,7 @@ public class DatabaseTests {
 	public void testMySqlFamilyStreamHonorsExplicitQueryFetchSize() {
 		MySqlFamilyStreamTrackingDataSource dataSource =
 				new MySqlFamilyStreamTrackingDataSource(createInMemoryDataSource("testMySqlFamilyStreamQueryFetchSize"));
-		Database database = Database.withDataSource(dataSource)
-				.databaseType(DatabaseType.MYSQL)
+		Database database = Database.with(dataSource, DatabaseType.MYSQL)
 				.build();
 
 		List<Integer> values = database.query("SELECT 1 FROM (VALUES (0)) AS t(x)")
@@ -686,7 +682,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testQueryRejectsPositionalParameters() {
-		Database db = Database.withDataSource(createInMemoryDataSource("testQueryRejectsPositionalParameters")).build();
+		Database db = Database.with(createInMemoryDataSource("testQueryRejectsPositionalParameters"), DatabaseType.GENERIC).build();
 
 		IllegalArgumentException e = Assertions.assertThrows(IllegalArgumentException.class,
 				() -> db.query("SELECT * FROM employee WHERE employee_id=?"));
@@ -696,7 +692,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testQueryAllowsQuestionMarkInStringLiteral() {
-		Database db = Database.withDataSource(createInMemoryDataSource("testQueryAllowsQuestionMarkInStringLiteral")).build();
+		Database db = Database.with(createInMemoryDataSource("testQueryAllowsQuestionMarkInStringLiteral"), DatabaseType.GENERIC).build();
 
 		Assertions.assertDoesNotThrow(() ->
 				db.query("SELECT '?' FROM (VALUES (0)) AS t(x)"));
@@ -704,7 +700,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testQueryAllowsQuestionMarkOperators() {
-		Database db = Database.withDataSource(createInMemoryDataSource("testQueryAllowsQuestionMarkOperators")).build();
+		Database db = Database.with(createInMemoryDataSource("testQueryAllowsQuestionMarkOperators"), DatabaseType.GENERIC).build();
 
 		Assertions.assertDoesNotThrow(() ->
 				db.query("SELECT data ? 'a' AND data ?| 'b' AND data ?& 'c' FROM t"));
@@ -716,7 +712,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testQueryAllowsQuestionMarkOperatorAfterBlockComment() {
-		Database db = Database.withDataSource(createInMemoryDataSource("testQueryAllowsQuestionMarkOperatorAfterBlockComment")).build();
+		Database db = Database.with(createInMemoryDataSource("testQueryAllowsQuestionMarkOperatorAfterBlockComment"), DatabaseType.GENERIC).build();
 
 		Assertions.assertDoesNotThrow(() ->
 				db.query("SELECT data /* note */ ? 'a' FROM t"));
@@ -724,7 +720,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testQueryRejectsQuestionMarkWithoutLeftOperandBeforePipeOperator() {
-		Database db = Database.withDataSource(createInMemoryDataSource("testQueryRejectsQuestionMarkWithoutLeftOperandBeforePipeOperator")).build();
+		Database db = Database.with(createInMemoryDataSource("testQueryRejectsQuestionMarkWithoutLeftOperandBeforePipeOperator"), DatabaseType.GENERIC).build();
 
 		IllegalArgumentException exception = Assertions.assertThrows(IllegalArgumentException.class,
 				() -> db.query("SELECT ?|| 'x'"));
@@ -827,8 +823,7 @@ public class DatabaseTests {
 	@Test
 	public void testConfiguredMySqlUsesMySqlLexicalRulesWhenStandardParsingFails() {
 		PreparedStatement preparedStatement = preparedStatementWithDefaultBehavior();
-		Database db = Database.withDataSource(dataSourceForPreparedStatement(preparedStatement))
-				.databaseType(DatabaseType.MYSQL)
+		Database db = Database.with(dataSourceForPreparedStatement(preparedStatement), DatabaseType.MYSQL)
 				.build();
 
 		Assertions.assertDoesNotThrow(() -> db.query("UPDATE t SET value = 'it\\'s :ignored' WHERE id = :id")
@@ -840,8 +835,7 @@ public class DatabaseTests {
 	public void testConfiguredSqlServerUsesStandardBracketIdentifierRules() {
 		AtomicReference<StatementLog<?>> statementLog = new AtomicReference<>();
 		PreparedStatement preparedStatement = preparedStatementWithDefaultBehavior();
-		Database db = Database.withDataSource(dataSourceForPreparedStatement(preparedStatement))
-				.databaseType(DatabaseType.SQL_SERVER)
+		Database db = Database.with(dataSourceForPreparedStatement(preparedStatement), DatabaseType.SQL_SERVER)
 				.statementLogger(statementLog::set)
 				.build();
 		String sql = "UPDATE t SET [a:ignored] = :id";
@@ -860,12 +854,12 @@ public class DatabaseTests {
 						.bind("ignored", 1)
 						.bind("id", 7)
 						.execute());
-		Assertions.assertTrue(exception.getMessage().contains("not valid for the detected database SQL syntax"));
+		Assertions.assertTrue(exception.getMessage().contains("not valid for the configured database SQL syntax"));
 	}
 
 	@Test
 	public void testParsedSqlCacheStoresLexicalVariantsAsOneEntry() throws Exception {
-		Database db = Database.withDataSource(createInMemoryDataSource("parsed_sql_variant_cache"))
+		Database db = Database.with(createInMemoryDataSource("parsed_sql_variant_cache"), DatabaseType.GENERIC)
 				.parsedSqlCacheCapacity(8)
 				.build();
 		String sql = "SELECT payload #> :path FROM t WHERE id = :id";
@@ -896,8 +890,7 @@ public class DatabaseTests {
 		for (DatabaseType databaseType : List.of(DatabaseType.SQL_SERVER, DatabaseType.SQLITE)) {
 			for (int cacheCapacity : List.of(0, 8)) {
 				AtomicReference<StatementLog<?>> statementLog = new AtomicReference<>();
-				Database db = Database.withDataSource(dataSourceForPreparedStatement(preparedStatementWithDefaultBehavior()))
-						.databaseType(databaseType)
+				Database db = Database.with(dataSourceForPreparedStatement(preparedStatementWithDefaultBehavior()), databaseType)
 						.parsedSqlCacheCapacity(cacheCapacity)
 						.statementLogger(statementLog::set)
 						.build();
@@ -924,8 +917,7 @@ public class DatabaseTests {
 		for (DatabaseType databaseType : List.of(DatabaseType.POSTGRESQL, DatabaseType.DUCK_DB)) {
 			for (int cacheCapacity : List.of(0, 8)) {
 				AtomicReference<StatementLog<?>> statementLog = new AtomicReference<>();
-				Database db = Database.withDataSource(dataSourceForPreparedStatement(preparedStatementWithDefaultBehavior()))
-						.databaseType(databaseType)
+				Database db = Database.with(dataSourceForPreparedStatement(preparedStatementWithDefaultBehavior()), databaseType)
 						.parsedSqlCacheCapacity(cacheCapacity)
 						.statementLogger(statementLog::set)
 						.build();
@@ -1000,7 +992,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testQueryBindRejectsUnknownParameterName() {
-		Database db = Database.withDataSource(createInMemoryDataSource("testQueryBindRejectsUnknownParameterName")).build();
+		Database db = Database.with(createInMemoryDataSource("testQueryBindRejectsUnknownParameterName"), DatabaseType.GENERIC).build();
 
 		Assertions.assertThrows(IllegalArgumentException.class, () ->
 				db.query("SELECT :id FROM (VALUES (0)) AS t(x)")
@@ -1009,7 +1001,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testQueryBindRejectsRawCollection() {
-		Database db = Database.withDataSource(createInMemoryDataSource("testQueryBindRejectsRawCollection")).build();
+		Database db = Database.with(createInMemoryDataSource("testQueryBindRejectsRawCollection"), DatabaseType.GENERIC).build();
 
 		Assertions.assertThrows(IllegalArgumentException.class, () ->
 				db.query("SELECT :ids FROM (VALUES (0)) AS t(x)")
@@ -1019,7 +1011,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testQueryBindRejectsRawArray() {
-		Database db = Database.withDataSource(createInMemoryDataSource("testQueryBindRejectsRawArray")).build();
+		Database db = Database.with(createInMemoryDataSource("testQueryBindRejectsRawArray"), DatabaseType.GENERIC).build();
 
 		Assertions.assertThrows(IllegalArgumentException.class, () ->
 				db.query("SELECT :names FROM (VALUES (0)) AS t(x)")
@@ -1029,7 +1021,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testQueryBindOptionalUnwrapsValue() {
-		Database db = Database.withDataSource(createInMemoryDataSource("testQueryBindOptionalUnwrapsValue")).build();
+		Database db = Database.with(createInMemoryDataSource("testQueryBindOptionalUnwrapsValue"), DatabaseType.GENERIC).build();
 		Optional<String> email = Optional.of("admin@soklet.com");
 
 		Optional<String> result = db.query("SELECT :email FROM (VALUES (0)) AS t(x)")
@@ -1041,7 +1033,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testQueryBindOptionalEmptyBindsNull() {
-		Database db = Database.withDataSource(createInMemoryDataSource("testQueryBindOptionalEmptyBindsNull")).build();
+		Database db = Database.with(createInMemoryDataSource("testQueryBindOptionalEmptyBindsNull"), DatabaseType.GENERIC).build();
 
 		Optional<String> result = db.query("SELECT :email FROM (VALUES (0)) AS t(x)")
 				.bind("email", Optional.empty())
@@ -1052,7 +1044,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testQueryInListExpandsParameter() {
-		Database db = Database.withDataSource(createInMemoryDataSource("testQueryInListExpandsParameter")).build();
+		Database db = Database.with(createInMemoryDataSource("testQueryInListExpandsParameter"), DatabaseType.GENERIC).build();
 
 				db.query("CREATE TABLE t (id INT, email VARCHAR(255))").execute();
 				db.query("INSERT INTO t VALUES (1, 'a@example.com')").execute();
@@ -1068,7 +1060,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testQueryInListExpandsRepeatedParameterName() {
-		Database db = Database.withDataSource(createInMemoryDataSource("testQueryInListExpandsRepeatedParameterName")).build();
+		Database db = Database.with(createInMemoryDataSource("testQueryInListExpandsRepeatedParameterName"), DatabaseType.GENERIC).build();
 
 				db.query("CREATE TABLE t (id INT, email VARCHAR(255))").execute();
 				db.query("INSERT INTO t VALUES (1, 'a@example.com')").execute();
@@ -1084,7 +1076,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testQueryInListExpandsPrimitiveArray() {
-		Database db = Database.withDataSource(createInMemoryDataSource("testQueryInListExpandsPrimitiveArray")).build();
+		Database db = Database.with(createInMemoryDataSource("testQueryInListExpandsPrimitiveArray"), DatabaseType.GENERIC).build();
 
 				db.query("CREATE TABLE t (id INT, email VARCHAR(255))").execute();
 				db.query("INSERT INTO t VALUES (1, 'a@example.com')").execute();
@@ -1100,7 +1092,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testQueryInListRejectsEmptyCollection() {
-		Database db = Database.withDataSource(createInMemoryDataSource("testQueryInListRejectsEmptyCollection")).build();
+		Database db = Database.with(createInMemoryDataSource("testQueryInListRejectsEmptyCollection"), DatabaseType.GENERIC).build();
 
 				db.query("CREATE TABLE t (id INT, email VARCHAR(255))").execute();
 
@@ -1112,7 +1104,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testQueryInListRejectsNullElements() {
-		Database db = Database.withDataSource(createInMemoryDataSource("testQueryInListRejectsNullElements")).build();
+		Database db = Database.with(createInMemoryDataSource("testQueryInListRejectsNullElements"), DatabaseType.GENERIC).build();
 
 		IllegalArgumentException exception = Assertions.assertThrows(IllegalArgumentException.class, () ->
 				db.query("SELECT id FROM t WHERE email IN (:emails)")
@@ -1125,7 +1117,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testQueryInListRejectsNullAfterRecursiveSecureAndOptionalUnwrapping() {
-		Database db = Database.withDataSource(createInMemoryDataSource("in_list_recursive_null")).build();
+		Database db = Database.with(createInMemoryDataSource("in_list_recursive_null"), DatabaseType.GENERIC).build();
 		Object nestedNull = Optional.of(Parameters.secure(Optional.of(Optional.empty())));
 
 		IllegalArgumentException exception = Assertions.assertThrows(IllegalArgumentException.class, () ->
@@ -1139,7 +1131,7 @@ public class DatabaseTests {
 	@Test
 	public void testQueryInListPreservesElementLevelSecureMasks() {
 		AtomicReference<StatementLog<?>> statementLog = new AtomicReference<>();
-		Database db = Database.withDataSource(createInMemoryDataSource("in_list_element_secure"))
+		Database db = Database.with(createInMemoryDataSource("in_list_element_secure"), DatabaseType.GENERIC)
 				.statementLogger(statementLog::set)
 				.build();
 		db.query("CREATE TABLE t (value VARCHAR(64))").execute();
@@ -1157,7 +1149,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testQueryInListRejectsOptionalEmptyElements() {
-		Database db = Database.withDataSource(createInMemoryDataSource("testQueryInListRejectsOptionalEmptyElements")).build();
+		Database db = Database.with(createInMemoryDataSource("testQueryInListRejectsOptionalEmptyElements"), DatabaseType.GENERIC).build();
 
 		IllegalArgumentException exception = Assertions.assertThrows(IllegalArgumentException.class, () ->
 				db.query("SELECT id FROM t WHERE email IN (:emails)")
@@ -1170,7 +1162,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testQueryInListUnwrapsOptionalElements() {
-		Database db = Database.withDataSource(createInMemoryDataSource("testQueryInListUnwrapsOptionalElements")).build();
+		Database db = Database.with(createInMemoryDataSource("testQueryInListUnwrapsOptionalElements"), DatabaseType.GENERIC).build();
 
 				db.query("CREATE TABLE t (id INT, email VARCHAR(255))").execute();
 				db.query("INSERT INTO t VALUES (1, 'a@example.com')").execute();
@@ -1186,7 +1178,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testExecuteBatchRejectsMismatchedInListSizes() {
-		Database db = Database.withDataSource(createInMemoryDataSource("testExecuteBatchRejectsMismatchedInListSizes")).build();
+		Database db = Database.with(createInMemoryDataSource("testExecuteBatchRejectsMismatchedInListSizes"), DatabaseType.GENERIC).build();
 
 				db.query("CREATE TABLE t (id INT, flag INT)").execute();
 				db.query("INSERT INTO t VALUES (1, 0)").execute();
@@ -1250,8 +1242,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database.withDataSource(dataSource)
-				.databaseType(DatabaseType.GENERIC)
+		Database db = Database.with(dataSource, DatabaseType.GENERIC)
 				.build();
 
 		Query query = db.query("UPDATE t SET flag = :flag WHERE id = :id");
@@ -1295,8 +1286,7 @@ public class DatabaseTests {
 					return defaultValue(method.getReturnType());
 				});
 
-		Database db = Database.withDataSource(dataSourceForPreparedStatement(preparedStatement))
-				.databaseType(DatabaseType.GENERIC)
+		Database db = Database.with(dataSourceForPreparedStatement(preparedStatement), DatabaseType.GENERIC)
 				.statementLogger(logRef::set)
 				.build();
 
@@ -1354,8 +1344,7 @@ public class DatabaseTests {
 					return defaultValue(method.getReturnType());
 				});
 
-		Database db = Database.withDataSource(dataSourceForPreparedStatement(preparedStatement))
-				.databaseType(DatabaseType.GENERIC)
+		Database db = Database.with(dataSourceForPreparedStatement(preparedStatement), DatabaseType.GENERIC)
 				.build();
 
 		Query query = db.query("INSERT INTO t (id) VALUES (:id)")
@@ -1422,8 +1411,7 @@ public class DatabaseTests {
 						return defaultValue(method.getReturnType());
 					});
 
-			Database db = Database.withDataSource(dataSourceForConnection(connection[0]))
-					.databaseType(vector ? DatabaseType.DUCK_DB : DatabaseType.GENERIC)
+			Database db = Database.with(dataSourceForConnection(connection[0]), vector ? DatabaseType.DUCK_DB : DatabaseType.GENERIC)
 					.build();
 
 			Object parameter = vector
@@ -1504,8 +1492,7 @@ public class DatabaseTests {
 						return defaultValue(method.getReturnType());
 					});
 
-			Database db = Database.withDataSource(dataSourceForConnection(connection[0]))
-					.databaseType(DatabaseType.DUCK_DB)
+			Database db = Database.with(dataSourceForConnection(connection[0]), DatabaseType.DUCK_DB)
 					.build();
 
 			Map<String, Object> parameterGroup = Map.of("embedding", Parameters.vectorOfDoubles(new double[]{0.25, 0.5}));
@@ -1585,8 +1572,7 @@ public class DatabaseTests {
 						return defaultValue(method.getReturnType());
 					});
 
-			Database db = Database.withDataSource(dataSourceForConnection(connection[0]))
-					.databaseType(DatabaseType.DUCK_DB)
+			Database db = Database.with(dataSourceForConnection(connection[0]), DatabaseType.DUCK_DB)
 					.build();
 
 			Map<String, Object> parameterGroup = Map.of("embedding", Parameters.vectorOfDoubles(new double[]{0.25, 0.5}));
@@ -1678,8 +1664,7 @@ public class DatabaseTests {
 						return defaultValue(method.getReturnType());
 					});
 
-			Database db = Database.withDataSource(dataSourceForConnection(connection[0]))
-					.databaseType(DatabaseType.DUCK_DB)
+			Database db = Database.with(dataSourceForConnection(connection[0]), DatabaseType.DUCK_DB)
 					.build();
 
 			Map<String, Object> parameterGroup = Map.of("embedding", Parameters.vectorOfDoubles(new double[]{0.25, 0.5}));
@@ -1763,8 +1748,7 @@ public class DatabaseTests {
 					return defaultValue(method.getReturnType());
 				});
 
-		Database db = Database.withDataSource(dataSourceForConnection(connection[0]))
-				.databaseType(DatabaseType.DUCK_DB)
+		Database db = Database.with(dataSourceForConnection(connection[0]), DatabaseType.DUCK_DB)
 				.build();
 
 		Map<String, Object> parameterGroup = Map.of("embedding", Parameters.vectorOfDoubles(new double[]{0.25, 0.5}));
@@ -1788,7 +1772,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testBatchChunkSizeRejectsNonPositiveValues() {
-		Database db = Database.withDataSource(createInMemoryDataSource("testBatchChunkSizeRejectsNonPositiveValues")).build();
+		Database db = Database.with(createInMemoryDataSource("testBatchChunkSizeRejectsNonPositiveValues"), DatabaseType.GENERIC).build();
 
 		Assertions.assertThrows(IllegalArgumentException.class, () ->
 				db.query("INSERT INTO t (id) VALUES (:id)").batchChunkSize(0));
@@ -1843,8 +1827,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database.withDataSource(dataSource)
-				.databaseType(DatabaseType.GENERIC)
+		Database db = Database.with(dataSource, DatabaseType.GENERIC)
 				.build();
 
 		Assertions.assertThrows(IllegalStateException.class, () ->
@@ -1892,8 +1875,7 @@ public class DatabaseTests {
 					return defaultValue(method.getReturnType());
 				});
 
-		Database db = Database.withDataSource(dataSourceForPreparedStatement(preparedStatement))
-				.databaseType(DatabaseType.GENERIC)
+		Database db = Database.with(dataSourceForPreparedStatement(preparedStatement), DatabaseType.GENERIC)
 				.build();
 
 		Long result = db.query("UPDATE t SET flag = 1").execute();
@@ -1926,8 +1908,7 @@ public class DatabaseTests {
 					return defaultValue(method.getReturnType());
 				});
 
-		Database db = Database.withDataSource(dataSourceForPreparedStatement(preparedStatement))
-				.databaseType(DatabaseType.GENERIC)
+		Database db = Database.with(dataSourceForPreparedStatement(preparedStatement), DatabaseType.GENERIC)
 				.build();
 
 		Query query = db.query("INSERT INTO t (id) VALUES (:id)");
@@ -1942,7 +1923,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testTransactions() {
-		Database database = Database.withDataSource(createInMemoryDataSource("testTransactions")).build();
+		Database database = Database.with(createInMemoryDataSource("testTransactions"), DatabaseType.GENERIC).build();
 
 				database.query("CREATE TABLE product (product_id BIGINT, name VARCHAR(255) NOT NULL, price DECIMAL)").execute();
 
@@ -1990,7 +1971,7 @@ public class DatabaseTests {
 		Locale.setDefault(Locale.forLanguageTag("tr-TR"));
 
 		try {
-			Database db = Database.withDataSource(createInMemoryDataSource("normalization_locale_root")).build();
+			Database db = Database.with(createInMemoryDataSource("normalization_locale_root"), DatabaseType.GENERIC).build();
 
 			IdHolder holder = db.query("SELECT 1 AS ID FROM (VALUES (0)) AS t(x)")
 					.fetchObject(IdHolder.class)
@@ -2005,7 +1986,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testTransactionPreservesInterruptFlag() {
-		Database db = Database.withDataSource(createInMemoryDataSource("txn_interrupt")).build();
+		Database db = Database.with(createInMemoryDataSource("txn_interrupt"), DatabaseType.GENERIC).build();
 
 		Thread.interrupted();
 
@@ -2024,7 +2005,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testTransactionRethrowsError() {
-		Database db = Database.withDataSource(createInMemoryDataSource("txn_error")).build();
+		Database db = Database.with(createInMemoryDataSource("txn_error"), DatabaseType.GENERIC).build();
 		TestError error = new TestError("boom");
 
 		TestError thrown = Assertions.assertThrows(TestError.class, () ->
@@ -2045,7 +2026,7 @@ public class DatabaseTests {
 
 						return defaultValue(method.getReturnType());
 					});
-			Database db = Database.withDataSource(dataSourceForConnection(connection)).build();
+			Database db = Database.with(dataSourceForConnection(connection), DatabaseType.GENERIC).build();
 			TestError error = new TestError("raw operation failed");
 
 			TestError thrown = Assertions.assertThrows(TestError.class, () ->
@@ -2063,8 +2044,8 @@ public class DatabaseTests {
 	@Test
 	public void testParticipatePreservesInterruptFlag() {
 		DataSource ds = createInMemoryDataSource("participate_interrupt");
-		Database db = Database.withDataSource(ds).build();
-		Transaction transaction = new Transaction(ds, TransactionOptions.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
+		Database db = Database.with(ds, DatabaseType.GENERIC).build();
+		Transaction transaction = new Transaction(ds, TransactionOptions.DEFAULT, db.getMetricsCollectorDispatcher(), db.getDatabaseType());
 
 		Thread.interrupted();
 
@@ -2084,8 +2065,8 @@ public class DatabaseTests {
 	@Test
 	public void testParticipateRethrowsError() {
 		DataSource ds = createInMemoryDataSource("participate_error");
-		Database db = Database.withDataSource(ds).build();
-		Transaction transaction = new Transaction(ds, TransactionOptions.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
+		Database db = Database.with(ds, DatabaseType.GENERIC).build();
+		Transaction transaction = new Transaction(ds, TransactionOptions.DEFAULT, db.getMetricsCollectorDispatcher(), db.getDatabaseType());
 		TestError error = new TestError("boom");
 
 		TestError thrown = Assertions.assertThrows(TestError.class, () ->
@@ -2116,7 +2097,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testTransactionalStreamCloseFromDifferentThreadFailsFast() {
-		Database db = Database.withDataSource(createInMemoryDataSource("stream_close_wrong_thread")).build();
+		Database db = Database.with(createInMemoryDataSource("stream_close_wrong_thread"), DatabaseType.GENERIC).build();
 
 		db.transaction(() -> {
 			StatementContext<Integer> statementContext = StatementContext.<Integer>with(
@@ -2153,7 +2134,7 @@ public class DatabaseTests {
 		DataSource ds = createInMemoryDataSource("dt_roundtrips");
 		ZoneId zone = ZoneId.of("America/New_York");
 
-		Database db = Database.withDataSource(ds)
+		Database db = Database.with(ds, DatabaseType.GENERIC)
 				.timeZone(zone)
 				.build();
 
@@ -2179,7 +2160,7 @@ public class DatabaseTests {
 		DataSource ds = createInMemoryDataSource("ts_roundtrips");
 		ZoneId zone = ZoneId.of("America/New_York");
 
-		Database db = Database.withDataSource(ds)
+		Database db = Database.with(ds, DatabaseType.GENERIC)
 				.timeZone(zone)
 				.build();
 
@@ -2234,8 +2215,7 @@ public class DatabaseTests {
 	@Test
 	public void testZonedDateTimeMappingSupportsStandardAndBeanTargets() throws SQLException {
 		ZoneId zone = ZoneId.of("America/New_York");
-		Database db = Database.withDataSource(createInMemoryDataSource("zoned_datetime_mapping"))
-				.databaseType(DatabaseType.GENERIC)
+		Database db = Database.with(createInMemoryDataSource("zoned_datetime_mapping"), DatabaseType.GENERIC)
 				.timeZone(zone)
 				.build();
 
@@ -2259,7 +2239,7 @@ public class DatabaseTests {
 	@Test
 	public void testStringTemporalColumnsMapToRecordTargets() {
 		ZoneId zone = ZoneId.of("UTC");
-		Database db = Database.withDataSource(createInMemoryDataSource("string_temporal_mapping"))
+		Database db = Database.with(createInMemoryDataSource("string_temporal_mapping"), DatabaseType.GENERIC)
 				.timeZone(zone)
 				.build();
 
@@ -2287,8 +2267,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testUuidBytesMapToUuidForStandardAndBeanTargets() throws SQLException {
-		Database db = Database.withDataSource(createInMemoryDataSource("uuid_bytes_mapping"))
-				.databaseType(DatabaseType.ORACLE)
+		Database db = Database.with(createInMemoryDataSource("uuid_bytes_mapping"), DatabaseType.ORACLE)
 				.build();
 
 		UUID uuid = UUID.fromString("f81d4fae-7dec-11d0-a765-00a0c91e6bf6");
@@ -2322,8 +2301,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testPostgresDialectUnwrapsPgObjectDuringStandardMapping() throws SQLException {
-		Database db = Database.withDataSource(createInMemoryDataSource("pgobject_mapping"))
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database db = Database.with(createInMemoryDataSource("pgobject_mapping"), DatabaseType.POSTGRESQL)
 				.build();
 		org.postgresql.util.PGobject pgObject = new org.postgresql.util.PGobject();
 		pgObject.setType("jsonb");
@@ -2337,8 +2315,7 @@ public class DatabaseTests {
 	@Test
 	public void testPostgresDialectUnwrapsPgObjectForObjectPropertiesWithAndWithoutRowPlanning() throws SQLException {
 		for (Boolean planCachingEnabled : List.of(false, true)) {
-			Database db = Database.withDataSource(createInMemoryDataSource("pgobject_property_" + planCachingEnabled))
-					.databaseType(DatabaseType.POSTGRESQL)
+			Database db = Database.with(createInMemoryDataSource("pgobject_property_" + planCachingEnabled), DatabaseType.POSTGRESQL)
 					.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(planCachingEnabled).build())
 					.build();
 			org.postgresql.util.PGobject pgObject = new org.postgresql.util.PGobject();
@@ -2368,8 +2345,7 @@ public class DatabaseTests {
 						return raw;
 					return defaultValue(method.getReturnType());
 				});
-		Database db = Database.withDataSource(createInMemoryDataSource("timestamp_tz_typed_fallback"))
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database db = Database.with(createInMemoryDataSource("timestamp_tz_typed_fallback"), DatabaseType.POSTGRESQL)
 				.timeZone(zone)
 				.build();
 		StatementContext<?> statementContext = StatementContext.with(
@@ -2390,7 +2366,7 @@ public class DatabaseTests {
 		// NY DB
 		DataSource dsNY = createInMemoryDataSource("ts_literal_ny");
 		ZoneId ny = ZoneId.of("America/New_York");
-		Database dbNY = Database.withDataSource(dsNY).timeZone(ny).build();
+		Database dbNY = Database.with(dsNY, DatabaseType.GENERIC).timeZone(ny).build();
 		Instant expectedNY = ldt.atZone(ny).toInstant();
 		Instant gotNY = dbNY.query("SELECT TIMESTAMP '2020-01-02 03:04:05.123' FROM (VALUES (0)) AS t(x)")
 				.fetchObject(Instant.class)
@@ -2406,7 +2382,7 @@ public class DatabaseTests {
 		// UTC DB
 		DataSource dsUTC = createInMemoryDataSource("ts_literal_utc");
 		ZoneId utc = ZoneId.of("UTC");
-		Database dbUTC = Database.withDataSource(dsUTC).timeZone(utc).build();
+		Database dbUTC = Database.with(dsUTC, DatabaseType.GENERIC).timeZone(utc).build();
 		Instant expectedUTC = ldt.atZone(utc).toInstant();
 		Instant gotUTC = dbUTC.query("SELECT TIMESTAMP '2020-01-02 03:04:05.123' FROM (VALUES (0)) AS t(x)")
 				.fetchObject(Instant.class)
@@ -2423,7 +2399,7 @@ public class DatabaseTests {
 	public void testLegacySqlTypesRoundTrip() {
 		DataSource ds = createInMemoryDataSource("legacy_sql_types");
 		ZoneId zone = ZoneId.of("America/New_York");
-		Database db = Database.withDataSource(ds).timeZone(zone).build();
+		Database db = Database.with(ds, DatabaseType.GENERIC).timeZone(zone).build();
 
 		// java.sql.Timestamp
 		java.sql.Timestamp ts = java.sql.Timestamp.valueOf("2020-01-02 03:04:05.123");
@@ -2476,7 +2452,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database.withDataSource(dataSource)
+		Database db = Database.with(dataSource, DatabaseType.GENERIC)
 				.resultSetMapper(ResultSetMapper.withCustomColumnMappers(List.of(localeOverride)).build())
 				.build();
 
@@ -2554,7 +2530,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database.withDataSource(dataSource)
+		Database db = Database.with(dataSource, DatabaseType.GENERIC)
 				.resultSetMapper(ResultSetMapper.withCustomColumnMappers(List.of(first, second)).build())
 				.build();
 
@@ -2601,7 +2577,7 @@ public class DatabaseTests {
 				}
 			};
 
-			Database db = Database.withDataSource(createInMemoryDataSource("cm_broad_null_" + planCachingEnabled))
+			Database db = Database.with(createInMemoryDataSource("cm_broad_null_" + planCachingEnabled), DatabaseType.GENERIC)
 					.resultSetMapper(ResultSetMapper.withCustomColumnMappers(List.of(broadFallback))
 							.planCachingEnabled(planCachingEnabled)
 							.build())
@@ -2671,7 +2647,7 @@ public class DatabaseTests {
 				}
 			};
 
-			Database db = Database.withDataSource(createInMemoryDataSource("cm_broad_multi_" + planCachingEnabled))
+			Database db = Database.with(createInMemoryDataSource("cm_broad_multi_" + planCachingEnabled), DatabaseType.GENERIC)
 					.resultSetMapper(ResultSetMapper.withCustomColumnMappers(List.of(broadRowMapper))
 							.planCachingEnabled(planCachingEnabled)
 							.build())
@@ -2697,7 +2673,7 @@ public class DatabaseTests {
 	@Test
 	public void testBeanMappingRejectsResultSetsWithNoWritableColumnMatches() {
 		for (Boolean planCachingEnabled : List.of(false, true)) {
-			Database db = Database.withDataSource(createInMemoryDataSource("bean_no_writable_column_matches_" + planCachingEnabled))
+			Database db = Database.with(createInMemoryDataSource("bean_no_writable_column_matches_" + planCachingEnabled), DatabaseType.GENERIC)
 					.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(planCachingEnabled).build())
 					.build();
 
@@ -2714,7 +2690,7 @@ public class DatabaseTests {
 	@Test
 	public void testBeanMappingRejectsSetterlessResultType() {
 		for (Boolean planCachingEnabled : List.of(false, true)) {
-			Database db = Database.withDataSource(createInMemoryDataSource("bean_setterless_" + planCachingEnabled))
+			Database db = Database.with(createInMemoryDataSource("bean_setterless_" + planCachingEnabled), DatabaseType.GENERIC)
 					.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(planCachingEnabled).build())
 					.build();
 
@@ -2731,7 +2707,7 @@ public class DatabaseTests {
 	@Test
 	public void testRecordMappingRejectsResultSetsWithNoComponentMatches() {
 		for (Boolean planCachingEnabled : List.of(false, true)) {
-			Database db = Database.withDataSource(createInMemoryDataSource("record_no_component_matches_" + planCachingEnabled))
+			Database db = Database.with(createInMemoryDataSource("record_no_component_matches_" + planCachingEnabled), DatabaseType.GENERIC)
 					.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(planCachingEnabled).build())
 					.build();
 
@@ -2748,7 +2724,7 @@ public class DatabaseTests {
 	@Test
 	public void testRecordMappingAllowsPartialNullableComponentMatches() {
 		for (Boolean planCachingEnabled : List.of(false, true)) {
-			Database db = Database.withDataSource(createInMemoryDataSource("record_partial_component_matches_" + planCachingEnabled))
+			Database db = Database.with(createInMemoryDataSource("record_partial_component_matches_" + planCachingEnabled), DatabaseType.GENERIC)
 					.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(planCachingEnabled).build())
 					.build();
 
@@ -2832,7 +2808,7 @@ public class DatabaseTests {
 				.planCacheCapacity(2)
 				.build();
 
-		Database db = Database.withDataSource(dataSource)
+		Database db = Database.with(dataSource, DatabaseType.GENERIC)
 				.resultSetMapper(resultSetMapper)
 				.build();
 
@@ -2856,7 +2832,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testQueryCustomize_overwritesPrevious_andLimitsResults() {
-		Database db = Database.withDataSource(createInMemoryDataSource("query_customize")).build();
+		Database db = Database.with(createInMemoryDataSource("query_customize"), DatabaseType.GENERIC).build();
 		createTestSchema(db);
 
 				db.query("INSERT INTO employee VALUES (1, 'A', 'a@x.com', 'en-US')").execute();
@@ -2884,7 +2860,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testPreparedStatementSettingsApplyDefaultsAndPerQueryOverridesBeforeCustomizer() {
-		Database db = Database.withDataSource(createInMemoryDataSource("query_statement_settings"))
+		Database db = Database.with(createInMemoryDataSource("query_statement_settings"), DatabaseType.GENERIC)
 				.queryTimeout(Duration.ofMillis(1_500))
 				.fetchSize(100)
 				.maxRows(1)
@@ -2930,16 +2906,16 @@ public class DatabaseTests {
 	@Test
 	public void testPreparedStatementSettingsRejectInvalidValues() {
 		DataSource dataSource = createInMemoryDataSource("query_statement_settings_invalid");
-		Database db = Database.withDataSource(dataSource).build();
+		Database db = Database.with(dataSource, DatabaseType.GENERIC).build();
 
 		Assertions.assertThrows(IllegalArgumentException.class, () ->
-				Database.withDataSource(dataSource).queryTimeout(Duration.ofNanos(-1)));
+				Database.with(dataSource, DatabaseType.GENERIC).queryTimeout(Duration.ofNanos(-1)));
 		Assertions.assertThrows(IllegalArgumentException.class, () ->
-				Database.withDataSource(dataSource).queryTimeout(Duration.ofSeconds((long) Integer.MAX_VALUE + 1L)));
+				Database.with(dataSource, DatabaseType.GENERIC).queryTimeout(Duration.ofSeconds((long) Integer.MAX_VALUE + 1L)));
 		Assertions.assertThrows(IllegalArgumentException.class, () ->
-				Database.withDataSource(dataSource).fetchSize(-1));
+				Database.with(dataSource, DatabaseType.GENERIC).fetchSize(-1));
 		Assertions.assertThrows(IllegalArgumentException.class, () ->
-				Database.withDataSource(dataSource).maxRows(-1));
+				Database.with(dataSource, DatabaseType.GENERIC).maxRows(-1));
 		Assertions.assertThrows(IllegalArgumentException.class, () ->
 				db.query("SELECT 1 FROM (VALUES (0)) AS t(x)").queryTimeout(Duration.ofNanos(-1)));
 		Assertions.assertThrows(IllegalArgumentException.class, () ->
@@ -2985,7 +2961,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database.withDataSource(dataSource)
+		Database db = Database.with(dataSource, DatabaseType.GENERIC)
 				.resultSetMapper(ResultSetMapper.withCustomColumnMappers(List.of(csvUuidList)).build())
 				.build();
 
@@ -3045,7 +3021,7 @@ public class DatabaseTests {
 		ResultSetMapper.Builder rsmBuilder = ResultSetMapper
 				.withCustomColumnMappers(List.of(localeOverride));
 
-		Database db = Database.withDataSource(dataSource)
+		Database db = Database.with(dataSource, DatabaseType.GENERIC)
 				.resultSetMapper(rsmBuilder.build())
 				.build();
 
@@ -3103,7 +3079,7 @@ public class DatabaseTests {
 				}
 			};
 
-			Database db = Database.withDataSource(createInMemoryDataSource("cm_sql_exception_" + planCachingEnabled))
+			Database db = Database.with(createInMemoryDataSource("cm_sql_exception_" + planCachingEnabled), DatabaseType.GENERIC)
 					.resultSetMapper(ResultSetMapper.withCustomColumnMappers(List.of(throwingMapper))
 							.planCachingEnabled(planCachingEnabled)
 							.build())
@@ -3147,7 +3123,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database.withDataSource(dataSource)
+		Database db = Database.with(dataSource, DatabaseType.GENERIC)
 				.resultSetMapper(ResultSetMapper.withCustomColumnMappers(List.of(localeOverride)).build())
 				.build();
 
@@ -3236,7 +3212,7 @@ public class DatabaseTests {
 		// If feature is behind a toggle:
 		// rsmBuilder = rsmBuilder.applyCustomMappersForStandardTypes(true);
 
-		Database db = Database.withDataSource(dataSource)
+		Database db = Database.with(dataSource, DatabaseType.GENERIC)
 				.resultSetMapper(rsmBuilder.build())
 				.build();
 
@@ -3288,7 +3264,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testExecuteForObjectAndListUsingSelect() {
-		Database db = Database.withDataSource(createInMemoryDataSource("exec_select")).build();
+		Database db = Database.with(createInMemoryDataSource("exec_select"), DatabaseType.GENERIC).build();
 				db.query("CREATE TABLE prod (id INT, name VARCHAR(64))").execute();
 				db.query("INSERT INTO prod VALUES (1, 'A')").execute();
 				db.query("INSERT INTO prod VALUES (2, 'B')").execute();
@@ -3306,7 +3282,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testExecuteReturningGeneratedKey() {
-		Database db = Database.withDataSource(createInMemoryDataSource("generated_key_single")).build();
+		Database db = Database.with(createInMemoryDataSource("generated_key_single"), DatabaseType.GENERIC).build();
 		db.query("CREATE TABLE generated_key_items (id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, name VARCHAR(64))").execute();
 
 		Integer id = db.query("INSERT INTO generated_key_items (name) VALUES (:name)")
@@ -3326,7 +3302,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testExecuteReturningGeneratedKeyWithColumnName() {
-		Database db = Database.withDataSource(createInMemoryDataSource("generated_key_column_name")).build();
+		Database db = Database.with(createInMemoryDataSource("generated_key_column_name"), DatabaseType.GENERIC).build();
 		db.query("CREATE TABLE generated_key_items (id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, name VARCHAR(64))").execute();
 
 		Integer id = db.query("INSERT INTO generated_key_items (name) VALUES (:name)")
@@ -3346,8 +3322,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testExecuteReturningGeneratedKeyOracleRequiresColumnName() {
-		Database db = Database.withDataSource(createInMemoryDataSource("generated_key_oracle_requires_column_name"))
-				.databaseType(DatabaseType.ORACLE)
+		Database db = Database.with(createInMemoryDataSource("generated_key_oracle_requires_column_name"), DatabaseType.ORACLE)
 				.build();
 
 		DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
@@ -3362,8 +3337,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testExecuteReturningGeneratedKeysOracleRequiresColumnName() {
-		Database db = Database.withDataSource(createInMemoryDataSource("generated_keys_oracle_requires_column_name"))
-				.databaseType(DatabaseType.ORACLE)
+		Database db = Database.with(createInMemoryDataSource("generated_keys_oracle_requires_column_name"), DatabaseType.ORACLE)
 				.build();
 
 		DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
@@ -3378,8 +3352,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testExecuteReturningGeneratedKeyOracleAllowsExplicitColumnName() {
-		Database db = Database.withDataSource(createInMemoryDataSource("generated_key_oracle_column_name"))
-				.databaseType(DatabaseType.ORACLE)
+		Database db = Database.with(createInMemoryDataSource("generated_key_oracle_column_name"), DatabaseType.ORACLE)
 				.build();
 		db.query("CREATE TABLE generated_key_items (id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, name VARCHAR(64))").execute();
 
@@ -3393,7 +3366,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testExecuteReturningGeneratedKeys() {
-		Database db = Database.withDataSource(createInMemoryDataSource("generated_key_list")).build();
+		Database db = Database.with(createInMemoryDataSource("generated_key_list"), DatabaseType.GENERIC).build();
 		db.query("CREATE TABLE generated_key_items (id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, name VARCHAR(64))").execute();
 
 		List<Integer> ids = db.query("INSERT INTO generated_key_items (name) VALUES (:firstName), (:secondName)")
@@ -3412,7 +3385,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testExecuteReturningGeneratedKeyRejectsMultipleRows() {
-		Database db = Database.withDataSource(createInMemoryDataSource("generated_key_single_rejects_multiple")).build();
+		Database db = Database.with(createInMemoryDataSource("generated_key_single_rejects_multiple"), DatabaseType.GENERIC).build();
 		db.query("CREATE TABLE generated_key_items (id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, name VARCHAR(64))").execute();
 
 		DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
@@ -3518,8 +3491,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database.withDataSource(dataSource)
-				.databaseType(DatabaseType.GENERIC)
+		Database db = Database.with(dataSource, DatabaseType.GENERIC)
 				.preparedStatementBinder(binder)
 				.build();
 
@@ -3554,7 +3526,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testZoneIdLocaleCurrencyRoundTrip() {
-		Database db = Database.withDataSource(createInMemoryDataSource("prefs")).build();
+		Database db = Database.with(createInMemoryDataSource("prefs"), DatabaseType.GENERIC).build();
 				db.query("CREATE TABLE prefs (tz VARCHAR(64), locale VARCHAR(32), currency VARCHAR(3))").execute();
 
 		ZoneId zone = ZoneId.of("America/New_York");
@@ -3577,7 +3549,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testNumericMappingPreservesPrecision() {
-		Database db = Database.withDataSource(createInMemoryDataSource("big_numbers")).build();
+		Database db = Database.with(createInMemoryDataSource("big_numbers"), DatabaseType.GENERIC).build();
 				db.query("CREATE TABLE big_numbers (v BIGINT)").execute();
 
 		long value = 9_007_199_254_740_993L; // 2^53 + 1
@@ -3612,7 +3584,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testNullParameterBinding() {
-		Database db = Database.withDataSource(createInMemoryDataSource("nulls")).build();
+		Database db = Database.with(createInMemoryDataSource("nulls"), DatabaseType.GENERIC).build();
 				db.query("CREATE TABLE foo (id INT, name VARCHAR(64))").execute();
 				db.query("INSERT INTO foo (id, name) VALUES (:p1, :p2)")
 			.bind("p1", 1)
@@ -3628,7 +3600,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testReadDatabaseMetaData() {
-		Database db = Database.withDataSource(createInMemoryDataSource("metadata")).build();
+		Database db = Database.with(createInMemoryDataSource("metadata"), DatabaseType.GENERIC).build();
 		final AtomicInteger seen = new AtomicInteger(0);
 		db.readDatabaseMetaData(meta -> {
 			Assertions.assertNotNull(meta.getDatabaseProductName());
@@ -3642,7 +3614,7 @@ public class DatabaseTests {
 		AtomicInteger isValidTimeout = new AtomicInteger(-1);
 		AtomicInteger closeCount = new AtomicInteger(0);
 		Connection connection = healthCheckConnection(isValidTimeout, closeCount, true, null);
-		Database db = Database.withDataSource(dataSourceForConnection(connection)).build();
+		Database db = Database.with(dataSourceForConnection(connection), DatabaseType.GENERIC).build();
 
 		db.performHealthCheck(Duration.ofMillis(1_500));
 
@@ -3696,7 +3668,7 @@ public class DatabaseTests {
 				return false;
 			}
 		};
-		Database db = Database.withDataSource(dataSource).build();
+		Database db = Database.with(dataSource, DatabaseType.GENERIC).build();
 
 		Assertions.assertThrows(IllegalArgumentException.class, () -> db.performHealthCheck(Duration.ofNanos(-1)));
 		Assertions.assertThrows(IllegalArgumentException.class, () ->
@@ -3707,7 +3679,7 @@ public class DatabaseTests {
 	public void testPerformHealthCheckThrowsWhenConnectionIsInvalid() {
 		AtomicInteger closeCount = new AtomicInteger(0);
 		Connection connection = healthCheckConnection(new AtomicInteger(-1), closeCount, false, null);
-		Database db = Database.withDataSource(dataSourceForConnection(connection)).build();
+		Database db = Database.with(dataSourceForConnection(connection), DatabaseType.GENERIC).build();
 
 		DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
 				db.performHealthCheck(Duration.ZERO));
@@ -3721,7 +3693,7 @@ public class DatabaseTests {
 		AtomicInteger closeCount = new AtomicInteger(0);
 		SQLException failure = new SQLException("validation failed");
 		Connection connection = healthCheckConnection(new AtomicInteger(-1), closeCount, true, failure);
-		Database db = Database.withDataSource(dataSourceForConnection(connection)).build();
+		Database db = Database.with(dataSourceForConnection(connection), DatabaseType.GENERIC).build();
 
 		DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
 				db.performHealthCheck(Duration.ofSeconds(1)));
@@ -3734,7 +3706,7 @@ public class DatabaseTests {
 	@Test
 	public void testPerformHealthCheckUsesFreshConnectionInsideTransaction() {
 		TrackingDataSource dataSource = new TrackingDataSource(createInMemoryDataSource("healthCheckFreshConnection"));
-		Database db = Database.withDataSource(dataSource).build();
+		Database db = Database.with(dataSource, DatabaseType.GENERIC).build();
 
 		db.query("CREATE TABLE health_check_txn (id INT)").execute();
 		dataSource.resetCloseCount();
@@ -3753,7 +3725,7 @@ public class DatabaseTests {
 	@Test
 	public void testUseRawConnectionClosesConnectionOutsideTransaction() {
 		TrackingDataSource dataSource = new TrackingDataSource(createInMemoryDataSource("useRawConnectionClose"));
-		Database db = Database.withDataSource(dataSource).build();
+		Database db = Database.with(dataSource, DatabaseType.GENERIC).build();
 
 		dataSource.resetCloseCount();
 
@@ -3769,7 +3741,7 @@ public class DatabaseTests {
 	@Test
 	public void testUseRawConnectionParticipatesInTransaction() {
 		TrackingDataSource dataSource = new TrackingDataSource(createInMemoryDataSource("useRawConnectionTransaction"));
-		Database db = Database.withDataSource(dataSource).build();
+		Database db = Database.with(dataSource, DatabaseType.GENERIC).build();
 
 		db.query("CREATE TABLE t_raw_connection (id INT)").execute();
 		dataSource.resetCloseCount();
@@ -3798,7 +3770,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testUseRawConnectionGuardsLifecycleAndTransactionMethods() {
-		Database db = Database.withDataSource(createInMemoryDataSource("useRawConnectionGuard")).build();
+		Database db = Database.with(createInMemoryDataSource("useRawConnectionGuard"), DatabaseType.GENERIC).build();
 
 		db.useRawConnection(connection -> {
 			Assertions.assertThrows(IllegalStateException.class, connection::close);
@@ -3830,7 +3802,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testUseRawConnectionStatementAndMetadataExposeGuardedConnection() {
-		Database db = Database.withDataSource(createInMemoryDataSource("useRawConnectionJdbcObjectGuard")).build();
+		Database db = Database.with(createInMemoryDataSource("useRawConnectionJdbcObjectGuard"), DatabaseType.GENERIC).build();
 		db.query("CREATE TABLE t_raw_jdbc_object_keys (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, name VARCHAR(64))").execute();
 
 		db.useRawConnection(connection -> {
@@ -3895,7 +3867,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testUseRawConnectionWrapsCheckedException() {
-		Database db = Database.withDataSource(createInMemoryDataSource("useRawConnectionException")).build();
+		Database db = Database.with(createInMemoryDataSource("useRawConnectionException"), DatabaseType.GENERIC).build();
 		Exception cause = new Exception("boom");
 
 		DatabaseException exception = Assertions.assertThrows(DatabaseException.class, () ->
@@ -3908,8 +3880,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testUseRawConnectionWrapsExceptionWithConfiguredDatabaseTypeClassification() {
-		Database db = Database.withDataSource(createInMemoryDataSource("useRawConnectionExceptionClassification"))
-				.databaseType(DatabaseType.SQL_SERVER)
+		Database db = Database.with(createInMemoryDataSource("useRawConnectionExceptionClassification"), DatabaseType.SQL_SERVER)
 				.build();
 		SQLException cause = new SQLException("unique", null, 2627);
 
@@ -3924,7 +3895,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testUseRawConnectionRetainedHandleFailsAfterCallback() {
-		Database db = Database.withDataSource(createInMemoryDataSource("useRawConnectionRetained")).build();
+		Database db = Database.with(createInMemoryDataSource("useRawConnectionRetained"), DatabaseType.GENERIC).build();
 		AtomicReference<Connection> connectionReference = new AtomicReference<>();
 
 		db.useRawConnection(connection -> {
@@ -3937,7 +3908,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testUseRawConnectionWrapperBehavior() {
-		Database db = Database.withDataSource(createInMemoryDataSource("useRawConnectionWrapper")).build();
+		Database db = Database.with(createInMemoryDataSource("useRawConnectionWrapper"), DatabaseType.GENERIC).build();
 
 		db.useRawConnection(connection -> {
 			Assertions.assertInstanceOf(PyranidRawConnection.class, connection);
@@ -3967,7 +3938,7 @@ public class DatabaseTests {
 					case "isClosed" -> false;
 					default -> defaultValue(method.getReturnType());
 				});
-		Database db = Database.withDataSource(dataSourceForConnection(physicalConnection)).build();
+		Database db = Database.with(dataSourceForConnection(physicalConnection), DatabaseType.GENERIC).build();
 
 		db.useRawConnection(connection -> {
 			Assertions.assertTrue(connection.isWrapperFor(VendorConnectionAccess.class));
@@ -4034,14 +4005,13 @@ public class DatabaseTests {
 		};
 
 		Assertions.assertDoesNotThrow(() ->
-				Database.withDataSource(dataSource)
-						.databaseType(DatabaseType.GENERIC)
+				Database.with(dataSource, DatabaseType.GENERIC)
 						.build());
 	}
 
 	@Test
 	public void testStatementLoggerReceivesEvent() {
-		Database db = Database.withDataSource(createInMemoryDataSource("logger")).statementLogger((log) -> {
+		Database db = Database.with(createInMemoryDataSource("logger"), DatabaseType.GENERIC).statementLogger((log) -> {
 			Assertions.assertNotNull(log.getStatementContext(), "StatementContext should be present");
 			Assertions.assertTrue(log.getStatementContext().getStatement().getSql().length() > 0, "SQL should be present");
 		}).build();
@@ -4053,7 +4023,7 @@ public class DatabaseTests {
 	@Test
 	public void testStatementLoggerIncludesBatchSize() {
 		AtomicReference<StatementLog<?>> logRef = new AtomicReference<>();
-		Database db = Database.withDataSource(createInMemoryDataSource("logger_batch"))
+		Database db = Database.with(createInMemoryDataSource("logger_batch"), DatabaseType.GENERIC)
 				.statementLogger(logRef::set)
 				.build();
 
@@ -4077,7 +4047,7 @@ public class DatabaseTests {
 	@Test
 	public void testStatementLoggerFailureRollsBackTransaction() {
 		AtomicBoolean shouldThrow = new AtomicBoolean(false);
-		Database db = Database.withDataSource(createInMemoryDataSource("logger_rollback"))
+		Database db = Database.with(createInMemoryDataSource("logger_rollback"), DatabaseType.GENERIC)
 				.statementLogger(statementLog -> {
 					if (shouldThrow.get())
 						throw new RuntimeException("logger boom");
@@ -4111,7 +4081,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database.withDataSource(createInMemoryDataSource("error_logger_mask"))
+		Database db = Database.with(createInMemoryDataSource("error_logger_mask"), DatabaseType.GENERIC)
 				.preparedStatementBinder(binder)
 				.statementLogger(statementLog -> {
 					loggerCalled.set(true);
@@ -4133,7 +4103,7 @@ public class DatabaseTests {
 	public void testStatementLoggerFailureInParticipateSurfacesOnParticipatingThread() {
 		AtomicBoolean shouldThrow = new AtomicBoolean(false);
 		AtomicReference<Throwable> failure = new AtomicReference<>();
-		Database db = Database.withDataSource(createInMemoryDataSource("logger_participate_thread"))
+		Database db = Database.with(createInMemoryDataSource("logger_participate_thread"), DatabaseType.GENERIC)
 				.statementLogger(statementLog -> {
 					if (shouldThrow.get())
 						throw new RuntimeException("logger boom");
@@ -4174,7 +4144,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testQueryRejectsDuplicateColumnLabels() {
-		Database db = Database.withDataSource(createInMemoryDataSource("dup_column_labels")).build();
+		Database db = Database.with(createInMemoryDataSource("dup_column_labels"), DatabaseType.GENERIC).build();
 
 				db.query("CREATE TABLE t (id INT, name VARCHAR(255))").execute();
 				db.query("INSERT INTO t VALUES (1, 'alpha')").execute();
@@ -4186,7 +4156,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testQueryRejectsDuplicateColumnLabels_withoutPlanCaching() {
-		Database db = Database.withDataSource(createInMemoryDataSource("dup_column_labels_no_plan"))
+		Database db = Database.with(createInMemoryDataSource("dup_column_labels_no_plan"), DatabaseType.GENERIC)
 				.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(false).build())
 				.build();
 
@@ -4200,7 +4170,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testSqlArrayParameter_insertAndReadBack() {
-		Database db = Database.withDataSource(createInMemoryDataSource("it_array_param")).build();
+		Database db = Database.with(createInMemoryDataSource("it_array_param"), DatabaseType.GENERIC).build();
 
 		// HSQLDB array column syntax: VARCHAR(100) ARRAY
 				db.query("CREATE TABLE t_array (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, tags VARCHAR(100) ARRAY)").execute();
@@ -4246,7 +4216,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testSqlArrayParameter_emptyArray() {
-		Database db = Database.withDataSource(createInMemoryDataSource("it_array_param_empty")).build();
+		Database db = Database.with(createInMemoryDataSource("it_array_param_empty"), DatabaseType.GENERIC).build();
 				db.query("CREATE TABLE t_array (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, tags VARCHAR(100) ARRAY)").execute();
 
 				db.query("INSERT INTO t_array(tags) VALUES (:p1)")
@@ -4261,7 +4231,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testSqlArrayParameter_allowsNullElements() {
-		Database db = Database.withDataSource(createInMemoryDataSource("it_array_param_null_elements")).build();
+		Database db = Database.with(createInMemoryDataSource("it_array_param_null_elements"), DatabaseType.GENERIC).build();
 				db.query("CREATE TABLE t_array (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, tags VARCHAR(100) ARRAY)").execute();
 
 				db.query("INSERT INTO t_array(tags) VALUES (:p1)")
@@ -4288,7 +4258,7 @@ public class DatabaseTests {
 	@Test
 	public void testSqlArrayResultMappingToRecordAndBean() {
 		for (Boolean planCachingEnabled : List.of(false, true)) {
-			Database db = Database.withDataSource(createInMemoryDataSource("sql_array_result_mapping_" + planCachingEnabled))
+			Database db = Database.with(createInMemoryDataSource("sql_array_result_mapping_" + planCachingEnabled), DatabaseType.GENERIC)
 					.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(planCachingEnabled).build())
 					.build();
 
@@ -4316,7 +4286,7 @@ public class DatabaseTests {
 	@Test
 	public void testSqlArrayResultMappingFansOutSingleColumnToMultipleTargets() {
 		for (Boolean planCachingEnabled : List.of(false, true)) {
-			Database db = Database.withDataSource(createInMemoryDataSource("sql_array_fanout_" + planCachingEnabled))
+			Database db = Database.with(createInMemoryDataSource("sql_array_fanout_" + planCachingEnabled), DatabaseType.GENERIC)
 					.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(planCachingEnabled).build())
 					.build();
 
@@ -4341,7 +4311,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testJsonParameter_roundTrip_textOnHsqldb() {
-		Database db = Database.withDataSource(createInMemoryDataSource("it_json_param")).build();
+		Database db = Database.with(createInMemoryDataSource("it_json_param"), DatabaseType.GENERIC).build();
 				db.query("CREATE TABLE t_json (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, body LONGVARCHAR)").execute();
 
 		String json = "{\"a\":1,\"b\":[true,false],\"s\":\"x\"}";
@@ -4368,7 +4338,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testVectorParameter_throwsOnUnsupportedDatabase() {
-		Database db = Database.withDataSource(createInMemoryDataSource("it_vector_param")).build();
+		Database db = Database.with(createInMemoryDataSource("it_vector_param"), DatabaseType.GENERIC).build();
 				db.query("CREATE TABLE t_vec (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, v LONGVARCHAR)").execute();
 
 		try {
@@ -4384,7 +4354,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testTransactionIsolation() {
-		Database db = Database.withDataSource(createInMemoryDataSource("txn_isolation")).build();
+		Database db = Database.with(createInMemoryDataSource("txn_isolation"), DatabaseType.GENERIC).build();
 
 		db.transaction(TransactionOptions.withIsolation(TransactionIsolation.SERIALIZABLE).build(), () -> {
 			db.performRawConnectionOperation(conn -> {
@@ -4428,7 +4398,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testTransactionReadOnly() {
-		Database db = Database.withDataSource(createInMemoryDataSource("txn_read_only")).build();
+		Database db = Database.with(createInMemoryDataSource("txn_read_only"), DatabaseType.GENERIC).build();
 
 		db.transaction(TransactionOptions.withReadOnly(true).build(), () -> {
 			db.performRawConnectionOperation(conn -> {
@@ -4447,7 +4417,7 @@ public class DatabaseTests {
 	@Test
 	public void testTransactionReadWriteOptionRestoresReadOnlyConnection() throws Exception {
 		TrackingReadOnlyDataSource dataSource = new TrackingReadOnlyDataSource(createInMemoryDataSource("txn_read_write_restore"), true);
-		Database db = Database.withDataSource(dataSource).build();
+		Database db = Database.with(dataSource, DatabaseType.GENERIC).build();
 
 		db.transaction(TransactionOptions.withReadOnly(false).build(), () -> {
 			db.performRawConnectionOperation(conn -> {
@@ -4462,7 +4432,7 @@ public class DatabaseTests {
 	@Test
 	public void testTransactionReadOnlyNullLeavesConnectionStateUnchanged() throws Exception {
 		TrackingReadOnlyDataSource dataSource = new TrackingReadOnlyDataSource(createInMemoryDataSource("txn_read_only_null"), true);
-		Database db = Database.withDataSource(dataSource).build();
+		Database db = Database.with(dataSource, DatabaseType.GENERIC).build();
 
 		db.transaction(TransactionOptions.withReadOnly(null).build(), () -> {
 			db.performRawConnectionOperation(conn -> {
@@ -4477,8 +4447,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testLocalDate_bindsToDateColumn_roundTrips() {
-		Database db = Database
-				.withDataSource(createInMemoryDataSource("it_psb_localdate"))
+		Database db = Database.with(createInMemoryDataSource("it_psb_localdate"), DatabaseType.GENERIC)
 				.preparedStatementBinder(PreparedStatementBinder.withDefaultConfiguration())
 				.build();
 
@@ -4608,8 +4577,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testLocalTime_bindsToTimeColumn_roundTrips() {
-		Database db = Database
-				.withDataSource(createInMemoryDataSource("it_psb_localtime"))
+		Database db = Database.with(createInMemoryDataSource("it_psb_localtime"), DatabaseType.GENERIC)
 				.preparedStatementBinder(PreparedStatementBinder.withDefaultConfiguration())
 				.build();
 
@@ -4628,8 +4596,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testLocalDateTime_bindsToTimestamp_roundTrips() {
-		Database db = Database
-				.withDataSource(createInMemoryDataSource("it_psb_ldt"))
+		Database db = Database.with(createInMemoryDataSource("it_psb_ldt"), DatabaseType.GENERIC)
 				.preparedStatementBinder(PreparedStatementBinder.withDefaultConfiguration())
 				.build();
 
@@ -4649,8 +4616,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testOffsetDateTime_targetTimestamp_coercesToDbZone_andInserts() {
-		Database db = Database
-				.withDataSource(createInMemoryDataSource("it_psb_odt_ts"))
+		Database db = Database.with(createInMemoryDataSource("it_psb_odt_ts"), DatabaseType.GENERIC)
 				.preparedStatementBinder(PreparedStatementBinder.withDefaultConfiguration())
 				// default tz is fine; binder will coerce ODT -> LDT when target is TIMESTAMP
 				.build();
@@ -4670,8 +4636,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testInstant_targetTimestamp_inserts() {
-		Database db = Database
-				.withDataSource(createInMemoryDataSource("it_psb_instant"))
+		Database db = Database.with(createInMemoryDataSource("it_psb_instant"), DatabaseType.GENERIC)
 				.preparedStatementBinder(PreparedStatementBinder.withDefaultConfiguration())
 				.build();
 
@@ -4691,8 +4656,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testJsonParameter_onNonPostgres_isStoredAsText() {
-		Database db = Database
-				.withDataSource(createInMemoryDataSource("it_psb_json_text"))
+		Database db = Database.with(createInMemoryDataSource("it_psb_json_text"), DatabaseType.GENERIC)
 				.preparedStatementBinder(PreparedStatementBinder.withDefaultConfiguration())
 				.build();
 
@@ -4715,7 +4679,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testVectorParameter_throwsOnUnsupportedDatabase_matchesExample() {
-		Database db = Database.withDataSource(createInMemoryDataSource("it_vector_param_dup")).build();
+		Database db = Database.with(createInMemoryDataSource("it_vector_param_dup"), DatabaseType.GENERIC).build();
 				db.query("CREATE TABLE t_vec (id INT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, v LONGVARCHAR)").execute();
 
 		try {
@@ -4747,8 +4711,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database
-				.withDataSource(createInMemoryDataSource("it_psb_custom"))
+		Database db = Database.with(createInMemoryDataSource("it_psb_custom"), DatabaseType.GENERIC)
 				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(localeBinder)))
 				.build();
 
@@ -4772,8 +4735,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testNullJsonParameter_bindsAsNull() {
-		Database db = Database
-				.withDataSource(createInMemoryDataSource("it_psb_json_null"))
+		Database db = Database.with(createInMemoryDataSource("it_psb_json_null"), DatabaseType.GENERIC)
 				.preparedStatementBinder(PreparedStatementBinder.withDefaultConfiguration())
 				.build();
 
@@ -4960,8 +4922,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testOffsetTime_bindsAsTimeWithZoneOrString_noException() {
-		Database db = Database
-				.withDataSource(createInMemoryDataSource("it_psb_offsettime"))
+		Database db = Database.with(createInMemoryDataSource("it_psb_offsettime"), DatabaseType.GENERIC)
 				.preparedStatementBinder(PreparedStatementBinder.withDefaultConfiguration())
 				.build();
 
@@ -4981,8 +4942,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testEverythingElse_setObjectFallback_handlesEnumAndCurrency() {
-		Database db = Database
-				.withDataSource(createInMemoryDataSource("it_psb_misc"))
+		Database db = Database.with(createInMemoryDataSource("it_psb_misc"), DatabaseType.GENERIC)
 				.preparedStatementBinder(PreparedStatementBinder.withDefaultConfiguration())
 				.build();
 
@@ -5054,8 +5014,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database
-				.withDataSource(createInMemoryDataSource("cpb_locale_wins"))
+		Database db = Database.with(createInMemoryDataSource("cpb_locale_wins"), DatabaseType.GENERIC)
 				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(localeBinder)))
 				// set a stable timezone just to be explicit
 				.timeZone(ZoneId.of("UTC"))
@@ -5115,8 +5074,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database
-				.withDataSource(createInMemoryDataSource("cpb_filtering"))
+		Database db = Database.with(createInMemoryDataSource("cpb_filtering"), DatabaseType.GENERIC)
 				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(intOnly, localeBinder)))
 				.build();
 
@@ -5176,8 +5134,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database
-				.withDataSource(createInMemoryDataSource("cpb_cache"))
+		Database db = Database.with(createInMemoryDataSource("cpb_cache"), DatabaseType.GENERIC)
 				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(first, second)))
 				.build();
 
@@ -5245,8 +5202,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database
-				.withDataSource(createInMemoryDataSource("cpb_stale_hint"))
+		Database db = Database.with(createInMemoryDataSource("cpb_stale_hint"), DatabaseType.GENERIC)
 				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(first, second)))
 				.build();
 
@@ -5289,8 +5245,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database
-				.withDataSource(createInMemoryDataSource("cpb_param_list_uuid"))
+		Database db = Database.with(createInMemoryDataSource("cpb_param_list_uuid"), DatabaseType.GENERIC)
 				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(listUuidBinder)))
 				.build();
 
@@ -5333,8 +5288,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database
-				.withDataSource(createInMemoryDataSource("cpb_fallback"))
+		Database db = Database.with(createInMemoryDataSource("cpb_fallback"), DatabaseType.GENERIC)
 				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(alwaysFalseForString)))
 				.build();
 
@@ -5369,8 +5323,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database
-				.withDataSource(createInMemoryDataSource("cpb_throw"))
+		Database db = Database.with(createInMemoryDataSource("cpb_throw"), DatabaseType.GENERIC)
 				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(throwingBinder)))
 				.build();
 
@@ -5407,8 +5360,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database
-				.withDataSource(createInMemoryDataSource("cpb_cache_sqltype"))
+		Database db = Database.with(createInMemoryDataSource("cpb_cache_sqltype"), DatabaseType.GENERIC)
 				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(localeBinder)))
 				.build();
 
@@ -5460,8 +5412,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database
-				.withDataSource(createInMemoryDataSource("cpb_param_set_uuid"))
+		Database db = Database.with(createInMemoryDataSource("cpb_param_set_uuid"), DatabaseType.GENERIC)
 				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(setUuidBinder)))
 				.build();
 
@@ -5522,8 +5473,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database
-				.withDataSource(createInMemoryDataSource("cpb_param_map_str_int"))
+		Database db = Database.with(createInMemoryDataSource("cpb_param_map_str_int"), DatabaseType.GENERIC)
 				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(mapBinder)))
 				.build();
 
@@ -5568,8 +5518,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database
-				.withDataSource(createInMemoryDataSource("cpb_param_array_str"))
+		Database db = Database.with(createInMemoryDataSource("cpb_param_array_str"), DatabaseType.GENERIC)
 				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(arrayBinder)))
 				.build();
 
@@ -5634,8 +5583,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database
-				.withDataSource(createInMemoryDataSource("cpb_cache_target_type"))
+		Database db = Database.with(createInMemoryDataSource("cpb_cache_target_type"), DatabaseType.GENERIC)
 				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(uuidListBinder, stringListBinder)))
 				.build();
 
@@ -5665,7 +5613,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testTypedParameterNullRequiresCustomBinder() {
-		Database db = Database.withDataSource(createInMemoryDataSource("typed_param_null")).build();
+		Database db = Database.with(createInMemoryDataSource("typed_param_null"), DatabaseType.GENERIC).build();
 				db.query("CREATE TABLE t (v VARCHAR(50))").execute();
 
 		DatabaseException thrown = Assertions.assertThrows(DatabaseException.class, () ->
@@ -5711,7 +5659,7 @@ public class DatabaseTests {
 			}
 		};
 
-		Database db = Database.withDataSource(createInMemoryDataSource("typed_param_null_binder"))
+		Database db = Database.with(createInMemoryDataSource("typed_param_null_binder"), DatabaseType.GENERIC)
 				.preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(listUuidBinder)))
 				.build();
 
@@ -5730,7 +5678,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testListOf_withoutBinder_failsFast() {
-		Database db = Database.withDataSource(createInMemoryDataSource("it_failfast_list")).build();
+		Database db = Database.with(createInMemoryDataSource("it_failfast_list"), DatabaseType.GENERIC).build();
 				db.query("CREATE TABLE t_dummy (id INT)").execute();
 
 		try {
@@ -5745,7 +5693,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testSetOf_withoutBinder_failsFast() {
-		Database db = Database.withDataSource(createInMemoryDataSource("it_failfast_set")).build();
+		Database db = Database.with(createInMemoryDataSource("it_failfast_set"), DatabaseType.GENERIC).build();
 				db.query("CREATE TABLE t_dummy (id INT)").execute();
 
 		try {
@@ -5760,7 +5708,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testMapOf_withoutBinder_failsFast() {
-		Database db = Database.withDataSource(createInMemoryDataSource("it_failfast_map")).build();
+		Database db = Database.with(createInMemoryDataSource("it_failfast_map"), DatabaseType.GENERIC).build();
 				db.query("CREATE TABLE t_dummy (id INT)").execute();
 
 		try {
@@ -5775,7 +5723,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testArrayOf_withoutBinder_failsFast() {
-		Database db = Database.withDataSource(createInMemoryDataSource("it_failfast_typed_array")).build();
+		Database db = Database.with(createInMemoryDataSource("it_failfast_typed_array"), DatabaseType.GENERIC).build();
 				db.query("CREATE TABLE t_dummy (v LONGVARCHAR)").execute();
 
 		try {
@@ -5790,7 +5738,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testInvalidStandardTypeConversionsThrowDatabaseException() {
-		Database db = Database.withDataSource(createInMemoryDataSource("invalid_standard_type_conversions")).build();
+		Database db = Database.with(createInMemoryDataSource("invalid_standard_type_conversions"), DatabaseType.GENERIC).build();
 
 		Assertions.assertThrows(DatabaseException.class, () ->
 				db.query("SELECT 'not-a-uuid' FROM (VALUES (0)) AS t(x)")
@@ -5850,8 +5798,7 @@ public class DatabaseTests {
 	private StatementContext<?> statementContextFor(@NonNull DatabaseType databaseType) {
 		requireNonNull(databaseType);
 
-		Database db = Database.withDataSource(createInMemoryDataSource("psb_null_binding_" + databaseType.name().toLowerCase(Locale.ROOT)))
-				.databaseType(databaseType)
+		Database db = Database.with(createInMemoryDataSource("psb_null_binding_" + databaseType.name().toLowerCase(Locale.ROOT)), databaseType)
 				.build();
 
 		return StatementContext.with(Statement.of("psb_null_binding", "SELECT ?"), db).build();

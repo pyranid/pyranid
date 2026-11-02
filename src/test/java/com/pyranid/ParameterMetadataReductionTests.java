@@ -43,8 +43,8 @@ public class ParameterMetadataReductionTests {
 	@Test
 	public void testScalarBindsDoNotCallParameterMetaData() {
 		AtomicInteger parameterMetaDataAccessCount = new AtomicInteger();
-		Database db = Database.withDataSource(new ParameterMetadataCountingDataSource(
-				createInMemoryDataSource("scalar_binds_no_parameter_metadata"), parameterMetaDataAccessCount)).build();
+		Database db = Database.with(new ParameterMetadataCountingDataSource(
+				createInMemoryDataSource("scalar_binds_no_parameter_metadata"), parameterMetaDataAccessCount), DatabaseType.GENERIC).build();
 
 		db.query("CREATE TABLE t (id INT, name VARCHAR(100), active BOOLEAN)").execute();
 		parameterMetaDataAccessCount.set(0);
@@ -62,8 +62,8 @@ public class ParameterMetadataReductionTests {
 	@Test
 	public void testInstantBindCallsParameterMetaDataForTimestampTargetDetection() {
 		AtomicInteger parameterMetaDataAccessCount = new AtomicInteger();
-		Database db = Database.withDataSource(new ParameterMetadataCountingDataSource(
-				createInMemoryDataSource("instant_bind_parameter_metadata"), parameterMetaDataAccessCount)).build();
+		Database db = Database.with(new ParameterMetadataCountingDataSource(
+				createInMemoryDataSource("instant_bind_parameter_metadata"), parameterMetaDataAccessCount), DatabaseType.GENERIC).build();
 
 		db.query("CREATE TABLE t (created_at TIMESTAMP)").execute();
 		parameterMetaDataAccessCount.set(0);
@@ -79,8 +79,8 @@ public class ParameterMetadataReductionTests {
 	@Test
 	public void testNullBindStillCallsParameterMetaDataForSqlTypeHint() {
 		AtomicInteger parameterMetaDataAccessCount = new AtomicInteger();
-		Database db = Database.withDataSource(new ParameterMetadataCountingDataSource(
-				createInMemoryDataSource("null_bind_parameter_metadata"), parameterMetaDataAccessCount)).build();
+		Database db = Database.with(new ParameterMetadataCountingDataSource(
+				createInMemoryDataSource("null_bind_parameter_metadata"), parameterMetaDataAccessCount), DatabaseType.GENERIC).build();
 
 		db.query("CREATE TABLE t (id INT)").execute();
 		parameterMetaDataAccessCount.set(0);
@@ -96,8 +96,8 @@ public class ParameterMetadataReductionTests {
 	@Test
 	public void testParameterMetaDataIsFetchedAtMostOncePerStatementExecution() {
 		AtomicInteger parameterMetaDataAccessCount = new AtomicInteger();
-		Database db = Database.withDataSource(new ParameterMetadataCountingDataSource(
-				createInMemoryDataSource("parameter_metadata_once_per_execution"), parameterMetaDataAccessCount)).build();
+		Database db = Database.with(new ParameterMetadataCountingDataSource(
+				createInMemoryDataSource("parameter_metadata_once_per_execution"), parameterMetaDataAccessCount), DatabaseType.GENERIC).build();
 
 		db.query("CREATE TABLE t (id INT, created_at TIMESTAMP, updated_at TIMESTAMP)").execute();
 		parameterMetaDataAccessCount.set(0);

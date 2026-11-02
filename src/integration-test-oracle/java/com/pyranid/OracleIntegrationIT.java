@@ -95,7 +95,7 @@ public class OracleIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 
 	@Test
 	public void testOracleTimestampWithTimeZoneRoundTrip() {
-		Database db = Database.withDataSource(dataSource())
+		Database db = Database.with(dataSource(), DatabaseType.ORACLE)
 				.timeZone(ZoneId.of("UTC"))
 				.build();
 		String table = "pyr_oracle_tstz_items";
@@ -121,7 +121,7 @@ public class OracleIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 
 	@Test
 	public void testOracleTimestampWithLocalTimeZoneMapsStoredInstant() {
-		Database db = Database.withDataSource(dataSource())
+		Database db = Database.with(dataSource(), DatabaseType.ORACLE)
 				.timeZone(ZoneId.of("UTC"))
 				.build();
 		String table = "pyr_oracle_ltz_items";

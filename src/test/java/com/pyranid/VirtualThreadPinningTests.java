@@ -200,7 +200,7 @@ public class VirtualThreadPinningTests {
 		dataSource.setUser("sa");
 		dataSource.setPassword("");
 
-		Database database = Database.withDataSource(dataSource).build();
+		Database database = Database.with(dataSource, DatabaseType.GENERIC).build();
 		database.query("CREATE TABLE vt_rows (id INTEGER, label VARCHAR(32))").execute();
 
 		int virtualThreads = 16;

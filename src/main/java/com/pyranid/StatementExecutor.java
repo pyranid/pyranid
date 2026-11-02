@@ -34,8 +34,6 @@ import java.util.Optional;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.function.Function;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
@@ -73,21 +71,6 @@ final class StatementExecutor {
 	PreparedStatementBinder getPreparedStatementBinder() { return this.preparedStatementBinder; }
 	StatementLogger getStatementLogger() { return this.statementLogger; }
 	MetricsCollectorDispatcher getMetricsCollectorDispatcher() { return this.metricsCollectorDispatcher; }
-
-	void warmDatabaseTypeCacheForMetricsIfNeeded(StatementContext<?> context) {
-		if (!this.metricsCollectorDispatcher.isEnabled()) return;
-		try {
-			context.getDatabaseType();
-		} catch (Throwable failure) {
-			if (JdbcFallbacks.isTerminal(failure)) {
-				if (failure instanceof Error error) throw error;
-				if (failure instanceof RuntimeException runtime) throw runtime;
-				throw DatabaseException.wrapSafely("Unable to determine database type for metrics", failure,
-						DatabaseDialect.forExceptionCause(failure));
-			}
-			Logger.getLogger(Database.class.getName()).log(Level.FINE, "Unable to warm database type cache for metrics", failure);
-		}
-	}
 
 	/**
 	 * Performs a SQL query that is expected to return 0 or 1 result rows.
@@ -559,7 +542,7 @@ final class StatementExecutor {
 	private PreparedStatementFactory generatedKeysPreparedStatementFactory(@NonNull String @NonNull [] keyColumnNames) {
 		requireNonNull(keyColumnNames);
 
-		return (connection, statementContext) -> this.connections.dialect(connection)
+		return (connection, statementContext) -> this.connections.dialect()
 				.prepareGeneratedKeysStatement(connection, statementContext, keyColumnNames);
 	}
 
@@ -1063,11 +1046,9 @@ final class StatementExecutor {
 		StatementResult statementResult = StatementResult.empty();
 		Exception exception = null;
 		Throwable thrown = null;
-		StatementConnections.MetadataScope metadataScope = null;
 
 		try {
 			Connection connection = lease.acquire("execute a statement on the transaction connection");
-			metadataScope = lease.metadataScope();
 			startTime = nanoTime();
 
 			try {
@@ -1095,7 +1076,6 @@ final class StatementExecutor {
 						if (resultSetMappingDuration == null)
 							resultSetMappingDuration = timing.resultSetMappingDuration;
 					}
-					warmDatabaseTypeCacheForMetricsIfNeeded(statementContext);
 				} catch (Exception | Error failure) {
 					statementFailure = failure;
 					throw failure;
@@ -1126,7 +1106,6 @@ final class StatementExecutor {
 		} finally {
 			Throwable cleanupFailure = null;
 
-			if (metadataScope != null) metadataScope.close();
 			try {
 				cleanupFailure = closeStatementContextResources(statementContext, cleanupFailure);
 			} finally {
@@ -1147,7 +1126,7 @@ final class StatementExecutor {
 					getMetricsCollectorDispatcher().didExecuteStatement(statementContext, statementLog, statementResult);
 				} else {
 					Throwable statementThrowable = thrown == null ? exception : thrown;
-					getMetricsCollectorDispatcher().didFailToExecuteStatement(statementContext, statementLog, this.connections.cachedType(),
+					getMetricsCollectorDispatcher().didFailToExecuteStatement(statementContext, statementLog, this.connections.databaseType(),
 							requireNonNull(statementThrowable));
 				}
 

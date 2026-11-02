@@ -431,8 +431,7 @@ public class SqlStructParameterTests {
 																							 @NonNull ZoneId timeZone) {
 		DataSource dataSource = (DataSource) Proxy.newProxyInstance(DataSource.class.getClassLoader(),
 				new Class<?>[]{DataSource.class}, (proxy, method, args) -> defaultValue(method.getReturnType()));
-		Database database = Database.withDataSource(dataSource)
-				.databaseType(databaseType)
+		Database database = Database.with(dataSource, databaseType)
 				.timeZone(timeZone)
 				.build();
 		return StatementContext.with(Statement.of("sql-struct-parameter-test", "SELECT ?"), database).build();

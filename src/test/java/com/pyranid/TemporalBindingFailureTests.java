@@ -214,7 +214,7 @@ class TemporalBindingFailureTests {
 			source.setUrl("jdbc:hsqldb:mem:temporal_binding_failure_" + UUID.randomUUID());
 			source.setUser("sa");
 			source.setPassword("");
-			this.inspectionDatabase = Database.withDataSource(source).databaseType(DatabaseType.GENERIC).build();
+			this.inspectionDatabase = Database.with(source, DatabaseType.GENERIC).build();
 			this.inspectionDatabase.query("CREATE TABLE temporal_work (id INT PRIMARY KEY, value_timestamp TIMESTAMP)").execute();
 			AtomicBoolean armed = new AtomicBoolean(true);
 			DataSource wrapped = proxy(DataSource.class, (method, args) -> {
@@ -244,8 +244,7 @@ class TemporalBindingFailureTests {
 				});
 			});
 			// DuckDB's dialect exercises untyped setObject; both paths use actual HSQLDB storage.
-			this.database = Database.withDataSource(wrapped)
-					.databaseType(untyped ? DatabaseType.DUCK_DB : DatabaseType.GENERIC).build();
+			this.database = Database.with(wrapped, untyped ? DatabaseType.DUCK_DB : DatabaseType.GENERIC).build();
 		}
 
 		private void executeStatements() {

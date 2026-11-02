@@ -58,16 +58,13 @@ public class ParsedSqlCacheBenchmark {
 
 		@Setup(Level.Trial)
 		public void setup() {
-			cachedDatabase = Database.withDataSource(BenchmarkSupport.throwingDataSource())
-					.databaseType(DatabaseType.POSTGRESQL)
+			cachedDatabase = Database.with(BenchmarkSupport.throwingDataSource(), DatabaseType.POSTGRESQL)
 					.parsedSqlCacheCapacity(256)
 					.build();
-			uncachedDatabase = Database.withDataSource(BenchmarkSupport.throwingDataSource())
-					.databaseType(DatabaseType.POSTGRESQL)
+			uncachedDatabase = Database.with(BenchmarkSupport.throwingDataSource(), DatabaseType.POSTGRESQL)
 					.parsedSqlCacheCapacity(0)
 					.build();
-			churnDatabase = Database.withDataSource(BenchmarkSupport.throwingDataSource())
-					.databaseType(DatabaseType.POSTGRESQL)
+			churnDatabase = Database.with(BenchmarkSupport.throwingDataSource(), DatabaseType.POSTGRESQL)
 					.parsedSqlCacheCapacity(64)
 					.build();
 			churnSql = new String[512];

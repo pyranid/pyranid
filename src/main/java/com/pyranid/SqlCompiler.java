@@ -127,14 +127,6 @@ final class SqlCompiler {
 		combinedParameterNames.addAll(effectiveBracketIdentifierParsedSql.distinctParameterNames);
 		Set<String> distinctParameterNames = Set.copyOf(combinedParameterNames);
 
-		boolean requiresDatabaseType = standardParseFailure != null
-				|| mysqlParseFailure != null
-				|| duckDbParseFailure != null
-				|| bracketIdentifierParseFailure != null
-				|| !effectiveStandardParsedSql.equivalentTo(effectiveMysqlParsedSql)
-				|| !effectiveStandardParsedSql.equivalentTo(effectiveDuckDbParsedSql)
-				|| !effectiveStandardParsedSql.equivalentTo(effectiveBracketIdentifierParsedSql);
-
 		return new ParsedSqlVariants(effectiveStandardParsedSql,
 				effectiveMysqlParsedSql,
 				effectiveDuckDbParsedSql,
@@ -143,8 +135,7 @@ final class SqlCompiler {
 				mysqlParseFailure == null ? null : requireNonNull(mysqlParseFailure.getMessage()),
 				duckDbParseFailure == null ? null : requireNonNull(duckDbParseFailure.getMessage()),
 				bracketIdentifierParseFailure == null ? null : requireNonNull(bracketIdentifierParseFailure.getMessage()),
-				distinctParameterNames,
-				requiresDatabaseType);
+				distinctParameterNames);
 	}
 
 	private static boolean requiresMySqlLexicalVariant(@NonNull String sql) {
@@ -176,7 +167,6 @@ final class SqlCompiler {
 		final String bracketIdentifierParseFailureMessage;
 		@NonNull
 		final Set<String> distinctParameterNames;
-		final boolean requiresDatabaseType;
 
 		private ParsedSqlVariants(@NonNull ParsedSql standardParsedSql,
 														@NonNull ParsedSql mysqlParsedSql,
@@ -186,8 +176,7 @@ final class SqlCompiler {
 														@Nullable String mysqlParseFailureMessage,
 														@Nullable String duckDbParseFailureMessage,
 														@Nullable String bracketIdentifierParseFailureMessage,
-														@NonNull Set<String> distinctParameterNames,
-														boolean requiresDatabaseType) {
+														@NonNull Set<String> distinctParameterNames) {
 			this.standardParsedSql = requireNonNull(standardParsedSql);
 			this.mysqlParsedSql = requireNonNull(mysqlParsedSql);
 			this.duckDbParsedSql = requireNonNull(duckDbParsedSql);
@@ -197,7 +186,6 @@ final class SqlCompiler {
 			this.duckDbParseFailureMessage = duckDbParseFailureMessage;
 			this.bracketIdentifierParseFailureMessage = bracketIdentifierParseFailureMessage;
 			this.distinctParameterNames = Set.copyOf(requireNonNull(distinctParameterNames));
-			this.requiresDatabaseType = requiresDatabaseType;
 		}
 	}
 
@@ -228,13 +216,6 @@ final class SqlCompiler {
 			this.hasQuestionMarkOperators = questionMarkOperatorFragmentIndexes.stream().anyMatch(indexes -> !indexes.isEmpty());
 			this.parameterNames = parameterNames;
 			this.distinctParameterNames = distinctParameterNames;
-		}
-
-		private boolean equivalentTo(@NonNull ParsedSql other) {
-			requireNonNull(other);
-			return this.sqlFragments.equals(other.sqlFragments)
-					&& this.questionMarkOperatorFragmentIndexes.equals(other.questionMarkOperatorFragmentIndexes)
-					&& this.parameterNames.equals(other.parameterNames);
 		}
 	}
 

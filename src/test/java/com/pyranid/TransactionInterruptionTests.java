@@ -266,7 +266,7 @@ class TransactionInterruptionTests {
 					catch (InterruptedException interrupted) { throw new IllegalStateException("metrics interrupted", interrupted); }
 				}
 			};
-			Database database = Database.withDataSource(source).databaseType(DatabaseType.GENERIC).metricsCollector(collector).build();
+			Database database = Database.with(source, DatabaseType.GENERIC).metricsCollector(collector).build();
 			DatabaseException original = new DatabaseException("cancelled serialization", new SQLException("serialization", "40001"));
 			RetryPolicy policy = RetryPolicy.ofMaxAttempts(2, RetryPolicy.Backoff.fixed(Duration.ZERO), failure -> {
 				conditions.incrementAndGet(); return true;
@@ -407,8 +407,8 @@ class TransactionInterruptionTests {
 								});
 					return value;
 				});
-		// No explicit database type, so failure diagnostics attempt dialect detection over this connection.
-		Database database = Database.withDataSource(wrapped).build();
+		// Failure diagnostics use the configured dialect and must never inspect connection metadata.
+		Database database = Database.with(wrapped, DatabaseType.GENERIC).build();
 		IllegalStateException primary = new IllegalStateException("no interrupt evidence");
 		try {
 			DatabaseException thrown = assertThrows(DatabaseException.class,
@@ -417,7 +417,7 @@ class TransactionInterruptionTests {
 						throw primary;
 					}));
 			assertSame(primary, thrown.getCause());
-			assertEquals(1, detections.get());
+			assertEquals(0, detections.get());
 			assertEquals(0, ThrowableGraph.inspect(thrown, current -> current instanceof InterruptedException ? 1 : 0, 0));
 			assertTrue(Thread.currentThread().isInterrupted());
 		} finally { Thread.interrupted(); }
@@ -519,31 +519,30 @@ class TransactionInterruptionTests {
 								});
 					return value;
 				});
-		// No explicit database type, so failure diagnostics attempt dialect detection over this connection.
-		Database database = Database.withDataSource(wrapped).build();
+		// Failure diagnostics use the configured dialect and must never inspect connection metadata.
+		Database database = Database.with(wrapped, DatabaseType.GENERIC).build();
 		try {
 			DatabaseException thrown = assertThrows(DatabaseException.class,
 					() -> database.query("SELECT id FROM any_table").executeForList(Integer.class));
-			assertEquals(1, detections.get());
+			assertEquals(0, detections.get());
 			assertEquals(0, ThrowableGraph.inspect(thrown, current -> current instanceof InterruptedException ? 1 : 0, 0));
 			assertTrue(Thread.currentThread().isInterrupted());
 		} finally { Thread.interrupted(); }
 	}
 
 	@Test
-	void statementFailureDiagnosticsInsideATransactionDoNotPublishInterrupt() {
+	void statementFailureDiagnosticsInsideATransactionPreserveDriverInterruptUntilCallerHandlesIt() {
 		AtomicInteger detections = new AtomicInteger();
-		Database database = Database.withDataSource(cancellationReportingDataSource(detections, "57014")).build();
+		Database database = Database.with(cancellationReportingDataSource(detections, "57014"), DatabaseType.GENERIC).build();
 		database.query("CREATE TABLE committed_work (id INT)").execute();
 
 		database.transaction(() -> {
 			Transaction transaction = database.currentTransaction().orElseThrow();
 			assertThrows(DatabaseException.class, () -> database.query(
 					"SELECT id FROM committed_work WHERE 'CANCEL_ME' = 'CANCEL_ME'").executeForList(Integer.class));
-			// The caller handles this cancellation report and keeps the transaction, so publishing the flag that the
-			// swallowed detection attempt consumed would abort the statement and savepoint paths that follow.
-			assertTrue(detections.get() > 0);
-			assertFalse(Thread.currentThread().isInterrupted());
+			// The application explicitly handles and clears the driver's pending interrupt before continuing.
+			assertEquals(0, detections.get());
+			assertTrue(Thread.interrupted());
 			database.query("INSERT INTO committed_work (id) VALUES (1)").execute();
 			transaction.withSavepoint(() -> database.query("INSERT INTO committed_work (id) VALUES (2)").execute());
 		});
@@ -554,9 +553,9 @@ class TransactionInterruptionTests {
 	}
 
 	@Test
-	void rawConnectionFailureDiagnosticsInsideATransactionDoNotPublishInterrupt() {
+	void rawConnectionFailureDiagnosticsInsideATransactionPreserveDriverInterruptUntilCallerHandlesIt() {
 		AtomicInteger detections = new AtomicInteger();
-		Database database = Database.withDataSource(cancellationReportingDataSource(detections, "57014")).build();
+		Database database = Database.with(cancellationReportingDataSource(detections, "57014"), DatabaseType.GENERIC).build();
 		database.query("CREATE TABLE committed_work (id INT)").execute();
 
 		database.transaction(() -> {
@@ -565,9 +564,9 @@ class TransactionInterruptionTests {
 				connection.nativeSQL("x");
 				return Optional.empty();
 			}));
-			// useRawConnection participates, so detection runs over this transaction's own connection.
-			assertTrue(detections.get() > 0);
-			assertFalse(Thread.currentThread().isInterrupted());
+			// Diagnostics leave the driver's interrupt intact until the application explicitly handles it.
+			assertEquals(0, detections.get());
+			assertTrue(Thread.interrupted());
 			database.query("INSERT INTO committed_work (id) VALUES (1)").execute();
 			transaction.withSavepoint(() -> database.query("INSERT INTO committed_work (id) VALUES (2)").execute());
 		});
@@ -578,37 +577,27 @@ class TransactionInterruptionTests {
 	}
 
 	@Test
-	void retryConditionStillSeesAFailureWhoseDriverReportedCancellation() {
+	void driverReportedCancellationCannotBeConsumedByDiagnosticsAndAdmitAnotherAttempt() {
 		AtomicInteger detections = new AtomicInteger(), attempts = new AtomicInteger(), conditions = new AtomicInteger();
-		Database database = Database.withDataSource(cancellationReportingDataSource(detections, "40001")).build();
+		Database database = Database.with(cancellationReportingDataSource(detections, "40001"), DatabaseType.GENERIC).build();
 		database.query("CREATE TABLE retried_work (id INT)").execute();
 		RetryPolicy policy = RetryPolicy.ofMaxAttempts(2, RetryPolicy.Backoff.fixed(Duration.ZERO), failure -> {
 			conditions.incrementAndGet();
 			return true;
 		});
 
-		TransactionRetryResult<Void> result = database.transactionWithRetry(policy, () -> {
-			if (attempts.incrementAndGet() == 1)
-				database.query("SELECT id FROM retried_work WHERE 'CANCEL_ME' = 'CANCEL_ME'").executeForList(Integer.class);
-			else
-				database.query("INSERT INTO retried_work (id) VALUES (2)").execute();
-		});
+		assertThrows(DatabaseException.class, () -> database.transactionWithRetry(policy, () -> {
+			attempts.incrementAndGet();
+			database.query("SELECT id FROM retried_work WHERE 'CANCEL_ME' = 'CANCEL_ME'").executeForList(Integer.class);
+		}));
 
-		// A retry-unsafe outcome is the only reason to skip the condition, and this SQLState 40001 failure carries no
-		// such outcome, so the condition is what decides it. The second attempt pins pre-existing behaviour rather than
-		// a goal of this release: the driver's metadata read consumes the flag it set, nothing republishes it, and the
-		// retry decision therefore sees an uninterrupted thread here as it did before the no-transaction gates existed.
-		assertEquals(1, conditions.get());
-		assertEquals(2, attempts.get());
-		assertEquals(2, result.getAttemptCount());
-		assertTrue(detections.get() > 0);
-		assertEquals(List.of(2), database.query("SELECT id FROM retried_work ORDER BY id").executeForList(Integer.class));
-		assertFalse(Thread.currentThread().isInterrupted());
+		assertEquals(0, conditions.get());
+		assertEquals(1, attempts.get());
+		assertEquals(0, detections.get());
+		assertTrue(Thread.currentThread().isInterrupted());
 	}
 
-	// A driver that reports cancellation the way NIO-channel drivers do: it interrupts the caller and throws, carrying
-	// no InterruptedException. Its metadata read consumes the pending flag and then fails, so failure-path dialect
-	// detection never caches a dialect and re-attempts on every later failure.
+	// The driver's metadata read would consume its pending interrupt; using the configured dialect must avoid it.
 	private static DataSource cancellationReportingDataSource(AtomicInteger detections, String sqlState) {
 		JDBCDataSource source = new JDBCDataSource();
 		source.setUrl("jdbc:hsqldb:mem:cancellation_reporting_" + UUID.randomUUID());
@@ -670,7 +659,7 @@ class TransactionInterruptionTests {
 									});
 						return value;
 					});
-			this.database = Database.withDataSource(wrapped).databaseType(DatabaseType.GENERIC).build();
+			this.database = Database.with(wrapped, DatabaseType.GENERIC).build();
 		}
 
 		private void run(RuntimeException primary, RuntimeException hookFailure) {

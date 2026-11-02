@@ -135,7 +135,7 @@ class SavepointCleanupCompletionTests {
 			source.setUrl("jdbc:hsqldb:mem:savepoint_completion_" + UUID.randomUUID());
 			source.setUser("sa");
 			source.setPassword("");
-			this.inspection = Database.withDataSource(source).databaseType(DatabaseType.GENERIC).build();
+			this.inspection = Database.with(source, DatabaseType.GENERIC).build();
 			this.inspection.query("CREATE TABLE work (id INT PRIMARY KEY)").execute();
 			DataSource wrapped = proxy(DataSource.class, (method, args) -> {
 				Object value = invoke(source, method, args);
@@ -162,7 +162,7 @@ class SavepointCleanupCompletionTests {
 					});
 				});
 			});
-			this.database = Database.withDataSource(wrapped).databaseType(DatabaseType.GENERIC).build();
+			this.database = Database.with(wrapped, DatabaseType.GENERIC).build();
 		}
 
 		private void run() throws Exception {

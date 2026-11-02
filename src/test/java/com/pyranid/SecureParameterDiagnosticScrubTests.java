@@ -353,7 +353,7 @@ public class SecureParameterDiagnosticScrubTests {
 				throw new IllegalStateException("boom containing sensitive text");
 			}
 		};
-		Database db = Database.withDataSource(createThrowingDataSource("driver failure text")).build();
+		Database db = Database.with(createThrowingDataSource("driver failure text"), DatabaseType.GENERIC).build();
 
 		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
 				db.query("INSERT INTO t (v) VALUES (:v)").bind("v", Parameters.secure(throwingValue)).execute());
@@ -378,8 +378,8 @@ public class SecureParameterDiagnosticScrubTests {
 	@Test
 	public void testDriverEchoedSecretScrubbedEndToEnd() {
 		String secret = "alice@secret.com";
-		Database db = Database.withDataSource(createThrowingDataSource(
-				format("ERROR: duplicate key value. Detail: Key (email)=(%s) already exists.", secret))).build();
+		Database db = Database.with(createThrowingDataSource(
+				format("ERROR: duplicate key value. Detail: Key (email)=(%s) already exists.", secret)), DatabaseType.GENERIC).build();
 
 		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
 				db.query("INSERT INTO account (email) VALUES (:email)")
@@ -401,8 +401,8 @@ public class SecureParameterDiagnosticScrubTests {
 				Parameters.secure(structSecret, "<driver-struct>"),
 				Parameters.sqlArrayOf("VARCHAR", List.of(
 						Parameters.secure(arraySecret, "<driver-array>")))));
-		Database db = Database.withDataSource(createThrowingDataSource(
-				format("driver rejected %s and %s", structSecret, arraySecret))).build();
+		Database db = Database.with(createThrowingDataSource(
+				format("driver rejected %s and %s", structSecret, arraySecret)), DatabaseType.GENERIC).build();
 
 		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
 				db.query("INSERT INTO t (payload) VALUES (:payload)").bind("payload", payload).execute());
@@ -419,8 +419,8 @@ public class SecureParameterDiagnosticScrubTests {
 	public void testWhitespaceContainingSecretScrubbedBeforeMessageBounding() {
 		// boundedDiagnosticMessage collapses whitespace runs; scrubbing must happen against the RAW message
 		String secret = "line1\n  line2secret";
-		Database db = Database.withDataSource(createThrowingDataSource(
-				format("rejected value: %s (constraint x)", secret))).build();
+		Database db = Database.with(createThrowingDataSource(
+				format("rejected value: %s (constraint x)", secret)), DatabaseType.GENERIC).build();
 
 		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
 				db.query("INSERT INTO t (v) VALUES (:v)").bind("v", Parameters.secure(secret)).execute());
@@ -435,7 +435,7 @@ public class SecureParameterDiagnosticScrubTests {
 		// Craft a message where the secret spans the 1024-char diagnostic truncation boundary
 		String secret = "SECRETSECRETSECRETSECRETSECRETSECRETSECRETSECRET";
 		String filler = "x".repeat(1000);
-		Database db = Database.withDataSource(createThrowingDataSource(filler + " " + secret + " tail")).build();
+		Database db = Database.with(createThrowingDataSource(filler + " " + secret + " tail"), DatabaseType.GENERIC).build();
 
 		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
 				db.query("INSERT INTO t (v) VALUES (:v)").bind("v", Parameters.secure(secret)).execute());
@@ -448,7 +448,7 @@ public class SecureParameterDiagnosticScrubTests {
 	public void testStatementLogCarriesScrubbedWrappedException() {
 		String secret = "log-visible-secret";
 		AtomicReference<StatementLog<?>> loggedStatementLog = new AtomicReference<>();
-		Database db = Database.withDataSource(createThrowingDataSource(format("driver rejected %s here", secret)))
+		Database db = Database.with(createThrowingDataSource(format("driver rejected %s here", secret)), DatabaseType.GENERIC)
 				.statementLogger(loggedStatementLog::set)
 				.build();
 
@@ -469,7 +469,7 @@ public class SecureParameterDiagnosticScrubTests {
 	@Test
 	public void testNoSecureParametersLeavesDriverMessageIntact() {
 		String driverMessage = "plain failure mentioning value-12345 with no secure params";
-		Database db = Database.withDataSource(createThrowingDataSource(driverMessage)).build();
+		Database db = Database.with(createThrowingDataSource(driverMessage), DatabaseType.GENERIC).build();
 
 		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
 				db.query("INSERT INTO t (v) VALUES (:v)").bind("v", "value-12345").execute());
@@ -483,7 +483,7 @@ public class SecureParameterDiagnosticScrubTests {
 		// ParameterRedactor governs Pyranid's parameter-list rendering only; driver-text scrubbing is
 		// triggered exclusively by explicit Parameters.secure(...) marks
 		String plainValue = "not-marked-secure-value";
-		Database db = Database.withDataSource(createThrowingDataSource(format("driver echoed %s", plainValue)))
+		Database db = Database.with(createThrowingDataSource(format("driver echoed %s", plainValue)), DatabaseType.GENERIC)
 				.parameterRedactor(ParameterRedactor.redactAll())
 				.build();
 
@@ -499,7 +499,7 @@ public class SecureParameterDiagnosticScrubTests {
 		// A1 third-sink regression: real (HSQLDB) failure with a secure param + redactAll - the secret
 		// must not appear anywhere in getMessage()/toString()
 		String secret = "regression-secret";
-		Database db = Database.withDataSource(createInMemoryDataSource("scrub_a1_third_sink"))
+		Database db = Database.with(createInMemoryDataSource("scrub_a1_third_sink"), DatabaseType.GENERIC)
 				.parameterRedactor(ParameterRedactor.redactAll())
 				.build();
 
@@ -515,8 +515,8 @@ public class SecureParameterDiagnosticScrubTests {
 	public void testSecureInListElementsScrubbed() {
 		String secret1 = "in-list-secret-1";
 		String secret2 = "in-list-secret-2";
-		Database db = Database.withDataSource(createThrowingDataSource(
-				format("bad values %s and %s", secret1, secret2))).build();
+		Database db = Database.with(createThrowingDataSource(
+				format("bad values %s and %s", secret1, secret2)), DatabaseType.GENERIC).build();
 
 		DatabaseException ex = Assertions.assertThrows(DatabaseException.class, () ->
 				db.query("SELECT * FROM t WHERE v IN (:vs)")
@@ -530,7 +530,7 @@ public class SecureParameterDiagnosticScrubTests {
 	@Test
 	public void testMappingDatabaseExceptionIsScrubbedAndRetainsMetadata() {
 		String secret = "mapping-secret-value";
-		Database db = Database.withDataSource(createInMemoryDataSource("mapping_exception_scrub")).build();
+		Database db = Database.with(createInMemoryDataSource("mapping_exception_scrub"), DatabaseType.GENERIC).build();
 		ResultSetMapper throwingMapper = new ResultSetMapper() {
 			@Override
 			public <T> Optional<T> map(@NonNull StatementContext<T> statementContext,

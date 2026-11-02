@@ -225,8 +225,7 @@ public class PostgresDriverForkTests {
 					throw new UnsupportedOperationException("This test should not touch the DataSource");
 				});
 
-		Database database = Database.withDataSource(dataSource)
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database database = Database.with(dataSource, DatabaseType.POSTGRESQL)
 				.build();
 
 		return StatementContext.<Long>with(Statement.of("postgres-vector-bind-test", "SELECT 1"), database)

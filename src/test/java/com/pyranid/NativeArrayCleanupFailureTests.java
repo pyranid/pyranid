@@ -222,7 +222,7 @@ class NativeArrayCleanupFailureTests {
 				throw new UnsupportedOperationException(method.getName());
 			});
 			this.readSql = duckDbFile == null ? "VALUES (1)" : "SELECT {'nested': [7]} AS value";
-			this.inspection = Database.withDataSource(source).databaseType(DatabaseType.GENERIC).build();
+			this.inspection = Database.with(source, DatabaseType.GENERIC).build();
 			this.inspection.query("CREATE TABLE work (id INT PRIMARY KEY)").execute();
 			DataSource wrapped = proxy(DataSource.class, (method, args) -> {
 				Object result = invoke(source, method, args);
@@ -257,7 +257,7 @@ class NativeArrayCleanupFailureTests {
 					});
 				});
 			});
-			this.database = Database.withDataSource(wrapped).databaseType(DatabaseType.DUCK_DB)
+			this.database = Database.with(wrapped, DatabaseType.DUCK_DB)
 					.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(cached).build()).build();
 		}
 

@@ -57,8 +57,8 @@ import static java.lang.String.format;
 public class MetricsCollectorTests {
 	@Test
 	public void defaultAndNullCollectorsAreDisabled() {
-		Database defaultDatabase = Database.withDataSource(createInMemoryDataSource("metrics_default")).build();
-		Database nullDatabase = Database.withDataSource(createInMemoryDataSource("metrics_null"))
+		Database defaultDatabase = Database.with(createInMemoryDataSource("metrics_default"), DatabaseType.GENERIC).build();
+		Database nullDatabase = Database.with(createInMemoryDataSource("metrics_null"), DatabaseType.GENERIC)
 				.metricsCollector(null)
 				.build();
 
@@ -83,7 +83,7 @@ public class MetricsCollectorTests {
 	@Test
 	public void inMemoryCollectorCountsStatementsAndTransactionOutcomes() {
 		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
-		Database database = Database.withDataSource(createInMemoryDataSource("metrics_snapshot"))
+		Database database = Database.with(createInMemoryDataSource("metrics_snapshot"), DatabaseType.GENERIC)
 				.metricsCollector(metricsCollector)
 				.build();
 
@@ -133,7 +133,7 @@ public class MetricsCollectorTests {
 	@Test
 	public void streamingTerminalOutcomesAreDeferredUntilCallbackCompletion() {
 		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
-		Database database = Database.withDataSource(createInMemoryDataSource("metrics_stream"))
+		Database database = Database.with(createInMemoryDataSource("metrics_stream"), DatabaseType.GENERIC)
 				.metricsCollector(metricsCollector)
 				.build();
 
@@ -175,7 +175,7 @@ public class MetricsCollectorTests {
 	@Test
 	public void openFailureCloseOutcomeDoesNotDoubleCountInMemoryOpenFailures() {
 		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
-		Database database = Database.withDataSource(createInMemoryDataSource("metrics_open_failure_counter")).build();
+		Database database = Database.with(createInMemoryDataSource("metrics_open_failure_counter"), DatabaseType.GENERIC).build();
 		StatementContext<?> statementContext = StatementContext.with(com.pyranid.Statement.of("test", "SELECT 1"), database).build();
 
 		metricsCollector.didFailToOpenStream(statementContext, DatabaseType.GENERIC, Duration.ZERO, new RuntimeException("open"));
@@ -376,7 +376,7 @@ public class MetricsCollectorTests {
 	public void iterationFailureStreamOutcomeIsRecordedWhenResultSetThrows() {
 		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
 		AtomicInteger nextCalls = new AtomicInteger();
-		Database database = Database.withDataSource(iterationFailingDataSource("metrics_iteration_failure", nextCalls))
+		Database database = Database.with(iterationFailingDataSource("metrics_iteration_failure", nextCalls), DatabaseType.GENERIC)
 				.metricsCollector(metricsCollector)
 				.build();
 
@@ -412,7 +412,7 @@ public class MetricsCollectorTests {
 				throw mapperFailure;
 			}
 		};
-		Database database = Database.withDataSource(createInMemoryDataSource("metrics_mapper_iteration_failure"))
+		Database database = Database.with(createInMemoryDataSource("metrics_mapper_iteration_failure"), DatabaseType.GENERIC)
 				.metricsCollector(metricsCollector)
 				.statementLogger(logRef::set)
 				.resultSetMapper(throwingMapper)
@@ -464,7 +464,7 @@ public class MetricsCollectorTests {
 				throw mapperFailure;
 			}
 		};
-		Database database = Database.withDataSource(createInMemoryDataSource("metrics_custom_mapper_iteration_failure"))
+		Database database = Database.with(createInMemoryDataSource("metrics_custom_mapper_iteration_failure"), DatabaseType.GENERIC)
 				.metricsCollector(metricsCollector)
 				.statementLogger(logRef::set)
 				.resultSetMapper(ResultSetMapper.withCustomColumnMappers(List.of(throwingMapper)).build())
@@ -516,7 +516,7 @@ public class MetricsCollectorTests {
 				throw mapperFailure;
 			}
 		};
-		Database database = Database.withDataSource(createInMemoryDataSource("metrics_custom_mapper_error_iteration_failure"))
+		Database database = Database.with(createInMemoryDataSource("metrics_custom_mapper_error_iteration_failure"), DatabaseType.GENERIC)
 				.metricsCollector(metricsCollector)
 				.statementLogger(logRef::set)
 				.resultSetMapper(ResultSetMapper.withCustomColumnMappers(List.of(throwingMapper))
@@ -564,7 +564,7 @@ public class MetricsCollectorTests {
 		logger.addHandler(throwingLogHandler);
 
 		try {
-			Database database = Database.withDataSource(createInMemoryDataSource("metrics_failure_containment"))
+			Database database = Database.with(createInMemoryDataSource("metrics_failure_containment"), DatabaseType.GENERIC)
 					.metricsCollector(throwingMetricsCollector())
 					.build();
 
@@ -591,9 +591,10 @@ public class MetricsCollectorTests {
 	}
 
 	@Test
-	public void databaseTypeWarmingFailureDoesNotFailSuccessfulStatement() {
+	public void statementMetricsDoNotReadDatabaseMetadata() {
+		AtomicInteger metadataReads = new AtomicInteger();
 		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
-		Database database = Database.withDataSource(metadataFailingDataSource("metrics_warm_type_statement"))
+		Database database = Database.with(metadataFailingDataSource("metrics_configured_type_statement", metadataReads), DatabaseType.GENERIC)
 				.metricsCollector(metricsCollector)
 				.build();
 
@@ -605,12 +606,14 @@ public class MetricsCollectorTests {
 		Assertions.assertEquals(Integer.valueOf(1), value);
 		Assertions.assertEquals(1L, snapshot.statementsExecuted());
 		Assertions.assertEquals(0L, snapshot.statementsFailed());
+		Assertions.assertEquals(0, metadataReads.get());
 	}
 
 	@Test
-	public void databaseTypeWarmingFailureDoesNotFailSuccessfulStream() {
+	public void streamMetricsDoNotReadDatabaseMetadata() {
+		AtomicInteger metadataReads = new AtomicInteger();
 		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
-		Database database = Database.withDataSource(metadataFailingDataSource("metrics_warm_type_stream"))
+		Database database = Database.with(metadataFailingDataSource("metrics_configured_type_stream", metadataReads), DatabaseType.GENERIC)
 				.metricsCollector(metricsCollector)
 				.build();
 
@@ -624,6 +627,7 @@ public class MetricsCollectorTests {
 		Assertions.assertEquals(1L, snapshot.streamsClosedNormally());
 		Assertions.assertEquals(1L, snapshot.statementsExecuted());
 		Assertions.assertEquals(0L, snapshot.statementsFailed());
+		Assertions.assertEquals(0, metadataReads.get());
 	}
 
 	@Test
@@ -631,7 +635,7 @@ public class MetricsCollectorTests {
 		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
 		AtomicInteger rollbacks = new AtomicInteger();
 		AtomicReference<TransactionResult> transactionResult = new AtomicReference<>();
-		Database database = Database.withDataSource(commitFailingDataSource("metrics_commit_failure", rollbacks))
+		Database database = Database.with(commitFailingDataSource("metrics_commit_failure", rollbacks), DatabaseType.GENERIC)
 				.metricsCollector(metricsCollector)
 				.build();
 
@@ -659,7 +663,7 @@ public class MetricsCollectorTests {
 	@Test
 	public void connectionReleaseFailuresAreCountedForStatementAndTransactionScopes() {
 		MetricsCollector statementMetricsCollector = MetricsCollector.inMemoryInstance();
-		Database statementDatabase = Database.withDataSource(closeFailingDataSource("metrics_statement_release_failure"))
+		Database statementDatabase = Database.with(closeFailingDataSource("metrics_statement_release_failure"), DatabaseType.GENERIC)
 				.metricsCollector(statementMetricsCollector)
 				.build();
 
@@ -667,7 +671,7 @@ public class MetricsCollectorTests {
 		Assertions.assertEquals(1L, snapshot(statementMetricsCollector).connectionReleaseFailuresStatementScope());
 
 		MetricsCollector transactionMetricsCollector = MetricsCollector.inMemoryInstance();
-		Database transactionDatabase = Database.withDataSource(closeFailingDataSource("metrics_transaction_release_failure"))
+		Database transactionDatabase = Database.with(closeFailingDataSource("metrics_transaction_release_failure"), DatabaseType.GENERIC)
 				.metricsCollector(transactionMetricsCollector)
 				.build();
 
@@ -679,8 +683,7 @@ public class MetricsCollectorTests {
 	@Test
 	public void statementFailureMetricsReceiveConfiguredDatabaseTypeSnapshot() {
 		RecordingMetricsCollector statementMetricsCollector = new RecordingMetricsCollector();
-		Database statementDatabase = Database.withDataSource(new ConnectionFailingDataSource())
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database statementDatabase = Database.with(new ConnectionFailingDataSource(), DatabaseType.POSTGRESQL)
 				.metricsCollector(statementMetricsCollector)
 				.build();
 
@@ -689,8 +692,7 @@ public class MetricsCollectorTests {
 		Assertions.assertEquals(DatabaseType.POSTGRESQL, statementMetricsCollector.statementFailureDatabaseType.get());
 
 		RecordingMetricsCollector streamMetricsCollector = new RecordingMetricsCollector();
-		Database streamDatabase = Database.withDataSource(new ConnectionFailingDataSource())
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database streamDatabase = Database.with(new ConnectionFailingDataSource(), DatabaseType.POSTGRESQL)
 				.metricsCollector(streamMetricsCollector)
 				.build();
 
@@ -704,7 +706,7 @@ public class MetricsCollectorTests {
 	@Test
 	public void runtimeConnectionAcquisitionFailuresAreCounted() {
 		MetricsCollector statementMetricsCollector = MetricsCollector.inMemoryInstance();
-		Database statementDatabase = Database.withDataSource(new RuntimeConnectionFailingDataSource())
+		Database statementDatabase = Database.with(new RuntimeConnectionFailingDataSource(), DatabaseType.GENERIC)
 				.metricsCollector(statementMetricsCollector)
 				.build();
 
@@ -714,7 +716,7 @@ public class MetricsCollectorTests {
 		Assertions.assertEquals(1L, statementSnapshot.statementsFailed());
 
 		MetricsCollector streamMetricsCollector = MetricsCollector.inMemoryInstance();
-		Database streamDatabase = Database.withDataSource(new RuntimeConnectionFailingDataSource())
+		Database streamDatabase = Database.with(new RuntimeConnectionFailingDataSource(), DatabaseType.GENERIC)
 				.metricsCollector(streamMetricsCollector)
 				.build();
 
@@ -726,7 +728,7 @@ public class MetricsCollectorTests {
 		Assertions.assertEquals(1L, streamSnapshot.statementsFailed());
 
 		MetricsCollector transactionMetricsCollector = MetricsCollector.inMemoryInstance();
-		Database transactionDatabase = Database.withDataSource(new RuntimeConnectionFailingDataSource())
+		Database transactionDatabase = Database.with(new RuntimeConnectionFailingDataSource(), DatabaseType.GENERIC)
 				.metricsCollector(transactionMetricsCollector)
 				.build();
 
@@ -742,7 +744,7 @@ public class MetricsCollectorTests {
 	@Test
 	public void savepointEventsAreCounted() {
 		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
-		Database database = Database.withDataSource(createInMemoryDataSource("metrics_savepoints"))
+		Database database = Database.with(createInMemoryDataSource("metrics_savepoints"), DatabaseType.GENERIC)
 				.metricsCollector(metricsCollector)
 				.build();
 
@@ -767,7 +769,7 @@ public class MetricsCollectorTests {
 	@Test
 	public void statementResultSeparatesReturnedAndAffectedRows() {
 		RecordingMetricsCollector metricsCollector = new RecordingMetricsCollector();
-		Database database = Database.withDataSource(createInMemoryDataSource("metrics_statement_result"))
+		Database database = Database.with(createInMemoryDataSource("metrics_statement_result"), DatabaseType.GENERIC)
 				.metricsCollector(metricsCollector)
 				.build();
 
@@ -787,8 +789,7 @@ public class MetricsCollectorTests {
 	@Test
 	public void transactionCallbacksReceiveDatabaseTypeSnapshotWithoutTransactionPublicAccessor() throws Exception {
 		RecordingMetricsCollector metricsCollector = new RecordingMetricsCollector();
-		Database database = Database.withDataSource(createInMemoryDataSource("metrics_database_type"))
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database database = Database.with(createInMemoryDataSource("metrics_database_type"), DatabaseType.POSTGRESQL)
 				.metricsCollector(metricsCollector)
 				.build();
 
@@ -800,16 +801,21 @@ public class MetricsCollectorTests {
 	}
 
 	@Test
-	public void automaticDatabaseTypeDetectionUpdatesPhysicalTransactionMetrics() {
+	public void configuredDatabaseTypeLabelsTransactionMetricsBeforeStatementExecution() {
+		AtomicInteger metadataReads = new AtomicInteger();
 		RecordingMetricsCollector metricsCollector = new RecordingMetricsCollector();
-		Database database = Database.withDataSource(databaseTypeOverridingDataSource(
-				"metrics_auto_transaction_type", "PostgreSQL"))
+		Database database = Database.with(metadataFailingDataSource("metrics_configured_transaction_type", metadataReads), DatabaseType.POSTGRESQL)
 				.metricsCollector(metricsCollector)
 				.build();
 
-		database.transaction(() -> database.query("SELECT 1 FROM (VALUES (0)) AS t(x)").fetchObject(Integer.class));
+		database.transaction(() -> {
+			Assertions.assertEquals(DatabaseType.POSTGRESQL, metricsCollector.transactionClosureDatabaseType.get());
+			Assertions.assertNull(metricsCollector.transactionDatabaseType.get());
+			database.query("SELECT 1 FROM (VALUES (0)) AS t(x)").fetchObject(Integer.class);
+		});
 
 		Assertions.assertEquals(DatabaseType.POSTGRESQL, metricsCollector.transactionDatabaseType.get());
+		Assertions.assertEquals(0, metadataReads.get());
 	}
 
 	private static MetricsCollector.Snapshot snapshot(@NonNull MetricsCollector metricsCollector) {
@@ -877,31 +883,14 @@ public class MetricsCollectorTests {
 	}
 
 	@NonNull
-	private static DataSource metadataFailingDataSource(@NonNull String databaseName) {
+	private static DataSource metadataFailingDataSource(@NonNull String databaseName, AtomicInteger metadataReads) {
 		return wrappingDataSource(databaseName, connection -> proxyConnection(connection, (delegate, method, args) -> {
-			if ("getMetaData".equals(method.getName()))
-				throw new SQLException("metadata unavailable");
+			if ("getMetaData".equals(method.getName())) {
+				metadataReads.incrementAndGet();
+				throw new AssertionError("Metrics must use the configured database type without reading JDBC metadata");
+			}
 
 			return invoke(delegate, method, args);
-		}));
-	}
-
-	@NonNull
-	private static DataSource databaseTypeOverridingDataSource(@NonNull String databaseName,
-																									 @NonNull String databaseProductName) {
-		return wrappingDataSource(databaseName, connection -> proxyConnection(connection, (delegate, method, args) -> {
-			Object result = invoke(delegate, method, args);
-
-			if ("getMetaData".equals(method.getName()) && result instanceof java.sql.DatabaseMetaData databaseMetaData)
-				return Proxy.newProxyInstance(java.sql.DatabaseMetaData.class.getClassLoader(),
-						new Class<?>[]{java.sql.DatabaseMetaData.class}, (proxy, metadataMethod, metadataArgs) -> {
-							if ("getDatabaseProductName".equals(metadataMethod.getName()))
-								return databaseProductName;
-
-							return invoke(databaseMetaData, metadataMethod, metadataArgs);
-						});
-
-			return result;
 		}));
 	}
 
@@ -1211,6 +1200,7 @@ public class MetricsCollectorTests {
 	private static final class RecordingMetricsCollector implements MetricsCollector {
 		private final List<StatementResult> results;
 		private final AtomicReference<DatabaseType> transactionDatabaseType;
+		private final AtomicReference<DatabaseType> transactionClosureDatabaseType;
 		private final AtomicReference<DatabaseType> statementConnectionFailureDatabaseType;
 		private final AtomicReference<DatabaseType> statementFailureDatabaseType;
 		private final AtomicReference<DatabaseType> streamOpenFailureDatabaseType;
@@ -1218,6 +1208,7 @@ public class MetricsCollectorTests {
 		private RecordingMetricsCollector() {
 			this.results = new ArrayList<>();
 			this.transactionDatabaseType = new AtomicReference<>();
+			this.transactionClosureDatabaseType = new AtomicReference<>();
 			this.statementConnectionFailureDatabaseType = new AtomicReference<>();
 			this.statementFailureDatabaseType = new AtomicReference<>();
 			this.streamOpenFailureDatabaseType = new AtomicReference<>();
@@ -1252,6 +1243,12 @@ public class MetricsCollectorTests {
 																		@NonNull Duration openDuration,
 																		@NonNull Throwable throwable) {
 			this.streamOpenFailureDatabaseType.set(databaseType);
+		}
+
+		@Override
+		public void didEnterTransactionClosure(@NonNull Transaction transaction,
+				@NonNull TransactionIsolation isolation, @NonNull DatabaseType databaseType) {
+			this.transactionClosureDatabaseType.set(databaseType);
 		}
 
 		@Override

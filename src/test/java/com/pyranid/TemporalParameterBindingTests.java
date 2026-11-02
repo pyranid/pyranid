@@ -353,8 +353,7 @@ public class TemporalParameterBindingTests {
 		requireNonNull(capture);
 		requireNonNull(zone);
 
-		return Database.withDataSource(dataSource(capture))
-				.databaseType(DatabaseType.GENERIC)
+		return Database.with(dataSource(capture), DatabaseType.GENERIC)
 				.timeZone(zone)
 				.ambiguousTimestampBindingStrategy(ambiguousTimestampBindingStrategy)
 				.build();

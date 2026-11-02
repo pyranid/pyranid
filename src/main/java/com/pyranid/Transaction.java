@@ -34,8 +34,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
-import java.util.function.Function;
-import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import static java.lang.String.format;
@@ -73,9 +71,7 @@ public final class Transaction {
 	@NonNull
 	private final MetricsCollectorDispatcher metricsCollectorDispatcher;
 	@NonNull
-	private volatile DatabaseType databaseType;
-	@NonNull
-	private final Function<@NonNull Connection, @NonNull DatabaseType> databaseTypeResolver;
+	private final DatabaseType databaseType;
 	@NonNull
 	private final List<@NonNull Consumer<TransactionResult>> postTransactionOperations;
 	@NonNull
@@ -122,19 +118,10 @@ public final class Transaction {
 								@NonNull TransactionOptions transactionOptions,
 								@NonNull MetricsCollectorDispatcher metricsCollectorDispatcher,
 								@NonNull DatabaseType databaseType) {
-		this(dataSource, transactionOptions, metricsCollectorDispatcher, databaseType, connection -> databaseType);
-	}
-
-	Transaction(@NonNull DataSource dataSource,
-								@NonNull TransactionOptions transactionOptions,
-								@NonNull MetricsCollectorDispatcher metricsCollectorDispatcher,
-								@NonNull DatabaseType databaseType,
-								@NonNull Function<@NonNull Connection, @NonNull DatabaseType> databaseTypeResolver) {
 		requireNonNull(dataSource);
 		requireNonNull(transactionOptions);
 		requireNonNull(metricsCollectorDispatcher);
 		requireNonNull(databaseType);
-		requireNonNull(databaseTypeResolver);
 
 		this.id = generateId();
 		this.dataSource = dataSource;
@@ -142,7 +129,6 @@ public final class Transaction {
 		this.transactionIsolation = transactionOptions.getIsolation();
 		this.metricsCollectorDispatcher = metricsCollectorDispatcher;
 		this.databaseType = databaseType;
-		this.databaseTypeResolver = databaseTypeResolver;
 		this.connection = null;
 		this.rollbackOnly = new AtomicBoolean(false);
 		this.lifecycleLock = new ReentrantLock();
@@ -642,7 +628,6 @@ public final class Transaction {
 		}
 
 		this.connectionAcquiredAtNanos = nanoTime();
-		resolveDatabaseType(requireNonNull(this.connection));
 		getMetricsCollectorDispatcher().didAcquireTransactionConnection(this, getDatabaseType(), Duration.ofNanos(this.connectionAcquiredAtNanos - startTime));
 
 		// Keep track of the initial setting for autocommit since it might need to get changed from "true" to "false" for
@@ -1090,34 +1075,12 @@ public final class Transaction {
 		}
 	}
 
-	private void resolveDatabaseType(@NonNull Connection connection) {
-		requireNonNull(connection);
-
-		if (this.databaseType != DatabaseType.GENERIC)
-			return;
-
-		try {
-			this.databaseType = requireNonNull(this.databaseTypeResolver.apply(connection));
-		} catch (Throwable t) {
-			if (JdbcFallbacks.isTerminal(t)) {
-				if (t instanceof Error error)
-					throw error;
-				if (t instanceof RuntimeException runtimeException)
-					throw runtimeException;
-				throw databaseException("Unable to determine database type from transaction connection", t);
-			}
-			LOGGER.log(Level.FINE, "Unable to determine database type from transaction connection", t);
-		}
-	}
-
 	@NonNull
 	private DatabaseException databaseException(@NonNull String message,
 																		@Nullable Throwable cause) {
 		requireNonNull(message);
 
-		DatabaseDialect databaseDialect = getDatabaseType() == DatabaseType.GENERIC
-				? DatabaseDialect.forExceptionCause(cause)
-				: getDatabaseType().dialect();
+		DatabaseDialect databaseDialect = getDatabaseType().dialect();
 		// Driver metadata is diagnostic: a broken accessor must not replace interruption or stop cleanup.
 		return cause == null ? new DatabaseException(message, null, databaseDialect)
 				: DatabaseException.wrapSafely(message, cause, databaseDialect);

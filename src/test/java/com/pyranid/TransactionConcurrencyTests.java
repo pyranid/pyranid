@@ -47,8 +47,8 @@ import static java.util.Objects.requireNonNull;
 public class TransactionConcurrencyTests {
 	@Test
 	public void testImplicitTransactionParticipationRejectsDifferentDataSource() {
-		Database databaseA = Database.withDataSource(createInMemoryDataSource("txn_owner_a")).build();
-		Database databaseB = Database.withDataSource(createInMemoryDataSource("txn_owner_b")).build();
+		Database databaseA = Database.with(createInMemoryDataSource("txn_owner_a"), DatabaseType.GENERIC).build();
+		Database databaseB = Database.with(createInMemoryDataSource("txn_owner_b"), DatabaseType.GENERIC).build();
 
 		databaseA.query("CREATE TABLE t (id INT)").execute();
 		databaseB.query("CREATE TABLE t (id INT)").execute();
@@ -70,8 +70,8 @@ public class TransactionConcurrencyTests {
 	@Test
 	public void testImplicitTransactionParticipationAllowsSameDataSourceWrapper() {
 		DataSource dataSource = createInMemoryDataSource("txn_owner_same_datasource");
-		Database databaseA = Database.withDataSource(dataSource).build();
-		Database databaseB = Database.withDataSource(dataSource).build();
+		Database databaseA = Database.with(dataSource, DatabaseType.GENERIC).build();
+		Database databaseB = Database.with(dataSource, DatabaseType.GENERIC).build();
 
 		databaseA.query("CREATE TABLE t (id INT)").execute();
 
@@ -88,8 +88,8 @@ public class TransactionConcurrencyTests {
 
 	@Test
 	public void testParticipateRejectsDifferentDataSourceTransaction() {
-		Database databaseA = Database.withDataSource(createInMemoryDataSource("txn_participate_owner_a")).build();
-		Database databaseB = Database.withDataSource(createInMemoryDataSource("txn_participate_owner_b")).build();
+		Database databaseA = Database.with(createInMemoryDataSource("txn_participate_owner_a"), DatabaseType.GENERIC).build();
+		Database databaseB = Database.with(createInMemoryDataSource("txn_participate_owner_b"), DatabaseType.GENERIC).build();
 
 		databaseA.query("CREATE TABLE t (id INT)").execute();
 		databaseB.query("CREATE TABLE t (id INT)").execute();
@@ -114,7 +114,7 @@ public class TransactionConcurrencyTests {
 		String databaseName = "txn_concurrency";
 		ConcurrencyGuard guard = new ConcurrencyGuard();
 		DataSource dataSource = new GuardedDataSource(createInMemoryDataSource(databaseName), guard);
-		Database database = Database.withDataSource(dataSource).build();
+		Database database = Database.with(dataSource, DatabaseType.GENERIC).build();
 
 				database.query("CREATE TABLE t (id INT)").execute();
 

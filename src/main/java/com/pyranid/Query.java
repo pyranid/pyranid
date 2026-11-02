@@ -35,7 +35,7 @@ import java.util.stream.Stream;
  * Parameter-looking text inside SQL string literals, quoted identifiers, comments, PostgreSQL dollar-quoted strings,
  * and SQL Server-style bracket-quoted identifiers is ignored. For DuckDB, brackets are parsed as list/subscript syntax,
  * so list literals can contain named parameters. PostgreSQL JSONB/hstore {@code ?}, {@code ?|}, and {@code ?&}
- * operators are supported and are escaped automatically for pgjdbc when the {@link Database} is configured or detected
+ * operators are supported and are escaped automatically for pgjdbc when the {@link Database} is configured
  * as PostgreSQL.
  * <p>
  * Example usage:

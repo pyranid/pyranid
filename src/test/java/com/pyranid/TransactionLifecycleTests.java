@@ -46,7 +46,7 @@ import static java.util.Objects.requireNonNull;
 public class TransactionLifecycleTests {
 	@Test
 	public void testNonTransactionalOperationsDoNotCreateTransactionStack() throws Exception {
-		Database db = Database.withDataSource(createInMemoryDataSource("transaction_threadlocal_absent")).build();
+		Database db = Database.with(createInMemoryDataSource("transaction_threadlocal_absent"), DatabaseType.GENERIC).build();
 		ThreadLocal<?> transactionStackHolder = transactionStackHolder();
 
 		transactionStackHolder.remove();
@@ -66,7 +66,7 @@ public class TransactionLifecycleTests {
 
 	@Test
 	public void testCompletedTransactionRejectsMutatingAndJdbcTouchingOperations() {
-		Database db = Database.withDataSource(createInMemoryDataSource("transaction_terminal_state")).build();
+		Database db = Database.with(createInMemoryDataSource("transaction_terminal_state"), DatabaseType.GENERIC).build();
 		AtomicReference<Transaction> transactionReference = new AtomicReference<>();
 		AtomicReference<Savepoint> savepointReference = new AtomicReference<>();
 		Consumer<TransactionResult> postTransactionOperation = result -> {};
@@ -96,8 +96,8 @@ public class TransactionLifecycleTests {
 	@Test
 	public void testWaitingParticipantCannotAcquireFreshConnectionAfterTransactionCompletes() throws Exception {
 		DataSource dataSource = createInMemoryDataSource("transaction_waiting_participant_completion");
-		Database db = Database.withDataSource(dataSource).build();
-		Transaction transaction = new Transaction(dataSource, TransactionOptions.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
+		Database db = Database.with(dataSource, DatabaseType.GENERIC).build();
+		Transaction transaction = new Transaction(dataSource, TransactionOptions.DEFAULT, db.getMetricsCollectorDispatcher(), db.getDatabaseType());
 		AtomicBoolean acquiredConnection = new AtomicBoolean(false);
 		AtomicReference<Throwable> failure = new AtomicReference<>();
 
@@ -131,8 +131,8 @@ public class TransactionLifecycleTests {
 	@Test
 	public void testParticipateRejectsCompletedTransactionBeforeRunningOperation() {
 		DataSource dataSource = createInMemoryDataSource("participate_completed_transaction");
-		Database db = Database.withDataSource(dataSource).build();
-		Transaction transaction = new Transaction(dataSource, TransactionOptions.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
+		Database db = Database.with(dataSource, DatabaseType.GENERIC).build();
+		Transaction transaction = new Transaction(dataSource, TransactionOptions.DEFAULT, db.getMetricsCollectorDispatcher(), db.getDatabaseType());
 		AtomicBoolean operationRan = new AtomicBoolean(false);
 
 		transaction.markCompleted();
@@ -147,8 +147,8 @@ public class TransactionLifecycleTests {
 	@Test
 	public void testParticipatePreservesOriginalExceptionWhenTransactionCompletesBeforeRollbackOnlyMark() {
 		DataSource dataSource = createInMemoryDataSource("participate_completion_race");
-		Database db = Database.withDataSource(dataSource).build();
-		Transaction transaction = new Transaction(dataSource, TransactionOptions.DEFAULT, db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
+		Database db = Database.with(dataSource, DatabaseType.GENERIC).build();
+		Transaction transaction = new Transaction(dataSource, TransactionOptions.DEFAULT, db.getMetricsCollectorDispatcher(), db.getDatabaseType());
 		RuntimeException boom = new RuntimeException("participant boom");
 
 		RuntimeException exception = Assertions.assertThrows(RuntimeException.class, () ->
@@ -163,7 +163,7 @@ public class TransactionLifecycleTests {
 
 	@Test
 	public void testNestedTransactionsRemainIndependent() {
-		Database db = Database.withDataSource(createInMemoryDataSource("nested_transactions_independent")).build();
+		Database db = Database.with(createInMemoryDataSource("nested_transactions_independent"), DatabaseType.GENERIC).build();
 
 		db.query("CREATE TABLE outer_events (id INT)").execute();
 		db.query("CREATE TABLE inner_events (id INT)").execute();
@@ -185,7 +185,7 @@ public class TransactionLifecycleTests {
 
 	@Test
 	public void testWithSavepointSuccessCommitsSavepointWork() {
-		Database db = Database.withDataSource(createInMemoryDataSource("savepoint_success")).build();
+		Database db = Database.with(createInMemoryDataSource("savepoint_success"), DatabaseType.GENERIC).build();
 
 		db.query("CREATE TABLE events (id INT)").execute();
 
@@ -201,7 +201,7 @@ public class TransactionLifecycleTests {
 
 	@Test
 	public void testWithSavepointRuntimeExceptionRollsBackToSavepoint() {
-		Database db = Database.withDataSource(createInMemoryDataSource("savepoint_runtime_rollback")).build();
+		Database db = Database.with(createInMemoryDataSource("savepoint_runtime_rollback"), DatabaseType.GENERIC).build();
 		RuntimeException boom = new RuntimeException("boom");
 
 		db.query("CREATE TABLE events (id INT)").execute();
@@ -224,7 +224,7 @@ public class TransactionLifecycleTests {
 
 	@Test
 	public void testWithSavepointErrorPropagatesAndRollsBackToSavepoint() {
-		Database db = Database.withDataSource(createInMemoryDataSource("savepoint_error_rollback")).build();
+		Database db = Database.with(createInMemoryDataSource("savepoint_error_rollback"), DatabaseType.GENERIC).build();
 		AssertionError boom = new AssertionError("boom");
 
 		db.query("CREATE TABLE events (id INT)").execute();
@@ -246,7 +246,7 @@ public class TransactionLifecycleTests {
 
 	@Test
 	public void testWithSavepointCheckedExceptionIsWrappedAndRollsBack() {
-		Database db = Database.withDataSource(createInMemoryDataSource("savepoint_checked_rollback")).build();
+		Database db = Database.with(createInMemoryDataSource("savepoint_checked_rollback"), DatabaseType.GENERIC).build();
 		Exception boom = new Exception("boom");
 
 		db.query("CREATE TABLE events (id INT)").execute();
@@ -268,7 +268,7 @@ public class TransactionLifecycleTests {
 
 	@Test
 	public void testNestedWithSavepointInnerFailsOuterSucceeds() {
-		Database db = Database.withDataSource(createInMemoryDataSource("savepoint_inner_fails")).build();
+		Database db = Database.with(createInMemoryDataSource("savepoint_inner_fails"), DatabaseType.GENERIC).build();
 
 		db.query("CREATE TABLE events (id INT)").execute();
 
@@ -292,7 +292,7 @@ public class TransactionLifecycleTests {
 
 	@Test
 	public void testNestedWithSavepointInnerSucceedsOuterFails() {
-		Database db = Database.withDataSource(createInMemoryDataSource("savepoint_outer_fails")).build();
+		Database db = Database.with(createInMemoryDataSource("savepoint_outer_fails"), DatabaseType.GENERIC).build();
 
 		db.query("CREATE TABLE events (id INT)").execute();
 
@@ -313,8 +313,8 @@ public class TransactionLifecycleTests {
 
 	@Test
 	public void testWithSavepointSwallowsUnsupportedReleaseOnSuccess() {
-		Database db = Database.withDataSource(new ReleaseSavepointThrowingDataSource(
-				createInMemoryDataSource("savepoint_release_unsupported"), new SQLFeatureNotSupportedException("release unsupported")))
+		Database db = Database.with(new ReleaseSavepointThrowingDataSource(
+				createInMemoryDataSource("savepoint_release_unsupported"), new SQLFeatureNotSupportedException("release unsupported")), DatabaseType.GENERIC)
 				.build();
 
 		db.query("CREATE TABLE events (id INT)").execute();
@@ -329,8 +329,8 @@ public class TransactionLifecycleTests {
 
 	@Test
 	public void testWithSavepointThrowsReleaseFailureOnSuccess() {
-		Database db = Database.withDataSource(new ReleaseSavepointThrowingDataSource(
-				createInMemoryDataSource("savepoint_release_failure"), new SQLException("release failed")))
+		Database db = Database.with(new ReleaseSavepointThrowingDataSource(
+				createInMemoryDataSource("savepoint_release_failure"), new SQLException("release failed")), DatabaseType.GENERIC)
 				.build();
 
 		db.query("CREATE TABLE events (id INT)").execute();
@@ -345,8 +345,8 @@ public class TransactionLifecycleTests {
 
 	@Test
 	public void testWithSavepointSuppressesRollbackFailure() {
-		Database db = Database.withDataSource(new RollbackSavepointThrowingDataSource(
-				createInMemoryDataSource("savepoint_rollback_failure"), new SQLException("rollback failed")))
+		Database db = Database.with(new RollbackSavepointThrowingDataSource(
+				createInMemoryDataSource("savepoint_rollback_failure"), new SQLException("rollback failed")), DatabaseType.GENERIC)
 				.build();
 		RuntimeException boom = new RuntimeException("boom");
 
@@ -366,8 +366,8 @@ public class TransactionLifecycleTests {
 
 	@Test
 	public void testWithSavepointRollbackFailureMarksOuterTransactionRollbackOnly() {
-		Database db = Database.withDataSource(new RollbackSavepointThrowingDataSource(
-				createInMemoryDataSource("savepoint_rollback_failure_marks_outer"), new SQLException("rollback failed")))
+		Database db = Database.with(new RollbackSavepointThrowingDataSource(
+				createInMemoryDataSource("savepoint_rollback_failure_marks_outer"), new SQLException("rollback failed")), DatabaseType.GENERIC)
 				.build();
 		db.query("CREATE TABLE events (id INT)").execute();
 
@@ -389,9 +389,9 @@ public class TransactionLifecycleTests {
 	@Test
 	public void testCreateSavepointWaitCanBeInterrupted() throws Exception {
 		DataSource dataSource = createInMemoryDataSource("savepoint_lock_interrupt");
-		Database db = Database.withDataSource(dataSource).build();
+		Database db = Database.with(dataSource, DatabaseType.GENERIC).build();
 		Transaction transaction = new Transaction(dataSource, TransactionOptions.DEFAULT,
-				db.getMetricsCollectorDispatcher(), db.peekDatabaseType());
+				db.getMetricsCollectorDispatcher(), db.getDatabaseType());
 		AtomicReference<Throwable> failure = new AtomicReference<>();
 		AtomicBoolean interrupted = new AtomicBoolean(false);
 
@@ -423,8 +423,8 @@ public class TransactionLifecycleTests {
 
 	@Test
 	public void testWithSavepointSuppressesReleaseFailureAfterRollback() {
-		Database db = Database.withDataSource(new ReleaseSavepointThrowingDataSource(
-				createInMemoryDataSource("savepoint_release_failure_after_rollback"), new SQLException("release failed")))
+		Database db = Database.with(new ReleaseSavepointThrowingDataSource(
+				createInMemoryDataSource("savepoint_release_failure_after_rollback"), new SQLException("release failed")), DatabaseType.GENERIC)
 				.build();
 		RuntimeException boom = new RuntimeException("boom");
 

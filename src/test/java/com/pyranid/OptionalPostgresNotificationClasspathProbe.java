@@ -39,8 +39,7 @@ public final class OptionalPostgresNotificationClasspathProbe {
 		assertDriverApiIsAbsent("com.yugabyte.PGConnection");
 
 		List<String> boundValues = new ArrayList<>();
-		Database database = Database.withDataSource(dataSource(boundValues))
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database database = Database.with(dataSource(boundValues), DatabaseType.POSTGRESQL)
 				.build();
 
 		if (database.isNotificationListeningSupported())

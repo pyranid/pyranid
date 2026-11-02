@@ -24,6 +24,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -42,6 +43,7 @@ public class TemporalResultSetMappingTests {
 	public record OffsetRow(OffsetDateTime value) {}
 	public record TimestampRow(Timestamp value) {}
 	public record SqlDateRow(java.sql.Date value) {}
+	public record LocalDateRow(LocalDate value) {}
 	public record DateRow(Date value) {}
 	public record TimeZoneRow(TimeZone value) {}
 
@@ -61,6 +63,12 @@ public class TemporalResultSetMappingTests {
 		private java.sql.Date value;
 		public java.sql.Date getValue() { return this.value; }
 		public void setValue(java.sql.Date value) { this.value = value; }
+	}
+
+	public static class LocalDateBean {
+		private LocalDate value;
+		public LocalDate getValue() { return this.value; }
+		public void setValue(LocalDate value) { this.value = value; }
 	}
 
 	public static class TimeZoneBean {
@@ -149,6 +157,21 @@ public class TemporalResultSetMappingTests {
 	}
 
 	@Test
+	public void zonedTimestampsUseConfiguredDateForLocalDateAcrossRowShapes() {
+		OffsetDateTime zoned = OffsetDateTime.parse("2020-01-02T03:04:05.123456789+05:45");
+		LocalDate expected = LocalDate.of(2020, 1, 1);
+		for (boolean planCachingEnabled : new boolean[]{true, false}) {
+			Database database = database("zoned_local_date", planCachingEnabled);
+			Assertions.assertEquals(expected, database.query(ZONED_TIMESTAMP_SQL).bind("value", zoned)
+					.fetchObject(LocalDate.class).orElseThrow());
+			Assertions.assertEquals(expected, database.query(ZONED_TIMESTAMP_SQL).bind("value", zoned)
+					.fetchObject(LocalDateRow.class).orElseThrow().value());
+			Assertions.assertEquals(expected, database.query(ZONED_TIMESTAMP_SQL).bind("value", zoned)
+					.fetchObject(LocalDateBean.class).orElseThrow().getValue());
+		}
+	}
+
+	@Test
 	public void instantConversionKeepsJdbcDateSubtypes() {
 		Database database = database("instant_subtypes", true);
 		DefaultResultSetMapper mapper = (DefaultResultSetMapper) database.getResultSetMapper();
@@ -212,7 +235,7 @@ public class TemporalResultSetMappingTests {
 		dataSource.setUrl("jdbc:hsqldb:mem:temporal_mapping_" + name + "_" + planCachingEnabled);
 		dataSource.setUser("sa");
 		dataSource.setPassword("");
-		return Database.withDataSource(dataSource)
+		return Database.with(dataSource, DatabaseType.GENERIC)
 				.timeZone(DATABASE_ZONE)
 				.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(planCachingEnabled).build())
 				.build();

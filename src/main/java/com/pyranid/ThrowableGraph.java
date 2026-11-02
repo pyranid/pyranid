@@ -46,8 +46,25 @@ final class ThrowableGraph {
 		return inspect(failure, evidence, unreadableEvidence, current -> true, true);
 	}
 
+	/** Retains accessor failures while pruning only the caller's explicitly excluded branches. */
+	static int inspectRetainingFailures(Throwable failure, ToIntFunction<Throwable> evidence, int unreadableEvidence,
+			Predicate<Throwable> descend) {
+		return inspect(failure, evidence, unreadableEvidence, descend, true);
+	}
+
+	/** Operation guards can retain interruption observed between separate foreign diagnostic accessors. */
+	static int inspectRetainingFailures(Throwable failure, ToIntFunction<Throwable> evidence, int unreadableEvidence,
+			Predicate<Throwable> descend, int interruptionEvidence) {
+		return inspect(failure, evidence, unreadableEvidence, descend, true, interruptionEvidence);
+	}
+
 	private static int inspect(Throwable failure, ToIntFunction<Throwable> evidence, int unreadableEvidence,
 			Predicate<Throwable> descend, boolean retainFailures) {
+		return inspect(failure, evidence, unreadableEvidence, descend, retainFailures, 0);
+	}
+
+	private static int inspect(Throwable failure, ToIntFunction<Throwable> evidence, int unreadableEvidence,
+			Predicate<Throwable> descend, boolean retainFailures, int interruptionEvidence) {
 		if (failure == null)
 			return 0;
 		int result = 0;
@@ -59,11 +76,16 @@ final class ThrowableGraph {
 			Throwable current = pending.removeLast();
 			if (!visited.add(current))
 				continue;
+			if (interruptionEvidence != 0 && Thread.currentThread().isInterrupted())
+				result |= interruptionEvidence;
 			try {
 				result |= evidence.applyAsInt(current);
 			} catch (Throwable inspectionFailure) {
 				result |= unreadableEvidence;
 				if (retainFailures) inspectionFailures = collect(inspectionFailures, inspectionFailure);
+			} finally {
+				if (interruptionEvidence != 0 && Thread.currentThread().isInterrupted())
+					result |= interruptionEvidence;
 			}
 			try {
 				if (!descend.test(current))
@@ -72,6 +94,9 @@ final class ThrowableGraph {
 				result |= unreadableEvidence;
 				if (retainFailures) inspectionFailures = collect(inspectionFailures, inspectionFailure);
 				continue;
+			} finally {
+				if (interruptionEvidence != 0 && Thread.currentThread().isInterrupted())
+					result |= interruptionEvidence;
 			}
 			try {
 				Throwable cause = current.getCause();
@@ -80,6 +105,9 @@ final class ThrowableGraph {
 			} catch (Throwable inspectionFailure) {
 				result |= unreadableEvidence;
 				if (retainFailures) inspectionFailures = collect(inspectionFailures, inspectionFailure);
+			} finally {
+				if (interruptionEvidence != 0 && Thread.currentThread().isInterrupted())
+					result |= interruptionEvidence;
 			}
 			// Inspect each edge independently: an unreadable cause must not hide suppressed interrupt evidence.
 			Collections.addAll(pending, current.getSuppressed());
@@ -91,6 +119,9 @@ final class ThrowableGraph {
 				} catch (Throwable inspectionFailure) {
 					result |= unreadableEvidence;
 					if (retainFailures) inspectionFailures = collect(inspectionFailures, inspectionFailure);
+				} finally {
+					if (interruptionEvidence != 0 && Thread.currentThread().isInterrupted())
+						result |= interruptionEvidence;
 				}
 			}
 		}

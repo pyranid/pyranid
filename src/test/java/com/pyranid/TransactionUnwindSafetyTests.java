@@ -159,7 +159,7 @@ class TransactionUnwindSafetyTests {
 									});
 						return value;
 					});
-			this.database = Database.withDataSource(wrapped).databaseType(DatabaseType.GENERIC).build();
+			this.database = Database.with(wrapped, DatabaseType.GENERIC).build();
 		}
 
 		private void fail(RuntimeException primary) {

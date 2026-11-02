@@ -182,7 +182,7 @@ class CleanupIdentityTests {
 		});
 		DataSource source = proxy(DataSource.class, (method, args) -> method.getName().equals("getConnection")
 				? connection[0] : zero(method.getReturnType()));
-		Database database = Database.withDataSource(source).databaseType(DatabaseType.DUCK_DB).build();
+		Database database = Database.with(source, DatabaseType.DUCK_DB).build();
 
 		assertEquals(Optional.of(7), database.query("SELECT 7 AS value WHERE :embedding IS NOT NULL")
 				.bind("embedding", Parameters.vectorOfDoubles(new double[]{0.25, 0.5}))
@@ -228,7 +228,7 @@ class CleanupIdentityTests {
 		});
 		DataSource source = proxy(DataSource.class, (method, args) -> method.getName().equals("getConnection")
 				? connection[0] : zero(method.getReturnType()));
-		Database database = Database.withDataSource(source).databaseType(DatabaseType.DUCK_DB).build();
+		Database database = Database.with(source, DatabaseType.DUCK_DB).build();
 
 		RuntimeException thrown = assertThrows(RuntimeException.class,
 				() -> database.query("SELECT 7 AS value WHERE :embedding IS NOT NULL")
@@ -299,7 +299,7 @@ class CleanupIdentityTests {
 			});
 			DataSource source = proxy(DataSource.class, (method, args) -> method.getName().equals("getConnection")
 					? connection[0] : zero(method.getReturnType()));
-			this.database = Database.withDataSource(source).databaseType(DatabaseType.GENERIC)
+			this.database = Database.with(source, DatabaseType.GENERIC)
 					.statementLogger(log -> { if (this.logFailure != null) throw this.logFailure; }).build();
 		}
 

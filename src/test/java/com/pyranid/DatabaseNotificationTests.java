@@ -249,8 +249,7 @@ public class DatabaseNotificationTests {
 	public void unsupportedGenericOperationsDoNotCheckoutAndSessionFailureIsMeasured() {
 		ConnectionHarness harness = new ConnectionHarness(true);
 		MetricsCollector metricsCollector = MetricsCollector.inMemoryInstance();
-		Database database = Database.withDataSource(harness.dataSource())
-				.databaseType(DatabaseType.GENERIC)
+		Database database = Database.with(harness.dataSource(), DatabaseType.GENERIC)
 				.metricsCollector(metricsCollector)
 				.build();
 		AtomicBoolean callbackInvoked = new AtomicBoolean();
@@ -656,8 +655,7 @@ public class DatabaseNotificationTests {
 		for (String sqlState : List.of("0A000", "42601", "42883")) {
 			ConnectionHarness harness = new ConnectionHarness(true);
 			harness.setExecuteFailure(new SQLException("ERROR: unknown function: pg_notify()", sqlState));
-			Database database = Database.withDataSource(harness.dataSource())
-					.databaseType(DatabaseType.POSTGRESQL)
+			Database database = Database.with(harness.dataSource(), DatabaseType.POSTGRESQL)
 					.build();
 
 			UnsupportedOperationException exception = Assertions.assertThrows(UnsupportedOperationException.class,
@@ -720,8 +718,7 @@ public class DatabaseNotificationTests {
 		// An unrelated failure must NOT be reinterpreted as a missing-feature report
 		ConnectionHarness harness = new ConnectionHarness(true);
 		harness.setExecuteFailure(new SQLException("connection reset", "08006"));
-		Database database = Database.withDataSource(harness.dataSource())
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database database = Database.with(harness.dataSource(), DatabaseType.POSTGRESQL)
 				.build();
 
 		Assertions.assertThrows(DatabaseException.class,
@@ -731,8 +728,7 @@ public class DatabaseNotificationTests {
 	@Test
 	public void sendNotificationAppliesDatabaseDefaultPreparedStatementSettings() {
 		ConnectionHarness harness = new ConnectionHarness(true);
-		Database database = Database.withDataSource(harness.dataSource())
-				.databaseType(DatabaseType.POSTGRESQL)
+		Database database = Database.with(harness.dataSource(), DatabaseType.POSTGRESQL)
 				.queryTimeout(Duration.ofMillis(1_500))
 				.fetchSize(27)
 				.maxRows(9)
@@ -1239,8 +1235,7 @@ public class DatabaseNotificationTests {
 	@NonNull
 	private static Database postgresDatabase(@NonNull ConnectionHarness harness,
 			MetricsCollector metricsCollector) {
-		Database.Builder builder = Database.withDataSource(harness.dataSource())
-				.databaseType(DatabaseType.POSTGRESQL);
+		Database.Builder builder = Database.with(harness.dataSource(), DatabaseType.POSTGRESQL);
 
 		if (metricsCollector != null)
 			builder.metricsCollector(metricsCollector);

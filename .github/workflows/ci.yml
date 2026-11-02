@@ -65,7 +65,7 @@ jobs:
         include:
           - name: PostgreSQL
             profiles: integration
-            test: PostgreSqlIntegrationIT,PostgreSqlNotificationFragmentedFrameIT
+            test: PostgreSqlIntegrationIT,PostgreSqlNotificationFragmentedFrameIT,NotificationSupervisorReleaseIT
             experimental: false
           - name: MySQL
             profiles: integration
