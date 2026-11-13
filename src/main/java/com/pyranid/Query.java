@@ -310,7 +310,7 @@ public interface Query {
 	/**
 	 * Executes a DML statement (INSERT, UPDATE, DELETE) with no resultset.
 	 *
-	 * @return the number of rows affected
+	 * @return the driver's affected-row count, which may be negative when the driver supplies no count
 	 */
 	@NonNull
 	Long execute();

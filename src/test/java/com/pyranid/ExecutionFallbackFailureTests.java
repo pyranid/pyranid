@@ -36,6 +36,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -109,6 +110,194 @@ class ExecutionFallbackFailureTests {
 				fixture.assertReleased(1, 0, 1);
 			}
 		}
+	}
+
+	@Test
+	void interruptionConsumedByLaterDiagnosticsStillPreventsTransactionRetry() {
+		for (String operation : List.of("update", "batch")) {
+			SQLException failure = oneShotInterruptedCapabilityFailure();
+			Fixture fixture = new Fixture(operation, failure, false);
+			AtomicInteger attempts = new AtomicInteger(), policyCalls = new AtomicInteger();
+			AtomicBoolean interruptedInsideBody = new AtomicBoolean();
+			RetryPolicy policy = RetryPolicy.ofMaxAttempts(2, RetryPolicy.Backoff.fixed(Duration.ZERO), ignored -> {
+				policyCalls.incrementAndGet(); return true;
+			});
+
+			try {
+				DatabaseException thrown = assertThrows(DatabaseException.class,
+						() -> fixture.database.transactionWithRetry(policy, () -> {
+							attempts.incrementAndGet();
+							try { fixture.work(0); }
+							catch (DatabaseException propagated) {
+								interruptedInsideBody.set(Thread.currentThread().isInterrupted());
+								throw propagated;
+							}
+						}));
+
+				assertSame(failure, thrown.getCause());
+				assertTrue(Thread.interrupted());
+				assertFalse(interruptedInsideBody.get());
+				assertEquals(1, attempts.get());
+				assertEquals(0, policyCalls.get());
+				assertEquals(1, fixture.largeCalls.get());
+				assertEquals(0, fixture.fallbacks.get());
+				assertEquals(List.of(), fixture.ids());
+				fixture.assertReleased(1, 0, 1);
+			} finally {
+				Thread.interrupted();
+			}
+		}
+	}
+
+	@Test
+	void handledInspectionInterruptionDoesNotInterruptLaterSavepointWork() {
+		for (String operation : List.of("update", "batch")) {
+			SQLException failure = oneShotInterruptedCapabilityFailure();
+			Fixture fixture = new Fixture(operation, failure, false);
+
+			fixture.database.transaction(() -> {
+				DatabaseException handled = assertThrows(DatabaseException.class, () -> fixture.work(0));
+				assertSame(failure, handled.getCause());
+				assertFalse(Thread.currentThread().isInterrupted());
+				fixture.database.currentTransaction().orElseThrow().withSavepoint(() -> fixture.work(10));
+			});
+
+			assertFalse(Thread.currentThread().isInterrupted());
+			List<Integer> expected = new java.util.ArrayList<>(List.of(1));
+			expected.addAll(fixture.expected(10));
+			assertEquals(expected, fixture.ids());
+			assertEquals(2, fixture.largeCalls.get());
+			assertEquals(0, fixture.fallbacks.get());
+			fixture.assertReleased(2, 1, 0);
+		}
+	}
+
+	@Test
+	void transactionOutcomesSeenOnceDuringCapabilityInspectionStillPreventRetry() {
+		for (String operation : List.of("update", "batch")) {
+			for (String edge : List.of("cause", "next")) {
+				for (boolean committed : new boolean[]{false, true}) {
+					SQLException failure = oneShotOutcomeCapabilityFailure(committed, edge);
+					Fixture fixture = new Fixture(operation, failure, false);
+					AtomicInteger attempts = new AtomicInteger(), policyCalls = new AtomicInteger();
+					RetryPolicy policy = RetryPolicy.ofMaxAttempts(2, RetryPolicy.Backoff.fixed(Duration.ZERO), ignored -> {
+						policyCalls.incrementAndGet(); return true;
+					});
+
+					DatabaseException thrown = assertThrows(DatabaseException.class,
+							() -> fixture.database.transactionWithRetry(policy, () -> {
+								attempts.incrementAndGet(); fixture.work(0);
+							}));
+
+					assertSame(failure, thrown.getCause());
+					assertEquals(committed ? TransactionRetrySafety.COMMITTED : TransactionRetrySafety.IN_DOUBT,
+							TransactionRetrySafety.outcomesOf(thrown));
+					assertEquals(1, attempts.get());
+					assertEquals(0, policyCalls.get());
+					assertEquals(1, fixture.largeCalls.get());
+					assertEquals(0, fixture.fallbacks.get());
+					assertEquals(List.of(), fixture.ids());
+					fixture.assertReleased(1, 0, 1);
+					assertFalse(Thread.currentThread().isInterrupted());
+				}
+			}
+		}
+	}
+
+	@Test
+	void handledCapabilityOutcomeStillFencesAnUnrelatedSerializationFailure() {
+		for (String operation : List.of("update", "batch")) {
+			for (String edge : List.of("cause", "next")) {
+				for (boolean committed : new boolean[]{false, true}) {
+					SQLException failure = oneShotOutcomeCapabilityFailure(committed, edge);
+					Fixture fixture = new Fixture(operation, failure, false);
+					DatabaseException unrelated = new DatabaseException("later serialization failure",
+							new SQLException("serialization", "40001"));
+					AtomicInteger attempts = new AtomicInteger(), policyCalls = new AtomicInteger();
+					AtomicReference<DatabaseException> handled = new AtomicReference<>();
+					RetryPolicy policy = RetryPolicy.ofMaxAttempts(2, RetryPolicy.Backoff.fixed(Duration.ZERO), ignored -> {
+						policyCalls.incrementAndGet(); return true;
+					});
+
+					DatabaseException thrown = assertThrows(DatabaseException.class,
+							() -> fixture.database.transactionWithRetry(policy, () -> {
+								attempts.incrementAndGet();
+								try { fixture.work(0); }
+								catch (DatabaseException captured) { handled.set(captured); }
+								throw unrelated;
+							}));
+
+					assertSame(unrelated, thrown);
+					assertSame(failure, handled.get().getCause());
+					assertTrue(thrown.isSerializationFailure());
+					assertEquals(committed ? TransactionRetrySafety.COMMITTED : TransactionRetrySafety.IN_DOUBT,
+							TransactionRetrySafety.outcomesOf(thrown));
+					assertEquals(1, attempts.get());
+					assertEquals(0, policyCalls.get());
+					assertEquals(1, fixture.largeCalls.get());
+					assertEquals(0, fixture.fallbacks.get());
+					assertEquals(List.of(), fixture.ids());
+					fixture.assertReleased(1, 0, 1);
+					assertFalse(Thread.currentThread().isInterrupted());
+				}
+			}
+		}
+	}
+
+	@Test
+	void repeatedCapabilityInspectionKeepsStableEvidenceWithoutAccumulatingCarriers() {
+		for (String kind : List.of("interrupt", "committed", "in-doubt")) {
+			SQLException failure = kind.equals("interrupt") ? oneShotInterruptedCapabilityFailure()
+					: oneShotOutcomeCapabilityFailure(kind.equals("committed"), "cause");
+			int outcomes = kind.equals("interrupt") ? 0 : kind.equals("committed")
+					? TransactionRetrySafety.COMMITTED : TransactionRetrySafety.IN_DOUBT;
+
+			assertFalse(JdbcFallbacks.isExecutionFallbackSafe(failure));
+			Throwable[] retained = failure.getSuppressed();
+			assertTrue(retained.length > 0);
+			assertEquals(outcomes, TransactionRetrySafety.outcomesOf(failure));
+			assertFalse(Thread.currentThread().isInterrupted());
+
+			assertFalse(JdbcFallbacks.isExecutionFallbackSafe(failure));
+			assertArrayEquals(retained, failure.getSuppressed());
+			assertEquals(outcomes, TransactionRetrySafety.outcomesOf(failure));
+			assertEquals(kind.equals("interrupt") ? 1 : 0, ThrowableGraph.inspect(failure,
+					current -> current instanceof InterruptedException ? 1 : 0, 0));
+			assertFalse(Thread.currentThread().isInterrupted());
+		}
+	}
+
+	private static SQLException oneShotOutcomeCapabilityFailure(boolean committed, String edge) {
+		DatabaseException completed = new DatabaseException("independent transaction outcome");
+		if (committed) completed.markTransactionOutcomeCommitted();
+		else completed.markTransactionOutcomeIndeterminate();
+		SQLException detail = new SQLException("outcome detail", "0A000", completed);
+		AtomicInteger reads = new AtomicInteger();
+		return new SQLFeatureNotSupportedException("unsupported", "0A000") {
+			@Override public Throwable getCause() {
+				return edge.equals("cause") && reads.getAndIncrement() == 0 ? completed : null;
+			}
+			@Override public SQLException getNextException() {
+				return edge.equals("next") && reads.getAndIncrement() == 0 ? detail : null;
+			}
+		};
+	}
+
+	private static SQLException oneShotInterruptedCapabilityFailure() {
+		return new SQLFeatureNotSupportedException("unsupported", "0A000") {
+			private boolean published;
+			@Override public String getSQLState() {
+				if (!this.published) {
+					this.published = true;
+					Thread.currentThread().interrupt();
+				}
+				return super.getSQLState();
+			}
+			@Override public Throwable getCause() {
+				Thread.interrupted();
+				return null;
+			}
+		};
 	}
 
 	@Test
@@ -203,10 +392,10 @@ class ExecutionFallbackFailureTests {
 	void benignUnsupportedMethodsStillFallbackAndCacheTheirCapability() {
 		for (String operation : List.of("update", "batch")) {
 			for (Throwable failure : List.of(new SQLFeatureNotSupportedException("unsupported", "0A000"),
-					new UnsupportedOperationException("unsupported"), new AbstractMethodError("large operation"),
-					new SQLException("unavailable", "0A000"), new SQLException("unavailable", "HYC00"),
-					new SQLException("not implemented", "HY000"),
-					new SQLException("unavailable", "HY000", new UnsupportedOperationException("optional method")))) {
+					new SQLFeatureNotSupportedException("unsupported", "HYC00"),
+					new SQLFeatureNotSupportedException("unsupported"),
+					new SQLFeatureNotSupportedException("unsupported", ""),
+					new UnsupportedOperationException("unsupported"), new AbstractMethodError("large operation"))) {
 				Fixture fixture = new Fixture(operation, failure, false);
 
 				fixture.database.transaction(() -> { fixture.work(0); fixture.work(10); });

@@ -129,11 +129,11 @@ public interface TargetType {
 
 	@NonNull
 	default Optional<TargetType> getArrayComponentType() {
-		if (getRawClass().isArray())
-			return Optional.of(TargetType.of(getRawClass().getComponentType()));
-
 		if (getType() instanceof GenericArrayType genericArrayType)
 			return Optional.of(TargetType.of(genericArrayType.getGenericComponentType()));
+
+		if (getRawClass().isArray())
+			return Optional.of(TargetType.of(getRawClass().getComponentType()));
 
 		return Optional.empty();
 	}

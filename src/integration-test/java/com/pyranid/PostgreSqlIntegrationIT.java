@@ -41,6 +41,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -67,6 +68,75 @@ public class PostgreSqlIntegrationIT extends AbstractPortableJdbcIntegrationTest
 	public record PgvectorRow(Long documentId, float[] embeddingFloats, double[] embeddingDoubles) {}
 	public record TemporalArrayRow(List<Instant> value) {}
 	public record NestedTemporalArrayRow(List<List<Instant>> value) {}
+
+	@Test
+	public void notificationSendingUsesTheCatalogFunctionDespiteAnExactSearchPathOverload() throws InterruptedException {
+		Database inspection = Database.with(dataSource(), DatabaseType.POSTGRESQL).build();
+		String schema = "notify_shadow_" + UUID.randomUUID().toString().replace("-", "");
+		inspection.query("CREATE SCHEMA " + schema).execute();
+		try {
+			inspection.query("CREATE TABLE " + schema + ".intercepted (payload TEXT)").execute();
+			inspection.query("CREATE FUNCTION " + schema + ".pg_notify(varchar, varchar) RETURNS void LANGUAGE plpgsql AS $$ "
+					+ "BEGIN INSERT INTO " + schema + ".intercepted VALUES ($2); END $$").execute();
+			PGSimpleDataSource source = (PGSimpleDataSource) dataSource();
+			source.setCurrentSchema(schema);
+			Database database = Database.with(source, DatabaseType.POSTGRESQL).build();
+			// Prove that a same-name exact varchar overload can intercept an unqualified invocation.
+			database.query("SELECT pg_notify(CAST(:channel AS varchar), CAST(:payload AS varchar))")
+					.bind("channel", "catalog_notify").bind("payload", "intercepted").fetchObject(Object.class);
+			Assertions.assertEquals(1L, inspection.query("SELECT COUNT(*) FROM " + schema + ".intercepted")
+					.fetchObject(Long.class).orElseThrow());
+			database.withNotificationSession("catalog_notify", session -> {
+				database.sendNotification("catalog_notify", "delivered");
+				Assertions.assertEquals(Notification.of("catalog_notify", "delivered"),
+						awaitNotification(session, "catalog_notify", "delivered", Duration.ofSeconds(5)));
+			});
+			Assertions.assertEquals(1L, inspection.query("SELECT COUNT(*) FROM " + schema + ".intercepted")
+					.fetchObject(Long.class).orElseThrow());
+		} finally {
+			inspection.query("DROP SCHEMA " + schema + " CASCADE").execute();
+		}
+	}
+
+	@Test
+	public void executionErrorsMentioningUnsupportedDoNotBecomeCapabilityFallbacks() {
+		for (boolean batch : new boolean[]{false, true}) {
+			for (boolean transactional : new boolean[]{false, true}) {
+				Database inspection = Database.with(dataSource(), DatabaseType.POSTGRESQL).build();
+				String table = "unsupported_execution_" + UUID.randomUUID().toString().replace("-", "");
+				inspection.query("CREATE TABLE " + table + " (id INT PRIMARY KEY, note TEXT)").execute();
+				inspection.query("INSERT INTO " + table + " VALUES (1, 'existing')").execute();
+				// The failing call must be this Database's first execution of its large method.
+				Database database = Database.with(dataSource(), DatabaseType.POSTGRESQL).build();
+				AtomicReference<TransactionCompletion> completion = new AtomicReference<>();
+				Runnable operation = () -> {
+					if (transactional) database.useRawConnection(connection -> {
+						try (java.sql.Statement statement = connection.createStatement()) {
+							statement.executeUpdate("INSERT INTO " + table + " VALUES (2, 'tentative')");
+						}
+						return Optional.empty();
+					});
+					Query query = database.query("INSERT INTO " + table + " VALUES (:id, :note)");
+					if (batch) query.executeBatch(List.of(Map.of("id", 1, "note", "unsupported customer value")));
+					else query.bind("id", 1).bind("note", "unsupported customer value").execute();
+				};
+
+				DatabaseException failure = Assertions.assertThrows(DatabaseException.class, () -> {
+					if (transactional) database.transaction(TransactionOptions.withReadOnly(null)
+							.completionObserver(completion::set).build(), operation::run);
+					else operation.run();
+				});
+
+				Assertions.assertEquals("23505", failure.getSqlState().orElseThrow());
+				Assertions.assertInstanceOf(SQLException.class, failure.getCause());
+				Assertions.assertEquals(List.of(1), inspection.query("SELECT id FROM " + table + " ORDER BY id").fetchList(Integer.class));
+				if (transactional) {
+					Assertions.assertEquals(TransactionResult.ROLLED_BACK, completion.get().getResult());
+					Assertions.assertSame(failure, completion.get().getFailure().orElseThrow());
+				}
+			}
+		}
+	}
 
 	@Test
 	public void timestampArraysPreserveZonedInstantsAndZoneLessWallClockValues() {

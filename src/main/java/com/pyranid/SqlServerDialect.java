@@ -58,7 +58,7 @@ final class SqlServerDialect extends UuidStringDialect {
 														 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
-		return super.isTransient(metadata, cause) || hasErrorCode(metadata, cause, 1205, 1222);
+		return super.isTransient(metadata, cause) || hasErrorCode(metadata, cause, 1205, 1222, 3960);
 	}
 
 	@NonNull

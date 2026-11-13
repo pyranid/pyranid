@@ -35,7 +35,7 @@ final class PostgresNotificationSupport implements DatabaseNotificationSupport {
 	private static final int MAX_CHANNEL_BYTES = 63;
 	private static final int MAX_PAYLOAD_BYTES = 7_999;
 	@NonNull
-	private static final String SEND_STATEMENT_SQL = "SELECT pg_notify(?, ?)";
+	private static final String SEND_STATEMENT_SQL = "SELECT pg_catalog.pg_notify(?, ?)";
 
 	private PostgresNotificationSupport() {}
 

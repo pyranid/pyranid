@@ -27,12 +27,10 @@ import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.SQLFeatureNotSupportedException;
 import java.time.Duration;
 import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
@@ -237,6 +235,10 @@ public final class Database {
 	 * Performs an operation transactionally with the given options, optionally returning a value.
 	 * <p>
 	 * The transaction will be automatically rolled back if an exception bubbles out of {@code transactionalOperation}.
+	 * Ordinary failure-derived interruption is restored after cleanup and post-transaction hooks, only when no enclosing
+	 * Pyranid transaction remains bound. Handling a nested failure does not defer cancellation to the outer boundary;
+	 * callers that intend cancellation must rethrow or restore the flag. A final propagating {@link Error} restores its
+	 * reachable interruption evidence even with an enclosing transaction.
 	 * <p>
 	 * Nested calls to {@code transaction(...)} are independent transactions with independent JDBC connections; they do
 	 * not automatically join an outer transaction. Use {@link #participate(Transaction, ReturningTransactionalOperation)} to
@@ -253,6 +255,88 @@ public final class Database {
 	public <T> Optional<T> transaction(@NonNull TransactionOptions transactionOptions,
 																		 @NonNull ReturningTransactionalOperation<T> transactionalOperation) {
 		return this.transactions.run(transactionOptions, transactionalOperation);
+	}
+
+	/**
+	 * Performs one independent transaction attempt and returns its database outcome and invocation failure.
+	 * Uses the default options and performs no automatic retry. A normal rollback-only callback has no failure;
+	 * a committed transaction can retain a cleanup or hook failure. A final {@link Error} still escapes.
+	 *
+	 * @param operation the transactional operation
+	 * @return the completed transaction outcome, with no attempted value
+	 * @since 4.9.0
+	 */
+	@NonNull
+	public TransactionOutcome<Void> transactionWithOutcome(@NonNull TransactionalOperation operation) {
+		return transactionWithOutcome(TransactionOptions.DEFAULT, operation);
+	}
+
+	/**
+	 * Performs one independent transaction attempt with explicit options, returning its result and ordinary failure.
+	 * Argument validation still throws normally; an operational acquisition/begin failure produces an outcome.
+	 * Nested calls own independent connections. Use {@code participate(...)} to join a transaction explicitly.
+	 *
+	 * @param options transaction options
+	 * @param operation the transactional operation
+	 * @return the completed transaction outcome, with no attempted value
+	 * @since 4.9.0
+	 */
+	@NonNull
+	public TransactionOutcome<Void> transactionWithOutcome(@NonNull TransactionOptions options,
+			@NonNull TransactionalOperation operation) {
+		requireNonNull(options);
+		requireNonNull(operation);
+		return transactionWithOutcome(options, () -> {
+			operation.perform();
+			return Optional.empty();
+		});
+	}
+
+	/**
+	 * Performs one independent transaction attempt and retains the value returned normally by its callback.
+	 * The attempted value is available even if completion rolls back, becomes uncertain or fails after commit.
+	 * Uses default options; see the options overload for failure and interruption semantics.
+	 *
+	 * @param operation the transactional operation
+	 * @param <T> the callback value type
+	 * @return the completed transaction outcome and attempted callback value
+	 * @since 4.9.0
+	 */
+	@NonNull
+	public <T> TransactionOutcome<T> transactionWithOutcome(@NonNull ReturningTransactionalOperation<T> operation) {
+		return transactionWithOutcome(TransactionOptions.DEFAULT, operation);
+	}
+
+	/**
+	 * Performs one independent transaction attempt, returning its final completion and attempted callback value.
+	 * <p>
+	 * The callback runs once. Ordinary invocation failures, including programming errors, are retained instead of
+	 * thrown, with the traditional API's wrapping, causes and suppressed failures. A final {@link Error} escapes
+	 * after best-effort completion and observation. Null arguments and failures before a boundary exists still throw.
+	 * An empty or accidentally null callback Optional is normalized to empty; a callback that throws has no value.
+	 * <p>
+	 * Result, value and failure describe separate facts. Rollback-only completion can retain a value without a
+	 * failure, and successful commit can retain a cleanup or hook failure. The configured completion observer sees
+	 * the same completion after cleanup and hooks. Its own failure remains contained.
+	 * <p>
+	 * With no enclosing transaction, interruption from a returned failure is restored before return. With an enclosing
+	 * transaction, Pyranid preserves an already-pending flag but does not newly publish interruption from a handled
+	 * outcome; that evidence remains in its failure. A propagating final Error follows the throwing API's restoration.
+	 * <p>
+	 * This method never retries and does not join an ambient transaction. Do not combine it with retries by nesting
+	 * it inside {@code transactionWithRetry(...)}: that creates an independent transaction. An uncertain result needs
+	 * application reconciliation under the original durable operation identity; it does not authorize replay.
+	 *
+	 * @param options transaction options
+	 * @param operation the transactional operation
+	 * @param <T> the callback value type
+	 * @return the completed transaction outcome and attempted callback value
+	 * @since 4.9.0
+	 */
+	@NonNull
+	public <T> TransactionOutcome<T> transactionWithOutcome(@NonNull TransactionOptions options,
+			@NonNull ReturningTransactionalOperation<T> operation) {
+		return this.transactions.runWithOutcome(options, operation);
 	}
 
 	/**
@@ -852,36 +936,6 @@ public final class Database {
 		return existing;
 	}
 
-	static boolean isUnsupportedSqlFeature(@NonNull SQLException e) {
-		requireNonNull(e);
-
-		try {
-			String sqlState = e.getSQLState();
-			if (sqlState != null && (sqlState.startsWith("0A") || "HYC00".equals(sqlState)))
-				return true;
-
-			Throwable cause = e.getCause();
-			if (cause instanceof SQLFeatureNotSupportedException
-					|| cause instanceof UnsupportedOperationException
-					|| cause instanceof AbstractMethodError)
-				return true;
-
-			String message = e.getMessage();
-			if (message == null)
-				return false;
-
-			String lower = message.toLowerCase(Locale.ROOT);
-			return lower.contains("not supported")
-					|| lower.contains("unsupported")
-					|| lower.contains("not implemented")
-					|| lower.contains("feature not supported");
-		} catch (Throwable diagnosticFailure) {
-			if (e != diagnosticFailure) e.addSuppressed(diagnosticFailure);
-			// Unreadable capability evidence cannot authorize executing the statement again.
-			return false;
-		}
-	}
-
 	@Nullable
 	static Duration validateQueryTimeout(@Nullable Duration queryTimeout) {
 		if (queryTimeout != null) {
@@ -1429,16 +1483,20 @@ public final class Database {
 					}
 				}
 
+				if (transaction.isPresent()) transaction.get().requireCompletionValidation();
 				return rawConnectionOperation.perform(connection);
 			} catch (DatabaseException e) {
 				thrown = e;
+				if (connection != null && transaction.isPresent()) transaction.get().recordSuspectFailure(e);
 				throw e;
 			} catch (Error e) {
 				thrown = e;
+				if (connection != null && transaction.isPresent()) transaction.get().recordSuspectFailure(e);
 				throw e;
 			} catch (Exception e) {
 				DatabaseException wrapped = databaseExceptionWithRawConnectionContext(e);
 				thrown = wrapped;
+				if (connection != null && transaction.isPresent()) transaction.get().recordSuspectFailure(wrapped);
 				throw wrapped;
 			} finally {
 				Throwable cleanupFailure = null;

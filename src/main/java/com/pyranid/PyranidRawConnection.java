@@ -52,6 +52,7 @@ import static java.util.Objects.requireNonNull;
 final class PyranidRawConnection implements Connection {
 	@NonNull
 	private final Connection connection;
+	private final Thread ownerThread = Thread.currentThread();
 	private volatile boolean released;
 
 	PyranidRawConnection(@NonNull Connection connection) {
@@ -60,6 +61,14 @@ final class PyranidRawConnection implements Connection {
 
 	void release() {
 		this.released = true;
+	}
+
+	/** Internal metadata recovery must not expose transaction controls through the public raw handle. */
+	Connection metadataConnection() {
+		assertUsable();
+		if (Thread.currentThread() != this.ownerThread)
+			throw new IllegalStateException("Raw parameter metadata must be read on the callback thread");
+		return this.connection;
 	}
 
 	@Override

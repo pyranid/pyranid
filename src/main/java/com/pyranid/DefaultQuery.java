@@ -342,8 +342,10 @@ final class DefaultQuery implements Query {
 			this.database.applyDefaultPreparedStatementSettings(preparedStatement);
 			applyPreparedStatementSettings(preparedStatement, this.queryTimeout, this.fetchSize, this.maxRows);
 
-			if (this.preparedStatementCustomizer != null)
+			if (this.preparedStatementCustomizer != null) {
+				JdbcCallbackContext.requireValidation();
 				this.preparedStatementCustomizer.customize(statementContext, preparedStatement);
+			}
 		};
 	}
 

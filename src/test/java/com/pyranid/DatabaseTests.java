@@ -41,6 +41,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.Duration;
@@ -1325,7 +1326,7 @@ public class DatabaseTests {
 					}
 					if ("executeLargeBatch".equals(name)) {
 						largeBatchCalls.incrementAndGet();
-						throw new SQLException("feature not supported", "0A000");
+						throw new SQLFeatureNotSupportedException("feature not supported", "0A000");
 					}
 					if ("executeBatch".equals(name)) {
 						batchCalls.incrementAndGet();
@@ -1853,7 +1854,7 @@ public class DatabaseTests {
 	}
 
 	@Test
-	public void testExecuteLargeUpdateFallsBackOnSqlException() {
+	public void testExecuteLargeUpdateFallsBackOnExplicitUnsupportedMethod() {
 		AtomicInteger largeUpdateCalls = new AtomicInteger();
 		AtomicInteger updateCalls = new AtomicInteger();
 
@@ -1864,7 +1865,7 @@ public class DatabaseTests {
 					String name = method.getName();
 					if ("executeLargeUpdate".equals(name)) {
 						largeUpdateCalls.incrementAndGet();
-						throw new SQLException("feature not supported", "0A000");
+						throw new SQLFeatureNotSupportedException("feature not supported", "0A000");
 					}
 					if ("executeUpdate".equals(name)) {
 						updateCalls.incrementAndGet();
@@ -1886,7 +1887,7 @@ public class DatabaseTests {
 	}
 
 	@Test
-	public void testExecuteLargeBatchFallsBackOnSqlException() {
+	public void testExecuteLargeBatchFallsBackOnExplicitUnsupportedMethod() {
 		AtomicInteger largeBatchCalls = new AtomicInteger();
 		AtomicInteger batchCalls = new AtomicInteger();
 
@@ -1897,7 +1898,7 @@ public class DatabaseTests {
 					String name = method.getName();
 					if ("executeLargeBatch".equals(name)) {
 						largeBatchCalls.incrementAndGet();
-						throw new SQLException("feature not supported", "0A000");
+						throw new SQLFeatureNotSupportedException("feature not supported", "0A000");
 					}
 					if ("executeBatch".equals(name)) {
 						batchCalls.incrementAndGet();
@@ -5914,12 +5915,17 @@ public class DatabaseTests {
 	@NonNull
 	private PreparedStatement preparedStatementCapturingNull(@NonNull NullBindingCapture capture) {
 		requireNonNull(capture);
+		Connection connection = (Connection) Proxy.newProxyInstance(Connection.class.getClassLoader(),
+				new Class<?>[]{Connection.class}, (proxy, method, args) ->
+						"getAutoCommit".equals(method.getName()) ? true : defaultValue(method.getReturnType()));
 
 		return (PreparedStatement) Proxy.newProxyInstance(
 				PreparedStatement.class.getClassLoader(),
 				new Class<?>[]{PreparedStatement.class},
 				(proxy, method, args) -> {
 					String name = method.getName();
+					if ("getConnection".equals(name))
+						return connection;
 					if ("setNull".equals(name)) {
 						capture.setNullCalls++;
 						capture.sqlType = (Integer) args[1];

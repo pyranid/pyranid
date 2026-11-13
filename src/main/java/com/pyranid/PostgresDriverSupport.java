@@ -60,27 +60,25 @@ final class PostgresDriverSupport {
 	/**
 	 * A driver's {@code PGobject} class to everything needed to build one. Keyed on the resolved
 	 * {@code PGobject} class rather than the connection class: one wrapper type (a pool's proxy) can front
-	 * different drivers in the same application, so the connection class is not a sound cache key.
+	 * different drivers in the same application, so the connection class is not a sound cache key. Values
+	 * contain only JDK reflection objects in a JDK array: a Pyranid-defined factory would pin Pyranid's
+	 * class loader when the driver class belongs to a longer-lived parent loader.
 	 */
 	@NonNull
-	private static final ClassValue<PgObjectFactory> PG_OBJECT_FACTORIES = new ClassValue<>() {
+	private static final ClassValue<Object[]> PG_OBJECT_FACTORIES = new ClassValue<>() {
 		@Override
 		@Nullable
-		protected PgObjectFactory computeValue(@NonNull Class<?> pgObjectClass) {
+		protected Object[] computeValue(@NonNull Class<?> pgObjectClass) {
 			try {
-				return new PgObjectFactory(
+				return new Object[]{
 						pgObjectClass.getConstructor(),
 						pgObjectClass.getMethod("setType", String.class),
-						pgObjectClass.getMethod("setValue", String.class));
+						pgObjectClass.getMethod("setValue", String.class)};
 			} catch (NoSuchMethodException e) {
 				return null;
 			}
 		}
 	};
-
-	private record PgObjectFactory(@NonNull Constructor<?> constructor,
-																 @NonNull Method typeSetter,
-																 @NonNull Method valueSetter) {}
 
 	/**
 	 * Value class to its {@code getValue()} method when the class is a driver {@code PGobject}, else {@code null}.
@@ -104,6 +102,46 @@ final class PostgresDriverSupport {
 
 	private PostgresDriverSupport() {}
 
+	enum TransactionState { USABLE, FAILED, UNKNOWN }
+
+	record TransactionStateRead(TransactionState state, @Nullable Throwable failure) {}
+
+	/** Reads the physical driver's state without depending on its internal API at link time. */
+	static TransactionStateRead transactionState(Connection connection) {
+		Throwable unavailable = null;
+		try {
+			for (ClassLoader loader : candidateClassLoaders(connection)) {
+				for (String root : CANDIDATE_DRIVER_ROOT_PACKAGES) {
+					Class<?> connectionApi = loadClass(root + "." + PG_CONNECTION_SIMPLE_CLASS_NAME, loader);
+					if (connectionApi == null || !connectionApi.isInterface()) continue;
+					try {
+						Object driver;
+						if (connectionApi.isInstance(connection)) driver = connection;
+						else if (connection.isWrapperFor(connectionApi)) driver = connection.unwrap(connectionApi);
+						else continue;
+						if (driver == null) continue;
+						Object state = driver.getClass().getMethod("getTransactionState").invoke(driver);
+						if (!(state instanceof Enum<?> value)) continue;
+						TransactionState classified = switch (value.name()) {
+							case "OPEN", "IDLE" -> TransactionState.USABLE;
+							case "FAILED" -> TransactionState.FAILED;
+							default -> TransactionState.UNKNOWN;
+						};
+						return new TransactionStateRead(classified, unavailable);
+					} catch (Throwable failure) {
+						Throwable diagnostic = failure instanceof InvocationTargetException invocation
+								? invocation.getTargetException() : failure;
+						// Keep the first original diagnostic; fallback validation decides whether completion can proceed.
+						if (unavailable == null) unavailable = diagnostic;
+					}
+				}
+			}
+		} catch (Throwable failure) {
+			if (unavailable == null) unavailable = failure;
+		}
+		return new TransactionStateRead(TransactionState.UNKNOWN, unavailable);
+	}
+
 	/**
 	 * Binds {@code value} as a driver {@code PGobject} of SQL type {@code typeName}, using the {@code PGobject}
 	 * class belonging to the driver that owns {@code connection}.
@@ -119,7 +157,7 @@ final class PostgresDriverSupport {
 		requireNonNull(value);
 
 		Class<?> pgObjectClass = resolvePgObjectClass(connection);
-		PgObjectFactory factory = pgObjectClass == null ? null : PG_OBJECT_FACTORIES.get(pgObjectClass);
+		Object[] factory = pgObjectClass == null ? null : PG_OBJECT_FACTORIES.get(pgObjectClass);
 
 		if (factory == null)
 			throw new SQLException(format(
@@ -128,9 +166,9 @@ final class PostgresDriverSupport {
 							+ "with a usable PGobject implementation.", connection.getClass().getName()));
 
 		try {
-			Object pgObject = factory.constructor().newInstance();
-			factory.typeSetter().invoke(pgObject, typeName);
-			factory.valueSetter().invoke(pgObject, value);
+			Object pgObject = ((Constructor<?>) factory[0]).newInstance();
+			((Method) factory[1]).invoke(pgObject, typeName);
+			((Method) factory[2]).invoke(pgObject, value);
 			return pgObject;
 		} catch (InvocationTargetException e) {
 			Throwable targetException = e.getTargetException();

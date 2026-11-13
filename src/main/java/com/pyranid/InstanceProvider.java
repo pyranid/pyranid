@@ -23,6 +23,7 @@ import javax.annotation.concurrent.ThreadSafe;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.util.Arrays;
+import java.util.List;
 
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
@@ -95,8 +96,11 @@ public interface InstanceProvider {
 			return constructor.newInstance(initargs);
 		} catch (NoSuchMethodException | InstantiationException | IllegalAccessException |
 						 IllegalArgumentException | InvocationTargetException e) {
-			throw DatabaseException.wrapSafely(String.format("Unable to instantiate Record type %s with args %s", recordType,
-					initargs == null ? "[none]" : Arrays.asList(initargs)), e, DatabaseDialect.forExceptionCause(e));
+			List<String> components = Arrays.stream(recordType.getRecordComponents())
+					.map(component -> component.getName() + ":" + component.getType().getTypeName())
+					.toList();
+			throw DatabaseException.wrapSafely(String.format("Unable to instantiate Record type %s with components %s",
+					recordType.getName(), components), e, DatabaseDialect.forExceptionCause(e));
 		}
 	}
 }

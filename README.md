@@ -40,6 +40,46 @@ Similarly-flavored commercially-friendly OSS libraries are available.
 * [Soklet](https://www.soklet.com) - DI-friendly HTTP 1.1 (and SSE) server that supports [JEP 444 Virtual Threads](https://openjdk.org/jeps/444)
 * [Lokalized](https://www.lokalized.com) - natural-sounding translations (i18n) via expression language
 
+### 4.9.0
+
+`transactionWithOutcome(...)` returns the database result, attempted callback value and invocation failure together,
+after cleanup and post-transaction hooks. It runs the callback once and supports the same options and void callbacks
+as `transaction(...)`:
+
+```java
+TransactionOutcome<Receipt> outcome = database.transactionWithOutcome(() -> {
+  Receipt receipt = applyCommandAndPersistReceiptAndOutbox(command);
+  return Optional.of(receipt);
+});
+
+switch (outcome.getResult()) {
+  case COMMITTED -> {
+    outcome.getFailure().ifPresent(this::reportCompletionFailure);
+    respondFromReceipt(outcome.getAttemptedValue().orElseThrow());
+  }
+  case ROLLED_BACK -> handleAbortedAttempt(operationId, outcome.getFailure());
+  case IN_DOUBT -> recoverOrReportUnresolved(operationId);
+}
+```
+
+The receipt helpers are application code; this callback promises a value on normal return. A value alone does not
+prove commit, and cleanup or hook failure can accompany `COMMITTED`. Returned failures can also be programming errors;
+rethrow failures your application does not recognize. Final `Error`s and pre-boundary argument validation still throw.
+The API is not a durable operation ledger and never retries. Use it at the owning command boundary; nesting it inside
+`transactionWithRetry(...)` opens an independent transaction and does not combine outcome handling with safe retries.
+
+PostgreSQL and DuckDB completion now detect observable aborted transactions before physical commit. A handled failure
+that leaves the transaction usable can still commit. Traditional `transaction(...)` throws if the transaction was
+aborted or a required pre-commit check cannot establish usability. Mixed or unreadable commit-failure evidence remains
+`IN_DOUBT`, preventing an automatic retry based solely on a secondary serialization diagnostic. See
+[migration notes](CHANGELOG.md#490-snapshot) and [transaction documentation](https://www.pyranid.com/docs/transactions).
+
+Traditional nested transaction failures now follow the outcome API's ordinary interruption rule: cleanup and hooks
+finish before restoration, and an enclosing transaction prevents newly publishing a handled failure's interrupt.
+Retained cancellation still stops retries. PostgreSQL parameter describes use internal savepoint protection in
+manual-commit mode, and batch rows share statement-scoped metadata resolution. Negative driver update counts remain
+available to callers while metrics report them as unknown.
+
 ### 4.8.0
 
 Version `4.8.0` adds managed notification supervision, transaction completion observers, retry budgets, and bounded LOB materialization.
@@ -898,6 +938,8 @@ An omitted column differs from a selected column containing SQL `NULL`. A select
 
 The default [`InstanceProvider`](https://javadoc.pyranid.com/com/pyranid/InstanceProvider.html) uses public constructors and the standard mapper uses public JavaBean accessors. Define mapped beans, records, constructors, getters, and setters as public. An application-owned [`InstanceProvider`](https://javadoc.pyranid.com/com/pyranid/InstanceProvider.html) can instantiate an intentionally non-public record. Mapping a non-public JavaBean generally requires a custom [`ResultSetMapper`](https://javadoc.pyranid.com/com/pyranid/ResultSetMapper.html), because the standard mapper invokes the bean's setters itself.
 
+Inherited JavaBean setter types resolve against the concrete fetched class. For example, `class Account extends Entity<Long>` makes an inherited `setId(ID)` target `Long`, including numeric conversion, rather than an erased `Object`. Nested collections and generic arrays retain their resolved element types. A selected property whose type variables remain unresolved fails clearly; use a concrete subclass, an intentional `Object`/raw collection property, or a custom mapper. Unselected generic properties keep their existing defaults.
+
 By default, column names are assumed to be separated by `_` characters and are mapped to their camel-case equivalent.  For example:
 
 ```java
@@ -1631,9 +1673,13 @@ Because the real value is bound to the [`PreparedStatement`](https://docs.oracle
 
 Only values explicitly wrapped with [`Parameters::secure(...)`](https://javadoc.pyranid.com/com/pyranid/Parameters.html#secure(java.lang.Object)) trigger the driver-text scrub; a [`ParameterRedactor`](https://javadoc.pyranid.com/com/pyranid/ParameterRedactor.html) governs Pyranid's parameter-list rendering only.
 
+`DatabaseException.toString()` omits server detail, hint, internal query and context fields; those remain available through explicit accessors. Record-construction failures report component names and types rather than row values. These protections do not sanitize arbitrary driver/application exception messages or cause chains, and parameter redaction does not generally redact fetched row data.
+
 ### Custom Parameters
 
 You may register instances of [`CustomParameterBinder`](https://javadoc.pyranid.com/com/pyranid/CustomParameterBinder.html) to bind application-specific types to [`java.sql.PreparedStatement`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/PreparedStatement.html) however you like.
+
+For implicit enum parameters, custom binder selection uses the declaring enum class even when a constant has its own class body. The binder receives the original enum value; explicit `TypedParameter` hints take precedence. Without a handling custom binder, the default remains `Enum.name()`.
 
 This allows you to use your objects as-is with Pyranid instead of sprinkling "convert this object to database format" code throughout your system.
 
@@ -2086,6 +2132,16 @@ DuckDB's JDBC driver does not support savepoints. Savepoints are stack-like on m
 ### Large Update Counts
 
 Pyranid uses JDBC [`PreparedStatement::executeLargeUpdate()`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/PreparedStatement.html#executeLargeUpdate()) / [`Statement::executeLargeBatch()`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Statement.html#executeLargeBatch()) when supported and falls back to standard update APIs when the driver reports lack of support. That support decision is cached per [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) instance.
+
+Fallback requires an explicit `SQLFeatureNotSupportedException`, `UnsupportedOperationException` or legacy
+`AbstractMethodError`, without conflicting SQLState, interruption, connection or transaction-outcome evidence.
+General `SQLException`s propagate even if their SQLState is `0A`/`HYC00`, their cause mentions an unsupported method,
+or their message contains "unsupported", "not supported" or "not implemented". Those diagnostics can describe a
+statement that already executed; they cannot authorize executing it again. Drivers that report unavailable large
+methods only through general SQL exceptions now surface that failure rather than falling back.
+`BatchUpdateException` evidence also prevents fallback, including when it is nested under an unsupported-method
+signal or has no SQLState. Interruption and unsafe transaction outcomes observed while inspecting that signal
+remain available to the existing transaction retry guards even if later diagnostic reads return different values.
 
 ### Notifications
 

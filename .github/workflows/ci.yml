@@ -65,7 +65,12 @@ jobs:
         include:
           - name: PostgreSQL
             profiles: integration
-            test: PostgreSqlIntegrationIT,PostgreSqlNotificationFragmentedFrameIT,NotificationSupervisorReleaseIT
+            test: PostgreSqlIntegrationIT,PostgreSqlTransactionOutcomeIT,PostgreSqlParameterMetadataIT,PostgreSqlNullArrayIT,PostgreSqlLockClassificationIT,PostgreSqlBatchMetadataIT,PostgreSqlNotificationFragmentedFrameIT,NotificationSupervisorReleaseIT
+            experimental: false
+          - name: PostgreSQL metadata (New York)
+            profiles: integration
+            test: PostgreSqlParameterMetadataIT
+            extraArgs: -Duser.timezone=America/New_York -Dtest=ParameterMetadataSafetyTests
             experimental: false
           - name: MySQL
             profiles: integration
@@ -77,11 +82,11 @@ jobs:
             experimental: false
           - name: DuckDB
             profiles: integration
-            test: DuckDbIntegrationIT
+            test: DuckDbIntegrationIT,DuckDbTransactionOutcomeIT,DuckDbMetricsIntegrationIT,DuckDbCommitClassificationIT,LobMappingIntegrationIT,TemporalArrayMappingIntegrationIT
             experimental: false
           - name: MariaDB
             profiles: integration,it-mariadb
-            test: MariaDbIntegrationIT
+            test: MariaDbIntegrationIT,MariaDbSignalClassificationIT
             experimental: false
           - name: YugabyteDB
             profiles: integration,it-yugabyte
@@ -109,7 +114,7 @@ jobs:
       - name: Verify ${{ matrix.name }} integration profile
         env:
           ACCEPT_EULA: 'Y'
-        run: mvn -B -ntp -P${{ matrix.profiles }} -Dit.test=${{ matrix.test }} verify
+        run: mvn -B -ntp -P${{ matrix.profiles }} -Dit.test=${{ matrix.test }} ${{ matrix.extraArgs }} verify
 
   notification-topology:
     name: Notification Topology (PgBouncer)

@@ -23,16 +23,14 @@ import org.jspecify.annotations.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
+import java.lang.ref.Reference;
+import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
-import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
-import java.lang.reflect.TypeVariable;
-import java.lang.reflect.WildcardType;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
@@ -60,6 +58,7 @@ import java.time.format.DateTimeParseException;
 import java.time.temporal.TemporalAccessor;
 import java.time.temporal.TemporalQueries;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Currency;
 import java.util.Date;
@@ -106,10 +105,7 @@ import static java.util.stream.Collectors.toSet;
 class DefaultResultSetMapper implements ResultSetMapper {
 	@NonNull
 	private static final Map<Class<?>, Class<?>> WRAPPER_CLASSES_BY_PRIMITIVE_CLASS;
-	@NonNull
-	private static final ClassValue<TargetType> RAW_TARGET_TYPES = new ClassValue<>() {
-		@Override protected TargetType computeValue(Class<?> type) { return TargetType.of(type); }
-	};
+	private static final int[] NO_CUSTOM_COLUMN_MAPPERS = new int[0];
 	@NonNull
 	private static final Pattern CAMEL_CASE_PATTERN = Pattern.compile("([a-z])([A-Z]+)");
 	@NonNull
@@ -124,13 +120,13 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	private final int planCacheCapacity;
 	private final @Nullable Long maxLobBytes;
 	private final @Nullable Long maxLobCharacters;
-	// Enables faster lookup of CustomColumnMapper instances by remembering which TargetType they've been used with before.
+	// Store indices rather than callbacks: a user callback can refer back to this mapper or its Database.
 	@NonNull
-	private final ClassValue<List<CustomColumnMapper>> customColumnMappersByRawClassCache =
+	private final ClassValue<int[]> customColumnMappersByRawClassCache =
 			new ClassValue<>() {
 				@Override
-				protected List<CustomColumnMapper> computeValue(Class<?> type) {
-					return computeCustomColumnMappersFor(TargetType.of(type));
+				protected int[] computeValue(Class<?> type) {
+					return computeCustomColumnMapperIndicesFor(TargetType.of(type));
 				}
 			};
 	@NonNull
@@ -202,9 +198,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	private final Map<ResultSetMetaData, Map<DatabaseDialect, String>> schemaSignatureByResultSetMetaData;
 	@NonNull
 	private final ReentrantLock schemaSignatureByResultSetMetaDataLock;
-	@NonNull
-	private final ThreadLocal<SchemaSignatureMemo> schemaSignatureMemo;
-	// The retained value contains only empty resource bookkeeping and weak cursor metadata.
+	// Cursor identity remains reusable even when a driver creates fresh metadata objects for each row.
+	private final Map<WeakIdentityKey<ResultSet>, Map<WeakIdentityKey<DatabaseDialect>, String>> schemaSignaturesByResultSet = new HashMap<>();
+	private final ReferenceQueue<ResultSet> schemaSignatureResultSets = new ReferenceQueue<>();
+	// Nested mapping shares ownership bookkeeping, but no mapper-owned value remains on a worker afterward.
 	private final ThreadLocal<MappingResources> mappingResources = new ThreadLocal<>();
 
 	private MappingResources acquireMappingResources() {
@@ -214,6 +211,17 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			this.mappingResources.set(resources);
 		}
 		return resources.acquire();
+	}
+
+	private void releaseMappingResources(MappingResources resources, @Nullable Throwable failure) throws SQLException {
+		try {
+			resources.close(failure);
+		} finally {
+			// Recursive calls acquire a child scope. Only the root's close ends this mapper's thread association.
+			if (this.mappingResources.get() == resources) {
+				this.mappingResources.remove();
+			}
+		}
 	}
 
 	static {
@@ -232,30 +240,33 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	@NonNull
 	protected List<@NonNull CustomColumnMapper> customColumnMappersFor(@NonNull TargetType targetType) {
 		requireNonNull(targetType);
+		return customColumnMappersAtIndices(customColumnMapperIndicesFor(targetType));
+	}
 
+	private int[] customColumnMapperIndicesFor(TargetType targetType) {
 		if (getCustomColumnMappers().isEmpty())
-			return List.of();
+			return NO_CUSTOM_COLUMN_MAPPERS;
 
 		if (targetType.getTypeArguments().isEmpty())
 			return this.customColumnMappersByRawClassCache.get(targetType.getRawClass());
 
 		// Avoid caching parameterized types to prevent holding user classes under system raw types.
-		return computeCustomColumnMappersFor(targetType);
+		return computeCustomColumnMapperIndicesFor(targetType);
 	}
 
-	@NonNull
-	private List<CustomColumnMapper> computeCustomColumnMappersFor(@NonNull TargetType targetType) {
-		requireNonNull(targetType);
+	private int[] computeCustomColumnMapperIndicesFor(TargetType targetType) {
+		List<CustomColumnMapper> mappers = getCustomColumnMappers();
+		int[] matches = new int[mappers.size()];
+		int count = 0;
+		for (int index = 0; index < mappers.size(); index++)
+			if (mappers.get(index).appliesTo(targetType)) matches[count++] = index;
+		return count == 0 ? NO_CUSTOM_COLUMN_MAPPERS : Arrays.copyOf(matches, count);
+	}
 
-		if (getCustomColumnMappers().isEmpty())
-			return List.of();
-
-		List<CustomColumnMapper> filtered = new ArrayList<>(getCustomColumnMappers().size());
-
-		for (CustomColumnMapper customColumnMapper : getCustomColumnMappers())
-			if (customColumnMapper.appliesTo(targetType))
-				filtered.add(customColumnMapper);
-
+	private List<CustomColumnMapper> customColumnMappersAtIndices(int[] matches) {
+		if (matches.length == 0) return List.of();
+		List<CustomColumnMapper> filtered = new ArrayList<>(matches.length);
+		for (int index : matches) filtered.add(getCustomColumnMappers().get(index));
 		return Collections.unmodifiableList(filtered);
 	}
 
@@ -358,6 +369,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			CustomColumnMapper.MappingResult mappingResult;
 
 			try {
+				JdbcCallbackContext.requireValidation();
 				mappingResult = mapper.map(statementContext, resultSet, resultSetValue, targetType, columnIndex, columnLabel, instanceProvider);
 			} catch (SQLException e) {
 				throw DatabaseException.wrapSafely(DatabaseException.messageSafely(e, "Unable to map custom JDBC column"),
@@ -391,7 +403,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		// JavaBean setters (preserve generics like List<UUID>)
 		for (WritableProperty writableProperty : determineWritableProperties(resultClass)) {
-			Type genericParameterType = setterMetadataMethod(writableProperty.getWriteMethod()).getGenericParameterTypes()[0];
+			Method metadataMethod = setterMetadataMethod(writableProperty.getWriteMethod());
+			Type genericParameterType = GenericPropertyTypes.resolve(resultClass, metadataMethod.getDeclaringClass(),
+					metadataMethod.getGenericParameterTypes()[0]);
 			types.put(writableProperty.getName(), TargetType.of(genericParameterType));
 		}
 
@@ -491,35 +505,19 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					|| Modifier.isStatic(inherited.getModifiers()) || Modifier.isAbstract(inherited.getModifiers())
 					|| inherited.getReturnType() != method.getReturnType())
 				return Optional.empty();
-			// An erased generic bridge can cast Object to a narrower subclass parameter. Do not treat it as
-			// an Object property or guess unresolved superclass type arguments.
-			if (containsTypeVariable(inherited.getGenericParameterTypes()[0]))
-				return Optional.empty();
+			// A real typed override has its own invocable setter; its narrowing erasure bridge is not another
+			// property. A visibility-only bridge still uses the inherited generic metadata, resolved below
+			// against the concrete result class rather than erased to Object.
+			for (Method candidate : method.getDeclaringClass().getDeclaredMethods())
+				if (!candidate.isBridge() && !candidate.isSynthetic() && candidate.getName().equals(method.getName())
+						&& Modifier.isPublic(candidate.getModifiers()) && !Modifier.isStatic(candidate.getModifiers())
+						&& candidate.getParameterCount() == 1 && candidate.getReturnType() == method.getReturnType()
+						&& candidate.getParameterTypes()[0] != method.getParameterTypes()[0]
+						&& method.getParameterTypes()[0].isAssignableFrom(candidate.getParameterTypes()[0]))
+					return Optional.empty();
 			return Optional.of(inherited);
 		}
 		return Optional.empty();
-	}
-
-	private boolean containsTypeVariable(@Nullable Type type) {
-		if (type instanceof TypeVariable<?>)
-			return true;
-		if (type instanceof ParameterizedType parameterizedType) {
-			if (containsTypeVariable(parameterizedType.getOwnerType()))
-				return true;
-			for (Type argument : parameterizedType.getActualTypeArguments())
-				if (containsTypeVariable(argument))
-					return true;
-		} else if (type instanceof GenericArrayType arrayType) {
-			return containsTypeVariable(arrayType.getGenericComponentType());
-		} else if (type instanceof WildcardType wildcardType) {
-			for (Type bound : wildcardType.getUpperBounds())
-				if (containsTypeVariable(bound))
-					return true;
-			for (Type bound : wildcardType.getLowerBounds())
-				if (containsTypeVariable(bound))
-					return true;
-		}
-		return false;
 	}
 
 	@NonNull
@@ -635,7 +633,6 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		this.maxLobCharacters = builder.maxLobCharacters;
 		this.schemaSignatureByResultSetMetaData = new WeakHashMap<>();
 		this.schemaSignatureByResultSetMetaDataLock = new ReentrantLock();
-		this.schemaSignatureMemo = new ThreadLocal<>();
 	}
 
 	@NonNull
@@ -743,7 +740,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			mappingFailure = failure;
 			throw failure;
 		} finally {
-			resources.close(mappingFailure);
+			releaseMappingResources(resources, mappingFailure);
 		}
 	}
 
@@ -786,7 +783,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				for (ColumnBinding b : plan.bindings) {
 					if (b.recordArgIndexOrMinusOne < 0) continue; // bean binding or SKIP
 					Object raw = reads == null ? readColumn(b.reader, resultSet, statementContext, b.columnIndex, resources) : reads.read(b);
-					Object val = b.converter.convert(raw, resultSet, statementContext, instanceProvider, resources);
+					Object val = b.converter.convert(this, raw, resultSet, statementContext, instanceProvider, resources);
 
 					if (val == null) {
 						if (b.targetIsPrimitive) {
@@ -835,7 +832,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				for (ColumnBinding b : plan.bindings) {
 					if (b.setterOrNull == null) continue; // record-only or SKIP
 					Object raw = reads == null ? readColumn(b.reader, resultSet, statementContext, b.columnIndex, resources) : reads.read(b);
-					Object val = b.converter.convert(raw, resultSet, statementContext, instanceProvider, resources);
+					Object val = b.converter.convert(this, raw, resultSet, statementContext, instanceProvider, resources);
 
 					if (val == null) {
 						if (b.targetIsPrimitive) {
@@ -879,7 +876,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					t, DatabaseDialect.forExceptionCause(t));
 		} finally {
 			try {
-				resources.close(mappingFailure);
+				releaseMappingResources(resources, mappingFailure);
 			} catch (DatabaseException failure) {
 				throw failure;
 			} catch (RuntimeException failure) {
@@ -897,14 +894,38 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(resultSet);
 		requireNonNull(resultSetMetaData);
 
-		SchemaSignatureMemo memo = getSchemaSignatureMemo().get();
+		ReentrantLock lock = getSchemaSignatureByResultSetMetaDataLock();
+		DatabaseDialect dialect = statementContext.getDatabaseDialect();
+		WeakIdentityKey<ResultSet> lookup = new WeakIdentityKey<>(resultSet, null);
+		WeakIdentityKey<DatabaseDialect> dialectKey = new WeakIdentityKey<>(dialect, null);
+		lock.lock();
+		try {
+			clearExpiredResultSetSignatures();
+			Map<WeakIdentityKey<DatabaseDialect>, String> signatures = this.schemaSignaturesByResultSet.get(lookup);
+			if (signatures != null) signatures.keySet().removeIf(key -> key.refersTo(null));
+			String signature = signatures == null ? null : signatures.get(dialectKey);
+			if (signature != null) return signature;
+		} finally {
+			lock.unlock();
+		}
 
-		if (memo != null && memo.matches(resultSet, statementContext.getDatabaseDialect()))
-			return memo.getSchemaSignature();
+		String signature = schemaSignatureFor(statementContext, resultSetMetaData);
+		lock.lock();
+		try {
+			clearExpiredResultSetSignatures();
+			Map<WeakIdentityKey<DatabaseDialect>, String> signatures = this.schemaSignaturesByResultSet.computeIfAbsent(
+					new WeakIdentityKey<>(resultSet, this.schemaSignatureResultSets), ignored -> new HashMap<>());
+			String existing = signatures.putIfAbsent(dialectKey, signature);
+			return existing == null ? signature : existing;
+		} finally {
+			lock.unlock();
+		}
+	}
 
-		String schemaSignature = schemaSignatureFor(statementContext, resultSetMetaData);
-		getSchemaSignatureMemo().set(new SchemaSignatureMemo(resultSet, statementContext.getDatabaseDialect(), schemaSignature));
-		return schemaSignature;
+	private void clearExpiredResultSetSignatures() {
+		Reference<? extends ResultSet> expired;
+		while ((expired = this.schemaSignatureResultSets.poll()) != null)
+			this.schemaSignaturesByResultSet.remove(expired);
 	}
 
 	@NonNull
@@ -969,11 +990,6 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		return sig.toString();
 	}
 
-	@NonNull
-	private ThreadLocal<SchemaSignatureMemo> getSchemaSignatureMemo() {
-		return this.schemaSignatureMemo;
-	}
-
 	@SuppressWarnings("unchecked")
 	private static <R extends Record> R provideRecordVia(
 			InstanceProvider ip,
@@ -1018,7 +1034,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		boolean customRawRead = false;
 
 		// See if custom mappers apply, e.g. user mapping a SQL ARRAY to a List<UUID>
-		TargetType targetType = RAW_TARGET_TYPES.get(resultClass);
+		TargetType targetType = TargetType.of(resultClass);
 		List<CustomColumnMapper> mappers = customColumnMappersFor(targetType);
 
 		if (!mappers.isEmpty()) {
@@ -1282,7 +1298,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			mappingFailure = failure;
 			throw failure;
 		} finally {
-			resources.close(mappingFailure);
+			releaseMappingResources(resources, mappingFailure);
 		}
 	}
 
@@ -1349,7 +1365,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			throw failure;
 		} finally {
 			try {
-				resources.close(mappingFailure);
+				releaseMappingResources(resources, mappingFailure);
 			} catch (SQLException failure) {
 				throw DatabaseException.wrapSafely("Unable to release mapping resources", failure, DatabaseDialect.forExceptionCause(failure));
 			}
@@ -3059,7 +3075,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	@FunctionalInterface
 	protected interface Converter {
 		@Nullable
-		Object convert(@Nullable Object raw,
+		Object convert(@NonNull DefaultResultSetMapper mapper,
+									 @Nullable Object raw,
 									 @NonNull ResultSet rs,
 									 @NonNull StatementContext<?> ctx,
 									 @NonNull InstanceProvider ip, @NonNull MappingResources resources);
@@ -3143,28 +3160,21 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 	}
 
-	protected static final class SchemaSignatureMemo {
-		@NonNull
-		private final WeakReference<ResultSet> resultSetReference;
-		private final WeakReference<DatabaseDialect> dialectReference;
-		@NonNull
-		private final String schemaSignature;
+	/** Cache lookups never invoke driver/dialect equals or hashCode, nor retain them through cache values. */
+	private static final class WeakIdentityKey<T> extends WeakReference<T> {
+		private final int hash;
 
-		SchemaSignatureMemo(@NonNull ResultSet resultSet, @NonNull DatabaseDialect dialect,
-												@NonNull String schemaSignature) {
-			this.resultSetReference = new WeakReference<>(requireNonNull(resultSet));
-			this.dialectReference = new WeakReference<>(requireNonNull(dialect));
-			this.schemaSignature = requireNonNull(schemaSignature);
+		WeakIdentityKey(T referent, @Nullable ReferenceQueue<? super T> queue) {
+			super(referent, queue);
+			this.hash = System.identityHashCode(referent);
 		}
 
-		boolean matches(@NonNull ResultSet resultSet, @NonNull DatabaseDialect dialect) {
-			requireNonNull(resultSet);
-			return this.resultSetReference.get() == resultSet && this.dialectReference.get() == dialect;
-		}
+		@Override public int hashCode() { return this.hash; }
 
-		@NonNull
-		String getSchemaSignature() {
-			return this.schemaSignature;
+		@Override public boolean equals(@Nullable Object other) {
+			if (this == other) return true;
+			T referent = get();
+			return referent != null && other instanceof WeakIdentityKey<?> key && referent == key.get();
 		}
 	}
 
@@ -3279,7 +3289,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 								-1,                           // recordArgIndexOrMinusOne (SKIP)
 								null,                         // setterOrNull
 								reader,                       // reader
-								(raw, rrs, cctx, ip, resources) -> raw,  // converter
+								(mapper, raw, rrs, cctx, ip, resources) -> raw,  // converter
 								false,                        // targetIsPrimitive (SKIP => false)
 								Object.class,                 // targetRawClass (boxed)
 								""                            // propertyName (empty for SKIP)
@@ -3310,11 +3320,15 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 				final int recordArgIndex = isRecord ? requireNonNull(recordIndexByProp.get(prop)) : -1;
 				final MethodHandle setterMH = isRecord ? null : setterByProp.get(prop);
+				if (!isRecord && GenericPropertyTypes.hasUnresolvedVariable(ttype.getType()))
+					throw new DatabaseException(format("Cannot resolve generic type %s for mapped property '%s' of %s. "
+							+ "Use a concrete subclass that binds its type parameters, an Object property, or a custom ResultSetMapper.",
+							ttype.getType().getTypeName(), prop, resultClass.getName()));
 
 				// Unboxed + boxed target, and primitive flag
 				final Class<?> rawTargetClassUnboxed = isRecord
 						? recordComponents[recordArgIndex].getType()
-						: setterMH.type().parameterType(1);
+						: ttype.getRawClass();
 				final Class<?> rawTargetClassBoxed = boxedClass(rawTargetClassUnboxed);
 				final boolean targetIsPrimitive = rawTargetClassUnboxed.isPrimitive();
 
@@ -3323,9 +3337,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				final int colIndexFinal = i;
 				final String labelFinal = labelNorm;
 
-				List<CustomColumnMapper> customMappers = customColumnMappersFor(targetTypeFinal);
-				Converter converter = (raw, rrs, cctx, ip, resources) -> convertColumn(
-						raw, targetTypeFinal, customMappers, rrs, cctx, ip, resources,
+				int[] mapperIndices = customColumnMapperIndicesFor(targetTypeFinal);
+				// Callbacks may refer back to the mapper, so neither they nor the mapper belong in a cached plan.
+				Converter converter = (mapper, raw, rrs, cctx, ip, resources) -> mapper.convertColumn(
+						raw, targetTypeFinal, mapper.customColumnMappersAtIndices(mapperIndices), rrs, cctx, ip, resources,
 						colIndexFinal, labelFinal, jdbcType);
 
 

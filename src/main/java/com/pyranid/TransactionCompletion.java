@@ -29,7 +29,7 @@ import static java.util.Objects.requireNonNull;
  * <p>
  * The database result and the invocation failure describe different facts: a committed transaction can still fail
  * during cleanup or a post-transaction hook. A normal rollback-only return has no failure. Nested independent
- * transactions have separate completions even when the same failure escapes both boundaries.
+ * transactions have separate completions even when the same failure is observed by both boundaries.
  * <p>
  * The failure is the original throwable reference, not an immutable copy of that throwable.
  *
@@ -87,10 +87,11 @@ public final class TransactionCompletion {
 	}
 
 	/**
-	 * Gets the exact throwable propagated by this invocation, including suppressed cleanup and hook failures.
+	 * Gets the final invocation failure, including suppressed cleanup and hook failures. The traditional API throws
+	 * this exact throwable; the outcome-bearing API retains an ordinary failure in its returned result.
 	 * The throwable may subsequently gain suppressed failures as it crosses enclosing transaction boundaries.
 	 *
-	 * @return invocation failure, or empty for a normal return
+	 * @return invocation failure, or empty when invocation completion had no failure
 	 */
 	@NonNull
 	public Optional<Throwable> getFailure() {

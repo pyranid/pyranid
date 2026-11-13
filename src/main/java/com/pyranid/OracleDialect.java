@@ -104,7 +104,7 @@ final class OracleDialect extends GenericDialect {
 														 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
-		return super.isTransient(metadata, cause) || hasErrorCode(metadata, cause, 60, 8177);
+		return super.isTransient(metadata, cause) || hasErrorCode(metadata, cause, 54, 60, 8177, 30006);
 	}
 
 	@NonNull
@@ -122,7 +122,7 @@ final class OracleDialect extends GenericDialect {
 													 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
-		return super.isTimeout(metadata, cause) || hasErrorCode(metadata, cause, 1013, 51);
+		return super.isTimeout(metadata, cause) || hasErrorCode(metadata, cause, 1013, 51, 54, 30006);
 	}
 
 	@NonNull

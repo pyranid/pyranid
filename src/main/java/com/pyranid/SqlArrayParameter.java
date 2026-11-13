@@ -31,6 +31,10 @@ import java.util.Optional;
  * You may determine available {@code baseTypeName} values for your database by examining metadata exposed via {@link Database#readDatabaseMetaData(DatabaseMetaDataReader)}.
  * <p>
  * Standard instances may be constructed via {@link Parameters#sqlArrayOf(String, Object[])} and {@link Parameters#sqlArrayOf(String, List)}.
+ * A null element container represents SQL NULL, distinct from an empty array. On PostgreSQL the default binder
+ * asks the driver to resolve the element's actual array type, preserving typed nulls without column context.
+ * Type-name syntax remains driver-specific; for PostgreSQL typed nulls supply the element name, such as
+ * {@code "text"}, rather than constructing an array name such as {@code "text[]"}.
  * <p>
  * Elements may themselves be {@code SqlArrayParameter}s. Pyranid materializes nested arrays recursively, but
  * multidimensional support and type-name syntax remain driver-specific; this shape is integration-verified on

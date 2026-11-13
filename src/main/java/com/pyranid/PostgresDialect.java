@@ -24,8 +24,12 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Set;
 
 import static java.util.Objects.requireNonNull;
 
@@ -199,36 +203,72 @@ final class PostgresDialect extends GenericDialect {
 	@Override
 	public DatabaseExceptionMetadata databaseExceptionMetadata(@Nullable Throwable cause) {
 		DatabaseExceptionMetadata.Builder builder = DatabaseExceptionMetadata.builder(cause);
+		// Metadata belongs to a JDBC failure. Runtime/Error wrappers keep their existing empty metadata
+		// contract even though diagnostic classifiers can still follow their causes.
+		if (!(cause instanceof SQLException sqlFailure)) return builder.build();
+		String primarySqlState = builder.build().sqlState;
+		Object serverErrorMessage = firstServerErrorMessage(sqlFailure);
 
-		if (PostgresDriverSupport.isPsqlException(cause)) {
-			Object serverErrorMessage = PostgresDriverSupport.serverErrorMessage(requireNonNull(cause));
+		if (serverErrorMessage != null) {
+			builder.column(serverErrorMessageText(serverErrorMessage, "getColumn"))
+					.constraint(serverErrorMessageText(serverErrorMessage, "getConstraint"))
+					.datatype(serverErrorMessageText(serverErrorMessage, "getDatatype"))
+					.detail(serverErrorMessageText(serverErrorMessage, "getDetail"))
+					.file(serverErrorMessageText(serverErrorMessage, "getFile"))
+					.hint(serverErrorMessageText(serverErrorMessage, "getHint"))
+					.internalQuery(serverErrorMessageText(serverErrorMessage, "getInternalQuery"))
+					.dbmsMessage(serverErrorMessageText(serverErrorMessage, "getMessage"))
+					.routine(serverErrorMessageText(serverErrorMessage, "getRoutine"))
+					.schema(serverErrorMessageText(serverErrorMessage, "getSchema"))
+					.severity(serverErrorMessageText(serverErrorMessage, "getSeverity"))
+					.table(serverErrorMessageText(serverErrorMessage, "getTable"))
+					.where(serverErrorMessageText(serverErrorMessage, "getWhere"))
+					.internalPosition(serverErrorMessageNumber(serverErrorMessage, "getInternalPosition"))
+					.line(serverErrorMessageNumber(serverErrorMessage, "getLine"))
+					.position(serverErrorMessageNumber(serverErrorMessage, "getPosition"));
 
-			if (serverErrorMessage != null) {
-				builder.column(serverErrorMessageText(serverErrorMessage, "getColumn"))
-						.constraint(serverErrorMessageText(serverErrorMessage, "getConstraint"))
-						.datatype(serverErrorMessageText(serverErrorMessage, "getDatatype"))
-						.detail(serverErrorMessageText(serverErrorMessage, "getDetail"))
-						.file(serverErrorMessageText(serverErrorMessage, "getFile"))
-						.hint(serverErrorMessageText(serverErrorMessage, "getHint"))
-						.internalQuery(serverErrorMessageText(serverErrorMessage, "getInternalQuery"))
-						.dbmsMessage(serverErrorMessageText(serverErrorMessage, "getMessage"))
-						.routine(serverErrorMessageText(serverErrorMessage, "getRoutine"))
-						.schema(serverErrorMessageText(serverErrorMessage, "getSchema"))
-						.severity(serverErrorMessageText(serverErrorMessage, "getSeverity"))
-						.table(serverErrorMessageText(serverErrorMessage, "getTable"))
-						.where(serverErrorMessageText(serverErrorMessage, "getWhere"))
-						.internalPosition(serverErrorMessageNumber(serverErrorMessage, "getInternalPosition"))
-						.line(serverErrorMessageNumber(serverErrorMessage, "getLine"))
-						.position(serverErrorMessageNumber(serverErrorMessage, "getPosition"));
+			String sqlState = serverErrorMessageText(serverErrorMessage, "getSQLState");
 
-				String sqlState = serverErrorMessageText(serverErrorMessage, "getSQLState");
-
-				if (sqlState != null)
-					builder.sqlState(sqlState);
-			}
+			// Batch/transport wrappers retain their own primary state. A missing shell state can
+			// use the server's state, and a direct PSQLException keeps its established behavior.
+			if (sqlState != null && (primarySqlState == null || PostgresDriverSupport.isPsqlException(cause)))
+				builder.sqlState(sqlState);
 		}
 
 		return builder.build();
+	}
+
+	/** Finds useful server diagnostics through the driver's failure path, never suppressed cleanup failures. */
+	@Nullable
+	private Object firstServerErrorMessage(SQLException failure) {
+		Set<Throwable> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+		ArrayDeque<Throwable> pending = new ArrayDeque<>();
+		pending.add(failure);
+		while (!pending.isEmpty()) {
+			Throwable current = pending.removeLast();
+			if (!visited.add(current)) continue;
+			if (PostgresDriverSupport.isPsqlException(current)) {
+				Object message = PostgresDriverSupport.serverErrorMessage(current);
+				if (message != null) return message;
+			}
+			// Push next first so a direct cause takes precedence, while guarding the edges independently.
+			// Metadata inspection is best effort; safety guards separately inspect the complete graph.
+			if (current instanceof SQLException sqlFailure) {
+				try {
+					SQLException next = sqlFailure.getNextException();
+					if (next != null) pending.add(next);
+				} catch (Throwable ignored) {
+					// An unreadable next edge must not hide a readable cause.
+				}
+			}
+			try {
+				Throwable cause = current.getCause();
+				if (cause != null) pending.add(cause);
+			} catch (Throwable ignored) {
+				// An unreadable cause must not hide the driver's next-exception chain.
+			}
+		}
+		return null;
 	}
 
 	@NonNull
@@ -251,11 +291,20 @@ final class PostgresDialect extends GenericDialect {
 
 	@NonNull
 	@Override
+	public Boolean isTransient(@NonNull DatabaseExceptionMetadata metadata,
+														 @Nullable Throwable cause) {
+		requireNonNull(metadata);
+
+		return super.isTransient(metadata, cause) || hasSqlState(metadata, cause, "55P03");
+	}
+
+	@NonNull
+	@Override
 	public Boolean isTimeout(@NonNull DatabaseExceptionMetadata metadata,
 													 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
-		return super.isTimeout(metadata, cause) || hasSqlState(metadata, cause, "57014");
+		return super.isTimeout(metadata, cause) || hasSqlState(metadata, cause, "57014", "55P03");
 	}
 
 	@Nullable

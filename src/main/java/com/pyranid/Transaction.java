@@ -27,8 +27,11 @@ import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Savepoint;
 import java.time.Duration;
 import java.util.Collections;
+import java.util.Deque;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -94,6 +97,13 @@ public final class Transaction {
 	// never be mistaken for this one.
 	@Nullable
 	private volatile SavepointScopeConflictException savepointScopeConflictBeforeCommit;
+	@Nullable
+	private volatile Throwable validationFailureBeforeCommit;
+	private volatile boolean physicalCommitSucceeded;
+	// Guarded by connectionLock. These describe the existing physical connection, never ambient work.
+	@Nullable
+	private Throwable firstSuspectFailure;
+	private boolean completionValidationRequired;
 	@NonNull
 	private volatile PhysicalTransactionBeginState physicalTransactionBeginState;
 	@Nullable
@@ -167,14 +177,24 @@ public final class Transaction {
 	@NonNull
 	public Savepoint createSavepoint() {
 		lockConnectionInterruptibly("create a savepoint");
+		boolean acquired = false;
 
 		try {
 			assertNotCompleted("create a savepoint");
-			Savepoint savepoint = getConnection().setSavepoint();
+			Connection connection = getConnection();
+			acquired = true;
+			Savepoint savepoint = connection.setSavepoint();
 			getMetricsCollectorDispatcher().didCreateSavepoint(this, getDatabaseType());
 			return savepoint;
+		} catch (SavepointScopeConflictException e) {
+			throw e;
 		} catch (SQLException e) {
-			throw databaseException("Unable to create savepoint", e);
+			DatabaseException wrapped = databaseException("Unable to create savepoint", e);
+			if (acquired) recordSuspectFailure(wrapped);
+			throw wrapped;
+		} catch (RuntimeException | Error e) {
+			if (acquired) recordSuspectFailure(e);
+			throw e;
 		} finally {
 			getConnectionLock().unlock();
 		}
@@ -189,21 +209,28 @@ public final class Transaction {
 	public void rollback(@NonNull Savepoint savepoint) {
 		requireNonNull(savepoint);
 		boolean connectionLockAcquired = false;
+		boolean acquired = false;
 
 		try {
 			lockConnectionInterruptibly("roll back to a savepoint");
 			connectionLockAcquired = true;
 			assertNotCompleted("roll back to a savepoint");
-			getConnection().rollback(savepoint);
+			Connection connection = getConnection();
+			acquired = true;
+			connection.rollback(savepoint);
+			clearSuspectFailure();
 			getMetricsCollectorDispatcher().didRollbackToSavepoint(this, getDatabaseType());
 		} catch (SavepointScopeConflictException e) {
 			// No JDBC rollback was attempted. A caller may handle this ownership conflict and retry after the scope ends.
 			throw e;
 		} catch (SQLException e) {
 			markRollbackOnlyIfActive();
-			throw databaseException("Unable to roll back to savepoint", e);
+			DatabaseException wrapped = databaseException("Unable to roll back to savepoint", e);
+			if (acquired) recordSuspectFailure(wrapped);
+			throw wrapped;
 		} catch (RuntimeException | Error e) {
 			markRollbackOnlyIfActive();
+			if (acquired) recordSuspectFailure(e);
 			throw e;
 		} finally {
 			if (connectionLockAcquired)
@@ -481,6 +508,13 @@ public final class Transaction {
 			// raised here proves nothing was committed, which is what lets completion report a rollback instead of an
 			// indeterminate outcome, and because commit-failure metrics must count only a failed commit attempt.
 			assertSavepointScopeAccessBeforeCommit();
+			try {
+				TransactionCompletionValidation.validate(requireNonNull(this.connection), this.databaseType,
+						this.firstSuspectFailure, this.completionValidationRequired);
+			} catch (RuntimeException | Error failure) {
+				this.validationFailureBeforeCommit = failure;
+				throw failure;
+			}
 
 			LOGGER.finer("Committing transaction...");
 
@@ -488,22 +522,20 @@ public final class Transaction {
 
 			try {
 				requireNonNull(this.connection).commit();
-				getMetricsCollectorDispatcher().didCommitPhysicalTransaction(this, getDatabaseType(), Duration.ofNanos(nanoTime() - startTime));
-				LOGGER.finer("Transaction committed.");
+				this.physicalCommitSucceeded = true;
 			} catch (SQLException e) {
+				// Classify only the driver's original failure, before wrapping, metrics, rollback or cleanup alter it.
+				this.commitSerializationFailure.set(TransactionCommitEvidence.provesSerializationAbort(e, this.databaseType.dialect()));
 				DatabaseException wrapped = databaseException("Unable to commit transaction", e);
-
-				// This catch is scoped to the physical JDBC commit call, so a serialization classification here cannot come from
-				// the transaction body or later cleanup.
-				if (wrapped.isSerializationFailure())
-					this.commitSerializationFailure.set(true);
-
 				getMetricsCollectorDispatcher().didFailToCommitPhysicalTransaction(this, getDatabaseType(), Duration.ofNanos(nanoTime() - startTime), wrapped);
 				throw wrapped;
 			} catch (RuntimeException | Error e) {
 				getMetricsCollectorDispatcher().didFailToCommitPhysicalTransaction(this, getDatabaseType(), Duration.ofNanos(nanoTime() - startTime), e);
 				throw e;
 			}
+			// Physical success is already durable evidence even if success instrumentation throws.
+			getMetricsCollectorDispatcher().didCommitPhysicalTransaction(this, getDatabaseType(), Duration.ofNanos(nanoTime() - startTime));
+			LOGGER.finer("Transaction committed.");
 		} finally {
 			getConnectionLock().unlock();
 		}
@@ -511,6 +543,41 @@ public final class Transaction {
 
 	boolean didCommitFailWithSerializationFailure() {
 		return this.commitSerializationFailure.get();
+	}
+
+	boolean didPhysicalCommitSucceed() {
+		return this.physicalCommitSucceeded;
+	}
+
+	boolean didSkipCommitBeforePhysicalAttempt(@NonNull Throwable commitFailure) {
+		requireNonNull(commitFailure);
+		return this.validationFailureBeforeCommit == commitFailure
+				|| didSkipCommitForSavepointScopeConflict(commitFailure);
+	}
+
+	void recordSuspectFailure(@NonNull Throwable failure) {
+		requireNonNull(failure);
+		assertConnectionLockHeld();
+		if (this.connection != null && this.physicalTransactionBeginState == PhysicalTransactionBeginState.READY
+				&& this.completionPhase != CompletionPhase.COMPLETED && this.firstSuspectFailure == null)
+			this.firstSuspectFailure = failure;
+	}
+
+	void requireCompletionValidation() {
+		assertConnectionLockHeld();
+		if (this.connection != null && this.physicalTransactionBeginState == PhysicalTransactionBeginState.READY
+				&& this.completionPhase != CompletionPhase.COMPLETED)
+			this.completionValidationRequired = true;
+	}
+
+	private void clearSuspectFailure() {
+		assertConnectionLockHeld();
+		this.firstSuspectFailure = null;
+	}
+
+	private void assertConnectionLockHeld() {
+		if (!this.connectionLock.isHeldByCurrentThread())
+			throw new IllegalStateException("Transaction connection lock must be held while recording completion evidence");
 	}
 
 	boolean didSkipCommitForSavepointScopeConflict(@NonNull Throwable commitFailure) {
@@ -889,11 +956,18 @@ public final class Transaction {
 	}
 
 	void markCompleted() {
-		this.lifecycleLock.lock();
+		this.connectionLock.lock();
 		try {
-			this.completionPhase = CompletionPhase.COMPLETED;
+			this.lifecycleLock.lock();
+			try {
+				this.completionPhase = CompletionPhase.COMPLETED;
+				this.firstSuspectFailure = null;
+				this.completionValidationRequired = false;
+			} finally {
+				this.lifecycleLock.unlock();
+			}
 		} finally {
-			this.lifecycleLock.unlock();
+			this.connectionLock.unlock();
 		}
 	}
 
@@ -918,6 +992,18 @@ public final class Transaction {
 				this.rollbackOnly.set(true);
 		} finally {
 			this.lifecycleLock.unlock();
+		}
+	}
+
+	/** A failed internal savepoint must fence only the transaction whose connection was actually used. */
+	static void markRollbackOnlyAfterMetadataFailure(Connection failedConnection) {
+		Deque<Transaction> stack = TransactionCoordinator.TRANSACTION_STACK_HOLDER.get();
+		if (stack == null) return;
+		Set<Transaction> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+		for (Transaction transaction : stack) {
+			if (visited.add(transaction) && transaction.connection == failedConnection
+					&& transaction.connectionLock.isHeldByCurrentThread())
+				transaction.markRollbackOnlyForCleanupFailure();
 		}
 	}
 
@@ -978,16 +1064,27 @@ public final class Transaction {
 	private void releaseSavepointAfterSuccess(@NonNull Savepoint savepoint) {
 		requireNonNull(savepoint);
 		lockConnectionInterruptibly("release a savepoint");
+		boolean acquired = false;
 
 		try {
-			getConnection().releaseSavepoint(savepoint);
+			Connection connection = getConnection();
+			acquired = true;
+			connection.releaseSavepoint(savepoint);
 			getMetricsCollectorDispatcher().didReleaseSavepoint(this, getDatabaseType());
 		} catch (SQLFeatureNotSupportedException e) {
-			if (JdbcFallbacks.isTerminal(e))
-				throw databaseException("Unable to release savepoint", e);
+			if (JdbcFallbacks.isTerminal(e)) {
+				DatabaseException wrapped = databaseException("Unable to release savepoint", e);
+				if (acquired) recordSuspectFailure(wrapped);
+				throw wrapped;
+			}
 			// Some drivers support rollback-to-savepoint but not release; successful closures should still succeed.
 		} catch (SQLException e) {
-			throw databaseException("Unable to release savepoint", e);
+			DatabaseException wrapped = databaseException("Unable to release savepoint", e);
+			if (acquired) recordSuspectFailure(wrapped);
+			throw wrapped;
+		} catch (RuntimeException | Error failure) {
+			if (acquired) recordSuspectFailure(failure);
+			throw failure;
 		} finally {
 			getConnectionLock().unlock();
 		}
@@ -999,42 +1096,55 @@ public final class Transaction {
 		requireNonNull(primary);
 
 		boolean rollbackConnectionLockAcquired = false;
+		boolean rollbackConnectionAcquired = false;
 
 		try {
 			lockConnectionInterruptibly("roll back to a savepoint");
 			rollbackConnectionLockAcquired = true;
-			getConnection().rollback(savepoint);
+			Connection connection = getConnection();
+			rollbackConnectionAcquired = true;
+			connection.rollback(savepoint);
+			clearSuspectFailure();
 			getMetricsCollectorDispatcher().didRollbackToSavepoint(this, getDatabaseType());
 		} catch (Throwable rollbackException) {
 			markRollbackOnlyForCleanupFailure();
+			DatabaseException wrapped = databaseException("Unable to roll back to savepoint", rollbackException);
+			if (rollbackConnectionAcquired) recordSuspectFailure(wrapped);
 			if (primary != rollbackException)
-				Database.appendCleanupFailure(primary, databaseException("Unable to roll back to savepoint", rollbackException));
+				Database.appendCleanupFailure(primary, wrapped);
 		} finally {
 			if (rollbackConnectionLockAcquired)
 				getConnectionLock().unlock();
 		}
 
 		boolean releaseConnectionLockAcquired = false;
+		boolean releaseConnectionAcquired = false;
 
 		try {
 			lockConnectionInterruptibly("release a savepoint");
 			releaseConnectionLockAcquired = true;
-			getConnection().releaseSavepoint(savepoint);
+			Connection connection = getConnection();
+			releaseConnectionAcquired = true;
+			connection.releaseSavepoint(savepoint);
 			getMetricsCollectorDispatcher().didReleaseSavepoint(this, getDatabaseType());
 		} catch (SQLFeatureNotSupportedException e) {
 			if (JdbcFallbacks.isTerminal(e)) {
 				// A caller may handle the body failure. Terminal release evidence must still prevent
 				// committing later work after a rollback or loss of the surrounding transaction.
 				markRollbackOnlyForCleanupFailure();
+				DatabaseException wrapped = databaseException("Unable to release savepoint", e);
+				if (releaseConnectionAcquired) recordSuspectFailure(wrapped);
 				if (primary != e)
-					Database.appendCleanupFailure(primary, databaseException("Unable to release savepoint", e));
+					Database.appendCleanupFailure(primary, wrapped);
 			}
 			// Some drivers support rollback-to-savepoint but not release.
 		} catch (Throwable releaseException) {
 			if (JdbcFallbacks.isTerminal(releaseException))
 				markRollbackOnlyForCleanupFailure();
+			DatabaseException wrapped = databaseException("Unable to release savepoint", releaseException);
+			if (releaseConnectionAcquired) recordSuspectFailure(wrapped);
 			if (primary != releaseException)
-				Database.appendCleanupFailure(primary, databaseException("Unable to release savepoint", releaseException));
+				Database.appendCleanupFailure(primary, wrapped);
 		} finally {
 			if (releaseConnectionLockAcquired)
 				getConnectionLock().unlock();
@@ -1044,12 +1154,20 @@ public final class Transaction {
 	private void releaseSavepointJdbc(@NonNull Savepoint savepoint) {
 		requireNonNull(savepoint);
 		lockConnectionInterruptibly("release a savepoint");
+		boolean acquired = false;
 
 		try {
-			getConnection().releaseSavepoint(savepoint);
+			Connection connection = getConnection();
+			acquired = true;
+			connection.releaseSavepoint(savepoint);
 			getMetricsCollectorDispatcher().didReleaseSavepoint(this, getDatabaseType());
 		} catch (SQLException e) {
-			throw databaseException("Unable to release savepoint", e);
+			DatabaseException wrapped = databaseException("Unable to release savepoint", e);
+			if (acquired) recordSuspectFailure(wrapped);
+			throw wrapped;
+		} catch (RuntimeException | Error failure) {
+			if (acquired) recordSuspectFailure(failure);
+			throw failure;
 		} finally {
 			getConnectionLock().unlock();
 		}

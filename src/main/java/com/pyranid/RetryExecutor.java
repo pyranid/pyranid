@@ -30,6 +30,7 @@ import static java.util.Objects.requireNonNull;
 /** Retry admission and failure preservation, with deterministic clock and sleep seams for tests. */
 final class RetryExecutor {
 	static final RetryExecutor DEFAULT = new RetryExecutor(System::nanoTime, RetryExecutor::sleepBackoff);
+	private static final int INTERRUPTED = 4;
 
 	private final LongSupplier clock;
 	private final Sleeper sleeper;
@@ -48,7 +49,8 @@ final class RetryExecutor {
 
 		for (int attempt = 1; attempt <= retryPolicy.getMaxAttempts(); ++attempt) {
 			if (attempt > 1 && (Thread.currentThread().isInterrupted()
-					|| (budget != null && elapsedSince(startedAt).compareTo(budget) >= 0))) {
+					|| (budget != null && elapsedSince(startedAt).compareTo(budget) >= 0)
+					|| retryAdmissionBlocked(priorFailures.get(priorFailures.size() - 1)))) {
 				DatabaseException lastFailure = priorFailures.get(priorFailures.size() - 1);
 				suppressPriorFailures(lastFailure, priorFailures);
 				throw lastFailure;
@@ -61,9 +63,9 @@ final class RetryExecutor {
 				// Outcome fences precede any user policy invocation. An enclosing rollback must not erase evidence
 				// that an independent inner transaction committed or has an unknown outcome.
 				TransactionRetrySafety.applyTo(failure, attemptSafety.outcomes());
-				if (Thread.currentThread().isInterrupted() || failure.isTransactionOutcomeRetryUnsafe()
-						|| attempt == retryPolicy.getMaxAttempts()
-						|| (budget != null && elapsedSince(startedAt).compareTo(budget) >= 0)) {
+				if (Thread.currentThread().isInterrupted() || attempt == retryPolicy.getMaxAttempts()
+						|| (budget != null && elapsedSince(startedAt).compareTo(budget) >= 0)
+						|| retryAdmissionBlocked(failure)) {
 					suppressPriorFailures(failure, priorFailures);
 					throw failure;
 				}
@@ -75,7 +77,7 @@ final class RetryExecutor {
 					suppressRetryFailures(conditionFailure, failure, priorFailures);
 					throw conditionFailure;
 				}
-				if (Thread.currentThread().isInterrupted()) {
+				if (retryAdmissionBlocked(failure)) {
 					suppressPriorFailures(failure, priorFailures);
 					throw failure;
 				}
@@ -101,7 +103,7 @@ final class RetryExecutor {
 					suppressPriorFailures(backoffFailure, priorFailures);
 					throw backoffFailure;
 				}
-				if (Thread.currentThread().isInterrupted()) {
+				if (retryAdmissionBlocked(failure)) {
 					suppressPriorFailures(failure, priorFailures);
 					throw failure;
 				}
@@ -123,12 +125,16 @@ final class RetryExecutor {
 						throw failure;
 					}
 				}
+				if (retryAdmissionBlocked(failure)) {
+					suppressPriorFailures(failure, priorFailures);
+					throw failure;
+				}
 
 				try {
 					if (!delay.isZero())
 						this.sleeper.sleep(delay);
 				} catch (InterruptedException interruptedException) {
-					Thread.currentThread().interrupt();
+					if (!TransactionCoordinator.hasAmbientTransaction()) Thread.currentThread().interrupt();
 					suppressPriorFailures(failure, priorFailures);
 					failure.addSuppressed(interruptedException);
 					throw failure;
@@ -136,6 +142,43 @@ final class RetryExecutor {
 			}
 		}
 		throw new AssertionError("unreachable");
+	}
+
+	private boolean retryAdmissionBlocked(DatabaseException failure) {
+		if (Thread.currentThread().isInterrupted()) return true;
+		InterruptedException[] interruption = new InterruptedException[1];
+		// Inspect cancellation and outcomes together: an outcome-only scan could consume a foreign accessor's
+		// one-time interruption report before a separate cancellation scan observes it.
+		int evidence = ThrowableGraph.inspectRetainingFailures(failure, current -> {
+			if (current instanceof InterruptedException interrupted) {
+				if (interruption[0] == null) interruption[0] = interrupted;
+				return INTERRUPTED;
+			}
+			if (current instanceof DatabaseException databaseException) {
+				int outcomes = 0;
+				if (databaseException.isTransactionOutcomeCommitted()) outcomes |= TransactionRetrySafety.COMMITTED;
+				if (databaseException.isTransactionOutcomeIndeterminate()) outcomes |= TransactionRetrySafety.IN_DOUBT;
+				return outcomes;
+			}
+			if (current instanceof PostTransactionOperationException postTransactionFailure) {
+				return switch (postTransactionFailure.getTransactionResult()) {
+					case COMMITTED -> TransactionRetrySafety.COMMITTED;
+					case IN_DOUBT -> TransactionRetrySafety.IN_DOUBT;
+					case ROLLED_BACK -> 0;
+				};
+			}
+			return 0;
+		}, TransactionRetrySafety.IN_DOUBT, current -> true, INTERRUPTED);
+		TransactionRetrySafety.applyTo(failure, evidence);
+		if ((evidence & INTERRUPTED) != 0 && !Thread.currentThread().isInterrupted()
+				&& ThrowableGraph.inspect(failure, current -> current instanceof InterruptedException ? 1 : 0, 0) == 0) {
+			// Preserve evidence hidden or consumed by later diagnostic accessors, without publishing a thread flag
+			// inside an enclosing transaction. Stable graphs retain their existing exception structure.
+			ThrowableGraph.retainInspectionFailure(failure, interruption[0] == null
+					? new InterruptedException("Interruption observed while inspecting a transaction retry failure")
+					: interruption[0]);
+		}
+		return evidence != 0 || Thread.currentThread().isInterrupted();
 	}
 
 	private Duration elapsedSince(long startedAt) {

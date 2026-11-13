@@ -25,6 +25,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLRecoverableException;
 import java.sql.SQLException;
+import java.sql.SQLTransientConnectionException;
 import java.sql.SQLTransientException;
 import java.sql.SQLTimeoutException;
 import java.sql.Statement;
@@ -275,8 +276,15 @@ class GenericDialect implements DatabaseDialect {
 														 @Nullable Throwable cause) {
 		requireNonNull(metadata);
 
-		return hasSqlException(cause, sqlException -> sqlException instanceof SQLTransientException
-				|| sqlException instanceof SQLRecoverableException)
+		return hasSqlException(cause, sqlException -> {
+			// Some drivers also use this subtype for application SIGNAL errors. Its superclass alone
+			// must not authorize retry when the driver supplied an unrelated, non-connection SQLState.
+			if (sqlException instanceof SQLTransientConnectionException) {
+				String sqlState = sqlException.getSQLState();
+				return sqlState == null || sqlState.startsWith("08");
+			}
+			return sqlException instanceof SQLTransientException || sqlException instanceof SQLRecoverableException;
+		})
 				|| hasSqlStateClass(metadata, cause, "08", "40");
 	}
 

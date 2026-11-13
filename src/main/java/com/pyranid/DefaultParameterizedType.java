@@ -52,7 +52,7 @@ class DefaultParameterizedType implements ParameterizedType {
 		requireNonNull(typeArguments);
 
 		this.rawType = rawType;
-		this.typeArguments = typeArguments;
+		this.typeArguments = typeArguments.clone();
 		this.ownerType = ownerType;
 	}
 
@@ -72,10 +72,8 @@ class DefaultParameterizedType implements ParameterizedType {
 
 	@Override
 	public int hashCode() {
-		int result = Arrays.hashCode(getActualTypeArguments());
-		result = 31 * result + Objects.hashCode(getRawType());
-		result = 31 * result + Objects.hashCode(getOwnerType());
-		return result;
+		// ParameterizedType implementations must share the JDK's hash contract when they compare equal.
+		return Arrays.hashCode(this.typeArguments) ^ Objects.hashCode(this.ownerType) ^ Objects.hashCode(this.rawType);
 	}
 
 	@Override

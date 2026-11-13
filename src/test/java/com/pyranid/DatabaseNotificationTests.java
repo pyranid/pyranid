@@ -738,7 +738,7 @@ public class DatabaseNotificationTests {
 
 		Assertions.assertEquals(List.of(
 				"checkout",
-				"prepareStatement:SELECT pg_notify(?, ?)",
+				"prepareStatement:SELECT pg_catalog.pg_notify(?, ?)",
 				"setQueryTimeout:2",
 				"setFetchSize:27",
 				"setMaxRows:9",
@@ -758,7 +758,7 @@ public class DatabaseNotificationTests {
 
 		Assertions.assertEquals(List.of(
 				"checkout",
-				"prepareStatement:SELECT pg_notify(?, ?)",
+				"prepareStatement:SELECT pg_catalog.pg_notify(?, ?)",
 				"setObject:1:car_changed",
 				"setObject:2:42",
 				"executePreparedStatement",
@@ -770,8 +770,9 @@ public class DatabaseNotificationTests {
 	public void sendNotificationPassesNullAndOmittedPayloadsThroughToBackend() {
 		List<String> expectedEvents = List.of(
 				"checkout",
-				"prepareStatement:SELECT pg_notify(?, ?)",
+				"prepareStatement:SELECT pg_catalog.pg_notify(?, ?)",
 				"setObject:1:car_changed",
+				"getAutoCommit:true",
 				"setNull:2:0",
 				"executePreparedStatement",
 				"closePreparedStatement",

@@ -79,6 +79,8 @@ public interface CustomParameterBinder {
 	 * For example, if this binder should apply when binding {@code MyCustomType}, this method could return {@code targetType.matchesClass(MyCustomType.class)}.
 	 * <p>
 	 * For parameterized types like {@code List<UUID>}, this method could return {@code targetType.matchesParameterizedType(List.class, UUID.class)}.
+	 * Implicit enum parameters use their declaring enum class, even when a constant has its own class body.
+	 * An explicit {@link TypedParameter} type takes precedence over this implicit derivation.
 	 *
 	 * @param targetType the target type to evaluate - should this custom binder handle it or not?
 	 * @return {@code true} if this binder should handle the type, {@code false} otherwise.

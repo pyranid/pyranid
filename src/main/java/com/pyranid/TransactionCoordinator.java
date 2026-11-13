@@ -109,19 +109,41 @@ final class TransactionCoordinator {
 
 	@NonNull
 	<T> Optional<T> run(@NonNull TransactionOptions transactionOptions,
-																		 @NonNull ReturningTransactionalOperation<T> transactionalOperation) {
+			@NonNull ReturningTransactionalOperation<T> transactionalOperation) {
+		Execution<T> execution = executeBoundary(transactionOptions, transactionalOperation, false);
+		rethrowFailure(execution.completion().getFailure().orElse(null));
+		return execution.attemptedValue();
+	}
+
+	@NonNull
+	<T> TransactionOutcome<T> runWithOutcome(@NonNull TransactionOptions transactionOptions,
+			@NonNull ReturningTransactionalOperation<T> transactionalOperation) {
+		Execution<T> execution = executeBoundary(transactionOptions, transactionalOperation, true);
+		Throwable failure = execution.completion().getFailure().orElse(null);
+		if (failure instanceof Error error) throw error;
+		return new TransactionOutcome<>(execution.completion(), execution.attemptedValue());
+	}
+
+	private <T> Execution<T> executeBoundary(TransactionOptions transactionOptions,
+			ReturningTransactionalOperation<T> transactionalOperation, boolean captureFailure) {
 		requireNonNull(transactionOptions);
 		requireNonNull(transactionalOperation);
-
-		Transaction transaction = new Transaction(dataSource, transactionOptions, this.metrics,
-				this.databaseType);
+		Transaction transaction = new Transaction(this.dataSource, transactionOptions, this.metrics, this.databaseType);
 		try (var ignored = transaction.retrySafety().activate()) {
-			return run(transaction, transactionOptions, transactionalOperation);
+			return execute(transaction, transactionOptions, transactionalOperation, captureFailure);
 		}
 	}
 
-	private <T> Optional<T> run(Transaction transaction, TransactionOptions transactionOptions,
-			ReturningTransactionalOperation<T> transactionalOperation) {
+	private record Execution<T>(Optional<T> attemptedValue, TransactionCompletion completion) {}
+
+	private static void rethrowFailure(Throwable failure) {
+		if (failure instanceof Error error) throw error;
+		if (failure instanceof RuntimeException runtimeException) throw runtimeException;
+		if (failure != null) throw new IllegalStateException("Unexpected checked transaction failure", failure);
+	}
+
+	private <T> Execution<T> execute(Transaction transaction, TransactionOptions transactionOptions,
+			ReturningTransactionalOperation<T> transactionalOperation, boolean captureFailure) {
 		Deque<Transaction> transactionStack = transactionStackForPush();
 		Long enclosingTransactionId = transactionStack.isEmpty() ? null : transactionStack.peek().id();
 		transactionStack.push(transaction);
@@ -130,21 +152,21 @@ final class TransactionCoordinator {
 		boolean rollbackFailed = false;
 		boolean rollbackAttempted = false;
 		Throwable thrown = null;
+		Optional<T> attemptedValue = Optional.empty();
+		TransactionCompletion completion = null;
+		boolean interruptedOnEntry = Thread.currentThread().isInterrupted();
 		long transactionStartTime = nanoTime();
 		this.metrics.didEnterTransactionClosure(transaction, transactionOptions.getIsolation(), transaction.getDatabaseType());
 
 		try {
-			Optional<T> returnValue;
 			try {
-				returnValue = transactionalOperation.perform();
+				Optional<T> returnValue = transactionalOperation.perform();
+				// Capture before any completion step can fail, normalizing the existing null-Optional convention.
+				attemptedValue = returnValue == null ? Optional.empty() : returnValue;
 			} finally {
 				// Close public admission before waiting for the JDBC lock on either the success or failure path.
 				transaction.beginCompletion();
 			}
-
-			// Safeguard in case user code accidentally returns null instead of Optional.empty()
-			if (returnValue == null)
-				returnValue = Optional.empty();
 
 			transaction.getConnectionLock().lock();
 
@@ -160,10 +182,11 @@ final class TransactionCoordinator {
 				} else {
 					try {
 						transaction.commit();
-					} catch (RuntimeException | Error e) {
-						// The savepoint-ownership guard refuses the commit before issuing it, so nothing committed and the rollback
-						// below proves the outcome. Every other commit failure leaves the outcome unknown.
-						commitFailed = !transaction.didSkipCommitForSavepointScopeConflict(e);
+					} catch (Throwable e) {
+						// Preserve the physical driver's acknowledgment even if success diagnostics subsequently fail.
+						// Identity-based pre-commit refusals are distinct from an uncertain issued commit.
+						committed = transaction.didPhysicalCommitSucceed();
+						commitFailed = !committed && !transaction.didSkipCommitBeforePhysicalAttempt(e);
 						throw e;
 					}
 					committed = true;
@@ -174,41 +197,40 @@ final class TransactionCoordinator {
 				transaction.getConnectionLock().unlock();
 			}
 
-			return returnValue;
 		} catch (RuntimeException e) {
 			thrown = e;
-			if (rollbackAttempted) {
+			if (committed) {
+				markTransactionCompleted(transaction);
+			} else if (rollbackAttempted) {
 				rollbackFailed = true;
 				markTransactionCompleted(transaction);
 			} else {
 				rollbackFailed = rollbackTransactionAfterFailure(transaction, e);
 			}
 
-			Database.restoreInterruptIfNeeded(e);
-			throw e;
 		} catch (Error e) {
 			thrown = e;
-			if (rollbackAttempted) {
+			if (committed) {
+				markTransactionCompleted(transaction);
+			} else if (rollbackAttempted) {
 				rollbackFailed = true;
 				markTransactionCompleted(transaction);
 			} else {
 				rollbackFailed = rollbackTransactionAfterFailure(transaction, e);
 			}
 
-			Database.restoreInterruptIfNeeded(e);
-			throw e;
 		} catch (Throwable t) {
 			RuntimeException wrapped = new RuntimeException(t);
 			thrown = wrapped;
-			if (rollbackAttempted) {
+			if (committed) {
+				markTransactionCompleted(transaction);
+			} else if (rollbackAttempted) {
 				rollbackFailed = true;
 				markTransactionCompleted(transaction);
 			} else {
 				rollbackFailed = rollbackTransactionAfterFailure(transaction, wrapped);
 			}
 
-			Database.restoreInterruptIfNeeded(t);
-			throw wrapped;
 		} finally {
 			transactionStack.pop();
 
@@ -294,21 +316,20 @@ final class TransactionCoordinator {
 							transactionOutcomeIndeterminate),
 					transaction.getDatabaseType(), Duration.ofNanos(nanoTime() - transactionStartTime), exitThrown);
 
+			completion = new TransactionCompletion(transaction.id(), enclosingTransactionId, result, exitThrown);
 			Consumer<TransactionCompletion> observer = transactionOptions.getCompletionObserver().orElse(null);
 			if (observer != null)
-				observeCompletion(observer, new TransactionCompletion(transaction.id(), enclosingTransactionId, result, exitThrown));
+				observeCompletion(observer, completion);
 
-			// Cleanup and post-transaction hooks can introduce interruption after the operation's catch block.
-			// Restore from the final failure after diagnostics, which may themselves consume the thread flag.
-			if (exitThrown != null)
+			// A caller can handle an ordinary thrown or returned failure while an enclosing transaction remains
+			// usable. Publish its cancellation only after cleanup/hooks, outside that transaction. A final Error
+			// still follows its propagating-error contract; an already-pending flag is never cleared here.
+			if (exitThrown != null && (!hasAmbientTransaction() || exitThrown instanceof Error))
 				Database.restoreInterruptIfNeeded(exitThrown);
-
-			if (thrown == null && exitThrown != null) {
-				if (exitThrown instanceof Error error)
-					throw error;
-				throw (RuntimeException) exitThrown;
-			}
+			if (captureFailure && interruptedOnEntry)
+				Thread.currentThread().interrupt();
 		}
+		return new Execution<>(attemptedValue, requireNonNull(completion));
 	}
 
 	private void observeCompletion(Consumer<TransactionCompletion> observer, TransactionCompletion completion) {
@@ -512,22 +533,23 @@ final class TransactionCoordinator {
 			ReturningTransactionalOperation<T> transactionalOperation) {
 		Deque<Transaction> transactionStack = transactionStackForPush();
 		transactionStack.push(transaction);
+		Throwable thrown = null;
 
 		try {
 			Optional<T> returnValue = transactionalOperation.perform();
 			return returnValue == null ? Optional.empty() : returnValue;
 		} catch (RuntimeException e) {
+			thrown = e;
 			setRollbackOnlyAfterParticipationFailure(transaction, e);
-			Database.restoreInterruptIfNeeded(e);
 			throw e;
 		} catch (Error e) {
+			thrown = e;
 			setRollbackOnlyAfterParticipationFailure(transaction, e);
-			Database.restoreInterruptIfNeeded(e);
 			throw e;
 		} catch (Throwable t) {
 			RuntimeException wrapped = new RuntimeException(t);
+			thrown = wrapped;
 			setRollbackOnlyAfterParticipationFailure(transaction, wrapped);
-			Database.restoreInterruptIfNeeded(t);
 			throw wrapped;
 		} finally {
 			try {
@@ -535,6 +557,8 @@ final class TransactionCoordinator {
 			} finally {
 				if (transactionStack.isEmpty())
 					TRANSACTION_STACK_HOLDER.remove();
+				if (thrown != null && !hasAmbientTransaction())
+					Database.restoreInterruptIfNeeded(thrown);
 			}
 		}
 	}

@@ -287,6 +287,12 @@ public class DatabaseException extends RuntimeException {
 		return diagnosticRedactor == null || value == null ? value : diagnosticRedactor.apply(value);
 	}
 
+	/**
+	 * Renders general diagnostics without automatically appending server detail, hint, internal query or context.
+	 * Explicit diagnostic accessors retain those fields; messages and original causes can still contain data.
+	 *
+	 * @return a diagnostic description
+	 */
 	@Override
 	public String toString() {
 		List<String> components = new ArrayList<>(20);
@@ -304,16 +310,10 @@ public class DatabaseException extends RuntimeException {
 			components.add(format("constraint=%s", getConstraint().get()));
 		if (getDatatype().isPresent())
 			components.add(format("datatype=%s", getDatatype().get()));
-		if (getDetail().isPresent())
-			components.add(format("detail=%s", getDetail().get()));
 		if (getFile().isPresent())
 			components.add(format("file=%s", getFile().get()));
-		if (getHint().isPresent())
-			components.add(format("hint=%s", getHint().get()));
 		if (getInternalPosition().isPresent())
 			components.add(format("internalPosition=%s", getInternalPosition().get()));
-		if (getInternalQuery().isPresent())
-			components.add(format("internalQuery=%s", getInternalQuery().get()));
 		if (getLine().isPresent())
 			components.add(format("line=%s", getLine().get()));
 		if (getDbmsMessage().isPresent())
@@ -328,8 +328,6 @@ public class DatabaseException extends RuntimeException {
 			components.add(format("severity=%s", getSeverity().get()));
 		if (getTable().isPresent())
 			components.add(format("table=%s", getTable().get()));
-		if (getWhere().isPresent())
-			components.add(format("where=%s", getWhere().get()));
 
 		return format("%s: %s", getClass().getName(), components.stream().collect(Collectors.joining(", ")));
 	}

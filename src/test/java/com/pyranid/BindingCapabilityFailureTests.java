@@ -222,6 +222,7 @@ class BindingCapabilityFailureTests {
 		private final AtomicInteger faults = new AtomicInteger(), attempts = new AtomicInteger(), executions = new AtomicInteger();
 		private final AtomicInteger commits = new AtomicInteger(), rollbacks = new AtomicInteger();
 		private final AtomicInteger statementCloses = new AtomicInteger(), rawCloses = new AtomicInteger(), connectionCloses = new AtomicInteger();
+		private final AtomicInteger validations = new AtomicInteger(), validationCloses = new AtomicInteger();
 
 		private Fixture(Site site, Throwable failure, boolean physicalRollback, boolean pendingInterrupt) {
 			this.site = site;
@@ -257,10 +258,23 @@ class BindingCapabilityFailureTests {
 					if (name.equals("close")) this.connectionCloses.incrementAndGet();
 					Object value = invoke(connection, operation, parameters);
 					if (!(value instanceof PreparedStatement statement)) {
-						if (value instanceof Statement raw) return proxy(Statement.class, (call, values) -> {
-							if (call.getName().equals("close")) this.rawCloses.incrementAndGet();
-							return invoke(raw, call, values);
-						});
+						if (value instanceof Statement raw) {
+							AtomicBoolean validating = new AtomicBoolean();
+							return proxy(Statement.class, (call, values) -> {
+								if (call.getName().equals("executeQuery") && "SELECT 1".equals(values[0])) {
+									validating.set(true);
+									this.validations.incrementAndGet();
+									// HSQL backs the fixture; production PostgreSQL and DuckDB accept SELECT 1.
+									values = values.clone();
+									values[0] = "VALUES(1)";
+								}
+								if (call.getName().equals("close")) {
+									if (validating.get()) this.validationCloses.incrementAndGet();
+									else this.rawCloses.incrementAndGet();
+								}
+								return invoke(raw, call, values);
+							});
+						}
 						return value;
 					}
 					return proxy(PreparedStatement.class, (jdbc, values) -> {
@@ -317,6 +331,9 @@ class BindingCapabilityFailureTests {
 		private void assertClosed(int attempts) {
 			assertEquals(attempts, this.statementCloses.get());
 			assertEquals(attempts, this.rawCloses.get());
+			int expectedValidations = this.site == Site.UNTYPED || this.site == Site.POSTGRES ? this.commits.get() : 0;
+			assertEquals(expectedValidations, this.validations.get());
+			assertEquals(expectedValidations, this.validationCloses.get());
 			assertEquals(attempts, this.connectionCloses.get());
 			assertTrue(this.database.currentTransaction().isEmpty());
 		}

@@ -26,6 +26,7 @@ import java.sql.Connection;
 import java.sql.ParameterMetaData;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.sql.Savepoint;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Struct;
 import java.sql.Types;
@@ -45,6 +46,7 @@ import java.util.Collections;
 import java.util.Currency;
 import java.util.Date;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -96,7 +98,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 																@NonNull PreparedStatement preparedStatement,
 																@NonNull Integer parameterIndex,
 																@NonNull Object parameter) throws SQLException {
-		bindParameter(statementContext, preparedStatement, parameterIndex, parameter, new ParameterSqlTypeResolver(preparedStatement));
+		bindParameter(statementContext, preparedStatement, parameterIndex, parameter, new ParameterSqlTypeResolver(statementContext, preparedStatement));
 	}
 
 	<T> void bindParameter(@NonNull StatementContext<T> statementContext,
@@ -146,8 +148,11 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			return;
 		}
 
-		if (explicitTargetType == null)
-			explicitTargetType = TargetType.of(unwrappedParameter.getClass());
+		if (explicitTargetType == null) {
+			Class<?> parameterClass = unwrappedParameter instanceof Enum<?> enumValue
+					? enumValue.getDeclaringClass() : unwrappedParameter.getClass();
+			explicitTargetType = TargetType.of(parameterClass);
+		}
 
 		// Try custom binders first (if they exist) on the unwrapped value
 		if (!getCustomParameterBinders().isEmpty() && !customBindersFor(explicitTargetType).isEmpty()) {
@@ -261,15 +266,25 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 			Object[] elements = sqlArrayParameter.getElements().orElse(null);
 
-			if (elements == null) {
+			if (elements == null && statementContext.getDatabaseType() != DatabaseType.POSTGRESQL) {
 				Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(parameterSqlTypeResolver, parameterIndex);
 				setNullWithFallback(preparedStatement, parameterIndex, Types.ARRAY, sqlArrayParameter.getBaseTypeName(),
 						sqlTypeOptional.map(ParameterSqlType::getSqlType).orElse(null));
 			} else {
 				List<Array> createdArrays = new ArrayList<>();
 				try {
-					Array array = createSqlArray(statementContext, preparedStatement.getConnection(),
-							sqlArrayParameter, createdArrays, 0);
+					Array array;
+					if (elements == null) {
+						// PostgreSQL setNull(typeName) expects an array type name, not its element name.
+						// Let the driver resolve the element's real array type, retaining its OID even without SQL context.
+						array = preparedStatement.getConnection().createArrayOf(sqlArrayParameter.getBaseTypeName(), (Object[]) null);
+						if (array == null)
+							throw new SQLException("PostgreSQL driver did not supply a typed null SQL ARRAY");
+						createdArrays.add(array);
+					} else {
+						array = createSqlArray(statementContext, preparedStatement.getConnection(),
+								sqlArrayParameter, createdArrays, 0);
+					}
 					preparedStatement.setArray(parameterIndex, array);
 					registerSqlArrayCleanupOperations(statementContext, createdArrays);
 				} catch (SQLException | RuntimeException | Error e) {
@@ -674,65 +689,154 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	static final class ParameterSqlTypeResolver {
 		@NonNull
 		private final PreparedStatement preparedStatement;
+		private final boolean protectPostgresMetadata;
+		private final Map<Integer, Optional<ParameterSqlType>> resolvedTypes = new HashMap<>();
 		private boolean initialized;
+		@Nullable
+		private Throwable resolutionFailure;
 		@Nullable
 		private ParameterMetaData parameterMetaData;
 
 		ParameterSqlTypeResolver(@NonNull PreparedStatement preparedStatement) {
+			this(preparedStatement, false);
+		}
+
+		ParameterSqlTypeResolver(@NonNull StatementContext<?> context, @NonNull PreparedStatement preparedStatement) {
+			this(preparedStatement, requireNonNull(context).getDatabaseType() == DatabaseType.POSTGRESQL);
+		}
+
+		private ParameterSqlTypeResolver(PreparedStatement preparedStatement, boolean protectPostgresMetadata) {
 			this.preparedStatement = requireNonNull(preparedStatement);
+			this.protectPostgresMetadata = protectPostgresMetadata;
 		}
 
 		@NonNull
 		Optional<ParameterSqlType> determineParameterSqlType(@NonNull Integer parameterIndex) throws SQLException {
 			requireNonNull(parameterIndex);
+			if (this.resolutionFailure != null) rethrowMetadataFailure(this.resolutionFailure);
+			Optional<ParameterSqlType> cached = this.resolvedTypes.get(parameterIndex);
+			if (cached != null) return cached;
+			if (this.initialized && this.parameterMetaData == null) return Optional.empty();
 
-			ParameterMetaData parameterMetaData = parameterMetaData();
-
-			if (parameterMetaData == null)
-				return Optional.empty();
-
+			ParameterTypeLookup lookup = new ParameterTypeLookup(parameterIndex);
+			Optional<ParameterSqlType> resolved;
 			try {
-				Integer sqlType = parameterMetaData.getParameterType(parameterIndex);
-				String typeName = null;
-
-				try {
-					typeName = parameterMetaData.getParameterTypeName(parameterIndex);
-				} catch (AbstractMethodError failure) {
-					if (JdbcFallbacks.isTerminal(failure))
-						throw failure;
-				} catch (SQLException failure) {
-					rethrowTerminalBindingFailure(failure);
+				resolved = lookupProtected(lookup);
+			} catch (MetadataProtectionFailure failure) {
+				// Establishment/recovery failures are never optional-metadata compatibility signals.
+				this.resolutionFailure = failure.original;
+				rethrowMetadataFailure(failure.original);
+				throw new AssertionError("Unreachable");
+			} catch (AbstractMethodError failure) {
+				if (JdbcFallbacks.isTerminal(failure)) {
+					this.resolutionFailure = failure;
+					throw failure;
 				}
+				resolved = lookup.fallback();
+			} catch (SQLException failure) {
+				if (JdbcFallbacks.isTerminal(failure)) {
+					this.resolutionFailure = failure;
+					throw failure;
+				}
+				resolved = lookup.fallback();
+			} catch (RuntimeException | Error failure) {
+				this.resolutionFailure = failure;
+				throw failure;
+			}
+			this.resolvedTypes.put(parameterIndex, resolved);
+			return resolved;
+		}
 
-				return Optional.of(new ParameterSqlType(sqlType, typeName));
-			} catch (AbstractMethodError e) {
-				if (JdbcFallbacks.isTerminal(e))
-					throw e;
-				return Optional.empty();
-			} catch (SQLException e) {
-				rethrowTerminalBindingFailure(e);
-				return Optional.empty();
+		private Optional<ParameterSqlType> lookupProtected(ParameterTypeLookup lookup) throws SQLException {
+			if (!this.protectPostgresMetadata) return lookup.perform();
+			Connection connection = null;
+			boolean autoCommit;
+			try {
+				connection = this.preparedStatement.getConnection();
+				if (connection instanceof PyranidRawConnection rawConnection)
+					connection = rawConnection.metadataConnection();
+				autoCommit = connection.getAutoCommit();
+			} catch (Throwable failure) {
+				if (connection != null) Transaction.markRollbackOnlyAfterMetadataFailure(connection);
+				throw new MetadataProtectionFailure(failure);
+			}
+			if (autoCommit) return lookup.perform();
+			Savepoint savepoint;
+			try {
+				// pgjdbc describes unknown parameters on the server. Even an optional describe can abort
+				// a transaction before the real, correctly typed execution. Keep that probe recoverable.
+				savepoint = requireNonNull(connection.setSavepoint(), "Driver returned no parameter metadata savepoint");
+			} catch (Throwable failure) {
+				Transaction.markRollbackOnlyAfterMetadataFailure(connection);
+				throw new MetadataProtectionFailure(failure);
+			}
+
+			Optional<ParameterSqlType> resolved;
+			try {
+				resolved = lookup.perform();
+			} catch (Throwable primary) {
+				boolean recovered = true;
+				try { connection.rollback(savepoint); }
+				catch (Throwable cleanup) {
+					Database.appendCleanupFailure(primary, cleanup);
+					recovered = false;
+				}
+				try { connection.releaseSavepoint(savepoint); }
+				catch (Throwable cleanup) {
+					Database.appendCleanupFailure(primary, cleanup);
+					recovered = false;
+				}
+				if (!recovered) {
+					Transaction.markRollbackOnlyAfterMetadataFailure(connection);
+					throw new MetadataProtectionFailure(primary);
+				}
+				rethrowMetadataFailure(primary);
+				throw new AssertionError("Unreachable");
+			}
+			try { connection.releaseSavepoint(savepoint); }
+			catch (Throwable failure) {
+				Transaction.markRollbackOnlyAfterMetadataFailure(connection);
+				throw new MetadataProtectionFailure(failure);
+			}
+			return resolved;
+		}
+
+		private final class ParameterTypeLookup {
+			private final int index;
+			@Nullable private Integer sqlType;
+
+			private ParameterTypeLookup(int index) { this.index = index; }
+
+			private Optional<ParameterSqlType> perform() throws SQLException {
+				if (!ParameterSqlTypeResolver.this.initialized) {
+					ParameterSqlTypeResolver.this.initialized = true;
+					ParameterSqlTypeResolver.this.parameterMetaData = ParameterSqlTypeResolver.this.preparedStatement.getParameterMetaData();
+				}
+				ParameterMetaData metadata = ParameterSqlTypeResolver.this.parameterMetaData;
+				if (metadata == null) return Optional.empty();
+				this.sqlType = metadata.getParameterType(this.index);
+				return Optional.of(new ParameterSqlType(this.sqlType, metadata.getParameterTypeName(this.index)));
+			}
+
+			private Optional<ParameterSqlType> fallback() {
+				return this.sqlType == null ? Optional.empty() : Optional.of(new ParameterSqlType(this.sqlType, null));
 			}
 		}
 
-		@Nullable
-		private ParameterMetaData parameterMetaData() throws SQLException {
-			if (!this.initialized) {
-				this.initialized = true;
+		private static void rethrowMetadataFailure(Throwable failure) throws SQLException {
+			if (failure instanceof SQLException sqlFailure) throw sqlFailure;
+			if (failure instanceof RuntimeException runtimeFailure) throw runtimeFailure;
+			if (failure instanceof Error error) throw error;
+			throw new SQLException("Parameter metadata lookup failed", failure);
+		}
 
-				try {
-					this.parameterMetaData = this.preparedStatement.getParameterMetaData();
-				} catch (AbstractMethodError e) {
-					if (JdbcFallbacks.isTerminal(e))
-						throw e;
-					this.parameterMetaData = null;
-				} catch (SQLException e) {
-					rethrowTerminalBindingFailure(e);
-					this.parameterMetaData = null;
-				}
+		/** Private control flow; never render or replace the original driver's failure. */
+		private static final class MetadataProtectionFailure extends RuntimeException {
+			private final Throwable original;
+			private MetadataProtectionFailure(Throwable original) {
+				super(null, null, false, false);
+				this.original = original;
 			}
-
-			return this.parameterMetaData;
 		}
 	}
 
@@ -869,6 +973,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			return false;
 
 		for (CustomParameterBinder customParameterBinder : candidates) {
+			JdbcCallbackContext.requireValidation();
 			BindingResult bindingResult = requireNonNull(customParameterBinder.bind(statementContext, preparedStatement, parameterIndex, parameter));
 
 			if (bindingResult instanceof BindingResult.Handled)
@@ -898,6 +1003,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			return false;
 
 		for (CustomParameterBinder customParameterBinder : candidates) {
+			JdbcCallbackContext.requireValidation();
 			BindingResult bindingResult = requireNonNull(
 					customParameterBinder.bindNull(statementContext, preparedStatement, parameterIndex, targetType, sqlType));
 

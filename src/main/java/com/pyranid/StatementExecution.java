@@ -16,12 +16,15 @@
 
 package com.pyranid;
 
+import org.jspecify.annotations.Nullable;
+
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.Optional;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 
 /** Per-operation connection lease. Owns a standalone connection or a transaction lock, never both. */
 final class StatementExecution {
@@ -96,6 +99,35 @@ final class StatementExecution {
 	Duration acquisitionDuration() { return this.acquisitionDuration; }
 	Duration elapsedDuration() { return this.elapsedDuration; }
 
+	void recordFailure(Throwable failure) {
+		if (this.connection != null && this.transaction.isPresent() && this.locked
+				&& this.lock.isHeldByCurrentThread())
+			this.transaction.get().recordSuspectFailure(failure);
+	}
+
+	void requireCompletionValidation() {
+		if (this.connection != null && this.transaction.isPresent() && this.locked
+				&& this.lock.isHeldByCurrentThread())
+			this.transaction.get().requireCompletionValidation();
+	}
+
+	@Nullable
+	DatabaseException prepareCapabilityFailure(Supplier<DatabaseException> failure) {
+		if (this.connection == null || this.transaction.isEmpty() || !this.locked
+				|| !this.lock.isHeldByCurrentThread()
+				|| (this.connections.databaseType() != DatabaseType.POSTGRESQL
+						&& this.connections.databaseType() != DatabaseType.DUCK_DB))
+			return null;
+		return failure.get();
+	}
+
+	/** Build the escaping cleanup failure before releasing ownership, preserving its identity in completion. */
+	static Throwable prepareCleanupFailure(Throwable cleanupFailure, Throwable primary) {
+		return cleanupFailure != null && primary == null
+				&& !(cleanupFailure instanceof RuntimeException) && !(cleanupFailure instanceof Error)
+				? new RuntimeException("Unable to clean up statement resources", cleanupFailure) : cleanupFailure;
+	}
+
 	void assertCloseThread() {
 		if (this.locked && !this.lock.isHeldByCurrentThread())
 			throw new DatabaseException("Transactional streams must be closed by the thread that opened them");
@@ -122,11 +154,15 @@ final class StatementExecution {
 				else this.metrics.didFailToReleaseStatementConnection(this.context, held, releaseFailure);
 			}
 		} finally {
-			if (this.locked) {
-				this.lock.unlock();
-				this.locked = false;
+			try {
+				if (failure != null) recordFailure(failure);
+			} finally {
+				if (this.locked) {
+					this.lock.unlock();
+					this.locked = false;
+				}
+				if (this.elapsedDuration == null) this.elapsedDuration = since(this.started);
 			}
-			if (this.elapsedDuration == null) this.elapsedDuration = since(this.started);
 		}
 		return failure;
 	}

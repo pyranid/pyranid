@@ -144,7 +144,7 @@ final class StatementExecutor {
 				if (resultSet.next()) {
 					rowsReturned = 1L;
 					try {
-						T value = resultSetMapperFor(statementContext).map(statementContext, resultSet, statementContext.getResultSetRowType().get(), getInstanceProvider()).orElse(null);
+						T value = mapResultSetRow(statementContext, resultSet).orElse(null);
 						result = Optional.ofNullable(value);
 					} catch (SQLException e) {
 						throw databaseExceptionWithStatementContext(statementContext,
@@ -241,7 +241,7 @@ final class StatementExecutor {
 
 				while (resultSet.next()) {
 					try {
-						T listElement = resultSetMapperFor(statementContext).map(statementContext, resultSet, statementContext.getResultSetRowType().get(), getInstanceProvider()).orElse(null);
+						T listElement = mapResultSetRow(statementContext, resultSet).orElse(null);
 						list.add(listElement);
 					} catch (SQLException e) {
 						throw databaseExceptionWithStatementContext(statementContext,
@@ -353,11 +353,11 @@ final class StatementExecutor {
 
 		performDatabaseOperation(statementContext, parametersAsList, preparedStatementCustomizer, (PreparedStatement preparedStatement, DatabaseOperationTiming timing) -> {
 			long startTime = nanoTime();
-			resultHolder.value = executeUpdate(preparedStatement);
+			resultHolder.value = executeUpdate(preparedStatement, statementContext);
 
 			Duration executionDuration = Duration.ofNanos(nanoTime() - startTime);
 			StatementResult statementResult = getMetricsCollectorDispatcher().isEnabled()
-					? StatementResult.ofRowsAffected(resultHolder.value)
+					? new StatementResult(null, metricsRowsAffected(resultHolder.value))
 					: StatementResult.empty();
 			return new DatabaseOperationResult(executionDuration, null, statementResult);
 		});
@@ -366,7 +366,7 @@ final class StatementExecutor {
 	}
 
 	@NonNull
-	private Long executeUpdate(@NonNull PreparedStatement preparedStatement) throws SQLException {
+	private Long executeUpdate(@NonNull PreparedStatement preparedStatement, @NonNull StatementContext<?> statementContext) throws SQLException {
 		requireNonNull(preparedStatement);
 
 		DatabaseOperationSupportStatus executeLargeUpdateSupported = getExecuteLargeUpdateSupported();
@@ -379,25 +379,24 @@ final class StatementExecutor {
 		if (executeLargeUpdateSupported == DatabaseOperationSupportStatus.NO)
 			return (long) preparedStatement.executeUpdate();
 
-		// If the driver doesn't support executeLargeUpdate, then UnsupportedOperationException is thrown.
+		// Only explicit unavailable-method signals can authorize another execution. SQLState, messages and
+		// nested capability exceptions can describe a statement that already ran.
 		try {
 			Long result = preparedStatement.executeLargeUpdate();
 			setExecuteLargeUpdateSupported(DatabaseOperationSupportStatus.YES);
 			return result;
 		} catch (SQLFeatureNotSupportedException | UnsupportedOperationException | AbstractMethodError e) {
-			if (JdbcFallbacks.isTerminal(e))
+			if (!JdbcFallbacks.isExecutionFallbackSafe(e))
 				throw e;
+			DatabaseException recorded = JdbcCallbackContext.prepareCapabilityFailure(() -> databaseExceptionWithStatementContext(statementContext,
+					"JDBC large execution method unavailable", e));
+			if (recorded != null && !JdbcFallbacks.isExecutionFallbackSafe(e)) {
+				if (e instanceof Error error) throw error;
+				throw recorded;
+			}
+			if (recorded != null) JdbcCallbackContext.recordFailure(recorded);
 			setExecuteLargeUpdateSupported(DatabaseOperationSupportStatus.NO);
 			return (long) preparedStatement.executeUpdate();
-		} catch (SQLException e) {
-			if (JdbcFallbacks.isTerminal(e))
-				throw e;
-			if (isUnsupportedSqlFeature(e)) {
-				setExecuteLargeUpdateSupported(DatabaseOperationSupportStatus.NO);
-				return (long) preparedStatement.executeUpdate();
-			}
-
-			throw e;
 		}
 	}
 
@@ -423,7 +422,7 @@ final class StatementExecutor {
 
 		performDatabaseOperation(statementContext, parametersAsList, preparedStatementCustomizer, (PreparedStatement preparedStatement, DatabaseOperationTiming timing) -> {
 			long startTime = nanoTime();
-			Long rowsAffected = executeUpdate(preparedStatement);
+			Long rowsAffected = executeUpdate(preparedStatement, statementContext);
 
 			ResultSet resultSet = preparedStatement.getGeneratedKeys();
 			Throwable resultSetFailure = null;
@@ -438,7 +437,7 @@ final class StatementExecutor {
 				if (resultSet.next()) {
 					rowsReturned = 1L;
 					try {
-						T value = resultSetMapperFor(statementContext).map(statementContext, resultSet, statementContext.getResultSetRowType().get(), getInstanceProvider()).orElse(null);
+						T value = mapResultSetRow(statementContext, resultSet).orElse(null);
 						result = Optional.ofNullable(value);
 					} catch (SQLException e) {
 						throw databaseExceptionWithStatementContext(statementContext,
@@ -454,7 +453,7 @@ final class StatementExecutor {
 				resultHolder.value = result;
 				Duration resultSetMappingDuration = Duration.ofNanos(nanoTime() - startTime);
 				StatementResult statementResult = getMetricsCollectorDispatcher().isEnabled()
-						? new StatementResult(rowsReturned, rowsAffected)
+						? new StatementResult(rowsReturned, metricsRowsAffected(rowsAffected))
 						: StatementResult.empty();
 				return new DatabaseOperationResult(executionDuration, resultSetMappingDuration, statementResult);
 			} catch (Exception | Error failure) {
@@ -490,7 +489,7 @@ final class StatementExecutor {
 
 		performDatabaseOperation(statementContext, parametersAsList, preparedStatementCustomizer, (PreparedStatement preparedStatement, DatabaseOperationTiming timing) -> {
 			long startTime = nanoTime();
-			Long rowsAffected = executeUpdate(preparedStatement);
+			Long rowsAffected = executeUpdate(preparedStatement, statementContext);
 
 			ResultSet resultSet = preparedStatement.getGeneratedKeys();
 			Throwable resultSetFailure = null;
@@ -501,7 +500,7 @@ final class StatementExecutor {
 
 				while (resultSet.next()) {
 					try {
-						T listElement = resultSetMapperFor(statementContext).map(statementContext, resultSet, statementContext.getResultSetRowType().get(), getInstanceProvider()).orElse(null);
+						T listElement = mapResultSetRow(statementContext, resultSet).orElse(null);
 						list.add(listElement);
 					} catch (SQLException e) {
 						throw databaseExceptionWithStatementContext(statementContext,
@@ -511,7 +510,7 @@ final class StatementExecutor {
 
 				Duration resultSetMappingDuration = Duration.ofNanos(nanoTime() - startTime);
 				StatementResult statementResult = getMetricsCollectorDispatcher().isEnabled()
-						? new StatementResult((long) list.size(), rowsAffected)
+						? new StatementResult((long) list.size(), metricsRowsAffected(rowsAffected))
 						: StatementResult.empty();
 				return new DatabaseOperationResult(executionDuration, resultSetMappingDuration, statementResult);
 			} catch (Exception | Error failure) {
@@ -743,15 +742,17 @@ final class StatementExecutor {
 			performDatabaseOperation(statementContext, (preparedStatement) -> {
 				applyPreparedStatementCustomizer(statementContext, preparedStatement, preparedStatementCustomizer);
 
+				DefaultPreparedStatementBinder.ParameterSqlTypeResolver parameterSqlTypeResolver =
+						new DefaultPreparedStatementBinder.ParameterSqlTypeResolver(statementContext, preparedStatement);
 				for (List<Object> parameterGroup : parameterGroups) {
 					if (parameterGroup.size() > 0)
-						performPreparedStatementBinding(statementContext, preparedStatement, parameterGroup);
+						performPreparedStatementBinding(statementContext, preparedStatement, parameterGroup, parameterSqlTypeResolver);
 
 					preparedStatement.addBatch();
 				}
 			}, (PreparedStatement preparedStatement, DatabaseOperationTiming timing) -> {
 				long startTime = nanoTime();
-				List<Long> result = executePreparedStatementBatch(preparedStatement);
+				List<Long> result = executePreparedStatementBatch(preparedStatement, statementContext);
 
 				resultHolder.value = result;
 				return batchDatabaseOperationResult(startTime, result);
@@ -766,17 +767,19 @@ final class StatementExecutor {
 				int currentBatchSize = 0;
 				List<Long> result = new ArrayList<>(parameterGroups.size());
 				Throwable chunkCleanupFailure = null;
+				DefaultPreparedStatementBinder.ParameterSqlTypeResolver parameterSqlTypeResolver =
+						new DefaultPreparedStatementBinder.ParameterSqlTypeResolver(statementContext, preparedStatement);
 
 				try {
 					for (List<Object> parameterGroup : parameterGroups) {
 						if (parameterGroup.size() > 0)
-							performPreparedStatementBinding(statementContext, preparedStatement, parameterGroup);
+							performPreparedStatementBinding(statementContext, preparedStatement, parameterGroup, parameterSqlTypeResolver);
 
 						preparedStatement.addBatch();
 						++currentBatchSize;
 
 						if (currentBatchSize == effectiveBatchChunkSize) {
-							result.addAll(executePreparedStatementBatch(preparedStatement));
+							result.addAll(executePreparedStatementBatch(preparedStatement, statementContext));
 							chunkCleanupFailure = releaseChunkParameterResources(statementContext, preparedStatement, chunkCleanupFailure);
 							currentBatchSize = 0;
 						}
@@ -785,7 +788,7 @@ final class StatementExecutor {
 					// The trailing partial chunk releases on the same terms as a full one; leaving it to statement exit
 					// would make per-chunk release depend on whether batchChunkSize happens to divide the batch.
 					if (currentBatchSize > 0) {
-						result.addAll(executePreparedStatementBatch(preparedStatement));
+						result.addAll(executePreparedStatementBatch(preparedStatement, statementContext));
 						chunkCleanupFailure = releaseChunkParameterResources(statementContext, preparedStatement, chunkCleanupFailure);
 					}
 				} finally {
@@ -805,6 +808,12 @@ final class StatementExecutor {
 		}
 
 		return resultHolder.value;
+	}
+
+	/** JDBC negative update counts mean no count was supplied, not a negative number of affected rows. */
+	@Nullable
+	private static Long metricsRowsAffected(@Nullable Long rowsAffected) {
+		return rowsAffected == null || rowsAffected < 0L ? null : rowsAffected;
 	}
 
 	@NonNull
@@ -884,7 +893,7 @@ final class StatementExecutor {
 	}
 
 	@NonNull
-	private List<Long> executePreparedStatementBatch(@NonNull PreparedStatement preparedStatement) throws SQLException {
+	private List<Long> executePreparedStatementBatch(@NonNull PreparedStatement preparedStatement, @NonNull StatementContext<?> statementContext) throws SQLException {
 		requireNonNull(preparedStatement);
 
 		DatabaseOperationSupportStatus executeLargeBatchSupported = getExecuteLargeBatchSupported();
@@ -900,23 +909,21 @@ final class StatementExecutor {
 			return Arrays.stream(resultArray).asLongStream().boxed().collect(Collectors.toList());
 		}
 
-		// If the driver doesn't support executeLargeBatch, then UnsupportedOperationException is thrown.
+		// An ordinary execution failure must propagate even while capability discovery is still unknown.
 		try {
 			long[] resultArray = preparedStatement.executeLargeBatch();
 			setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.YES);
 			return Arrays.stream(resultArray).boxed().collect(Collectors.toList());
 		} catch (SQLFeatureNotSupportedException | UnsupportedOperationException | AbstractMethodError e) {
-			if (JdbcFallbacks.isTerminal(e))
+			if (!JdbcFallbacks.isExecutionFallbackSafe(e))
 				throw e;
-			setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.NO);
-			int[] resultArray = preparedStatement.executeBatch();
-			return Arrays.stream(resultArray).asLongStream().boxed().collect(Collectors.toList());
-		} catch (SQLException e) {
-			if (JdbcFallbacks.isTerminal(e))
-				throw e;
-			if (!isUnsupportedSqlFeature(e))
-				throw e;
-
+			DatabaseException recorded = JdbcCallbackContext.prepareCapabilityFailure(() -> databaseExceptionWithStatementContext(statementContext,
+					"JDBC large execution method unavailable", e));
+			if (recorded != null && !JdbcFallbacks.isExecutionFallbackSafe(e)) {
+				if (e instanceof Error error) throw error;
+				throw recorded;
+			}
+			if (recorded != null) JdbcCallbackContext.recordFailure(recorded);
 			setExecuteLargeBatchSupported(DatabaseOperationSupportStatus.NO);
 			int[] resultArray = preparedStatement.executeBatch();
 			return Arrays.stream(resultArray).asLongStream().boxed().collect(Collectors.toList());
@@ -959,15 +966,19 @@ final class StatementExecutor {
 	}
 
 	<T> void performPreparedStatementBinding(@NonNull StatementContext<T> statementContext,
-																										 @NonNull PreparedStatement preparedStatement,
-																										 @NonNull List<Object> parameters) {
+			@NonNull PreparedStatement preparedStatement, @NonNull List<Object> parameters) {
+		performPreparedStatementBinding(statementContext, preparedStatement, parameters,
+				new DefaultPreparedStatementBinder.ParameterSqlTypeResolver(statementContext, preparedStatement));
+	}
+
+	private <T> void performPreparedStatementBinding(@NonNull StatementContext<T> statementContext,
+			@NonNull PreparedStatement preparedStatement, @NonNull List<Object> parameters,
+			DefaultPreparedStatementBinder.ParameterSqlTypeResolver parameterSqlTypeResolver) {
 		requireNonNull(statementContext);
 		requireNonNull(preparedStatement);
 		requireNonNull(parameters);
 
 		try {
-			DefaultPreparedStatementBinder.ParameterSqlTypeResolver parameterSqlTypeResolver =
-					new DefaultPreparedStatementBinder.ParameterSqlTypeResolver(preparedStatement);
 			PreparedStatementBinder preparedStatementBinder = preparedStatementBinderFor(statementContext);
 
 			for (int i = 0; i < parameters.size(); ++i) {
@@ -979,6 +990,7 @@ final class StatementExecutor {
 						defaultPreparedStatementBinder.bindParameter(statementContext, preparedStatement, parameterIndex, parameter,
 								parameterSqlTypeResolver);
 					} else {
+						JdbcCallbackContext.requireValidation();
 						preparedStatementBinder.bindParameter(statementContext, preparedStatement, parameterIndex, parameter);
 					}
 				} else {
@@ -1047,7 +1059,7 @@ final class StatementExecutor {
 		Exception exception = null;
 		Throwable thrown = null;
 
-		try {
+		try (var ignored = JdbcCallbackContext.activate(lease)) {
 			Connection connection = lease.acquire("execute a statement on the transaction connection");
 			startTime = nanoTime();
 
@@ -1091,10 +1103,12 @@ final class StatementExecutor {
 			DatabaseException wrapped = databaseExceptionWithStatementContext(statementContext, e);
 			exception = wrapped;
 			thrown = wrapped;
+			lease.recordFailure(wrapped);
 			throw wrapped;
 		} catch (Error e) {
 			exception = databaseExceptionWithStatementContext(statementContext, e);
 			thrown = e;
+			lease.recordFailure(e);
 			throw e;
 		} catch (Exception e) {
 			DatabaseException wrapped = databaseExceptionWithStatementContext(statementContext, e);
@@ -1102,6 +1116,7 @@ final class StatementExecutor {
 			// and Error paths - the raw driver exception remains available via the wrapped cause
 			exception = wrapped;
 			thrown = wrapped;
+			lease.recordFailure(wrapped);
 			throw wrapped;
 		} finally {
 			Throwable cleanupFailure = null;
@@ -1109,6 +1124,7 @@ final class StatementExecutor {
 			try {
 				cleanupFailure = closeStatementContextResources(statementContext, cleanupFailure);
 			} finally {
+				cleanupFailure = StatementExecution.prepareCleanupFailure(cleanupFailure, thrown);
 				cleanupFailure = lease.close(cleanupFailure);
 
 				StatementLog statementLog =
@@ -1149,6 +1165,13 @@ final class StatementExecutor {
 				}
 			}
 		}
+	}
+
+	@NonNull
+	<T> Optional<T> mapResultSetRow(@NonNull StatementContext<T> context, @NonNull ResultSet resultSet) throws SQLException {
+		ResultSetMapper mapper = resultSetMapperFor(context);
+		if (!(mapper instanceof DefaultResultSetMapper)) JdbcCallbackContext.requireValidation();
+		return mapper.map(context, resultSet, context.getResultSetRowType().orElseThrow(), getInstanceProvider());
 	}
 
 	/**

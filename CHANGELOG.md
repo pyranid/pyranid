@@ -2,6 +2,111 @@
 
 All notable changes to Pyranid will be documented in this file.
 
+## 4.9.0-SNAPSHOT
+
+### Added
+
+- `Database.transactionWithOutcome(...)` supplies a single-attempt `TransactionOutcome<T>` containing the final
+  completion, database result, normally returned callback value and optional `RuntimeException`. All four returning/void
+  and default/supplied-options overloads share the traditional transaction engine. Observers receive the same completion.
+  Attempted values survive rollback and completion failures; final `Error`s still escape after best-effort completion.
+
+### Fixed
+
+- Large-update and batch execution fall back only on explicit unsupported-method signals without conflicting
+  failure evidence. General SQL exceptions, including SQLState `0A`/`HYC00`, nested capability exceptions and
+  error text containing "unsupported", "not supported" or "not implemented", propagate without executing again
+  or changing the cached capability. This prevents failed batches appearing to succeed and unsafe repeated updates.
+- Execution capability checks reject batch-failure evidence even when nested diagnostics report no SQLState or an
+  unsupported-feature state. They retain observed interruption and committed/in-doubt outcomes across changing
+  diagnostic accessors, so later wrapping cannot lose cancellation or admit an unsafe transaction retry.
+- PostgreSQL and DuckDB transactions no longer issue commit after an observable handled statement failure aborted
+  the transaction. PostgreSQL reads driver state where available; DuckDB and the PostgreSQL fallback conditionally
+  validate the existing connection after recorded failures or participating raw/custom JDBC access. Usable transactions,
+  driver recovery and supported savepoint recovery remain eligible to commit.
+- Physical commit failure classification requires a direct, readable `40001` with no conflicting exception-graph
+  evidence and successful follow-up rollback before reporting a serialization-abort rollback. Mixed, transport or
+  unreadable evidence remains `IN_DOUBT`, even when broad serialization diagnostics are true. Successful physical
+  commit is retained before success diagnostics can fail, preventing accidental replay of committed work.
+- Traditional transaction failures now restore interruption after connection cleanup and post-transaction hooks,
+  and only when no enclosing transaction remains. Retained interruption evidence blocks retry before user policy
+  invocation, even when the thread flag has not been published. Participation retains its rollback-only contract.
+- PostgreSQL parameter metadata inspection is protected by an internal savepoint in manual-commit mode, so an
+  optional describe failure cannot abort otherwise valid temporal SQL. Batch groups and chunks reuse one
+  prepared-statement resolver instead of requesting parameter metadata once per row.
+- Negative JDBC update counts are reported as unknown affected counts in metrics, including generated-key paths.
+  Public update results retain the driver's count. Enabled metrics no longer turn DuckDB DDL or SET into failures.
+- Row-plan converters and scalar/driver reflection caches no longer retain discarded mappers or application
+  class loaders through ClassValue cycles. Mapping resource state is removed from pooled workers after each
+  outermost mapping scope, and weak cursor identity memoization preserves schema reuse.
+- PostgreSQL notification sends explicitly call `pg_catalog.pg_notify`, preventing search-path overloads from
+  intercepting the built-in function.
+- Automatic exception rendering omits PostgreSQL detail, hint, internal query and context fields; explicit diagnostic
+  accessors remain available. Record-construction errors describe component names and types without printing row values.
+- Inherited JavaBean setter types are resolved against the concrete row class, including superclass/interface and
+  owner bindings, nested collections and generic arrays. Conversion and setter validation now use the resolved
+  type instead of silently storing values under an erased `Object` signature.
+- Implicit enum parameters select custom binders using their declaring enum class, including constants with their
+  own class bodies. Explicit `TypedParameter` hints retain precedence, and default enum-name binding is unchanged.
+- PostgreSQL null SQL ARRAY parameters retain the driver's resolved array type through `createArrayOf`/`setArray`,
+  including queries without a target-column type context. Driver arrays are released through normal statement
+  cleanup; other dialects keep their existing null binding.
+- Parameterized type tokens obey the reflection equality/hash contract and defensively copy their argument arrays,
+  so resolved generic types work as custom mapper/binder hash keys.
+- PostgreSQL `55P03` and Oracle `54`/`30006` classify as timeout and transient failures. SQL Server `3960`
+  also classifies as transient, alongside its serialization classification; that code alone is not a timeout.
+- JDBC `SQLTransientConnectionException` requires a missing or class `08` SQLState for subtype-based transient
+  classification, preventing MariaDB application `SIGNAL` errors from authorizing retries through that subtype.
+  Independent class `08`/`40` evidence still qualifies.
+- PostgreSQL batch/JDBC wrappers recover server diagnostics through cause and next-exception chains while retaining
+  the wrapper's primary SQLState when present and its error code. Non-JDBC roots keep empty metadata, and recovered
+  fields use the existing secure-parameter scrubber.
+- DuckDB commit-time primary-key/unique violations classify as unique constraint failures. A duplicate value containing
+  `conflict` no longer makes that failure transient or a serialization failure; commit uncertainty still prevents replay.
+
+### Migration Notes
+
+- Drivers that report unavailable large-update or large-batch methods only through a general `SQLException` now
+  surface that failure instead of falling back. Explicit unsupported-method signals remain supported unless their
+  diagnostics contain conflicting failure evidence.
+- Traditional `transaction(...)` now throws when PostgreSQL/DuckDB pre-commit detection finds an aborted transaction,
+  or a required usability check fails. Previously a swallowed statement error could return normally despite discarded
+  work. A failed validation conservatively refuses commit without claiming that every validation error proves an abort.
+  There is no opt-out. Other dialects retain their existing transaction-continuity behavior.
+- The outcome API never retries and does not join an enclosing transaction. `ROLLED_BACK` alone does not authorize
+  replay; independently committed work and external effects remain application responsibilities. Use the original
+  durable operation identity to resolve `IN_DOUBT`, rather than replaying under a new identity.
+- A returned interrupted outcome restores interruption only when no enclosing Pyranid transaction remains bound.
+  An existing pending flag survives; interruption stays in the returned failure when handled inside an enclosing
+  transaction. Ordinary traditional failures now follow the same ambient-transaction rule after cleanup/hooks.
+  Final propagating boundary `Error`s retain their interruption-restoration behavior. Handling a nested ordinary
+  failure does not queue deferred cancellation; callers that intend cancellation must restore the flag or rethrow.
+- Commit failures identified only by vendor codes or message text, including Oracle `8177`, SQL Server `3960` and
+  DuckDB conflicts without a primary `40001`, no longer qualify as proven serialization aborts at commit. Statement
+  diagnostics and body-failure retry classification remain independent of this stricter commit proof.
+- Timeout/transient retry policies can now recognize PostgreSQL `55P03` and Oracle `54`/`30006` body failures;
+  transient policies also recognize SQL Server `3960`, which does not itself satisfy a timeout policy. These flags
+  do not authorize another attempt after `COMMITTED` or `IN_DOUBT`.
+- Custom retry policies relying on MariaDB's `SQLTransientConnectionException` subtype should inspect the SQLState:
+  an application state such as `45000` no longer counts as transient through that subtype. Missing/class `08` states
+  and independent class `08`/`40` evidence retain their transient classification.
+- PostgreSQL JDBC batch failures may now expose constraint, table and other server fields previously absent.
+  Their primary wrapper state/code and non-JDBC-root metadata behavior are preserved; recovered fields retain
+  secure-parameter scrubbing.
+- DuckDB commit-time duplicate-key failures remain `IN_DOUBT`, even when the unique classifier identifies the cause;
+  resolve the original durable operation identity before deciding what to do next.
+- When an opaque PostgreSQL wrapper prevents driver-state reads, fallback validation depends on a recorded/escaped
+  failure or raw/custom JDBC access. Parameter describes now have internal savepoint protection; other built-in
+  compatibility paths that internally swallow type lookup, SQL ARRAY
+  metadata or typed-getter failures can still miss an abort if neither trigger exists. pgjdbc type-cache misses can
+  execute catalog SQL. Readable PostgreSQL state covers these aborts; qualify opaque driver/pool combinations.
+- API compatibility now compares against 4.8.0, without the exclusions for APIs removed in that release. CI also
+  executes the DuckDB LOB and temporal-array regression suites and a targeted PostgreSQL metadata leg with a
+  non-UTC JVM timezone.
+- A selected JavaBean property with unresolved type variables now fails clearly at mapping-plan construction.
+  Use a concrete subclass that binds those variables, an intentional `Object`/raw collection property, or a custom
+  mapper. Unselected generic properties retain their defaults.
+
 ## 4.8.0
 
 ### Added

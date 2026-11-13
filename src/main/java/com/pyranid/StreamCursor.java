@@ -95,7 +95,7 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 		long startTime = nanoTime();
 		this.openStartTime = startTime;
 		this.executor.getMetricsCollectorDispatcher().willOpenStream(this.statementContext);
-		try {
+		try (var ignored = JdbcCallbackContext.activate(this.lease)) {
 			this.connection = this.lease.acquire("open a stream on the transaction connection");
 			startTime = nanoTime();
 
@@ -124,6 +124,7 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 			DatabaseException wrapped = databaseExceptionWithStatementContext(this.statementContext, e);
 			this.exception = wrapped;
 			this.thrown = wrapped;
+			this.lease.recordFailure(wrapped);
 			this.openFailed = true;
 			this.executor.getMetricsCollectorDispatcher().didFailToOpenStream(this.statementContext, this.executor.connections.databaseType(),
 					Duration.ofNanos(nanoTime() - this.openStartTime), wrapped);
@@ -133,6 +134,7 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 			DatabaseException wrapped = databaseExceptionWithStatementContext(this.statementContext, e);
 			this.exception = wrapped;
 			this.thrown = wrapped;
+			this.lease.recordFailure(wrapped);
 			this.openFailed = true;
 			this.executor.getMetricsCollectorDispatcher().didFailToOpenStream(this.statementContext, this.executor.connections.databaseType(),
 					Duration.ofNanos(nanoTime() - this.openStartTime), wrapped);
@@ -141,6 +143,7 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 		} catch (Error e) {
 			this.exception = databaseExceptionWithStatementContext(this.statementContext, e);
 			this.thrown = e;
+			this.lease.recordFailure(e);
 			this.openFailed = true;
 			this.executor.getMetricsCollectorDispatcher().didFailToOpenStream(this.statementContext, this.executor.connections.databaseType(),
 					Duration.ofNanos(nanoTime() - this.openStartTime), e);
@@ -171,18 +174,21 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 				DatabaseException wrapped = databaseExceptionWithStatementContext(this.statementContext, e);
 				this.exception = wrapped;
 				this.thrown = wrapped;
+				this.lease.recordFailure(wrapped);
 				this.iterationThrowable = wrapped;
 				close();
 				throw wrapped;
 			} catch (RuntimeException e) {
 				this.exception = e;
 				this.thrown = e;
+				this.lease.recordFailure(e);
 				this.iterationThrowable = e;
 				close();
 				throw e;
 			} catch (Error e) {
 				this.exception = databaseExceptionWithStatementContext(this.statementContext, e);
 				this.thrown = e;
+				this.lease.recordFailure(e);
 				this.iterationThrowable = e;
 				close();
 				throw e;
@@ -200,11 +206,10 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 		this.hasNextEvaluated = false;
 		long startTime = nanoTime();
 
-		try {
+		try (var ignored = JdbcCallbackContext.activate(this.lease)) {
 			T value;
 			try {
-				value = this.executor.resultSetMapperFor(this.statementContext)
-						.map(this.statementContext, requireNonNull(this.resultSet), this.statementContext.getResultSetRowType().get(), this.executor.getInstanceProvider())
+				value = this.executor.mapResultSetRow(this.statementContext, requireNonNull(this.resultSet))
 						.orElse(null);
 			} finally {
 				this.resultSetMappingNanos += nanoTime() - startTime;
@@ -216,6 +221,7 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 					format("Unable to map JDBC %s row to %s", ResultSet.class.getSimpleName(), this.statementContext.getResultSetRowType().get()), e);
 			this.exception = wrapped;
 			this.thrown = wrapped;
+			this.lease.recordFailure(wrapped);
 			this.iterationThrowable = wrapped;
 			close();
 			throw wrapped;
@@ -223,12 +229,14 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 			DatabaseException wrapped = databaseExceptionWithStatementContext(this.statementContext, e);
 			this.exception = wrapped;
 			this.thrown = wrapped;
+			this.lease.recordFailure(wrapped);
 			this.iterationThrowable = wrapped;
 			close();
 			throw wrapped;
 		} catch (RuntimeException e) {
 			this.exception = e;
 			this.thrown = e;
+			this.lease.recordFailure(e);
 			this.iterationThrowable = e;
 			close();
 			throw e;
@@ -236,6 +244,7 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 			this.exception = databaseExceptionWithStatementContext(this.statementContext,
 					format("Unable to map JDBC %s row to %s", ResultSet.class.getSimpleName(), this.statementContext.getResultSetRowType().get()), e);
 			this.thrown = e;
+			this.lease.recordFailure(e);
 			this.iterationThrowable = e;
 			close();
 			throw e;
@@ -245,6 +254,7 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 	void callbackFailed(@NonNull Throwable throwable) {
 		requireNonNull(throwable);
 		this.callbackThrowable = throwable;
+		this.lease.recordFailure(throwable);
 	}
 
 	@Override
@@ -281,6 +291,8 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 			cleanupFailure = completeDialectStreamingConnectionIfNeeded(cleanupFailure);
 
 		} finally {
+			Throwable primary = this.thrown != null ? this.thrown : this.callbackThrowable;
+			cleanupFailure = StatementExecution.prepareCleanupFailure(cleanupFailure, primary);
 			cleanupFailure = this.lease.close(cleanupFailure);
 
 			Duration mappingDuration = this.resultSetMappingNanos == 0L ? null : Duration.ofNanos(this.resultSetMappingNanos);

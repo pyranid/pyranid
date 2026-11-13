@@ -6,6 +6,8 @@ Use JDK 25 for the publication build so the generated Javadocs include their bun
 
 Before cutting a release, run the [development verification checks](CONTRIBUTING.md#development-verification) from the `pyranid/` project directory, including the relevant integration suites.
 
+At the start of each release cycle, set `japicmp.baseline.version` in `pom.xml` to the most recent published release. Remove exclusions for APIs already absent from that baseline. Run `mvn verify` against the new baseline before changing public APIs, so compatibility checks also protect APIs introduced in the previous release.
+
 To verify the release profile without signing or uploading artifacts:
 
 ```bash

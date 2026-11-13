@@ -31,18 +31,20 @@ public enum TransactionResult {
 	 * Pyranid can prove that no application transaction work committed.
 	 * <p>
 	 * This includes a successful rollback before commit, a successful follow-up rollback after the physical commit reports a
-	 * recognized serialization failure, a successful rollback after a savepoint-scope ownership conflict refused the commit
+	 * narrowly proven serialization abort, a successful rollback after pre-commit validation or a savepoint-scope ownership conflict refused the commit
 	 * before it was issued, and a failed physical-transaction begin whose candidate connection Pyranid discarded before
 	 * application transaction work could execute. Therefore, this result does not necessarily mean that Pyranid invoked the
 	 * JDBC {@code rollback()} method.
 	 */
 	ROLLED_BACK,
 	/**
-	 * Pyranid cannot prove the final database outcome because the commit attempt failed without a recognized serialization
-	 * failure followed by successful rollback, or because rollback failed after application transaction work could have
+	 * Pyranid cannot prove the final database outcome because the commit attempt failed without narrow affirmative
+	 * serialization-abort evidence followed by successful rollback, or because rollback failed after application transaction work could have
 	 * executed. The commit attempt need not have reached the driver: once application transaction work could have executed,
 	 * a failure anywhere on the commit path is reported here unless it is one of the provable cases named under
-	 * {@link #ROLLED_BACK}.
+	 * {@link #ROLLED_BACK}. General serialization diagnostics, including a secondary {@code 40001} under an uncertain
+	 * primary commit failure, do not by themselves prove rollback. Validation success likewise does not prove that a
+	 * later failed commit aborted.
 	 * <p>
 	 * For example, the database may have committed successfully but the client may not have received the acknowledgement, or
 	 * rollback may have failed before the database confirmed that pending work was discarded.

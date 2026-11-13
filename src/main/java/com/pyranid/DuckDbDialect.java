@@ -77,6 +77,8 @@ final class DuckDbDialect extends GenericDialect {
 	@NonNull
 	private static final String UNIQUE_INDEX_DUPLICATES_FRAGMENT = "data contains duplicates on indexed column";
 	@NonNull
+	private static final String COMMIT_UNIQUE_VIOLATION_FRAGMENT = "failed to commit: primary key or unique constraint violation";
+	@NonNull
 	private static final String FOREIGN_KEY_VIOLATION_FRAGMENT = "violates foreign key constraint";
 	@NonNull
 	private static final String CONFLICT_FRAGMENT = "conflict";
@@ -388,7 +390,8 @@ final class DuckDbDialect extends GenericDialect {
 
 		return super.isUniqueConstraintViolation(metadata, cause)
 				|| hasDuckDbMessage(cause, CONSTRAINT_ERROR_FRAGMENT, PRIMARY_KEY_VIOLATION_FRAGMENT,
-				UNIQUE_VIOLATION_FRAGMENT, UNIQUE_INDEX_DUPLICATES_FRAGMENT);
+				UNIQUE_VIOLATION_FRAGMENT, UNIQUE_INDEX_DUPLICATES_FRAGMENT)
+				|| hasDuckDbMessage(cause, TRANSACTION_CONTEXT_ERROR_FRAGMENT, COMMIT_UNIQUE_VIOLATION_FRAGMENT);
 	}
 
 	@NonNull
@@ -472,7 +475,16 @@ final class DuckDbDialect extends GenericDialect {
 	}
 
 	private boolean isWriteWriteConflict(@Nullable Throwable cause) {
-		return hasDuckDbMessage(cause, TRANSACTION_CONTEXT_ERROR_FRAGMENT, CONFLICT_FRAGMENT);
+		return hasSqlException(cause, sqlException -> {
+			String message = sqlException.getMessage();
+			if (message == null) return false;
+			String lowercase = message.toLowerCase(Locale.ROOT);
+			// A duplicate key can itself contain "conflict". That value does not turn a commit-time
+			// uniqueness violation into an optimistic concurrency failure.
+			return lowercase.contains(TRANSACTION_CONTEXT_ERROR_FRAGMENT)
+					&& lowercase.contains(CONFLICT_FRAGMENT)
+					&& !lowercase.contains(COMMIT_UNIQUE_VIOLATION_FRAGMENT);
+		});
 	}
 
 	private boolean hasDuckDbMessage(@Nullable Throwable cause,

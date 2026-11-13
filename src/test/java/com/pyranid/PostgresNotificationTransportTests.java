@@ -76,7 +76,7 @@ public class PostgresNotificationTransportTests {
 				() -> support.validatePayload("car\0changed"));
 
 		Assertions.assertTrue(support.isSendSupported());
-		Assertions.assertEquals("SELECT pg_notify(?, ?)", support.sendStatementSql());
+		Assertions.assertEquals("SELECT pg_catalog.pg_notify(?, ?)", support.sendStatementSql());
 	}
 
 	@Test
