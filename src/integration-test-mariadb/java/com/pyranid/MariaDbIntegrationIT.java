@@ -153,6 +153,50 @@ public class MariaDbIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 	}
 
 	@Test
+	public void testMultiRowGeneratedKeysExposeOnlyFirstIdByDefaultWhileReturningExposesEveryId() {
+		Database db = database();
+		for (boolean namedKeyColumn : new boolean[]{false, true}) {
+			String table = "pyranid_mariadb_multi_keys_" + (namedKeyColumn ? "named" : "default");
+			recreateTable(db, table, "CREATE TABLE " + table + " (id BIGINT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(64) NOT NULL)");
+
+			Query single = db.query("INSERT INTO " + table + " (name) VALUES (:first), (:second)")
+					.bind("first", "one").bind("second", "two");
+			Assertions.assertEquals(1L, (namedKeyColumn ? single.executeReturningGeneratedKey(Long.class, "id")
+					: single.executeReturningGeneratedKey(Long.class)).orElseThrow(),
+					"One generated-key row does not mean the statement inserted only one row");
+			Assertions.assertEquals(List.of(1L, 2L), db.query("SELECT id FROM " + table + " ORDER BY id").fetchList(Long.class));
+
+			Query multiple = db.query("INSERT INTO " + table + " (name) VALUES (:first), (:second)")
+					.bind("first", "three").bind("second", "four");
+			Assertions.assertEquals(List.of(3L), namedKeyColumn ? multiple.executeReturningGeneratedKeys(Long.class, "id")
+					: multiple.executeReturningGeneratedKeys(Long.class),
+					"Default MariaDB Connector/J returns the first ID even through the plural API");
+
+			Assertions.assertEquals(List.of(5L, 6L), db.query("INSERT INTO " + table + " (name) VALUES (:first), (:second) RETURNING id")
+					.bind("first", "five").bind("second", "six").executeForList(Long.class));
+			Assertions.assertEquals(List.of(1L, 2L, 3L, 4L, 5L, 6L), db.query("SELECT id FROM " + table + " ORDER BY id").fetchList(Long.class));
+			Assertions.assertEquals(List.of("one", "two", "three", "four", "five", "six"),
+					db.query("SELECT name FROM " + table + " ORDER BY id").fetchList(String.class));
+		}
+	}
+
+	@Test
+	public void testLegacyMultiValueGeneratedIdsOptionChangesDriverResults() {
+		String url = MARIA_DB.getJdbcUrl();
+		DataSource source = new DriverManagerDataSource(url + (url.contains("?") ? "&" : "?")
+				+ "returnMultiValuesGeneratedIds=true", MARIA_DB.getUsername(), MARIA_DB.getPassword());
+		Database db = Database.with(source, DatabaseType.MARIA_DB).build();
+		String table = "pyranid_mariadb_legacy_multi_keys";
+		recreateTable(db, table, "CREATE TABLE " + table + " (id BIGINT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(64) NOT NULL)");
+		Assertions.assertEquals(List.of(1L, 2L), db.query("INSERT INTO " + table + " (name) VALUES ('one'), ('two')")
+				.executeReturningGeneratedKeys(Long.class));
+		Assertions.assertEquals(List.of(3L, 4L), db.query("INSERT INTO " + table + " (name) VALUES ('three'), ('four')")
+				.executeReturningGeneratedKeys(Long.class, "id"));
+		Assertions.assertEquals(List.of(1L, 2L, 3L, 4L), db.query("SELECT id FROM " + table + " ORDER BY id").fetchList(Long.class));
+		Assertions.assertEquals(List.of("one", "two", "three", "four"), db.query("SELECT name FROM " + table + " ORDER BY id").fetchList(String.class));
+	}
+
+	@Test
 	public void testMariaDbSavepointsStartPhysicalTransactionBeforeFirstStatement() {
 		Database db = database();
 		String table = "pyranid_mariadb_savepoint_items";

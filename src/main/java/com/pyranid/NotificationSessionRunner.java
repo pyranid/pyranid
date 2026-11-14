@@ -22,6 +22,7 @@ import org.jspecify.annotations.Nullable;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
+import java.sql.Statement;
 import java.time.Duration;
 import java.util.LinkedHashSet;
 import java.util.Set;
@@ -119,6 +120,14 @@ final class NotificationSessionRunner {
 
 			setupPhase = NotificationSetupPhase.OPEN_TRANSPORT;
 			transport = notificationSupport.open(connection);
+
+			setupPhase = NotificationSetupPhase.SANITIZE_ROLLBACK;
+			// Raw BEGIN can leave a pooled PostgreSQL session in a server-side transaction even
+			// while JDBC reports autocommit=true. End that transaction before LISTEN, otherwise
+			// registration is not committed and timed notification reads may return immediately.
+			try (Statement statement = connection.createStatement()) {
+				statement.execute("ROLLBACK");
+			}
 
 			setupPhase = NotificationSetupPhase.SANITIZE_UNLISTEN;
 			transport.unlistenAll();
@@ -540,6 +549,7 @@ final class NotificationSessionRunner {
 		ACQUIRE_CONNECTION,
 		CONFIGURE_CONNECTION,
 		OPEN_TRANSPORT,
+		SANITIZE_ROLLBACK,
 		SANITIZE_UNLISTEN,
 		SANITIZE_DRAIN,
 		REGISTER

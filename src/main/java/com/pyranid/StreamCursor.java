@@ -94,6 +94,7 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 	private void open() {
 		long startTime = nanoTime();
 		this.openStartTime = startTime;
+		this.executor.getMetricsCollectorDispatcher().willExecuteStatement(this.statementContext);
 		this.executor.getMetricsCollectorDispatcher().willOpenStream(this.statementContext);
 		try (var ignored = JdbcCallbackContext.activate(this.lease)) {
 			this.connection = this.lease.acquire("open a stream on the transaction connection");
@@ -292,8 +293,15 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 
 		} finally {
 			Throwable primary = this.thrown != null ? this.thrown : this.callbackThrowable;
-			cleanupFailure = StatementExecution.prepareCleanupFailure(cleanupFailure, primary);
+			cleanupFailure = normalizeCleanupFailure(cleanupFailure, primary);
 			cleanupFailure = this.lease.close(cleanupFailure);
+			cleanupFailure = normalizeCleanupFailure(cleanupFailure, primary);
+
+			Throwable statementFailure = this.thrown != null ? this.thrown : this.exception;
+			if (statementFailure == null && primary == null) statementFailure = cleanupFailure;
+			if (this.exception == null && statementFailure != null)
+				this.exception = statementFailure instanceof Exception failure ? failure
+						: databaseExceptionWithStatementContext(this.statementContext, statementFailure);
 
 			Duration mappingDuration = this.resultSetMappingNanos == 0L ? null : Duration.ofNanos(this.resultSetMappingNanos);
 
@@ -307,12 +315,11 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 							.exception(this.exception)
 							.build();
 
-			if (this.thrown == null && this.exception == null) {
+			if (statementFailure == null) {
 				this.executor.getMetricsCollectorDispatcher().didExecuteStatement(this.statementContext, statementLog, StatementResult.empty());
 			} else {
-				Throwable statementThrowable = this.thrown == null ? this.exception : this.thrown;
 				this.executor.getMetricsCollectorDispatcher().didFailToExecuteStatement(this.statementContext, statementLog,
-						this.executor.connections.databaseType(), requireNonNull(statementThrowable));
+						this.executor.connections.databaseType(), statementFailure);
 			}
 
 			try {
@@ -322,6 +329,7 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 			}
 		}
 
+		cleanupFailure = normalizeCleanupFailure(cleanupFailure, this.thrown != null ? this.thrown : this.callbackThrowable);
 		this.cleanupFailure = cleanupFailure;
 
 		if (cleanupFailure != null) {
@@ -336,6 +344,12 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 				throw new RuntimeException(cleanupFailure);
 			}
 		}
+	}
+
+	@Nullable
+	private Throwable normalizeCleanupFailure(@Nullable Throwable failure, @Nullable Throwable primary) {
+		if (failure == null || primary != null || failure instanceof Error) return failure;
+		return databaseExceptionWithStatementContext(this.statementContext, failure);
 	}
 
 	@Nullable

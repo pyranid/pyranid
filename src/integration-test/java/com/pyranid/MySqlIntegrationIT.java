@@ -112,48 +112,80 @@ public class MySqlIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 
 	@Test
 	public void testOnDuplicateKeyUpdateGeneratedKeyBehavior() {
-		Database db = database();
-		String table = "pyranid_mysql_upsert_keys";
-		recreateTable(db, table, "CREATE TABLE " + table + " ("
-				+ "id BIGINT AUTO_INCREMENT PRIMARY KEY, "
-				+ "email VARCHAR(100) NOT NULL UNIQUE, "
-				+ "name VARCHAR(100) NOT NULL"
-				+ ")");
+		Database db = databaseWithAffectedRows(false);
+		for (boolean namedKeyColumn : new boolean[]{false, true}) {
+			String table = "pyranid_mysql_upsert_keys_" + (namedKeyColumn ? "named" : "default");
+			recreateTable(db, table, "CREATE TABLE " + table + " ("
+					+ "id BIGINT AUTO_INCREMENT PRIMARY KEY, "
+					+ "email VARCHAR(100) NOT NULL UNIQUE, "
+					+ "name VARCHAR(100) NOT NULL"
+					+ ")");
+			String upsert = "INSERT INTO " + table + " (email, name) VALUES (:email, :name) "
+					+ "ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), name = :name";
 
-		Long insertedId = db.query("INSERT INTO " + table + " (email, name) VALUES (:email, :name)")
-				.bind("email", "ada@example.com")
-				.bind("name", "Ada")
-				.executeReturningGeneratedKey(Long.class)
-				.orElseThrow();
+			Query insertAda = db.query(upsert).bind("email", "ada@example.com").bind("name", "Ada");
+			Long adaId = (namedKeyColumn ? insertAda.executeReturningGeneratedKey(Long.class, "id")
+					: insertAda.executeReturningGeneratedKey(Long.class)).orElseThrow();
+			Assertions.assertEquals(1L, adaId);
+			Query insertGrace = db.query(upsert).bind("email", "grace@example.com").bind("name", "Grace");
+			Assertions.assertEquals(List.of(2L), namedKeyColumn ? insertGrace.executeReturningGeneratedKeys(Long.class, "id")
+					: insertGrace.executeReturningGeneratedKeys(Long.class));
 
-		DatabaseException duplicateUpdateException = Assertions.assertThrows(DatabaseException.class, () ->
-				db.query("INSERT INTO " + table + " (email, name) VALUES (:email, :name) "
-								+ "ON DUPLICATE KEY UPDATE name = :updatedName")
-						.bind("email", "ada@example.com")
-						.bind("name", "Ignored")
-						.bind("updatedName", "Ada Updated")
-						.executeReturningGeneratedKey(Long.class));
+			Query changedSingle = db.query(upsert).bind("email", "ada@example.com").bind("name", "Ada Updated");
+			DatabaseException failure = Assertions.assertThrows(DatabaseException.class, () -> {
+				if (namedKeyColumn) changedSingle.executeReturningGeneratedKey(Long.class, "id");
+				else changedSingle.executeReturningGeneratedKey(Long.class);
+			});
+			Assertions.assertTrue(failure.getMessage().contains("Expected 1 generated-key row but got more than 1 instead"));
+			Assertions.assertEquals("Ada Updated", db.query("SELECT name FROM " + table + " WHERE id = :id")
+					.bind("id", adaId).fetchObject(String.class).orElseThrow(), "The update precedes generated-key mapping failure");
 
-		Assertions.assertTrue(duplicateUpdateException.getMessage().contains("Expected 1 generated-key row but got more than 1 instead"),
-				"MySQL ON DUPLICATE KEY UPDATE does not behave like a normal single generated-key insert");
-		Assertions.assertEquals("Ada Updated", db.query("SELECT name FROM " + table + " WHERE id = :id")
-				.bind("id", insertedId)
-				.fetchObject(String.class)
-				.orElseThrow());
+			Query changedMultiple = db.query(upsert).bind("email", "ada@example.com").bind("name", "Ada Again");
+			Assertions.assertEquals(List.of(1L, 2L), namedKeyColumn ? changedMultiple.executeReturningGeneratedKeys(Long.class, "id")
+					: changedMultiple.executeReturningGeneratedKeys(Long.class), "The second key names Grace's untouched row");
+			Assertions.assertEquals("Grace", db.query("SELECT name FROM " + table + " WHERE id = 2")
+					.fetchObject(String.class).orElseThrow());
 
-		List<Long> recoveredIds = db.query("INSERT INTO " + table + " (email, name) VALUES (:email, :name) "
-						+ "ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), name = :updatedName")
-				.bind("email", "ada@example.com")
-				.bind("name", "Ignored Again")
-				.bind("updatedName", "Ada Recovered")
-				.executeReturningGeneratedKeys(Long.class);
+			// With Connector/J's default found-row semantics an unchanged upsert reports one key.
+			Query unchangedSingle = db.query(upsert).bind("email", "ada@example.com").bind("name", "Ada Again");
+			Assertions.assertEquals(Optional.of(1L), namedKeyColumn ? unchangedSingle.executeReturningGeneratedKey(Long.class, "id")
+					: unchangedSingle.executeReturningGeneratedKey(Long.class));
+			Query unchangedMultiple = db.query(upsert).bind("email", "ada@example.com").bind("name", "Ada Again");
+			Assertions.assertEquals(List.of(1L), namedKeyColumn ? unchangedMultiple.executeReturningGeneratedKeys(Long.class, "id")
+					: unchangedMultiple.executeReturningGeneratedKeys(Long.class));
+			Assertions.assertEquals(List.of(1L, 2L), db.query("SELECT id FROM " + table + " ORDER BY id").fetchList(Long.class));
+		}
+	}
 
-		Assertions.assertTrue(recoveredIds.contains(insertedId),
-				"MySQL LAST_INSERT_ID(id) should include the updated row's existing id in generated keys");
-		Assertions.assertEquals("Ada Recovered", db.query("SELECT name FROM " + table + " WHERE id = :id")
-				.bind("id", insertedId)
-				.fetchObject(String.class)
-				.orElseThrow());
+	@Test
+	public void testSingleRowUpsertIdLookupUsesTheSameTransactionConnection() {
+		for (boolean useAffectedRows : new boolean[]{false, true}) {
+			Database db = databaseWithAffectedRows(useAffectedRows);
+			String table = "pyranid_mysql_upsert_lookup_" + useAffectedRows;
+			recreateTable(db, table, "CREATE TABLE " + table + " ("
+					+ "id BIGINT AUTO_INCREMENT PRIMARY KEY, email VARCHAR(100) NOT NULL UNIQUE, name VARCHAR(100) NOT NULL)");
+			Assertions.assertEquals(1L, db.query("INSERT INTO " + table + " (email, name) VALUES ('grace@example.com', 'Grace')")
+					.executeReturningGeneratedKey(Long.class).orElseThrow());
+			String upsert = "INSERT INTO " + table + " (email, name) VALUES (:email, :name) "
+					+ "ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), name = :name";
+
+			for (String name : List.of("Ada", "Ada Updated", "Ada Updated")) {
+				Long id = db.transaction(() -> {
+					Long connectionId = db.query("SELECT CONNECTION_ID()").fetchObject(Long.class).orElseThrow();
+					// A stale session value must be replaced on insert, changed update and unchanged update.
+					Assertions.assertEquals(987654L, db.query("SELECT LAST_INSERT_ID(987654)").fetchObject(Long.class).orElseThrow());
+					db.query(upsert).bind("email", "ada@example.com").bind("name", name).execute();
+					Long upsertId = db.query("SELECT LAST_INSERT_ID()").fetchObject(Long.class).orElseThrow();
+					Assertions.assertEquals(connectionId, db.query("SELECT CONNECTION_ID()").fetchObject(Long.class).orElseThrow());
+					Assertions.assertEquals(upsertId, db.query("SELECT id FROM " + table + " WHERE email = 'ada@example.com'")
+							.fetchObject(Long.class).orElseThrow());
+					return Optional.of(upsertId);
+				}).orElseThrow();
+				Assertions.assertEquals(2L, id);
+			}
+			Assertions.assertEquals(List.of(1L, 2L), db.query("SELECT id FROM " + table + " ORDER BY id").fetchList(Long.class));
+			Assertions.assertEquals(List.of("Grace", "Ada Updated"), db.query("SELECT name FROM " + table + " ORDER BY id").fetchList(String.class));
+		}
 	}
 
 	@Test
@@ -323,6 +355,12 @@ public class MySqlIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 		});
 
 		Assertions.assertEquals("item-1", firstName.orElseThrow());
+	}
+
+	private Database databaseWithAffectedRows(boolean useAffectedRows) {
+		String url = MYSQL.getJdbcUrl();
+		url += (url.contains("?") ? "&" : "?") + "useAffectedRows=" + useAffectedRows;
+		return Database.with(new DriverManagerDataSource(url, MYSQL.getUsername(), MYSQL.getPassword()), DatabaseType.MYSQL).build();
 	}
 
 	@NonNull

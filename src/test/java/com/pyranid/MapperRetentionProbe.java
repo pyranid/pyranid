@@ -36,6 +36,8 @@ public final class MapperRetentionProbe {
 				awaitCollection(discarded, "discarded mappers; cached=" + cached + ", callback=" + callbackBackreference);
 			}
 		}
+		awaitCollection(discardBinders(source, false), "unused custom binders and their Database owners");
+		awaitCollection(discardBinders(source, true), "cached custom binders and their Database owners");
 		Database database = Database.with(source, DatabaseType.GENERIC).build();
 		awaitCollection(discardCursors(database), "cursors of a retained mapper");
 		Reference.reachabilityFence(database);
@@ -47,7 +49,7 @@ public final class MapperRetentionProbe {
 		});
 		try (ChildFirstLoader retained = applicationLoader()) {
 			WeakReference<ClassLoader> retainedControl = new WeakReference<>(retained);
-			for (String mode : List.of("construct", "long", "string", "record", "failure", "pgobject")) {
+			for (String mode : List.of("construct", "long", "string", "record", "failure", "pgobject", "binder")) {
 				List<WeakReference<?>> loaders = new ArrayList<>();
 				for (int deployment = 0; deployment < 3; deployment++)
 					loaders.add(deploy(worker, source, mode));
@@ -63,6 +65,30 @@ public final class MapperRetentionProbe {
 			check(worker.awaitTermination(5, TimeUnit.SECONDS), "Worker did not terminate");
 		}
 		System.out.println("PASS: mapper, cursor, driver-factory and worker-loader reclamation");
+	}
+
+	private static List<WeakReference<?>> discardBinders(DataSource source, boolean populateCache) throws Exception {
+		List<WeakReference<?>> references = new ArrayList<>();
+		for (int index = 0; index < 20; index++) {
+			Database[] owner = new Database[1];
+			CustomParameterBinder callback = new CustomParameterBinder() {
+				@Override public Boolean appliesTo(TargetType type) { return type.matchesClass(String.class); }
+				@Override public BindingResult bind(StatementContext<?> context, java.sql.PreparedStatement statement,
+						Integer parameterIndex, Object value) throws java.sql.SQLException {
+					check(owner[0] != null, "Custom binder lost its configured Database");
+					statement.setString(parameterIndex, value.toString());
+					return BindingResult.handled();
+				}
+			};
+			PreparedStatementBinder binder = PreparedStatementBinder.withCustomParameterBinders(List.of(callback));
+			Database database = Database.with(source, DatabaseType.GENERIC).preparedStatementBinder(binder).build();
+			owner[0] = database;
+			if (populateCache) MappingRetentionApplication.bind(binder, database);
+			references.add(new WeakReference<>(binder));
+			references.add(new WeakReference<>(database));
+			references.add(new WeakReference<>(callback));
+		}
+		return references;
 	}
 
 	private static List<WeakReference<?>> discardMappers(DataSource source, boolean cached, boolean callbackBackreference) throws Exception {

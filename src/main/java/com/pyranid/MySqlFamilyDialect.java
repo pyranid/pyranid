@@ -32,6 +32,14 @@ import static java.util.Objects.requireNonNull;
 abstract class MySqlFamilyDialect extends UuidStringDialect {
 	@NonNull
 	@Override
+	public Boolean prefersTimestampWithoutTimeZone() {
+		// MySQL-family timestamp types have no JDBC timestamp-with-time-zone target. In particular,
+		// client-side prepares and MariaDB do not reliably describe the parameter's actual column type.
+		return true;
+	}
+
+	@NonNull
+	@Override
 	public PreparedStatement prepareStreamingStatement(@NonNull Connection connection,
 																										 @NonNull StatementContext<?> statementContext) throws SQLException {
 		requireNonNull(connection);

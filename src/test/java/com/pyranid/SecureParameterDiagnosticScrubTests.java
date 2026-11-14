@@ -289,7 +289,7 @@ public class SecureParameterDiagnosticScrubTests {
 	}
 
 	@Test
-	public void testConstructorScrubsEveryStringMetadataField() {
+	public void testConstructorScrubsDriverTextMetadataWhilePreservingSqlState() {
 		String secret = "s3cr3t-value";
 		SecureParameterSupport.DiagnosticScrub scrub = SecureParameterSupport.diagnosticScrubForParameters(
 				List.of(Parameters.secure(secret)));
@@ -297,7 +297,7 @@ public class SecureParameterDiagnosticScrubTests {
 
 		SQLException cause = new SQLException("driver says " + secret + " was bad", "23505");
 		DatabaseExceptionMetadata metadata = DatabaseExceptionMetadata.builder(cause)
-				.sqlState("state-" + secret)
+				.sqlState("23505")
 				.column("column-" + secret)
 				.constraint("constraint-" + secret)
 				.datatype("datatype-" + secret)
@@ -321,10 +321,10 @@ public class SecureParameterDiagnosticScrubTests {
 		};
 
 		// The message is NOT re-scrubbed by the constructor (the Database factory scrubs the raw driver
-		// text before composing); metadata fields - raw dialect-extracted text - are each scrubbed once
+		// text before composing); driver-text metadata is scrubbed once, while the SQLState code remains operational.
 		DatabaseException databaseException = new DatabaseException("already-scrubbed message", cause, stubDialect, redactor);
 
-		Assertions.assertEquals("state-<redacted>", databaseException.getSqlState().orElseThrow());
+		Assertions.assertEquals("23505", databaseException.getSqlState().orElseThrow());
 		Assertions.assertEquals("column-<redacted>", databaseException.getColumn().orElseThrow());
 		Assertions.assertEquals("constraint-<redacted>", databaseException.getConstraint().orElseThrow());
 		Assertions.assertEquals("datatype-<redacted>", databaseException.getDatatype().orElseThrow());

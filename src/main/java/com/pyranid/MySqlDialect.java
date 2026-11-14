@@ -18,6 +18,11 @@ package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
 
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+
+import static java.util.Objects.requireNonNull;
+
 /**
  * MySQL-specific behavior.
  */
@@ -26,4 +31,18 @@ final class MySqlDialect extends MySqlFamilyDialect {
 	static final MySqlDialect INSTANCE = new MySqlDialect();
 
 	private MySqlDialect() {}
+
+	@Override
+	public void configureStreamingPreparedStatement(@NonNull PreparedStatement preparedStatement,
+			@NonNull DatabaseStreamState databaseStreamState, @NonNull Boolean transactionPresent,
+			@NonNull Boolean queryFetchSizeConfigured) throws SQLException {
+		requireNonNull(preparedStatement);
+		requireNonNull(databaseStreamState);
+		requireNonNull(transactionPresent);
+		requireNonNull(queryFetchSizeConfigured);
+		int fetchSize = preparedStatement.getFetchSize();
+		if (fetchSize == 0 && queryFetchSizeConfigured) return;
+		if (fetchSize > 0 && MySqlDriverSupport.cursorFetchEnabled(preparedStatement)) return;
+		preparedStatement.setFetchSize(Integer.MIN_VALUE);
+	}
 }

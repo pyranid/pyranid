@@ -229,7 +229,8 @@ public class SqliteIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 					OffsetDateTime.parse("2024-03-10T13:30:12.123456789+05:45"),
 					OffsetDateTime.parse("2024-11-03T01:30:00.123456789-05:00"),
 					OffsetDateTime.parse("2024-11-03T06:30:00.123456789Z"))) {
-				insertTemporal(db, ++id, value);
+				// Seed explicit-offset text to verify legacy/external storage. New temporal writes normalize to UTC.
+				insertTemporal(db, ++id, value.toString());
 				assertTemporalTargets(db, id, value.toInstant(), value,
 						value.atZoneSameInstant(zone).toLocalDateTime(), zone, true);
 			}
@@ -361,7 +362,7 @@ public class SqliteIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 			Database sqlite = Database.with(dataSource(), DatabaseType.SQLITE)
 					.timeZone(zone).resultSetMapper(shared).build();
 			recreateTemporalTable(sqlite);
-			insertTemporal(sqlite, 1, overlap);
+			insertTemporal(sqlite, 1, overlap.toString());
 			for (boolean useSqlite : new boolean[]{sqliteFirst, !sqliteFirst, sqliteFirst}) {
 				if (useSqlite)
 					assertTemporalTargets(sqlite, 1, overlap.toInstant(), overlap,
@@ -468,9 +469,9 @@ public class SqliteIntegrationIT extends AbstractPortableJdbcIntegrationTests {
 		Assertions.assertEquals(java.sql.Date.valueOf(local.toLocalDate()), temporalQuery(db, id).fetchObject(java.sql.Date.class).orElseThrow());
 		Assertions.assertEquals(java.sql.Date.valueOf(local.toLocalDate()), temporalQuery(db, id).fetchObject(SqlDateRow.class).orElseThrow().value());
 		Assertions.assertEquals(java.sql.Date.valueOf(local.toLocalDate()), temporalQuery(db, id).fetchObject(SqlDateBean.class).orElseThrow().getValue());
-		Assertions.assertEquals(offsetBearing ? Timestamp.from(instant) : Timestamp.valueOf(local), temporalQuery(db, id).fetchObject(Timestamp.class).orElseThrow());
-		Assertions.assertEquals(offsetBearing ? Timestamp.from(instant) : Timestamp.valueOf(local), temporalQuery(db, id).fetchObject(TimestampRow.class).orElseThrow().value());
-		Assertions.assertEquals(offsetBearing ? Timestamp.from(instant) : Timestamp.valueOf(local), temporalQuery(db, id).fetchObject(TimestampBean.class).orElseThrow().getValue());
+		Assertions.assertEquals(offsetBearing ? Timestamp.from(instant) : Timestamp.from(local.atZone(db.getTimeZone()).toInstant()), temporalQuery(db, id).fetchObject(Timestamp.class).orElseThrow());
+		Assertions.assertEquals(offsetBearing ? Timestamp.from(instant) : Timestamp.from(local.atZone(db.getTimeZone()).toInstant()), temporalQuery(db, id).fetchObject(TimestampRow.class).orElseThrow().value());
+		Assertions.assertEquals(offsetBearing ? Timestamp.from(instant) : Timestamp.from(local.atZone(db.getTimeZone()).toInstant()), temporalQuery(db, id).fetchObject(TimestampBean.class).orElseThrow().getValue());
 		Assertions.assertEquals(instant.atZone(zone), temporalQuery(db, id).fetchObject(ZonedDateTime.class).orElseThrow());
 		Assertions.assertEquals(instant.atZone(zone), temporalQuery(db, id).fetchObject(ZonedRow.class).orElseThrow().value());
 		Assertions.assertEquals(instant.atZone(zone), temporalQuery(db, id).fetchObject(ZonedBean.class).orElseThrow().getValue());

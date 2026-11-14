@@ -323,7 +323,7 @@ class NotificationDiagnosticFailureTests {
 			assertEquals(interrupted, this.interruptedOnExit.get());
 			assertFalse(this.interruptedDuringCleanup.get(), "Interruption must be restored after disposal");
 			assertEquals(this.statementsCreated.get(), this.statementsClosed.get());
-			assertEquals(this.phase == Phase.UNWRAP ? 0 : 2, this.statementsClosed.get());
+			assertEquals(this.phase == Phase.UNWRAP ? 0 : 3, this.statementsClosed.get());
 		}
 
 		private void assertRetried() {

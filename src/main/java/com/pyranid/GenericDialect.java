@@ -20,6 +20,7 @@ import com.pyranid.JsonParameter.BindingPreference;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
+import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSetMetaData;
@@ -53,6 +54,12 @@ class GenericDialect implements DatabaseDialect {
 	static final GenericDialect INSTANCE = new GenericDialect();
 
 	protected GenericDialect() {}
+
+	@NonNull
+	@Override
+	public BigDecimal normalizeBigDecimal(@NonNull BigDecimal value) {
+		return requireNonNull(value);
+	}
 
 	@NonNull
 	@Override
@@ -98,6 +105,25 @@ class GenericDialect implements DatabaseDialect {
 
 	@NonNull
 	@Override
+	public Boolean prefersTimestampWithoutTimeZone() {
+		return false;
+	}
+
+	@NonNull
+	@Override
+	public Boolean bindTemporalParameter(@NonNull PreparedStatement preparedStatement,
+																		 @NonNull Integer parameterIndex,
+																		 @NonNull Object parameter,
+																		 @NonNull Integer sqlType) throws SQLException {
+		requireNonNull(preparedStatement);
+		requireNonNull(parameterIndex);
+		requireNonNull(parameter);
+		requireNonNull(sqlType);
+		return false;
+	}
+
+	@NonNull
+	@Override
 	public Boolean bindsOffsetTimeAsString() {
 		return false;
 	}
@@ -130,6 +156,18 @@ class GenericDialect implements DatabaseDialect {
 	@Override
 	public Object normalizeUuid(@NonNull UUID uuid) {
 		return requireNonNull(uuid);
+	}
+
+	@NonNull
+	@Override
+	public Boolean requiresUuidParameterSqlType() {
+		return false;
+	}
+
+	@NonNull
+	@Override
+	public Object normalizeUuid(@NonNull UUID uuid, @Nullable Integer sqlType) {
+		return normalizeUuid(uuid);
 	}
 
 	@Override
@@ -327,10 +365,10 @@ class GenericDialect implements DatabaseDialect {
 		if (typeName == null)
 			return false;
 
-		String normalizedTypeName = typeName.toUpperCase(Locale.ROOT);
-		return normalizedTypeName.contains("TIMESTAMP WITH TIME ZONE")
-				|| normalizedTypeName.contains("TIMESTAMP WITH LOCAL TIME ZONE")
-				|| normalizedTypeName.contains("TIMESTAMPTZ");
+		String normalizedTypeName = typeName.trim().toUpperCase(Locale.ROOT);
+		// Container declarations can contain zoned timestamp names without being timestamps.
+		return normalizedTypeName.equals("TIMESTAMPTZ")
+				|| normalizedTypeName.matches("TIMESTAMP(?:\\s*\\(\\s*\\d+\\s*\\))?\\s+WITH\\s+(?:LOCAL\\s+)?TIME\\s+ZONE");
 	}
 
 	protected boolean hasErrorCode(@NonNull DatabaseExceptionMetadata metadata,

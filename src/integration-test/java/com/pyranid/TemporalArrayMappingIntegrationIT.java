@@ -73,7 +73,7 @@ class TemporalArrayMappingIntegrationIT {
 						+ ", 'sql_timestamp': " + literal + ", 'sql_date': " + literal
 						+ ", 'date': DATE '2024-01-02', 'time': TIME '12:34:56', 'quoted, \"value\"': " + literal + "} AS payload";
 				TemporalFields expected = new TemporalFields(local.atZone(zone).toInstant(), zoned.toInstant(), local,
-						zoned.atZoneSameInstant(zone).toLocalDateTime(), Timestamp.valueOf(local), java.sql.Date.valueOf(local.toLocalDate()),
+						zoned.atZoneSameInstant(zone).toLocalDateTime(), Timestamp.from(local.atZone(zone).toInstant()), java.sql.Date.valueOf(local.toLocalDate()),
 						LocalDate.parse("2024-01-02").atStartOfDay(zone).toInstant(), LocalTime.parse("12:34:56"),
 						local.atZone(zone).toInstant(), new Stamp(local.atZone(zone).toInstant()));
 				assertEquals(expected, database.query(sql).fetchObject(TemporalFields.class).orElseThrow());

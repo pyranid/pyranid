@@ -76,22 +76,26 @@ public class NumericConversionTests {
 	}
 
 	@Test
-	public void testNonFiniteDoubleToDoubleThrows() {
+	public void testNonFiniteDoubleToDoublePreservesValue() {
 		Database db = Database.with(createInMemoryDataSource("numeric_double_non_finite"), DatabaseType.GENERIC).build();
 
-		Assertions.assertThrows(DatabaseException.class, () ->
-				db.query("SELECT :value FROM (VALUES (0)) AS t(x)")
+		Assertions.assertEquals(Optional.of(Double.POSITIVE_INFINITY),
+				db.query("SELECT CAST(:value AS DOUBLE) FROM (VALUES (0)) AS t(x)")
 						.bind("value", Double.POSITIVE_INFINITY)
 						.fetchObject(Double.class));
 	}
 
 	@Test
-	public void testNonFiniteDoubleToFloatThrows() {
+	public void testNonFiniteDoubleToFloatPreservesValueWhileFiniteOverflowThrows() {
 		Database db = Database.with(createInMemoryDataSource("numeric_float_non_finite"), DatabaseType.GENERIC).build();
 
-		Assertions.assertThrows(DatabaseException.class, () ->
-				db.query("SELECT :value FROM (VALUES (0)) AS t(x)")
+		Assertions.assertEquals(Optional.of(Float.POSITIVE_INFINITY),
+				db.query("SELECT CAST(:value AS DOUBLE) FROM (VALUES (0)) AS t(x)")
 						.bind("value", Double.POSITIVE_INFINITY)
+						.fetchObject(Float.class));
+		Assertions.assertThrows(DatabaseException.class, () ->
+				db.query("SELECT CAST(:value AS DOUBLE) FROM (VALUES (0)) AS t(x)")
+						.bind("value", Double.MAX_VALUE)
 						.fetchObject(Float.class));
 	}
 

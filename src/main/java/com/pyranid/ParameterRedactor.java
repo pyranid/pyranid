@@ -20,6 +20,7 @@ import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
 import javax.annotation.concurrent.ThreadSafe;
+import java.util.Optional;
 
 /**
  * Converts non-secure bound parameter values into safe display values for diagnostics.
@@ -36,8 +37,11 @@ import javax.annotation.concurrent.ThreadSafe;
  * in statement logs and exception text; configure {@link #redactAll()} or a custom redactor if diagnostics may leave
  * a trusted boundary.
  * <p>
- * Redaction failures are fail-fast. If an implementation throws, Pyranid propagates the failure from the diagnostic
- * rendering call site.
+ * Implementations return a non-null Optional containing the safe display value. An empty Optional renders as
+ * {@code null} in the same parameter slot; it does not fall back to the original value or omit the slot.
+ * Direct diagnostic rendering propagates failures if an implementation throws or returns a null Optional. When
+ * rendering is part of reporting a SQL failure, Pyranid uses its fail-closed parameter-display fallback and retains
+ * the original SQL failure, with the rendering failure suppressed.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 4.4.0
@@ -47,16 +51,42 @@ import javax.annotation.concurrent.ThreadSafe;
 public interface ParameterRedactor {
 	/**
 	 * Redacts a single non-secure parameter for diagnostics.
+	 * <p>
+	 * Since 4.9.0 this method returns a non-null Optional rather than a nullable Object. Implementations, lambdas
+	 * and direct callers compiled against the earlier contract must be updated and recompiled.
 	 *
 	 * @param statementContext current SQL context
 	 * @param parameterIndex   zero-based index into {@link StatementContext#getParameters()} after IN-list expansion
 	 * @param parameter        parameter value to render safely
-	 * @return the safe display value
+	 * @return the safe display value, or an empty Optional to render {@code null}; never {@code null}
 	 */
-	@Nullable
-	Object redactParameter(@NonNull StatementContext<?> statementContext,
+	@NonNull
+	Optional<Object> redactParameter(@NonNull StatementContext<?> statementContext,
 												 @NonNull Integer parameterIndex,
 												 @Nullable Object parameter);
+
+	/**
+	 * Redacts a single non-secure parameter with its original query binding name, when known.
+	 * <p>
+	 * Repeated parameters and every slot expanded from an IN list retain the same name. The name is
+	 * {@code null} when metadata is unknown; a manual context can supply names through its builder. The default
+	 * implementation delegates directly to the three-argument method, which remains the functional method.
+	 * Secure parameters still bypass both overloads, and batch summaries do not invoke either.
+	 *
+	 * @param statementContext current SQL context
+	 * @param parameterIndex zero-based expanded JDBC parameter index
+	 * @param parameterName original named binding, or {@code null} if unknown
+	 * @param parameter parameter value to render safely
+	 * @return the safe display value, or an empty Optional to render {@code null}; never {@code null}
+	 * @since 4.9.0
+	 */
+	@NonNull
+	default Optional<Object> redactParameter(@NonNull StatementContext<?> statementContext,
+															 @NonNull Integer parameterIndex,
+															 @Nullable String parameterName,
+															 @Nullable Object parameter) {
+		return redactParameter(statementContext, parameterIndex, parameter);
+	}
 
 	/**
 	 * Acquires the default redactor, which renders non-secure values verbatim for non-batch executions.
@@ -65,7 +95,7 @@ public interface ParameterRedactor {
 	 */
 	@NonNull
 	static ParameterRedactor none() {
-		return (statementContext, parameterIndex, parameter) -> parameter;
+		return (statementContext, parameterIndex, parameter) -> Optional.ofNullable(parameter);
 	}
 
 	/**
@@ -75,6 +105,6 @@ public interface ParameterRedactor {
 	 */
 	@NonNull
 	static ParameterRedactor redactAll() {
-		return (statementContext, parameterIndex, parameter) -> SecureParameterSupport.DEFAULT_MASK;
+		return (statementContext, parameterIndex, parameter) -> Optional.of(SecureParameterSupport.DEFAULT_MASK);
 	}
 }

@@ -20,6 +20,8 @@ package com.pyranid;
  * Controls how {@link java.time.Instant} and {@link java.time.OffsetDateTime} parameters are bound when JDBC
  * {@link java.sql.ParameterMetaData} cannot identify whether the target column is {@code TIMESTAMP} or
  * {@code TIMESTAMP WITH TIME ZONE}.
+ * Metadata describing a non-timestamp type, such as {@code VARCHAR} or {@code DATE}, is also ambiguous
+ * for these instant-bearing parameters. Positively identified zoned timestamps always retain their zone semantics.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 4.2.0
@@ -31,6 +33,8 @@ public enum AmbiguousTimestampBindingStrategy {
 	 * <p>
 	 * This is Pyranid's default strategy and is appropriate when ambiguous parameters target timestamp-with-time-zone
 	 * columns.
+	 * MySQL and MariaDB use local timestamps in the configured database zone because those databases have no
+	 * timestamp-with-time-zone type. SQLite uses canonical UTC text for ambiguous instant-bearing values.
 	 */
 	TIMESTAMP_WITH_TIME_ZONE,
 

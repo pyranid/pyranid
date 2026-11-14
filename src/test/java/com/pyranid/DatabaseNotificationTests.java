@@ -209,7 +209,7 @@ public class DatabaseNotificationTests {
 	public void statementCloseConnectionFailureCannotHideUnsupportedRegistration() {
 		SQLException primary = new SQLException("LISTEN unavailable", "0A000");
 		SQLException closeFailure = new SQLException("statement close connection lost", "08006");
-		ConnectionHarness harness = new ConnectionHarness(true).failListenOn(1, primary).failStatementCloseOn(2, closeFailure);
+		ConnectionHarness harness = new ConnectionHarness(true).failListenOn(1, primary).failStatementCloseOn(3, closeFailure);
 		UnsupportedOperationException thrown = Assertions.assertThrows(UnsupportedOperationException.class,
 				() -> postgresDatabase(harness, null).withNotificationSession("events", session -> Assertions.fail("unexpected callback")));
 		Assertions.assertSame(primary, thrown.getCause());
@@ -221,7 +221,7 @@ public class DatabaseNotificationTests {
 	public void suppressedStatementCloseCapabilityFailureDoesNotReclassifyRegistrationFailure() {
 		SQLException primary = new SQLException("registration failed", "42000");
 		SQLException closeFailure = new SQLException("statement close unavailable", "0A000");
-		ConnectionHarness harness = new ConnectionHarness(true).failListenOn(1, primary).failStatementCloseOn(2, closeFailure);
+		ConnectionHarness harness = new ConnectionHarness(true).failListenOn(1, primary).failStatementCloseOn(3, closeFailure);
 		DatabaseException thrown = Assertions.assertThrows(DatabaseException.class,
 				() -> postgresDatabase(harness, null).withNotificationSession("events", session -> Assertions.fail("unexpected callback")));
 		Assertions.assertSame(primary, thrown.getCause());
@@ -288,9 +288,10 @@ public class DatabaseNotificationTests {
 		Assertions.assertEquals(1, harness.dataSource().checkouts());
 		Assertions.assertEquals("checkout", events.get(0));
 		Assertions.assertEquals("getAutoCommit:true", events.get(1));
-		Assertions.assertEquals("UNLISTEN *", events.get(2));
-		Assertions.assertEquals("drain:1", events.get(3));
-		Assertions.assertEquals(2L, events.subList(4, callbackIndex).stream()
+		Assertions.assertEquals("ROLLBACK", events.get(2));
+		Assertions.assertEquals("UNLISTEN *", events.get(3));
+		Assertions.assertEquals("drain:1", events.get(4));
+		Assertions.assertEquals(2L, events.subList(5, callbackIndex).stream()
 				.filter(event -> event.startsWith("LISTEN ")).count());
 		Assertions.assertEquals("UNLISTEN *", events.get(callbackIndex + 1));
 		Assertions.assertEquals("drain:2", events.get(callbackIndex + 2));
@@ -318,6 +319,7 @@ public class DatabaseNotificationTests {
 				"getAutoCommit:false",
 				"rollback",
 				"setAutoCommit:true",
+				"ROLLBACK",
 				"UNLISTEN *",
 				"drain:1",
 				"LISTEN \"car_changed\"",
@@ -344,6 +346,7 @@ public class DatabaseNotificationTests {
 			Assertions.assertEquals(List.of(
 					"checkout",
 					"getAutoCommit:true",
+					"ROLLBACK",
 					"UNLISTEN *",
 					"drain:1",
 					"LISTEN \"car_changed\"",
@@ -832,6 +835,7 @@ public class DatabaseNotificationTests {
 		Assertions.assertEquals(List.of(
 				"checkout",
 				"getAutoCommit:true",
+				"ROLLBACK",
 				"UNLISTEN *",
 				"abort",
 				"close"), harness.events());
@@ -859,7 +863,7 @@ public class DatabaseNotificationTests {
 	@Test
 	public void registrationStatementCloseFailureIsNotReclassifiedAsUnavailable() {
 		SQLException closeFailure = new SQLException("LISTEN statement close failed", "0A000");
-		ConnectionHarness harness = new ConnectionHarness(true).failStatementCloseOn(2, closeFailure);
+		ConnectionHarness harness = new ConnectionHarness(true).failStatementCloseOn(3, closeFailure);
 		Database database = postgresDatabase(harness, null);
 		AtomicBoolean callbackInvoked = new AtomicBoolean();
 
@@ -917,6 +921,7 @@ public class DatabaseNotificationTests {
 		Assertions.assertEquals(List.of(
 				"checkout",
 				"getAutoCommit:true",
+				"ROLLBACK",
 				"UNLISTEN *",
 				"drain:1",
 				"LISTEN \"car_changed\"",
@@ -1109,6 +1114,7 @@ public class DatabaseNotificationTests {
 		Assertions.assertEquals(List.of(
 				"checkout",
 				"getAutoCommit:true",
+				"ROLLBACK",
 				"UNLISTEN *",
 				"drain:1",
 				"LISTEN \"car_changed\"",
@@ -1134,6 +1140,7 @@ public class DatabaseNotificationTests {
 		Assertions.assertEquals(List.of(
 				"checkout",
 				"getAutoCommit:true",
+				"ROLLBACK",
 				"UNLISTEN *",
 				"drain:1",
 				"LISTEN \"car_changed\"",

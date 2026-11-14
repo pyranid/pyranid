@@ -31,6 +31,7 @@ import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Types;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.OffsetTime;
@@ -346,6 +347,86 @@ public class TemporalParameterBindingTests {
 		Assertions.assertEquals(offsetTime.toString(), capture.value);
 	}
 
+
+	@Test
+	public void withoutTimeZoneStrategyAppliesToNonTimestampMetadataAndPreservesPositiveZonedEvidence() {
+		ZoneId zone = ZoneId.of("Asia/Kathmandu");
+		Instant instant = Instant.parse("2024-07-02T12:34:56.123456789Z");
+		for (int type : new int[]{Types.VARCHAR, Types.DATE, Types.OTHER, Types.TIMESTAMP}) {
+			for (Object value : List.of(instant, instant.atOffset(ZoneOffset.ofHours(-3)),
+					java.util.Date.from(instant), java.sql.Timestamp.from(instant))) {
+				BindingCapture capture = new BindingCapture();
+				capture.parameterSqlType = type;
+				capture.parameterTypeName = type == Types.VARCHAR ? "VARCHAR" : type == Types.DATE ? "DATE" : null;
+				database(capture, zone, TIMESTAMP_WITHOUT_TIME_ZONE).query("UPDATE t SET value=:value")
+						.bind("value", value).execute();
+				Instant expected = value instanceof java.util.Date date && !(value instanceof java.sql.Timestamp)
+						? date.toInstant() : instant;
+				Assertions.assertEquals(LocalDateTime.ofInstant(expected, zone), capture.value);
+				Assertions.assertEquals(Types.TIMESTAMP, capture.sqlType);
+			}
+		}
+	}
+
+	@Test
+	public void localDatesAndTimesUseTheConfiguredZoneForKnownZonedTargets() {
+		ZoneId zone = ZoneId.of("America/New_York");
+		for (String name : new String[]{"TIMESTAMP WITH TIME ZONE", "timestamptz", "datetimeoffset"}) {
+			for (Object value : List.of(LocalDate.parse("2024-07-02"), LocalDateTime.parse("2024-01-02T12:34:56.123456789"),
+					LocalDateTime.parse("2024-03-10T02:30:00"), LocalDateTime.parse("2024-11-03T01:30:00"))) {
+				BindingCapture capture = new BindingCapture();
+				capture.parameterSqlType = Types.TIMESTAMP;
+				capture.parameterTypeName = name;
+				database(capture, zone, TIMESTAMP_WITHOUT_TIME_ZONE).query("UPDATE t SET value=:value")
+						.bind("value", value).execute();
+				OffsetDateTime expected = value instanceof LocalDate date ? date.atStartOfDay(zone).toOffsetDateTime()
+						: ((LocalDateTime) value).atZone(zone).toOffsetDateTime();
+				Assertions.assertEquals(expected, capture.value);
+				Assertions.assertEquals(Types.TIMESTAMP_WITH_TIMEZONE, capture.sqlType);
+			}
+		}
+	}
+
+	@Test
+	public void localValuesRetainWallClockSemanticsForNonZonedOrMissingMetadata() {
+		for (Integer type : new Integer[]{null, Types.DATE, Types.VARCHAR, Types.TIMESTAMP}) {
+			for (Object value : List.of(LocalDate.parse("2024-07-02"), LocalDateTime.parse("2024-07-02T12:34:56.123456789"))) {
+				BindingCapture capture = new BindingCapture();
+				capture.parameterSqlType = type;
+				database(capture, ZoneId.of("Asia/Kathmandu"), null).query("UPDATE t SET value=:value").bind("value", value).execute();
+				Assertions.assertEquals(value, capture.value);
+				Assertions.assertEquals(value instanceof LocalDate ? Types.DATE : Types.TIMESTAMP, capture.sqlType);
+			}
+		}
+	}
+
+	@Test
+	public void legacySqlTimeRetainsItsMillisecondsIncludingNegativeEpochs() {
+		for (long epoch : new long[]{0, 1, 123, 999, -1, -877, 43_210_987}) {
+			java.sql.Time value = new java.sql.Time(epoch);
+			BindingCapture capture = new BindingCapture();
+			database(capture, ZoneId.of("Asia/Kathmandu"), null).query("UPDATE t SET value=:value").bind("value", value).execute();
+			Assertions.assertEquals(value.toLocalTime().withNano((int) Math.floorMod(epoch, 1000L) * 1_000_000), capture.value);
+			Assertions.assertEquals(Types.TIME, capture.sqlType);
+		}
+	}
+
+
+
+	@Test
+	public void localTemporalMetadataLookupDoesNotHideTerminalFailures() {
+		for (Object value : List.of(LocalDate.parse("2024-07-02"), LocalDateTime.parse("2024-07-02T12:34:56"))) {
+			BindingCapture capture = new BindingCapture();
+			capture.metadataFailure = new java.sql.SQLNonTransientConnectionException("connection lost during describe", "08006");
+			DatabaseException failure = Assertions.assertThrows(DatabaseException.class,
+					() -> database(capture, ZoneId.of("Asia/Kathmandu"), null)
+							.query("UPDATE t SET value=:value").bind("value", value).execute());
+			Assertions.assertSame(capture.metadataFailure, failure.getCause());
+			Assertions.assertNull(capture.methodName, "Terminal metadata failure must stop before binding");
+		}
+	}
+
+
 	@NonNull
 	private Database database(@NonNull BindingCapture capture,
 														@NonNull ZoneId zone,
@@ -476,8 +557,10 @@ public class TemporalParameterBindingTests {
 	}
 
 	@NonNull
-	private ParameterMetaData parameterMetaData(@NonNull BindingCapture capture) throws SQLFeatureNotSupportedException {
+	private ParameterMetaData parameterMetaData(@NonNull BindingCapture capture) throws SQLException {
 		requireNonNull(capture);
+
+		if (capture.metadataFailure != null) throw capture.metadataFailure;
 
 		if (capture.parameterSqlType == null)
 			throw new SQLFeatureNotSupportedException("parameter metadata unavailable");
@@ -526,6 +609,8 @@ public class TemporalParameterBindingTests {
 	private static final class BindingCapture {
 		@Nullable
 		private SQLException setObjectFailure;
+		@Nullable
+		private SQLException metadataFailure;
 		@Nullable
 		private Integer parameterSqlType;
 		@Nullable

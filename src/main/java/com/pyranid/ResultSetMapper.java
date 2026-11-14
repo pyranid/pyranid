@@ -98,9 +98,10 @@ public interface ResultSetMapper {
 	int DEFAULT_PREFERRED_COLUMN_MAPPER_CACHE_CAPACITY = 256;
 
 	/**
-	 * Acquires a builder for a concrete implementation of this interface, specifying the locale to use when massaging JDBC column names for matching against Java property names.
+	 * Acquires a builder with the locale used for non-ASCII case normalization of JDBC column names.
+	 * ASCII letters are folded independently of locale before locale-sensitive lowercasing.
 	 *
-	 * @param normalizationLocale the locale to use when massaging JDBC column names for matching against Java property names
+	 * @param normalizationLocale the locale used after locale-independent ASCII folding
 	 * @return a {@code Builder} for a concrete implementation
 	 */
 	@NonNull
@@ -165,6 +166,8 @@ public interface ResultSetMapper {
 		Boolean planCachingEnabled;
 		@NonNull
 		Integer planCacheCapacity;
+		boolean failOnUnmappedColumns;
+		boolean detachLobValues;
 		@Nullable
 		Long maxLobBytes = 16L * 1024 * 1024;
 		@Nullable
@@ -178,9 +181,12 @@ public interface ResultSetMapper {
 		}
 
 		/**
-		 * Specifies the locale to use when massaging JDBC column names for matching against Java property names.
+		 * Specifies the locale used for non-ASCII case normalization when matching JDBC column names to Java properties.
+		 * ASCII uppercase letters always fold to their ASCII lowercase equivalents before locale-sensitive lowercasing,
+		 * keeping identifiers such as {@code ID} stable under Turkish and Azerbaijani locales. This locale still affects
+		 * non-ASCII letters; the default is {@link Locale#ROOT}.
 		 *
-		 * @param normalizationLocale the locale to use when massaging JDBC column names for matching against Java property names
+		 * @param normalizationLocale the locale used after locale-independent ASCII folding
 		 * @return this {@code Builder}, for chaining
 		 */
 		@NonNull
@@ -237,6 +243,40 @@ public interface ResultSetMapper {
 		}
 
 		/**
+		 * Rejects source columns that do not match a writable bean property or record component.
+		 * Disabled by default. This checks by-name row mappings before built-in column bindings read values; it does not
+		 * require every target member to be selected. Map rows, scalar values, custom whole-row mappings,
+		 * and the direct single-STRUCT record fallback keep their existing mapping rules.
+		 * Validation runs when a row is mapped; empty result sets do not invoke the row mapper.
+		 *
+		 * @param failOnUnmappedColumns whether to reject unmatched source columns
+		 * @return this builder
+		 * @since 4.9.0
+		 */
+		@NonNull
+		public Builder failOnUnmappedColumns(@NonNull Boolean failOnUnmappedColumns) {
+			this.failOnUnmappedColumns = requireNonNull(failOnUnmappedColumns);
+			return this;
+		}
+
+		/**
+		 * Detaches LOBs exposed by native Map/Object mapping as byte arrays or Strings.
+		 * Disabled by default. BLOBs become {@code byte[]}; CLOBs, NCLOBs and SQLXML become
+		 * {@link String}. Existing byte/character materialization limits apply, including nested
+		 * Java arrays, collections and maps. Containers are copied without mutating driver values.
+		 * Explicit JDBC-handle targets and handled custom mapper results retain their ownership contract.
+		 *
+		 * @param detachLobValues whether native result values should detach LOBs
+		 * @return this builder
+		 * @since 4.9.0
+		 */
+		@NonNull
+		public Builder detachLobValues(@NonNull Boolean detachLobValues) {
+			this.detachLobValues = requireNonNull(detachLobValues);
+			return this;
+		}
+
+		/**
 		 * Limits each BLOB value materialized by the default mapper as {@code byte[]}.
 		 * Defaults to 16 MiB. The limit does not cover driver buffering, custom mappers,
 		 * ordinary binary columns, or the aggregate size of a result list.
@@ -256,7 +296,8 @@ public interface ResultSetMapper {
 		}
 
 		/**
-		 * Limits each CLOB/NCLOB value materialized by the default mapper as {@link String}.
+		 * Limits each CLOB/NCLOB value materialized by the default mapper as {@link String}, and SQLXML values
+		 * detached through {@link #detachLobValues(Boolean)}.
 		 * Defaults to 8,388,608 UTF-16 code units. The limit does not cover driver buffering,
 		 * custom mappers, ordinary character columns, or the aggregate size of a result list.
 		 * This setter enables the character limit even after {@link #unboundedLobMaterialization()}.

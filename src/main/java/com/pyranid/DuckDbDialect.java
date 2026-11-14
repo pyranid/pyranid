@@ -19,6 +19,7 @@ package com.pyranid;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
+import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.sql.Array;
 import java.sql.Blob;
@@ -119,6 +120,30 @@ final class DuckDbDialect extends GenericDialect {
 		// The driver accepts setObject(OffsetTime) but fails at execute time with
 		// "Invalid Input Error: Unsupported parameter type"; the ISO-8601 string form casts cleanly to TIMETZ
 		return true;
+	}
+
+	@NonNull
+	@Override
+	public BigDecimal normalizeBigDecimal(@NonNull BigDecimal value) {
+		requireNonNull(value);
+		if (value.scale() >= 0) {
+			// The current JDBC driver can silently bind an unsupported decimal representation as SQL
+			// NULL, so check both fields rather than sending a value that will lose its identity.
+			if (value.scale() > 38 || value.precision() > 38)
+				throw unsupportedDecimalRepresentation();
+			return value;
+		}
+		// Check the resulting precision before expanding the coefficient. DuckDB decimals have a
+		// maximum width of 38; an extreme negative scale must not allocate an enormous integer.
+		if (value.signum() != 0 && (long) value.precision() - value.scale() > 38)
+			throw unsupportedDecimalRepresentation();
+		// DuckDB's JDBC decimal representation requires a nonnegative scale. Increasing a negative
+		// scale to zero appends integer zeroes and preserves the exact mathematical value.
+		return value.setScale(0);
+	}
+
+	private IllegalArgumentException unsupportedDecimalRepresentation() {
+		return new IllegalArgumentException("DuckDB decimal parameters require precision and nonnegative scale no greater than 38");
 	}
 
 	@NonNull
@@ -233,11 +258,70 @@ final class DuckDbDialect extends GenericDialect {
 	/** Read-side metadata only; native values retain their driver representation. */
 	int structAttributeJdbcType(@Nullable String typeName, int attributeIndex) {
 		if (typeName == null) return Types.OTHER;
-		return switch (classifyContainerTargetType(structAttributeTypeName(typeName, attributeIndex))) {
+		return containerJdbcType(structAttributeTypeName(typeName, attributeIndex));
+	}
+
+	int mapEntryJdbcType(@Nullable String typeName, int partIndex) {
+		return containerJdbcType(mapEntryTypeName(typeName, partIndex));
+	}
+
+	private int containerJdbcType(@Nullable String typeName) {
+		return switch (classifyContainerTargetType(typeName)) {
 			case TIMESTAMP_WITH_TIME_ZONE -> Types.TIMESTAMP_WITH_TIMEZONE;
 			case TIMESTAMP_WITHOUT_TIME_ZONE -> Types.TIMESTAMP;
 			default -> Types.OTHER;
 		};
+	}
+
+	/** Preserve declarations before unwrapping loses the MAP/STRUCT/ARRAY driver's type information. */
+	void registerContainerTypes(@Nullable Object value, @Nullable String typeName, MappingResources resources) {
+		if (value == null || typeName == null) return;
+		if (value instanceof Array || value instanceof Struct) {
+			resources.registerContainerType(value, typeName);
+			return;
+		}
+		if (value instanceof Map<?, ?> entries) {
+			resources.registerContainerType(value, typeName);
+			String keyType = mapEntryTypeName(typeName, 0), valueType = mapEntryTypeName(typeName, 1);
+			int index = 0;
+			for (Map.Entry<?, ?> entry : entries.entrySet()) {
+				registerContainerTypes(entry.getKey(), keyType, resources);
+				registerContainerTypes(entry.getValue(), valueType == null ? structAttributeTypeName(typeName, index) : valueType, resources);
+				index++;
+			}
+			return;
+		}
+		String elementType = arrayElementTypeName(typeName);
+		if (elementType == null) return;
+		if (value instanceof Object[] elements) {
+			resources.registerArrayType(value, containerJdbcType(elementType));
+			for (Object element : elements) registerContainerTypes(element, elementType, resources);
+		} else if (value instanceof Iterable<?> elements) {
+			resources.registerArrayType(value, containerJdbcType(elementType));
+			for (Object element : elements) registerContainerTypes(element, elementType, resources);
+		}
+	}
+
+	@Nullable
+	private String mapEntryTypeName(@Nullable String typeName, int partIndex) {
+		if (typeName == null) return null;
+		String trimmed = typeName.trim();
+		int open = trimmed.indexOf('('), close = trimmed.lastIndexOf(')');
+		if (open < 0 || close != trimmed.length() - 1 || !trimmed.substring(0, open).trim().equalsIgnoreCase("MAP"))
+			return null;
+		List<String> parts = splitTopLevelTypeList(trimmed.substring(open + 1, close));
+		return parts.size() == 2 ? parts.get(partIndex).trim() : null;
+	}
+
+	@Nullable
+	private String arrayElementTypeName(String typeName) {
+		String trimmed = typeName.trim();
+		if (!trimmed.endsWith("]")) return null;
+		int open = trimmed.lastIndexOf('[');
+		if (open < 0) return null;
+		for (int index = open + 1; index < trimmed.length() - 1; index++)
+			if (!Character.isDigit(trimmed.charAt(index))) return null;
+		return trimmed.substring(0, open).trim();
 	}
 
 	@Nullable
@@ -529,12 +613,11 @@ final class DuckDbDialect extends GenericDialect {
 		}
 
 		Map<String, Object> unwrappedAttributesByName = new LinkedHashMap<>(attributesByName.size());
-
-		for (Map.Entry<String, Object> entry : attributesByName.entrySet())
-			unwrappedAttributesByName.put(entry.getKey(), unwrapStructAttributeValue(entry.getValue(), materializeLobs, resources));
+		String typeName = null;
 		if (resources != null) {
 			try {
-				resources.registerStructType(unwrappedAttributesByName, ((Struct) duckDbStruct).getSQLTypeName());
+				typeName = ((Struct) duckDbStruct).getSQLTypeName();
+				registerContainerTypes(attributesByName, typeName, resources);
 			} catch (SQLException | UnsupportedOperationException | AbstractMethodError unsupportedMetadata) {
 				if (JdbcFallbacks.isTerminal(unsupportedMetadata)) {
 					if (unsupportedMetadata instanceof Error error) throw error;
@@ -545,6 +628,9 @@ final class DuckDbDialect extends GenericDialect {
 				// Preserve legacy conversion when the driver cannot supply STRUCT attribute types.
 			}
 		}
+		for (Map.Entry<String, Object> entry : attributesByName.entrySet())
+			unwrappedAttributesByName.put(entry.getKey(), unwrapStructAttributeValue(entry.getValue(), materializeLobs, resources));
+		if (resources != null) registerContainerTypes(unwrappedAttributesByName, typeName, resources);
 
 		return unwrappedAttributesByName;
 	}
@@ -585,7 +671,9 @@ final class DuckDbDialect extends GenericDialect {
 			changed |= unwrappedElement != element;
 		}
 
-		return changed ? unwrappedElements : elements;
+		List<?> result = changed ? unwrappedElements : elements;
+		if (resources != null) resources.copyArrayType(elements, result);
+		return result;
 	}
 
 	@NonNull
@@ -600,12 +688,17 @@ final class DuckDbDialect extends GenericDialect {
 			Object value = entry.getValue();
 			Object unwrappedKey = unwrapStructAttributeValue(key, materializeLobs, resources);
 			Object unwrappedValue = unwrapStructAttributeValue(value, materializeLobs, resources);
+			if (resources != null && unwrappedEntries.containsKey(unwrappedKey))
+				throw new DatabaseException("SQL MAP contains duplicate keys after dialect normalization");
 			unwrappedEntries.put(unwrappedKey, unwrappedValue);
 			changed |= unwrappedKey != key || unwrappedValue != value;
 		}
 
 		Map<?, ?> result = changed ? unwrappedEntries : entries;
-		if (resources != null) resources.copyStructType(entries, result);
+		if (resources != null) {
+			resources.copyStructType(entries, result);
+			registerContainerTypes(result, resources.containerType(entries), resources);
+		}
 		return result;
 	}
 
@@ -629,6 +722,7 @@ final class DuckDbDialect extends GenericDialect {
 		if (resources != null) {
 			try {
 				Object values = DefaultResultSetMapper.extractSqlArrayResultSetValue(sqlArray, resources);
+				registerContainerTypes(values, resources.containerType(sqlArray), resources);
 				return values instanceof Object[] elements ? unwrapArrayElements(elements, materializeLobs, resources) : values;
 			} catch (SQLException failure) {
 				throw DatabaseException.wrapSafely("Unable to extract DuckDB STRUCT list attribute", failure, DatabaseDialect.forExceptionCause(failure));

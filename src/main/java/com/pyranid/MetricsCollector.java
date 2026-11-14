@@ -240,10 +240,13 @@ public interface MetricsCollector {
 
 	/**
 	 * Called after Pyranid successfully commits a physical JDBC transaction.
+	 * <p>
+	 * The duration measures the commit attempt, not the transaction lifetime. Its clock starts immediately before
+	 * {@link java.sql.Connection#commit()}, after user work, connection-lock acquisition, and pre-commit validation.
 	 *
 	 * @param transaction      transaction that committed
 	 * @param databaseType     database type known at commit time
-	 * @param physicalDuration elapsed time between physical transaction begin and commit
+	 * @param physicalDuration elapsed time for the JDBC commit call and immediate success bookkeeping
 	 */
 	default void didCommitPhysicalTransaction(@NonNull Transaction transaction,
 																							@NonNull DatabaseType databaseType,
@@ -254,14 +257,14 @@ public interface MetricsCollector {
 	/**
 	 * Called after Pyranid fails to commit a physical JDBC transaction.
 	 * <p>
-	 * Reported when Pyranid's physical commit attempt fails: the JDBC commit call itself, or the success handling that
-	 * immediately follows it. It does not establish that the driver never received the commit, nor that the commit did not
-	 * succeed. A completion that refuses the commit before issuing it, such as a savepoint-scope ownership conflict, still
-	 * fails the transaction without reaching this callback.
+	 * Reported when the JDBC commit call throws. It does not establish that the driver never received the commit, nor
+	 * that the commit did not succeed. A completion that refuses the commit before issuing it, such as pre-commit
+	 * validation or a savepoint-scope ownership conflict, fails the transaction without reaching this callback.
 	 *
 	 * @param transaction      transaction whose commit failed
 	 * @param databaseType     database type known at commit time
-	 * @param physicalDuration elapsed time between physical transaction begin and the failed commit attempt
+	 * @param physicalDuration elapsed time from immediately before the JDBC commit call through failure reporting,
+	 *                         including error classification and wrapping; excludes preceding transaction work
 	 * @param throwable        failure that prevented commit from completing normally
 	 */
 	default void didFailToCommitPhysicalTransaction(@NonNull Transaction transaction,
@@ -273,10 +276,13 @@ public interface MetricsCollector {
 
 	/**
 	 * Called after Pyranid successfully rolls back a physical JDBC transaction.
+	 * <p>
+	 * The duration starts immediately before {@link java.sql.Connection#rollback()}; it excludes preceding user work
+	 * and connection-lock acquisition, rather than measuring the transaction lifetime.
 	 *
 	 * @param transaction      transaction that rolled back
 	 * @param databaseType     database type known at rollback time
-	 * @param physicalDuration elapsed time between physical transaction begin and rollback
+	 * @param physicalDuration elapsed time for the JDBC rollback call and immediate success bookkeeping
 	 */
 	default void didRollbackPhysicalTransaction(@NonNull Transaction transaction,
 																							 @NonNull DatabaseType databaseType,
@@ -286,11 +292,15 @@ public interface MetricsCollector {
 
 	/**
 	 * Called after Pyranid fails to roll back a physical JDBC transaction.
+	 * <p>
+	 * Reported when the JDBC rollback call throws. A failure in success diagnostics after the driver acknowledges
+	 * rollback does not reach this callback or change the known rolled-back outcome.
 	 *
 	 * @param transaction      transaction whose rollback failed
 	 * @param databaseType     database type known at rollback time
-	 * @param physicalDuration elapsed time between physical transaction begin and the failed rollback attempt
-	 * @param throwable        failure that prevented rollback from completing normally
+	 * @param physicalDuration elapsed time from immediately before the JDBC rollback call through failure reporting,
+	 *                         including error wrapping; excludes preceding transaction work and success diagnostics
+	 * @param throwable        failure from the JDBC rollback call, wrapped when appropriate
 	 */
 	default void didFailToRollbackPhysicalTransaction(@NonNull Transaction transaction,
 																											@NonNull DatabaseType databaseType,
@@ -350,16 +360,23 @@ public interface MetricsCollector {
 	}
 
 	/**
-	 * Called immediately before Pyranid executes a statement.
+	 * Called once when Pyranid starts a statement attempt, before connection acquisition and preparation.
+	 * Each call is paired with exactly one {@link #didExecuteStatement} or {@link #didFailToExecuteStatement},
+	 * including acquisition, preparation and stream-opening failures. A stream's pair ends when its cursor closes,
+	 * including exhaustion or explicit early closure; stream-specific callbacks are additional events.
 	 *
-	 * @param ctx statement context for the statement about to execute
+	 * @param ctx statement context for the attempt about to begin
 	 */
 	default void willExecuteStatement(@NonNull StatementContext<?> ctx) {
 		// No-op by default
 	}
 
 	/**
-	 * Called after Pyranid successfully executes a statement.
+	 * Called once after a statement executes and maps successfully, at resource closure.
+	 * A stream reports when its cursor closes; a later consumer callback failure is reported by
+	 * {@link #didCloseStream}, rather than changing a statement event already emitted at exhaustion.
+	 * This does not prove a surrounding transaction committed. Non-stream release/parameter-cleanup failures and
+	 * statement-logger failures may still propagate after this event; connection release has its own callbacks.
 	 *
 	 * @param ctx          statement context for the executed statement
 	 * @param statementLog diagnostic statement log for the execution
@@ -372,7 +389,9 @@ public interface MetricsCollector {
 	}
 
 	/**
-	 * Called after Pyranid fails to execute a statement.
+	 * Called once after a statement attempt fails, including failures during acquisition, preparation,
+	 * execution, mapping or stream cleanup. This pairs with {@link #willExecuteStatement}; non-stream cleanup and
+	 * statement-logger failures follow the separate reporting boundaries described by {@link #didExecuteStatement}.
 	 *
 	 * @param ctx          statement context for the failed statement
 	 * @param statementLog diagnostic statement log for the failed execution

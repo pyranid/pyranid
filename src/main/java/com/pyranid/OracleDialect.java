@@ -24,6 +24,8 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.sql.Types;
+import java.time.LocalTime;
 import java.util.Locale;
 import java.util.UUID;
 
@@ -40,6 +42,23 @@ final class OracleDialect extends GenericDialect {
 
 	@NonNull
 	@Override
+	public Boolean bindTemporalParameter(@NonNull PreparedStatement preparedStatement,
+																				 @NonNull Integer parameterIndex,
+																				 @NonNull Object parameter,
+																				 @NonNull Integer sqlType) throws SQLException {
+		requireNonNull(preparedStatement);
+		requireNonNull(parameterIndex);
+		requireNonNull(parameter);
+		requireNonNull(sqlType);
+		if (!(parameter instanceof LocalTime localTime)) return false;
+		// Oracle has no SQL TIME. An explicit TIME target passes through java.sql.Time,
+		// losing fractions and applying the JVM's epoch-date offset; native LocalTime does neither.
+		preparedStatement.setObject(parameterIndex, localTime);
+		return true;
+	}
+
+	@NonNull
+	@Override
 	public Boolean supportsSqlArray() {
 		return false;
 	}
@@ -53,6 +72,28 @@ final class OracleDialect extends GenericDialect {
 		byteBuffer.putLong(uuid.getMostSignificantBits());
 		byteBuffer.putLong(uuid.getLeastSignificantBits());
 		return byteBuffer.array();
+	}
+
+	@NonNull
+	@Override
+	public Boolean requiresUuidParameterSqlType() {
+		return true;
+	}
+
+	@NonNull
+	@Override
+	public Object normalizeUuid(@NonNull UUID uuid, @Nullable Integer sqlType) {
+		requireNonNull(uuid);
+		if (sqlType != null) {
+			switch (sqlType) {
+				case Types.CHAR, Types.VARCHAR, Types.LONGVARCHAR,
+						 Types.NCHAR, Types.NVARCHAR, Types.LONGNVARCHAR, Types.CLOB, Types.NCLOB:
+					return uuid.toString();
+			}
+		}
+		// Keep RAW(16) compatibility when a driver cannot infer the parameter's target type.
+		// Callers targeting text without metadata can pass uuid.toString() or use a custom binder.
+		return normalizeUuid(uuid);
 	}
 
 	@NonNull

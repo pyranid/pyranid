@@ -19,8 +19,10 @@ package com.pyranid;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
+import java.sql.PreparedStatement;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.time.LocalTime;
 import java.util.Locale;
 
 import static java.util.Objects.requireNonNull;
@@ -33,6 +35,23 @@ final class SqlServerDialect extends UuidStringDialect {
 	static final SqlServerDialect INSTANCE = new SqlServerDialect();
 
 	private SqlServerDialect() {}
+
+	@NonNull
+	@Override
+	public Boolean bindTemporalParameter(@NonNull PreparedStatement preparedStatement,
+																				 @NonNull Integer parameterIndex,
+																				 @NonNull Object parameter,
+																				 @NonNull Integer sqlType) throws SQLException {
+		requireNonNull(preparedStatement);
+		requireNonNull(parameterIndex);
+		requireNonNull(parameter);
+		requireNonNull(sqlType);
+		if (!(parameter instanceof LocalTime localTime)) return false;
+		// The driver's default sendTimeAsDatetime path changes TIME comparisons and rounds to
+		// DATETIME precision, even for LocalTime. An ISO string leaves conversion to the SQL target.
+		preparedStatement.setString(parameterIndex, localTime.toString());
+		return true;
+	}
 
 	@NonNull
 	@Override

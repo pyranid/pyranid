@@ -1059,6 +1059,7 @@ final class StatementExecutor {
 		Exception exception = null;
 		Throwable thrown = null;
 
+		getMetricsCollectorDispatcher().willExecuteStatement(statementContext);
 		try (var ignored = JdbcCallbackContext.activate(lease)) {
 			Connection connection = lease.acquire("execute a statement on the transaction connection");
 			startTime = nanoTime();
@@ -1073,7 +1074,6 @@ final class StatementExecutor {
 						preparationDuration = Duration.ofNanos(nanoTime() - startTime);
 					}
 
-					getMetricsCollectorDispatcher().willExecuteStatement(statementContext);
 					DatabaseOperationTiming timing = new DatabaseOperationTiming();
 					try {
 						DatabaseOperationResult databaseOperationResult = databaseOperation.perform(preparedStatement, timing);

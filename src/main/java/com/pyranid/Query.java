@@ -28,7 +28,11 @@ import java.util.function.Function;
 import java.util.stream.Stream;
 
 /**
- * Fluent builder for SQL statements.
+ * Fluent builder for one logical SQL statement.
+ * <p>
+ * This is not a script runner. Driver behavior for multi-statement strings differs; use
+ * {@link Database#useRawConnection(RawConnectionOperation)} with complete, dialect-appropriate commands
+ * or a database migration tool for scripts.
  * <p>
  * Obtain instances via {@link Database#query(String)}.
  * Positional parameters via {@code ?} are not supported; use named parameters (e.g. {@code :id}) and {@link #bind(String, Object)}.
@@ -127,6 +131,9 @@ public interface Query {
 	 * This maps to {@link java.sql.Statement#setFetchSize(int)}. {@code null} leaves the fetch size unset so any
 	 * {@link Database.Builder#fetchSize(Integer)} default applies. A value of {@code 0} uses the driver's default
 	 * fetch-size behavior.
+	 * Streaming queries also apply dialect rules: PostgreSQL and MariaDB default to 256 when no fetch size is
+	 * configured; MySQL preserves positive hints only when Connector/J cursor fetching is positively enabled,
+	 * otherwise retaining row streaming. An explicit per-query zero opts into driver-default behavior, which may buffer.
 	 *
 	 * @param fetchSize fetch size to apply, or {@code null} to inherit the database default
 	 * @return this builder, for chaining
@@ -179,9 +186,15 @@ public interface Query {
 	 * Overrides the {@link Database}-wide {@link ResultSetMapper} for this query only.
 	 * <p>
 	 * This enables per-query inline mapping - for example, projecting an ad-hoc join or computed columns -
-	 * without configuring a database-wide mapper. {@link ResultSetMapper} is a functional interface, so a
-	 * lambda works: <pre>{@code  database.query("SELECT name, COUNT(*) AS total FROM employee GROUP BY name")
-	 *   .resultSetMapper((ctx, rs, type, ip) -> Optional.of(type.cast(new NameCount(rs.getString(1), rs.getLong(2)))))
+	 * without configuring a database-wide mapper. Its generic mapping method requires an implementation
+	 * rather than a lambda: <pre>{@code  database.query("SELECT name, COUNT(*) AS total FROM employee GROUP BY name")
+	 *   .resultSetMapper(new ResultSetMapper() {
+	 *     @Override
+	 *     public <T> Optional<T> map(StatementContext<T> ctx, ResultSet rs, Class<T> type,
+	 *         InstanceProvider ip) throws SQLException {
+	 *       return Optional.of(type.cast(new NameCount(rs.getString(1), rs.getLong(2))));
+	 *     }
+	 *   })
 	 *   .fetchList(NameCount.class);}</pre>
 	 * The override applies to every row this query maps (including {@link #fetchStream} rows and DML-returning
 	 * results). Other queries on the same {@link Database} are unaffected. Metrics, statement logging, and
@@ -224,7 +237,8 @@ public interface Query {
 	 * {@link #maxRows(Integer)} settings, so it can override them when needed. It runs before Pyranid binds parameters.
 	 * <p>
 	 * For dialect-managed streams, Pyranid may apply driver-specific stream settings after this callback
-	 * unless this query explicitly configured {@link #fetchSize(Integer)}.
+	 * unless this query explicitly configured a fetch size. MySQL may still replace a positive hint with its
+	 * row-streaming sentinel unless Connector/J cursor fetching is positively enabled.
 	 * <p>
 	 * For driver-specific cancellation beyond {@link #queryTimeout(Duration)}, application code may capture the
 	 * {@link java.sql.PreparedStatement} here and call {@link java.sql.Statement#cancel()} from its own cancellation path.
@@ -290,11 +304,14 @@ public interface Query {
 	 * The stream must be consumed within the scope of the transaction or connection that created it.
 	 * If the stream participates in a Pyranid transaction, it must also be closed by the thread that opened it.
 	 * <p>
-	 * Supported dialects apply driver-specific streaming setup automatically. PostgreSQL streams use a positive JDBC
-	 * fetch size and an autocommit-disabled connection when no Pyranid transaction is active; MySQL streams use
-	 * forward-only/read-only statements and the MySQL streaming fetch-size sentinel; MariaDB streams use
-	 * forward-only/read-only statements without the MySQL sentinel. Use {@link #fetchSize(Integer)} to override
-	 * fetch-size behavior when needed.
+	 * PostgreSQL streams default to a fetch size of 256 inside and outside Pyranid transactions. Outside a transaction,
+	 * Pyranid temporarily disables autocommit to enable cursor fetching. MariaDB uses forward-only/read-only statements
+	 * and a default fetch size of 256. MySQL uses row streaming unless a positive hint and Connector/J's
+	 * {@code useCursorFetch=true} enable cursor fetching. Opaque wrappers retain row streaming when cursor mode
+	 * cannot be established. Explicit per-query {@code fetchSize(0)} requests the driver default, which may buffer. A database-wide zero
+	 * still receives the dialect streaming default.
+	 * Fully consume or close a MySQL/MariaDB stream before another statement uses the same connection; early close
+	 * may drain remaining rows. Streams bound driver buffering, but collecting the entire result still retains all values.
 	 *
 	 * @param resultType     the type to marshal each row to
 	 * @param streamFunction function that consumes the stream and returns a result
@@ -322,9 +339,19 @@ public interface Query {
 	 * as identity/auto-increment primary keys. If your SQL returns rows directly via database syntax such as PostgreSQL
 	 * {@code RETURNING} or SQL Server {@code OUTPUT}, use {@link #executeForObject(Class)} instead.
 	 * <p>
+	 * With its default settings, MariaDB Connector/J returns only the first generated ID for one multi-row
+	 * {@code INSERT}. Receiving one generated-key row therefore does not establish that only one row was inserted.
+	 * To retrieve every inserted ID on MariaDB, use {@code INSERT ... RETURNING} with {@link #executeForList(Class)}.
+	 * Explicit key column names do not change this default driver behavior.
+	 * <p>
 	 * For SQL Server multi-row identity inserts, use {@code OUTPUT} with {@link #executeForList(Class)} instead of JDBC
-	 * generated keys. For MySQL {@code INSERT ... ON DUPLICATE KEY UPDATE}, use the {@code LAST_INSERT_ID(id)} idiom if
-	 * you need the existing row's ID returned on the update path.
+	 * generated keys. MySQL {@code INSERT ... ON DUPLICATE KEY UPDATE} can produce extra JDBC-generated key rows
+	 * derived from the affected-row count, even with {@code id = LAST_INSERT_ID(id)}. A single-key call can therefore
+	 * throw after the update has executed, while a multiple-key call can include IDs of rows that were not changed.
+	 * For a single-row upsert, use {@link #execute()} with {@code id = LAST_INSERT_ID(id)} in the update clause, then
+	 * immediately query {@code SELECT LAST_INSERT_ID()} in the same {@link Database#transaction(ReturningTransactionalOperation)}
+	 * callback so both statements use one connection. See the
+	 * <a href="https://www.pyranid.com/docs/database-specific-recipes#retrieve-the-id-from-a-my-sql-upsert">MySQL upsert recipe</a>.
 	 * <p>
 	 * Oracle requires explicit generated-key column names; use {@link #executeReturningGeneratedKey(Class, String...)}
 	 * instead.
@@ -348,9 +375,19 @@ public interface Query {
 	 * generated value is available. If {@code keyColumnNames} is empty, this behaves like
 	 * {@link #executeReturningGeneratedKey(Class)}, except for dialects such as Oracle which require explicit names.
 	 * <p>
+	 * With its default settings, MariaDB Connector/J returns only the first generated ID for one multi-row
+	 * {@code INSERT}. Receiving one generated-key row therefore does not establish that only one row was inserted.
+	 * To retrieve every inserted ID on MariaDB, use {@code INSERT ... RETURNING} with {@link #executeForList(Class)}.
+	 * Explicit key column names do not change this default driver behavior.
+	 * <p>
 	 * For SQL Server multi-row identity inserts, use {@code OUTPUT} with {@link #executeForList(Class)} instead of JDBC
-	 * generated keys. For MySQL {@code INSERT ... ON DUPLICATE KEY UPDATE}, use the {@code LAST_INSERT_ID(id)} idiom if
-	 * you need the existing row's ID returned on the update path.
+	 * generated keys. MySQL {@code INSERT ... ON DUPLICATE KEY UPDATE} can produce extra JDBC-generated key rows
+	 * derived from the affected-row count, even with {@code id = LAST_INSERT_ID(id)}. A single-key call can therefore
+	 * throw after the update has executed, while a multiple-key call can include IDs of rows that were not changed.
+	 * For a single-row upsert, use {@link #execute()} with {@code id = LAST_INSERT_ID(id)} in the update clause, then
+	 * immediately query {@code SELECT LAST_INSERT_ID()} in the same {@link Database#transaction(ReturningTransactionalOperation)}
+	 * callback so both statements use one connection. See the
+	 * <a href="https://www.pyranid.com/docs/database-specific-recipes#retrieve-the-id-from-a-my-sql-upsert">MySQL upsert recipe</a>.
 	 *
 	 * @param resultType      the type to marshal the generated-key row to
 	 * @param keyColumnNames generated-key column names requested from the driver
@@ -372,9 +409,19 @@ public interface Query {
 	 * as identity/auto-increment primary keys. If your SQL returns rows directly via database syntax such as PostgreSQL
 	 * {@code RETURNING} or SQL Server {@code OUTPUT}, use {@link #executeForList(Class)} instead.
 	 * <p>
+	 * With its default settings, MariaDB Connector/J returns only the first generated ID for one multi-row
+	 * {@code INSERT}. Receiving one generated-key row therefore does not establish that only one row was inserted.
+	 * To retrieve every inserted ID on MariaDB, use {@code INSERT ... RETURNING} with {@link #executeForList(Class)}.
+	 * Explicit key column names do not change this default driver behavior.
+	 * <p>
 	 * For SQL Server multi-row identity inserts, use {@code OUTPUT} with {@link #executeForList(Class)} instead of JDBC
-	 * generated keys. For MySQL {@code INSERT ... ON DUPLICATE KEY UPDATE}, use the {@code LAST_INSERT_ID(id)} idiom if
-	 * you need the existing row's ID returned on the update path.
+	 * generated keys. MySQL {@code INSERT ... ON DUPLICATE KEY UPDATE} can produce extra JDBC-generated key rows
+	 * derived from the affected-row count, even with {@code id = LAST_INSERT_ID(id)}. A single-key call can therefore
+	 * throw after the update has executed, while a multiple-key call can include IDs of rows that were not changed.
+	 * For a single-row upsert, use {@link #execute()} with {@code id = LAST_INSERT_ID(id)} in the update clause, then
+	 * immediately query {@code SELECT LAST_INSERT_ID()} in the same {@link Database#transaction(ReturningTransactionalOperation)}
+	 * callback so both statements use one connection. See the
+	 * <a href="https://www.pyranid.com/docs/database-specific-recipes#retrieve-the-id-from-a-my-sql-upsert">MySQL upsert recipe</a>.
 	 * <p>
 	 * Oracle requires explicit generated-key column names; use {@link #executeReturningGeneratedKeys(Class, String...)}
 	 * instead.
@@ -397,9 +444,19 @@ public interface Query {
 	 * generated value is available. If {@code keyColumnNames} is empty, this behaves like
 	 * {@link #executeReturningGeneratedKeys(Class)}, except for dialects such as Oracle which require explicit names.
 	 * <p>
+	 * With its default settings, MariaDB Connector/J returns only the first generated ID for one multi-row
+	 * {@code INSERT}. Receiving one generated-key row therefore does not establish that only one row was inserted.
+	 * To retrieve every inserted ID on MariaDB, use {@code INSERT ... RETURNING} with {@link #executeForList(Class)}.
+	 * Explicit key column names do not change this default driver behavior.
+	 * <p>
 	 * For SQL Server multi-row identity inserts, use {@code OUTPUT} with {@link #executeForList(Class)} instead of JDBC
-	 * generated keys. For MySQL {@code INSERT ... ON DUPLICATE KEY UPDATE}, use the {@code LAST_INSERT_ID(id)} idiom if
-	 * you need the existing row's ID returned on the update path.
+	 * generated keys. MySQL {@code INSERT ... ON DUPLICATE KEY UPDATE} can produce extra JDBC-generated key rows
+	 * derived from the affected-row count, even with {@code id = LAST_INSERT_ID(id)}. A single-key call can therefore
+	 * throw after the update has executed, while a multiple-key call can include IDs of rows that were not changed.
+	 * For a single-row upsert, use {@link #execute()} with {@code id = LAST_INSERT_ID(id)} in the update clause, then
+	 * immediately query {@code SELECT LAST_INSERT_ID()} in the same {@link Database#transaction(ReturningTransactionalOperation)}
+	 * callback so both statements use one connection. See the
+	 * <a href="https://www.pyranid.com/docs/database-specific-recipes#retrieve-the-id-from-a-my-sql-upsert">MySQL upsert recipe</a>.
 	 *
 	 * @param resultType      the type to marshal each generated-key row to
 	 * @param keyColumnNames generated-key column names requested from the driver
@@ -419,6 +476,10 @@ public interface Query {
 	 * Any parameters already bound on this {@code Query} apply to all groups; group values override them.
 	 * Each group must provide a complete set of parameter values after merging; groups must be non-null and
 	 * expand to the same number of JDBC parameters (for example, IN-list sizes must match).
+	 * Batch statements must not return result rows, including through {@code RETURNING} or {@code OUTPUT}.
+	 * To collect IDs from a multi-row insert, use a single returning statement with {@link #executeForList(Class)},
+	 * or perform a JDBC generated-key batch inside {@link Database#useRawConnection(RawConnectionOperation)}.
+	 * This method returns update counts, not generated keys.
 	 *
 	 * @param parameterGroups groups of named parameter values (without the leading {@code :})
 	 * @return the number of rows affected by the SQL statement per-group

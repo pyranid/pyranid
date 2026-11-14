@@ -95,8 +95,9 @@ class MappingEngineTests {
 				assertSame(value, context.getDatabaseDialect().unwrapResultSetValue(value), databaseType.toString());
 				assertSame(value, mapper.convertResultSetValueToTargetType(context, value, TargetType.of(value.getClass())).orElseThrow());
 			}
-			assertThrows(DatabaseException.class, () -> mapper.convertResultSetValueToTargetType(context, Double.NaN, TargetType.of(Double.class)));
-			assertThrows(DatabaseException.class, () -> mapper.convertResultSetValueToTargetType(context, Double.POSITIVE_INFINITY, TargetType.of(Float.class)));
+			assertTrue(Double.isNaN((Double) mapper.convertResultSetValueToTargetType(context, Double.NaN, TargetType.of(Double.class)).orElseThrow()));
+			assertEquals(Float.POSITIVE_INFINITY, mapper.convertResultSetValueToTargetType(context, Double.POSITIVE_INFINITY, TargetType.of(Float.class)).orElseThrow());
+			assertThrows(DatabaseException.class, () -> mapper.convertResultSetValueToTargetType(context, Double.MAX_VALUE, TargetType.of(Float.class)));
 		}
 	}
 

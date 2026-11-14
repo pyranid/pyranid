@@ -666,7 +666,7 @@ public class DatabaseTests {
 	}
 
 	@Test
-	public void testMySqlFamilyStreamHonorsExplicitQueryFetchSize() {
+	public void testMySqlStreamKeepsStreamingWhenPositiveQueryFetchSizeCannotEnableACursor() {
 		MySqlFamilyStreamTrackingDataSource dataSource =
 				new MySqlFamilyStreamTrackingDataSource(createInMemoryDataSource("testMySqlFamilyStreamQueryFetchSize"));
 		Database database = Database.with(dataSource, DatabaseType.MYSQL)
@@ -677,8 +677,8 @@ public class DatabaseTests {
 				.fetchStream(Integer.class, stream -> stream.toList());
 
 		Assertions.assertEquals(List.of(1), values);
-		Assertions.assertEquals(9, dataSource.fetchSizeAtExecute.get(),
-				"Expected explicit query fetch size to override MySQL streaming fetch-size default");
+		Assertions.assertEquals(Integer.MIN_VALUE, dataSource.fetchSizeAtExecute.get(),
+				"A positive hint without known cursor support must retain MySQL row streaming");
 	}
 
 	@Test
@@ -701,7 +701,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testQueryAllowsQuestionMarkOperators() {
-		Database db = Database.with(createInMemoryDataSource("testQueryAllowsQuestionMarkOperators"), DatabaseType.GENERIC).build();
+		Database db = Database.with(createInMemoryDataSource("testQueryAllowsQuestionMarkOperators"), DatabaseType.POSTGRESQL).build();
 
 		Assertions.assertDoesNotThrow(() ->
 				db.query("SELECT data ? 'a' AND data ?| 'b' AND data ?& 'c' FROM t"));
@@ -713,7 +713,7 @@ public class DatabaseTests {
 
 	@Test
 	public void testQueryAllowsQuestionMarkOperatorAfterBlockComment() {
-		Database db = Database.with(createInMemoryDataSource("testQueryAllowsQuestionMarkOperatorAfterBlockComment"), DatabaseType.GENERIC).build();
+		Database db = Database.with(createInMemoryDataSource("testQueryAllowsQuestionMarkOperatorAfterBlockComment"), DatabaseType.POSTGRESQL).build();
 
 		Assertions.assertDoesNotThrow(() ->
 				db.query("SELECT data /* note */ ? 'a' FROM t"));

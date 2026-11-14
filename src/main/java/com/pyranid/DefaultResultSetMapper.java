@@ -31,6 +31,8 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
+import java.lang.reflect.TypeVariable;
+import java.lang.reflect.WildcardType;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
@@ -42,12 +44,15 @@ import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.DateTimeException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.MonthDay;
 import java.time.OffsetDateTime;
 import java.time.OffsetTime;
+import java.time.Period;
 import java.time.Year;
 import java.time.YearMonth;
 import java.time.ZoneId;
@@ -59,6 +64,7 @@ import java.time.temporal.TemporalAccessor;
 import java.time.temporal.TemporalQueries;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Currency;
 import java.util.Date;
@@ -110,6 +116,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	private static final Pattern CAMEL_CASE_PATTERN = Pattern.compile("([a-z])([A-Z]+)");
 	@NonNull
 	private static final Pattern LETTER_FOLLOWED_BY_NUMBER_PATTERN = Pattern.compile("(\\D)(\\d)");
+	@NonNull
+	private static final Pattern NUMBER_FOLLOWED_BY_CAPITAL_PATTERN = Pattern.compile("(\\d)([A-Z])");
+	@NonNull
+	private static final Pattern ACRONYM_WORD_BOUNDARY_PATTERN = Pattern.compile("([A-Z]+)([A-Z][a-z])");
 
 	@NonNull
 	private final Locale normalizationLocale;
@@ -120,6 +130,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	private final int planCacheCapacity;
 	private final @Nullable Long maxLobBytes;
 	private final @Nullable Long maxLobCharacters;
+	private final boolean failOnUnmappedColumns;
+	private final boolean detachLobValues;
 	// Store indices rather than callbacks: a user callback can refer back to this mapper or its Database.
 	@NonNull
 	private final ClassValue<int[]> customColumnMappersByRawClassCache =
@@ -207,7 +219,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	private MappingResources acquireMappingResources() {
 		MappingResources resources = this.mappingResources.get();
 		if (resources == null) {
-			resources = new MappingResources(this.maxLobBytes, this.maxLobCharacters);
+			resources = new MappingResources(this.maxLobBytes, this.maxLobCharacters, this.detachLobValues);
 			this.mappingResources.set(resources);
 		}
 		return resources.acquire();
@@ -247,10 +259,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		if (getCustomColumnMappers().isEmpty())
 			return NO_CUSTOM_COLUMN_MAPPERS;
 
-		if (targetType.getTypeArguments().isEmpty())
+		if (targetType.getType() instanceof Class<?>)
 			return this.customColumnMappersByRawClassCache.get(targetType.getRawClass());
 
-		// Avoid caching parameterized types to prevent holding user classes under system raw types.
+		// Preserve generic arrays, variables and wildcard bounds as well as parameterized types.
+		// Caching them under an erased Class loses applicability metadata and can retain user classes.
 		return computeCustomColumnMapperIndicesFor(targetType);
 	}
 
@@ -631,6 +644,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		this.planCacheCapacity = builder.planCacheCapacity;
 		this.maxLobBytes = builder.maxLobBytes;
 		this.maxLobCharacters = builder.maxLobCharacters;
+		this.failOnUnmappedColumns = builder.failOnUnmappedColumns;
+		this.detachLobValues = builder.detachLobValues;
 		this.schemaSignatureByResultSetMetaData = new WeakHashMap<>();
 		this.schemaSignatureByResultSetMetaDataLock = new ReentrantLock();
 	}
@@ -730,7 +745,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				// Match record/bean mapping: unwrap driver-specific wrappers (e.g. PostgreSQL PGobject for
 				// JSONB/vector columns becomes its String form) so map rows never carry raw driver objects
 				if (columnValue != null)
-					columnValue = resources.nativeValue(columnValue, statementContext.getDatabaseDialect());
+					columnValue = resources.nativeValue(columnValue, statementContext.getDatabaseDialect(),
+							resultSetMetaData.getColumnType(i), "column '" + rawLabel + "'");
 
 				row.put(label, columnValue);
 			}
@@ -1104,6 +1120,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			}
 		}
 
+		// A whole-row custom mapper may manually supply these shapes, including an empty outer
+		// fetch for SQL NULL. Automatic Optional construction remains unsupported.
+		if (resultClass == Optional.class || resultClass.isArray())
+			rejectOptionalMappingTargets(targetType);
+
 		// Target-aware JDBC readers preserve driver getter behavior. All detached values then
 		// pass through the same built-in conversion engine used by bean/record bindings.
 		Class<?> boxed = boxedClass(resultClass);
@@ -1111,7 +1132,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				|| boxed == Float.class || boxed == Double.class || boxed == Number.class) {
 			value = getNullableNumber(resultSet, 1, resultClass);
 		} else if (boxed == Boolean.class) {
-			value = getNullableBoolean(resultSet, 1);
+			// Read the original value so scalar text follows the same strict rule as row/container targets.
+			value = resultSet.getObject(1);
 		} else if (boxed == Character.class) {
 			value = resultSet.getString(1);
 		} else if (resultClass == String.class || resultClass == byte[].class) {
@@ -1123,7 +1145,21 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					? customRaw : resultSet.getObject(1);
 		} else if (resultClass == BigDecimal.class || resultClass == BigInteger.class) {
 			value = resultSet.getBigDecimal(1);
-		} else if (resultClass == Date.class || resultClass == Instant.class || resultClass == ZonedDateTime.class) {
+		} else if (resultClass == Date.class || resultClass == Timestamp.class || resultClass == java.sql.Date.class) {
+			// Preserve the driver's java.time representation until the legacy target's range is checked.
+			int jdbcType = resultSetMetaData.getColumnType(1);
+			boolean withZone = statementContext.getDatabaseDialect().isTimestampWithTimeZone(resultSetMetaData, 1);
+			if (jdbcType == Types.DATE || jdbcType == Types.TIMESTAMP || withZone)
+				value = readColumn(columnReaderFor(resultSetMetaData, statementContext, 1), resultSet, statementContext, 1, resources);
+			else if (resultClass == java.sql.Date.class)
+				value = TemporalReaders.asLocalDate(resultSet, 1, statementContext, resultSetMetaData);
+			else if (resultClass == Date.class)
+				value = TemporalReaders.asInstant(resultSet, 1, statementContext, resultSetMetaData);
+			else
+				value = statementContext.getDatabaseDialect() instanceof SqliteDialect
+						? TemporalReaders.readSqliteTimestamp(resultSet, statementContext, 1)
+						: TemporalReaders.asLocalDateTime(resultSet, 1, statementContext, false);
+		} else if (resultClass == Instant.class || resultClass == ZonedDateTime.class) {
 			value = TemporalReaders.asInstant(resultSet, 1, statementContext, resultSetMetaData);
 		} else if (resultClass == LocalDate.class) {
 			value = TemporalReaders.asLocalDate(resultSet, 1, statementContext, resultSetMetaData);
@@ -1135,15 +1171,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			value = TemporalReaders.asOffsetTime(resultSet, 1, statementContext, resultSetMetaData);
 		} else if (resultClass == OffsetDateTime.class) {
 			value = TemporalReaders.asOffsetDateTime(resultSet, 1, statementContext, resultSetMetaData);
-		} else if (resultClass == java.sql.Timestamp.class) {
-			value = statementContext.getDatabaseDialect() instanceof SqliteDialect
-					? TemporalReaders.readSqliteTimestamp(resultSet, statementContext, 1)
-					: statementContext.getDatabaseDialect().isTimestampWithTimeZone(resultSetMetaData, 1)
-					? TemporalReaders.asInstant(resultSet, 1, statementContext, true)
-					: TemporalReaders.asLocalDateTime(resultSet, 1, statementContext, false);
-		} else if (resultClass == java.sql.Date.class) {
-			value = TemporalReaders.asLocalDate(resultSet, 1, statementContext, resultSetMetaData);
-		} else if (resultClass == ZoneId.class || resultClass == TimeZone.class || resultClass == Locale.class
+		} else if (resultClass == java.sql.Time.class) {
+			value = TemporalReaders.asLocalTime(resultSet, 1, statementContext, resultSetMetaData);
+		} else if (resultClass == ZoneId.class || resultClass == ZoneOffset.class || resultClass == TimeZone.class || resultClass == Locale.class
 				|| resultClass == Currency.class || resultClass == YearMonth.class) {
 			value = resultSet.getString(1);
 		} else {
@@ -1168,7 +1198,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				throw new DatabaseException("Cannot map " + value.getClass().getName() + " to " + resultClass.getName());
 		}
 
-		if (standardType && (resultClass == Object.class || resultClass == java.sql.Blob.class
+		if (standardType && resultClass == Object.class && this.detachLobValues)
+			value = resources.detachLobs(value, resources.scalarJdbcType(resultSet, resultSetMetaData), "scalar Object value");
+		if (standardType && ((resultClass == Object.class && !this.detachLobValues) || resultClass == java.sql.Blob.class
 				|| resultClass == java.sql.Clob.class || resultClass == java.sql.NClob.class)) resources.borrow(value);
 		return new StandardTypeResult(value, standardType);
 	}
@@ -1225,6 +1257,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(resultSetMetaData);
 
 		String columnLabels = selectedColumnLabels(resultSetMetaData).stream().collect(joining(", "));
+		if (resultSetMetaData.getColumnCount() == 1 && (resultSetRowType == Duration.class
+				|| resultSetRowType == Period.class || resultSetRowType == MonthDay.class))
+			return new DatabaseException(format(
+					"No built-in scalar mapping supports %s. Selected column: %s. "
+							+ "Register a CustomColumnMapper through ResultSetMapper.withCustomColumnMappers(...), or provide a custom ResultSetMapper.",
+					resultSetRowType.getName(), columnLabels));
 		return new DatabaseException(format(
 				"No result columns map to writable bean properties of %s. Selected columns: %s. "
 						+ "Ensure the SQL selects/aliases columns that match bean setters, use a record target, or provide a custom ResultSetMapper.",
@@ -1268,21 +1306,69 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	private Map<String, Set<String>> computeColumnLabelAliasesByPropertyName(@NonNull Class<?> resultClass) {
 		requireNonNull(resultClass);
 
-		Map<String, Set<String>> cachedColumnLabelAliasesByPropertyName = new HashMap<>();
+		Map<String, Set<String>> aliasesByPropertyName = new HashMap<>();
+		Map<String, Field> aliasFieldsByPropertyName = new HashMap<>();
+		Set<String> annotatedFieldNames = new HashSet<>();
+		Set<String> writableNames = new HashSet<>();
+		if (!resultClass.isRecord())
+			for (WritableProperty property : determineWritableProperties(resultClass))
+				writableNames.add(property.getName());
 
 		for (Class<?> current = resultClass; current != null && current != Object.class; current = current.getSuperclass()) {
-			for (Field field : current.getDeclaredFields()) {
+			Field[] fields = current.getDeclaredFields();
+			Map<String, Field> fieldsInClass = new HashMap<>();
+			Arrays.sort(fields, (left, right) -> left.getName().compareTo(right.getName()));
+			for (Field field : fields) {
 				DatabaseColumn databaseColumn = field.getAnnotation(DatabaseColumn.class);
+				if (databaseColumn == null) continue;
+				// An annotated subclass field with the same spelling already supplied its metadata.
+				// Skip the hidden ancestor before resolving it against newly introduced setters.
+				if (!annotatedFieldNames.add(field.getName())) continue;
 
-				if (databaseColumn != null)
-					cachedColumnLabelAliasesByPropertyName.putIfAbsent(
-							field.getName(),
-							unmodifiableSet(asList(databaseColumn.value()).stream()
-									.map(columnLabel -> normalizeColumnLabel(columnLabel)).collect(toSet())));
+				// Record-component annotations also appear on their backing fields. Preserve those names;
+				// bean fields instead name a writable property, which need not have the field's spelling.
+				String propertyName = resultClass.isRecord() ? field.getName()
+						: writablePropertyNameForAnnotatedField(resultClass, field, writableNames);
+				Field previousInClass = fieldsInClass.putIfAbsent(propertyName, field);
+				if (previousInClass != null)
+					throw new DatabaseException(format("@DatabaseColumn fields '%s.%s' and '%s.%s' both identify writable property '%s' on %s",
+							current.getName(), previousInClass.getName(), current.getName(), field.getName(), propertyName, resultClass.getName()));
+				// The nearest annotated declaration overrides an ancestor's aliases, as before.
+				if (aliasFieldsByPropertyName.putIfAbsent(propertyName, field) != null) continue;
+				aliasesByPropertyName.put(propertyName, unmodifiableSet(asList(databaseColumn.value()).stream()
+						.map(this::normalizeColumnLabel).collect(toSet())));
 			}
 		}
 
-		return unmodifiableMap(cachedColumnLabelAliasesByPropertyName);
+		return unmodifiableMap(aliasesByPropertyName);
+	}
+
+	@NonNull
+	private String writablePropertyNameForAnnotatedField(Class<?> resultClass, Field field, Set<String> writableNames) {
+		if (Modifier.isStatic(field.getModifiers()))
+			throw new DatabaseException(format("@DatabaseColumn field '%s.%s' is static; annotations must identify writable instance properties",
+					field.getDeclaringClass().getName(), field.getName()));
+
+		String fieldName = field.getName();
+		Set<String> candidates = new java.util.TreeSet<>();
+		if (writableNames.contains(fieldName)) candidates.add(fieldName);
+		// A field xCoordinate conventionally uses setXCoordinate, whose JavaBeans name is
+		// XCoordinate because the first two letters are uppercase. Avoid java.desktop introspection.
+		String generatedName = decapitalizeJavaBeansPropertyName(Character.toUpperCase(fieldName.charAt(0)) + fieldName.substring(1));
+		if (writableNames.contains(generatedName)) candidates.add(generatedName);
+		// Lombok's primitive-boolean isActive field uses setActive. Boxed Boolean fields keep isActive.
+		if (field.getType() == boolean.class && fieldName.length() > 2 && fieldName.startsWith("is")
+				&& Character.isUpperCase(fieldName.charAt(2))) {
+			String booleanName = decapitalizeJavaBeansPropertyName(fieldName.substring(2));
+			if (writableNames.contains(booleanName)) candidates.add(booleanName);
+		}
+		if (candidates.isEmpty())
+			throw new DatabaseException(format("@DatabaseColumn field '%s.%s' has no writable JavaBean property on %s; provide a public instance setter",
+					field.getDeclaringClass().getName(), fieldName, resultClass.getName()));
+		if (candidates.size() > 1)
+			throw new DatabaseException(format("@DatabaseColumn field '%s.%s' ambiguously identifies writable properties %s on %s",
+					field.getDeclaringClass().getName(), fieldName, candidates, resultClass.getName()));
+		return candidates.iterator().next();
 	}
 
 	@NonNull
@@ -1324,7 +1410,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			return (r, c, i) -> c.getDatabaseDialect() instanceof SqliteDialect
 					? TemporalReaders.readSqliteTimestamp(r, c, i) : TemporalReaders.asLocalDateTime(r, i, c, false);
 		if (jdbcType == Types.DATE)
-			return (r, c, i) -> TemporalReaders.asLocalDate(r, i);
+			return (r, c, i) -> TemporalReaders.asLocalDate(r, i, c);
 		if (TemporalReaders.isTimeWithTimeZone(metadata, column))
 			return (r, c, i) -> TemporalReaders.asOffsetTime(r, i, c, true);
 		if (jdbcType == Types.TIME)
@@ -1335,7 +1421,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	@Nullable
 	private Object convertColumn(@Nullable Object raw, TargetType target, List<CustomColumnMapper> mappers,
 			ResultSet resultSet, StatementContext<?> context, InstanceProvider instances,
-			MappingResources resources, int column, String label, int jdbcType) {
+			MappingResources resources, int column, String label, int jdbcType, @Nullable String containerTypeName,
+			boolean deferredContainerType) {
 		if (raw == null) return null;
 		if (!mappers.isEmpty()) {
 			// Even a mapper returning fallback can retain the borrowed driver value.
@@ -1346,16 +1433,44 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				resources.borrow(custom.getValue());
 				return custom.getValue();
 			}
+			// An applicable whole-shape hook may construct inner Optionals itself. Declining it
+			// must not re-enable unsupported automatic mapping, including for empty containers.
+			rejectOptionalMappingTargets(target);
 		}
 		Object value = MappingResources.requiresMaterialization(raw, target.getRawClass(), jdbcType)
 				? resources.materialize(raw, target.getRawClass(), jdbcType, "column '" + label + "'") : raw;
+		if (this.detachLobValues && target.getRawClass() == Object.class)
+			value = resources.detachLobs(value, jdbcType, "column '" + label + "'");
+		if (context.getDatabaseDialect() instanceof DuckDbDialect duck
+				&& (requiresRecursiveContainerConversion(target) || target.isArray())) {
+			if (deferredContainerType) {
+				try {
+					containerTypeName = optionalContainerTypeName(resultSet.getMetaData(), column);
+				} catch (SQLException failure) {
+					throw DatabaseException.wrapSafely("Unable to determine typed SQL container declaration", failure,
+							DatabaseDialect.forExceptionCause(failure));
+				}
+			}
+			duck.registerContainerTypes(value, containerTypeName, resources);
+		}
 		return convertResultSetValueToTargetType(context, value, target, resources);
+	}
+
+	private static @Nullable String optionalContainerTypeName(ResultSetMetaData metadata, int column) throws SQLException {
+		try {
+			return metadata.getColumnTypeName(column);
+		} catch (SQLException | UnsupportedOperationException | AbstractMethodError unsupportedMetadata) {
+			if (JdbcFallbacks.isTerminal(unsupportedMetadata)) throw unsupportedMetadata;
+			// Most conversions need no SQL declaration. Ambiguous legacy timestamps fail later.
+			return null;
+		}
 	}
 
 	/** Convenience entry point for a detached value; row execution shares one resource scope. */
 	@NonNull
 	protected <T> Optional<Object> convertResultSetValueToTargetType(StatementContext<T> context,
 			@Nullable Object value, TargetType target) {
+		rejectOptionalMappingTargets(target);
 		MappingResources resources = acquireMappingResources();
 		Throwable mappingFailure = null;
 		try {
@@ -1378,6 +1493,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 																																 @NonNull TargetType targetType, @NonNull MappingResources resources) {
 		requireNonNull(statementContext);
 		requireNonNull(targetType);
+		targetType = builtInTargetType(targetType);
 
 		if (resultSetValue == null)
 			return null;
@@ -1389,10 +1505,17 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		if (MappingResources.requiresMaterialization(resultSetValue, targetType.getRawClass(), Types.OTHER))
 			resultSetValue = resources.materialize(resultSetValue, targetType.getRawClass(), Types.OTHER, "target " + targetType.getRawClass().getTypeName());
-		if (targetType.getRawClass() == Object.class || targetType.getRawClass().isInstance(resultSetValue))
-			resources.borrow(resultSetValue);
+		boolean recursiveContainer = requiresRecursiveContainerConversion(targetType);
+		if (recursiveContainer || targetType.isArray())
+			validateRecursiveMapTargets(targetType, false, new HashSet<>());
 		DatabaseDialect dialect = statementContext.getDatabaseDialect();
-		boolean nativeTarget = targetType.getRawClass() == Object.class || Map.class.isAssignableFrom(targetType.getRawClass());
+		boolean nativeTarget = targetType.getRawClass() == Object.class
+				|| (Map.class.isAssignableFrom(targetType.getRawClass()) && !recursiveContainer)
+				|| (this.detachLobValues && (targetType.isList() || targetType.isSet()) && !recursiveContainer);
+		if ((targetType.getRawClass() == Object.class || (targetType.getRawClass().isInstance(resultSetValue) && !recursiveContainer))
+				&& !(this.detachLobValues && (nativeTarget || targetType.isArray())))
+			resources.borrow(resultSetValue);
+		if (recursiveContainer) borrowNativeContainerParts(resultSetValue, targetType, resources);
 		Object beforeUnwrap = resultSetValue;
 		resultSetValue = nativeTarget ? resources.nativeValue(resultSetValue, dialect)
 				: dialect instanceof DuckDbDialect duck ? duck.unwrapForTypedMapping(resultSetValue, resources)
@@ -1408,8 +1531,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			TargetType targetType, MappingResources resources) {
 		if (resultSetValue == null) return null;
 		Class<?> targetClass = boxedClass(targetType.getRawClass());
-		// Keep this shared identity path small enough to inline. Floating-point values still
-		// undergo finite checks; containers still undergo recursive element conversion.
+		// Keep this shared identity path small enough to inline. Floating-point conversions still
+		// undergo overflow checks; containers still undergo recursive element conversion.
 		if (isIdentityScalar(resultSetValue, targetClass)) return resultSetValue;
 		return convertDetachedValueSlow(statementContext, resultSetValue, targetType, resources);
 	}
@@ -1419,6 +1542,193 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				|| targetClass == Integer.class || targetClass == Long.class || targetClass == Short.class
 				|| targetClass == Byte.class || targetClass == Boolean.class || targetClass == Character.class
 				|| targetClass == BigInteger.class || targetClass == BigDecimal.class || targetClass == byte[].class);
+	}
+
+	/** Object-valued containers retain the native mapping contract; declared types require recursion. */
+	private static boolean requiresRecursiveContainerConversion(TargetType targetType) {
+		targetType = builtInTargetType(targetType);
+		if (Map.class.isAssignableFrom(targetType.getRawClass())) {
+			MapTargetTypes types = mapTargetTypes(targetType);
+			return types.key.getRawClass() != Object.class || types.value.getRawClass() != Object.class;
+		}
+		if (targetType.isList())
+			return targetType.getListElementType().map(element -> element.getRawClass() != Object.class).orElse(false);
+		if (targetType.isSet())
+			return targetType.getSetElementType().map(element -> element.getRawClass() != Object.class).orElse(false);
+		return false;
+	}
+
+	private record MapTargetTypes(TargetType key, TargetType value) {}
+
+	/** Use parameterized upper bounds for built-ins while custom hooks retain the declared type. */
+	private static TargetType builtInTargetType(TargetType target) {
+		Type type = target.getType();
+		if (!(type instanceof TypeVariable<?> || type instanceof WildcardType)) return target;
+		Set<Type> resolving = new HashSet<>();
+		while (resolving.add(type)) {
+			Type[] bounds = type instanceof TypeVariable<?> variable ? variable.getBounds()
+					: type instanceof WildcardType wildcard ? wildcard.getUpperBounds() : null;
+			if (bounds == null) break;
+			type = bounds.length == 0 ? Object.class : bounds[0];
+		}
+		return TargetType.of(type);
+	}
+
+	/** Validate selected declared shapes without retaining reflective paths in a row plan. */
+	private static void rejectOptionalMappingTargets(TargetType target) {
+		Class<?> raw = builtInTargetType(target).getRawClass();
+		if (raw.isArray() && raw.getComponentType().isPrimitive()) return;
+		if (raw != Optional.class && !raw.isArray() && !Map.class.isAssignableFrom(raw)
+				&& !Collection.class.isAssignableFrom(raw) && !raw.isRecord()) return;
+		rejectOptionalMappingTargets(target, new HashSet<>(), new HashSet<>());
+	}
+
+	private static void rejectOptionalMappingTargets(TargetType target, Set<Type> path, Set<Class<?>> recordPath) {
+		target = builtInTargetType(target);
+		Class<?> raw = target.getRawClass();
+		if (raw == Optional.class)
+			throw new DatabaseException(format("Default result mapping does not support Optional-valued targets (%s). "
+					+ "Declare the nullable underlying type or use a custom ResultSetMapper; a CustomColumnMapper cannot supply an Optional for a NULL Optional-valued property.",
+					target.getType().getTypeName()));
+		if (!path.add(target.getType())) return;
+		try {
+			if (target.isArray()) {
+				target.getArrayComponentType().ifPresent(component -> rejectOptionalMappingTargets(component, path, recordPath));
+			} else if (Map.class.isAssignableFrom(raw)) {
+				MapTargetTypes types = mapTargetTypes(target);
+				rejectOptionalMappingTargets(types.key, path, recordPath);
+				rejectOptionalMappingTargets(types.value, path, recordPath);
+			} else if (Collection.class.isAssignableFrom(raw)) {
+				Type element = GenericPropertyTypes.resolve(target.getType(), Collection.class, Collection.class.getTypeParameters()[0]);
+				rejectOptionalMappingTargets(TargetType.of(element), path, recordPath);
+			} else if (raw.isRecord()) {
+				for (TargetType argument : target.getTypeArguments())
+					rejectOptionalMappingTargets(argument, path, recordPath);
+				if (recordPath.add(raw)) {
+					try {
+						for (RecordComponent component : raw.getRecordComponents())
+							rejectOptionalMappingTargets(TargetType.of(GenericPropertyTypes.resolve(target.getType(), raw,
+									component.getGenericType())), path, recordPath);
+					} finally {
+						recordPath.remove(raw);
+					}
+				}
+			}
+		} finally {
+			path.remove(target.getType());
+		}
+	}
+
+	/** Validate the declared Map tree even when an outer container is empty. */
+	private static void validateRecursiveMapTargets(TargetType target, boolean withinMap, Set<Type> path) {
+		target = builtInTargetType(target);
+		if (!path.add(target.getType())) return;
+		try {
+			if (Map.class.isAssignableFrom(target.getRawClass()) && requiresRecursiveContainerConversion(target)) {
+				if (!target.getRawClass().isAssignableFrom(LinkedHashMap.class))
+					throw new DatabaseException(format("Typed SQL MAP target %s cannot receive an insertion-ordered LinkedHashMap; "
+							+ "declare Map<K, V>, HashMap<K, V>, LinkedHashMap<K, V>, or use a custom column mapper.",
+							target.getType().getTypeName()));
+				MapTargetTypes types = mapTargetTypes(target);
+				validateRecursiveMapTargets(types.key, true, path);
+				validateRecursiveMapTargets(types.value, true, path);
+			} else if (target.isList() || target.isSet() || target.isArray()) {
+				TargetType element = (target.isList() ? target.getListElementType() : target.isSet()
+						? target.getSetElementType() : target.getArrayComponentType()).orElse(TargetType.of(Object.class));
+				validateRecursiveMapTargets(element, withinMap, path);
+			} else if (withinMap && Collection.class.isAssignableFrom(target.getRawClass())) {
+				TargetType element = TargetType.of(GenericPropertyTypes.resolve(target.getType(), Collection.class,
+						Collection.class.getTypeParameters()[0]));
+				if (element.getRawClass() != Object.class)
+					throw new DatabaseException(format("Typed collection target %s inside SQL MAP is unsupported; "
+							+ "declare List<E>, Set<E>, an array, or use a custom column mapper.", target.getType().getTypeName()));
+			}
+		} finally {
+			path.remove(target.getType());
+		}
+	}
+
+	/** Borrow native branches before typed siblings can materialize or release shared JDBC handles. */
+	private static void borrowNativeContainerParts(@Nullable Object value, TargetType target, MappingResources resources) {
+		if (value == null) return;
+		target = builtInTargetType(target);
+		if (target.getRawClass() == Object.class
+				|| (Map.class.isAssignableFrom(target.getRawClass()) && !requiresRecursiveContainerConversion(target))) {
+			if (!resources.detachesLobValues()) resources.borrow(value);
+			return;
+		}
+		if (value instanceof Map<?, ?> entries && Map.class.isAssignableFrom(target.getRawClass())) {
+			MapTargetTypes types = mapTargetTypes(target);
+			for (Map.Entry<?, ?> entry : entries.entrySet()) {
+				borrowNativeContainerParts(entry.getKey(), types.key, resources);
+				borrowNativeContainerParts(entry.getValue(), types.value, resources);
+			}
+		} else if (target.isList() || target.isSet() || target.isArray()) {
+			TargetType element = (target.isList() ? target.getListElementType() : target.isSet()
+					? target.getSetElementType() : target.getArrayComponentType()).orElse(TargetType.of(Object.class));
+			if (value instanceof Object[] elements) {
+				for (Object item : elements) borrowNativeContainerParts(item, element, resources);
+			} else if (value instanceof Collection<?> elements) {
+				for (Object item : elements) borrowNativeContainerParts(item, element, resources);
+			}
+		}
+	}
+
+	private static MapTargetTypes mapTargetTypes(TargetType targetType) {
+		targetType = builtInTargetType(targetType);
+		Type[] variables = Map.class.getTypeParameters();
+		return new MapTargetTypes(
+				TargetType.of(GenericPropertyTypes.resolve(targetType.getType(), Map.class, variables[0])),
+				TargetType.of(GenericPropertyTypes.resolve(targetType.getType(), Map.class, variables[1])));
+	}
+
+	private <T> Object convertCollectionResultSetValue(StatementContext<T> context, Collection<?> source,
+			TargetType targetType, MappingResources resources) {
+		TargetType elementType = (targetType.isList() ? targetType.getListElementType()
+				: targetType.getSetElementType()).orElse(TargetType.of(Object.class));
+		Collection<Object> result = targetType.isList() ? new ArrayList<>(source.size()) : new LinkedHashSet<>(source.size());
+		int elementJdbcType = resources.arrayType(source);
+		int index = 0;
+		for (Object value : source)
+			result.add(convertResultSetArrayElement(context, value, elementType, index++, resources, elementJdbcType));
+		return result;
+	}
+
+	private <T> Object convertMapResultSetValue(StatementContext<T> context, Map<?, ?> source,
+			TargetType targetType, MappingResources resources) {
+		MapTargetTypes types = mapTargetTypes(targetType);
+		Map<Object, Object> result = new LinkedHashMap<>(source.size());
+		int index = 0;
+		for (Map.Entry<?, ?> entry : source.entrySet()) {
+			Object key = convertMapEntryPart(context, entry.getKey(), types.key, source, index, true, resources);
+			if (result.containsKey(key))
+				throw new DatabaseException(format("SQL MAP entry %s produces a duplicate key after conversion to %s",
+						index, types.key.getType().getTypeName()));
+			Object value = convertMapEntryPart(context, entry.getValue(), types.value, source, index, false, resources);
+			result.put(key, value);
+			index++;
+		}
+		return result;
+	}
+
+	private <T> @Nullable Object convertMapEntryPart(StatementContext<T> context, @Nullable Object value,
+			TargetType target, Map<?, ?> source, int index, boolean key, MappingResources resources) {
+		if (value == null) return null;
+		if (value instanceof Timestamp && isTimestampConversionTarget(target.getRawClass())
+				&& context.getDatabaseDialect() instanceof DuckDbDialect duck) {
+			String declaration = resources.containerType(source);
+			int jdbcType = duck.mapEntryJdbcType(declaration, key ? 0 : 1);
+			if (!key && jdbcType == Types.OTHER) jdbcType = duck.structAttributeJdbcType(declaration, index);
+			if (jdbcType == Types.OTHER)
+				throw new DatabaseException(format("DuckDB SQL MAP entry %s %s requires declared TIMESTAMP or TIMESTAMPTZ "
+						+ "metadata to map legacy java.sql.Timestamp to %s", index, key ? "key" : "value", target.getType().getTypeName()));
+			value = normalizeContainerTemporalValue(context, value, jdbcType);
+		}
+		Object converted = convertResultSetValueToTargetType(context, value, target, resources);
+		if (converted != null && !boxedClass(target.getRawClass()).isInstance(converted))
+			throw new DatabaseException(format("SQL MAP entry %s %s of type %s cannot be mapped to %s",
+					index, key ? "key" : "value", value.getClass().getName(), target.getType().getTypeName()));
+		return converted;
 	}
 
 	@Nullable
@@ -1433,11 +1743,19 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		if (resultSetValue.getClass().isArray() && (targetType.isArray() || targetType.isList() || targetType.isSet()))
 			return convertArrayResultSetValue(statementContext, resultSetValue, targetType, resources);
 
+		if (resultSetValue instanceof Collection<?> values && (targetType.isList() || targetType.isSet())
+				&& requiresRecursiveContainerConversion(targetType))
+			return convertCollectionResultSetValue(statementContext, values, targetType, resources);
+
+		if (resultSetValue instanceof Map<?, ?> values && Map.class.isAssignableFrom(propertyType)
+				&& requiresRecursiveContainerConversion(targetType))
+			return convertMapResultSetValue(statementContext, values, targetType, resources);
+
 		// STRUCT-shaped values: dialects that surface SQL STRUCT columns as insertion-ordered
 		// attribute-name -> value maps (for example DuckDB - see DuckDbDialect#unwrapResultSetValue)
 		// map directly to record targets, recursively converting each attribute to its component type.
 		if (resultSetValue instanceof Map<?, ?> mapValue && propertyType.isRecord())
-			return convertMapResultSetValueToRecord(statementContext, mapValue, propertyType, STRUCT_RECORD_INSTANCE_PROVIDER, resources);
+			return convertMapResultSetValueToRecord(statementContext, mapValue, targetType, STRUCT_RECORD_INSTANCE_PROVIDER, resources);
 
 		// Vector read-back: drivers surface vector columns (e.g. pgvector) as text like "[1.5,2.5]" -
 		// unwrapResultSetValue above already converted PGobject to its String form. Parse into
@@ -1450,6 +1768,26 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		// Normalize primitives to wrappers
 		Class<?> targetClass = boxedClass(propertyType);
+		if (targetClass != Object.class) {
+			int infinity = postgresInfinityDirection(statementContext, resultSetValue);
+			if (infinity != 0) {
+				if (Date.class.isAssignableFrom(targetClass)) throw legacyTemporalRangeFailure(targetClass);
+				resultSetValue = resultSetValue instanceof Timestamp
+						? (infinity > 0 ? LocalDateTime.MAX : LocalDateTime.MIN)
+						: (infinity > 0 ? LocalDate.MAX : LocalDate.MIN);
+			}
+			if (Date.class.isAssignableFrom(targetClass) && isUnboundedTemporal(resultSetValue))
+				throw legacyTemporalRangeFailure(targetClass);
+			if (Date.class.isAssignableFrom(targetClass)) {
+				Instant instant = resultSetValue instanceof Instant value ? value
+						: resultSetValue instanceof OffsetDateTime value ? value.toInstant()
+						: resultSetValue instanceof ZonedDateTime value ? value.toInstant() : null;
+				if (instant != null) {
+					try { instant.toEpochMilli(); }
+					catch (ArithmeticException exception) { throw legacyTemporalRangeFailure(targetClass); }
+				}
+			}
+		}
 
 		// Already converted scalar values and native property values retain their representation.
 		if (targetClass.isInstance(resultSetValue) && !(resultSetValue instanceof Number))
@@ -1480,9 +1818,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			if (Long.class.isAssignableFrom(targetClass))
 				return exactLong(number);
 			if (Float.class.isAssignableFrom(targetClass))
-				return finiteFloat(number);
+				return checkedFloat(number);
 			if (Double.class.isAssignableFrom(targetClass))
-				return finiteDouble(number);
+				return checkedDouble(number);
 			if (BigDecimal.class.isAssignableFrom(targetClass)) {
 				if (number instanceof Byte || number instanceof Short || number instanceof Integer || number instanceof Long)
 					return BigDecimal.valueOf(number.longValue());
@@ -1498,7 +1836,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		// Legacy java.sql.* coming from drivers
 		if (resultSetValue instanceof java.sql.Timestamp timestamp) {
 			if (java.sql.Date.class.isAssignableFrom(targetClass))
-				return java.sql.Date.valueOf(timestamp.toLocalDateTime().toLocalDate());
+				return jdbcDateFromLocalDate(timestamp.toLocalDateTime().toLocalDate());
 			if (Date.class.isAssignableFrom(targetClass))
 				return timestamp;
 			if (Instant.class.isAssignableFrom(targetClass))
@@ -1518,7 +1856,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		if (resultSetValue instanceof java.sql.Time time) {
 			if (LocalTime.class.isAssignableFrom(targetClass))
-				return time.toLocalTime();
+				return localTimeWithMilliseconds(time);
 		}
 
 		// New java.time values (preferred)
@@ -1526,11 +1864,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			if (Instant.class.isAssignableFrom(targetClass))
 				return instant;
 			if (java.sql.Timestamp.class.isAssignableFrom(targetClass))
-				return Timestamp.from(instant);
+				return jdbcTimestampFromInstant(instant);
 			if (java.sql.Date.class.isAssignableFrom(targetClass))
-				return java.sql.Date.valueOf(instant.atZone(statementContext.getTimeZone()).toLocalDate());
+				return jdbcDateFromLocalDate(instant.atZone(statementContext.getTimeZone()).toLocalDate());
 			if (Date.class.isAssignableFrom(targetClass))
-				return Date.from(instant);
+				return legacyDateFromInstant(instant);
 			if (LocalDateTime.class.isAssignableFrom(targetClass))
 				return instant.atZone(statementContext.getTimeZone()).toLocalDateTime();
 			if (LocalDate.class.isAssignableFrom(targetClass))
@@ -1547,11 +1885,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			if (Instant.class.isAssignableFrom(targetClass))
 				return localDateTime.atZone(statementContext.getTimeZone()).toInstant();
 			if (java.sql.Timestamp.class.isAssignableFrom(targetClass))
-				return Timestamp.valueOf(localDateTime);
+				return jdbcTimestampFromInstant(localDateTime.atZone(statementContext.getTimeZone()).toInstant());
 			if (java.sql.Date.class.isAssignableFrom(targetClass))
-				return java.sql.Date.valueOf(localDateTime.toLocalDate());
+				return jdbcDateFromLocalDate(localDateTime.toLocalDate());
 			if (Date.class.isAssignableFrom(targetClass))
-				return Date.from(localDateTime.atZone(statementContext.getTimeZone()).toInstant());
+				return legacyDateFromInstant(localDateTime.atZone(statementContext.getTimeZone()).toInstant());
 			if (LocalDate.class.isAssignableFrom(targetClass))
 				return localDateTime.toLocalDate();
 			if (OffsetDateTime.class.isAssignableFrom(targetClass))
@@ -1570,14 +1908,17 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			if (LocalDate.class.isAssignableFrom(targetClass))
 				return offsetDateTime.atZoneSameInstant(statementContext.getTimeZone()).toLocalDate();
 			if (java.sql.Timestamp.class.isAssignableFrom(targetClass))
-				return Timestamp.from(offsetDateTime.toInstant());
+				return jdbcTimestampFromInstant(offsetDateTime.toInstant());
 			if (java.sql.Date.class.isAssignableFrom(targetClass))
-				return java.sql.Date.valueOf(offsetDateTime.atZoneSameInstant(statementContext.getTimeZone()).toLocalDate());
+				return jdbcDateFromLocalDate(offsetDateTime.atZoneSameInstant(statementContext.getTimeZone()).toLocalDate());
 			if (Date.class.isAssignableFrom(targetClass))
-				return Date.from(offsetDateTime.toInstant());
+				return legacyDateFromInstant(offsetDateTime.toInstant());
 			if (ZonedDateTime.class.isAssignableFrom(targetClass))
 				return offsetDateTime.atZoneSameInstant(statementContext.getTimeZone());
 		}
+
+		if (resultSetValue instanceof ZonedDateTime zonedDateTime)
+			return convertDetachedValue(statementContext, zonedDateTime.toOffsetDateTime(), targetType, resources);
 
 		if (resultSetValue instanceof LocalDate localDate) {
 			if (LocalDate.class.isAssignableFrom(targetClass))
@@ -1589,26 +1930,24 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			if (Instant.class.isAssignableFrom(targetClass))
 				return localDate.atStartOfDay(statementContext.getTimeZone()).toInstant();
 			if (java.sql.Date.class.isAssignableFrom(targetClass))
-				return java.sql.Date.valueOf(localDate);
+				return jdbcDateFromLocalDate(localDate);
 			if (java.sql.Timestamp.class.isAssignableFrom(targetClass))
-				return Timestamp.valueOf(localDate.atStartOfDay());
+				return jdbcTimestampFromInstant(localDate.atStartOfDay(statementContext.getTimeZone()).toInstant());
 			if (OffsetDateTime.class.isAssignableFrom(targetClass))
 				return localDate.atStartOfDay(statementContext.getTimeZone()).toOffsetDateTime();
 			if (Date.class.isAssignableFrom(targetClass))
-				return Date.from(localDate.atStartOfDay(statementContext.getTimeZone()).toInstant());
+				return legacyDateFromInstant(localDate.atStartOfDay(statementContext.getTimeZone()).toInstant());
 		}
 
 		if (resultSetValue instanceof LocalTime localTime) {
 			if (LocalTime.class.isAssignableFrom(targetClass))
 				return localTime;
 
-			if (OffsetTime.class.isAssignableFrom(targetClass)) {
-				ZoneOffset off = statementContext.getTimeZone().getRules().getOffset(Instant.EPOCH);
-				return localTime.atOffset(off);
-			}
+			if (OffsetTime.class.isAssignableFrom(targetClass))
+				return offsetTimeFromLocalTime(localTime, statementContext.getTimeZone());
 
 			if (java.sql.Time.class.isAssignableFrom(targetClass))
-				return java.sql.Time.valueOf(localTime);
+				return jdbcTimeWithMilliseconds(localTime);
 		}
 
 		if (resultSetValue instanceof OffsetTime offsetTime) {
@@ -1617,7 +1956,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			if (LocalTime.class.isAssignableFrom(targetClass))
 				return offsetTime.toLocalTime();
 			if (java.sql.Time.class.isAssignableFrom(targetClass))
-				return java.sql.Time.valueOf(offsetTime.toLocalTime());
+				return jdbcTimeWithMilliseconds(offsetTime.toLocalTime());
 		}
 
 		if (resultSetValue instanceof String string) {
@@ -1650,6 +1989,14 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					return localTimeFromString(string);
 				} catch (DateTimeException | IllegalArgumentException e) {
 					throw new DatabaseException(format("Unable to convert value '%s' to LocalTime", resultSetValue), e);
+				}
+			}
+
+			if (OffsetTime.class.isAssignableFrom(targetClass)) {
+				try {
+					return offsetTimeFromString(string, statementContext.getTimeZone());
+				} catch (DateTimeException | IllegalArgumentException exception) {
+					throw new DatabaseException("Cannot map text to OffsetTime; expected a valid local or explicit-offset time", exception);
 				}
 			}
 
@@ -1688,6 +2035,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		if (UUID.class.isAssignableFrom(targetClass)) {
 			return uuidFromValue(resultSetValue);
+		} else if (ZoneOffset.class.isAssignableFrom(targetClass)) {
+			return zoneOffsetFromValue(resultSetValue);
 		} else if (ZoneId.class.isAssignableFrom(targetClass)) {
 			try {
 				return ZoneId.of(resultSetValue.toString());
@@ -1712,17 +2061,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			return extractEnumValue(targetClass, resultSetValue);
 		}
 
-		if (Boolean.class.isAssignableFrom(targetClass)) {
-			// Native boolean
-			if (resultSetValue instanceof Boolean b)
-				return b;
-
-			// Numeric truthiness (0=false, nonzero=true)
-			if (resultSetValue instanceof Number number)
-				return decimalForNumericConversion(number).signum() != 0;
-
-			throw new DatabaseException(format("Cannot map value '%s' (%s) to boolean", resultSetValue, resultSetValue.getClass().getName()));
-		}
+		if (Boolean.class.isAssignableFrom(targetClass))
+			return booleanFromValue(resultSetValue);
 
 		if (Character.class.isAssignableFrom(targetClass)) {
 			// Native char
@@ -1761,7 +2101,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(targetType);
 
 		try {
-			return convertArrayResultSetValue(statementContext, extractSqlArrayResultSetValue(sqlArray, resources), targetType, resources);
+			Object values = extractSqlArrayResultSetValue(sqlArray, resources,
+					statementContext.getDatabaseDialect() instanceof DuckDbDialect || !resources.isBorrowed(sqlArray));
+			if (statementContext.getDatabaseDialect() instanceof DuckDbDialect duck)
+				duck.registerContainerTypes(values, resources.containerType(sqlArray), resources);
+			return convertArrayResultSetValue(statementContext, values, targetType, resources);
 		} catch (SQLException e) {
 			throw DatabaseException.wrapSafely("Unable to extract JDBC Array value", e, DatabaseDialect.forExceptionCause(e));
 		}
@@ -1769,12 +2113,23 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 	@Nullable
 	static Object extractSqlArrayResultSetValue(@NonNull Array sqlArray, MappingResources resources) throws SQLException {
-		requireNonNull(sqlArray);
+		return extractSqlArrayResultSetValue(sqlArray, resources, true);
+	}
 
+	@Nullable
+	private static Object extractSqlArrayResultSetValue(@NonNull Array sqlArray, MappingResources resources,
+			boolean free) throws SQLException {
+		requireNonNull(sqlArray);
+		MappingResources.SqlArrayExtraction previous = resources.sqlArrayExtraction(sqlArray);
+		if (previous != null) {
+			if (previous.failure() != null) rethrowArrayFailure(previous.failure());
+			return previous.values();
+		}
+		Object values = null;
 		Throwable thrown = null;
 
 		try {
-			Object values = sqlArray.getArray();
+			values = sqlArray.getArray();
 			int baseType = Types.OTHER;
 			try {
 				baseType = sqlArray.getBaseType();
@@ -1812,20 +2167,21 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					resources.registerArrayTimeValues(values, read.failure);
 				} else resources.registerArrayTimeValues(values, read.values);
 			}
-			return values;
 		} catch (SQLException | RuntimeException | Error e) {
 			thrown = e;
-			throw e;
 		} finally {
-			try {
-				sqlArray.free();
-			} catch (SQLException | RuntimeException | Error e) {
-				if (thrown != null && thrown != e)
-					thrown.addSuppressed(e);
-				else
-					throw e;
+			if (free) {
+				try {
+					sqlArray.free();
+				} catch (SQLException | RuntimeException | Error e) {
+					if (thrown == null) thrown = e;
+					else if (thrown != e) thrown.addSuppressed(e);
+				}
 			}
 		}
+		resources.rememberSqlArrayExtraction(sqlArray, values, thrown);
+		if (thrown != null) rethrowArrayFailure(thrown);
+		return values;
 	}
 
 	private static boolean isUnsupportedArrayReader(Throwable failure) {
@@ -1982,6 +2338,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 																									int elementIndex, @NonNull MappingResources resources, int jdbcType) {
 		requireNonNull(statementContext);
 		requireNonNull(targetType);
+		targetType = builtInTargetType(targetType);
 
 		if (value == null)
 			return null;
@@ -1989,11 +2346,15 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		Class<?> targetClass = boxedClass(targetType.getRawClass());
 
 		if (targetClass == Object.class)
-			return resources.nativeValue(value, statementContext.getDatabaseDialect());
-		value = normalizeContainerTemporalValue(value, jdbcType);
+			return resources.nativeValue(value, statementContext.getDatabaseDialect(), jdbcType, "SQL ARRAY element " + elementIndex);
+		// A driver may already expose a CLOB/BLOB element as String/byte[]. Preserve the
+		// configured typed-LOB bound before the matching-value identity fast path returns it.
+		if (MappingResources.requiresMaterialization(value, targetClass, jdbcType))
+			value = resources.materialize(value, targetClass, jdbcType, "SQL ARRAY element " + elementIndex);
+		value = normalizeContainerTemporalValue(statementContext, value, jdbcType);
 		if (value.getClass().isArray()) resources.registerArrayType(value, jdbcType);
-		if (targetClass.isInstance(value) && !(value.getClass().isArray()
-				&& (targetType.isArray() || targetType.isList() || targetType.isSet()))) {
+		if (targetClass.isInstance(value) && !requiresRecursiveContainerConversion(targetType)
+				&& !(value.getClass().isArray() && (targetType.isArray() || targetType.isList() || targetType.isSet()))) {
 			resources.borrow(value);
 			return value;
 		}
@@ -2008,7 +2369,16 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		return converted;
 	}
 
-	private static Object normalizeContainerTemporalValue(Object value, int jdbcType) {
+	private static Object normalizeContainerTemporalValue(StatementContext<?> context, Object value, int jdbcType) {
+		int infinity = postgresInfinityDirection(context, value);
+		if (infinity != 0) {
+			if (value instanceof Timestamp) {
+				if (jdbcType == Types.TIMESTAMP_WITH_TIMEZONE)
+					return infinity > 0 ? OffsetDateTime.MAX : OffsetDateTime.MIN;
+				return infinity > 0 ? LocalDateTime.MAX : LocalDateTime.MIN;
+			}
+			return infinity > 0 ? LocalDate.MAX : LocalDate.MIN;
+		}
 		// A Timestamp stores a JVM-zone-based epoch even for SQL TIMESTAMP WITHOUT TIME ZONE.
 		// Preserve the SQL container's type so only zone-less values become wall-clock values.
 		if (value instanceof Timestamp timestamp) {
@@ -2017,9 +2387,68 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		} else if (value instanceof java.sql.Date date) {
 			value = date.toLocalDate();
 		} else if (value instanceof java.sql.Time time && jdbcType == Types.TIME) {
-			value = time.toLocalTime();
+			value = localTimeWithMilliseconds(time);
 		}
 		return value;
+	}
+
+	private static int postgresInfinityDirection(StatementContext<?> context, Object value) {
+		if (!(context.getDatabaseDialect() instanceof PostgresDialect) || !(value instanceof Date date)) return 0;
+		// Constants are inlined; loading this mapper does not require the optional PostgreSQL driver.
+		if (date.getTime() == org.postgresql.PGStatement.DATE_POSITIVE_INFINITY) return 1;
+		if (date.getTime() == org.postgresql.PGStatement.DATE_NEGATIVE_INFINITY) return -1;
+		return 0;
+	}
+
+	private static boolean isUnboundedTemporal(Object value) {
+		return value.equals(LocalDate.MIN) || value.equals(LocalDate.MAX)
+				|| value.equals(LocalDateTime.MIN) || value.equals(LocalDateTime.MAX)
+				|| value.equals(OffsetDateTime.MIN) || value.equals(OffsetDateTime.MAX)
+				|| value.equals(Instant.MIN) || value.equals(Instant.MAX);
+	}
+
+	private static DatabaseException legacyTemporalRangeFailure(Class<?> target) {
+		return new DatabaseException("Temporal value is outside the representable range of " + target.getTypeName());
+	}
+
+	private static Timestamp jdbcTimestampFromInstant(Instant instant) {
+		try {
+			long millis = instant.toEpochMilli();
+			Timestamp timestamp = Timestamp.from(instant);
+			// Timestamp.from can overflow internally instead of reporting its documented range error.
+			if (timestamp.getTime() != millis || !timestamp.toInstant().equals(instant))
+				throw legacyTemporalRangeFailure(Timestamp.class);
+			return timestamp;
+		} catch (ArithmeticException | IllegalArgumentException exception) {
+			throw legacyTemporalRangeFailure(Timestamp.class);
+		}
+	}
+
+	private static java.sql.Date jdbcDateFromLocalDate(LocalDate date) {
+		// SQL Date's JDBC escape text has exactly four year digits and no era. Its legacy
+		// constructor also normalizes some dates (including the Gregorian cutover gap).
+		if (date.getYear() < 1 || date.getYear() > 9999) throw legacyTemporalRangeFailure(java.sql.Date.class);
+		java.sql.Date converted = java.sql.Date.valueOf(date);
+		if (!converted.toLocalDate().equals(date)) throw legacyTemporalRangeFailure(java.sql.Date.class);
+		return converted;
+	}
+
+	private static Date legacyDateFromInstant(Instant instant) {
+		try {
+			return Date.from(instant);
+		} catch (IllegalArgumentException exception) {
+			throw legacyTemporalRangeFailure(Date.class);
+		}
+	}
+
+	private static LocalTime localTimeWithMilliseconds(java.sql.Time time) {
+		return time.toLocalTime().withNano((int) Math.floorMod(time.getTime(), 1000L) * 1_000_000);
+	}
+
+	private static java.sql.Time jdbcTimeWithMilliseconds(LocalTime localTime) {
+		java.sql.Time time = java.sql.Time.valueOf(localTime);
+		time.setTime(time.getTime() + localTime.getNano() / 1_000_000);
+		return time;
 	}
 
 	private static boolean isTimestampConversionTarget(Class<?> target) {
@@ -2060,6 +2489,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(instanceProvider);
 		requireNonNull(resultSetMetaData);
 
+		rejectOptionalMappingTargets(TargetType.of(resultSetRowType));
 		Object resultSetValue = extractColumnValue(resultSetMetaData, statementContext, resultSet, 1, resources).orElse(null);
 
 		if (resultSetValue != null)
@@ -2074,13 +2504,13 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			throw noRecordColumnMappingsException(resultSetRowType, resultSetMetaData);
 
 		@SuppressWarnings("unchecked")
-		T record = (T) convertMapResultSetValueToRecord(statementContext, mapValue, resultSetRowType, instanceProvider, resources);
+		T record = (T) convertMapResultSetValueToRecord(statementContext, mapValue, TargetType.of(resultSetRowType), instanceProvider, resources);
 		return record;
 	}
 
 	/**
 	 * Converts a SQL STRUCT value - surfaced by the dialect as an attribute-name to value map - to an instance
-	 * of {@code recordClass}.
+	 * of the record described by {@code recordTargetType}.
 	 * <p>
 	 * Attribute names are normalized with {@link #normalizeColumnLabel(String)} and matched against record
 	 * components with the same conventions used for result columns ({@code camelCase} components match
@@ -2094,12 +2524,13 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	@NonNull
 	private <T> Object convertMapResultSetValueToRecord(@NonNull StatementContext<T> statementContext,
 																											@NonNull Map<?, ?> mapValue,
-																											@NonNull Class<?> recordClass,
+																											@NonNull TargetType recordTargetType,
 																											@NonNull InstanceProvider instanceProvider, @NonNull MappingResources resources) {
 		requireNonNull(statementContext);
 		requireNonNull(mapValue);
-		requireNonNull(recordClass);
+		requireNonNull(recordTargetType);
 		requireNonNull(instanceProvider);
+		Class<?> recordClass = recordTargetType.getRawClass();
 
 		Map<String, Object> valuesByNormalizedName = new HashMap<>(mapValue.size());
 		Map<String, Integer> attributeIndexesByNormalizedName = new HashMap<>(mapValue.size());
@@ -2122,7 +2553,6 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 		RecordComponent[] recordComponents = determineRecordComponents(recordClass);
 		Map<String, Set<String>> columnLabelsByRecordComponentName = determineColumnLabelsByRecordComponentName(recordClass);
-		Map<String, TargetType> propertyTargetTypes = determinePropertyTargetTypes(recordClass);
 
 		Object[] args = new Object[recordComponents.length];
 		int mappedAttributeCount = 0;
@@ -2141,9 +2571,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 			Class<?> recordComponentType = recordComponent.getType();
 
-			// Get the precise TargetType (generic-aware) for this component
-			TargetType targetType = propertyTargetTypes.get(propertyName);
-			if (targetType == null) targetType = TargetType.of(recordComponent.getGenericType());
+			// A nested record can bind its own variables (e.g. Box<UUID>). Resolving against
+			// only its raw Class would erase those arguments before recursive conversion.
+			TargetType targetType = TargetType.of(GenericPropertyTypes.resolve(recordTargetType.getType(),
+					recordClass, recordComponent.getGenericType()));
 
 			// Apply in attribute order for deterministic results
 			List<String> orderedAttributeNames = new ArrayList<>(potentialAttributeNames.size());
@@ -2163,9 +2594,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			for (String attributeName : orderedAttributeNames) {
 				++mappedAttributeCount;
 				Object rawValue = valuesByNormalizedName.get(attributeName);
-				if (rawValue instanceof Timestamp && isTimestampConversionTarget(recordComponentType)
+				if (rawValue instanceof Timestamp && isTimestampConversionTarget(targetType.getRawClass())
 						&& statementContext.getDatabaseDialect() instanceof DuckDbDialect duck)
-					rawValue = normalizeContainerTemporalValue(rawValue, duck.structAttributeJdbcType(resources.structType(mapValue),
+					rawValue = normalizeContainerTemporalValue(statementContext, rawValue, duck.structAttributeJdbcType(resources.structType(mapValue),
 							attributeIndexesByNormalizedName.get(attributeName)));
 				Object value = rawValue == null ? null
 						: convertResultSetValueToTargetType(statementContext, rawValue, targetType, resources);
@@ -2175,12 +2606,12 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					throw new DatabaseException(format("STRUCT attribute '%s' is NULL but record component '%s' of %s is primitive (%s). Use a non-primitive type or COALESCE/CAST in SQL.",
 							attributeName, recordComponent.getName(), recordClass.getSimpleName(), recordComponentType.getSimpleName()));
 
-				Class<?> checkedType = boxedClass(recordComponentType);
+				Class<?> checkedType = boxedClass(targetType.getRawClass());
 
 				if (value != null && !checkedType.isInstance(value)) {
 					throw new DatabaseException(format(
 							"STRUCT attribute '%s' for record component '%s' of %s expects type %s, but the STRUCT produced %s",
-							attributeName, recordComponent.getName(), recordClass, recordComponentType, value.getClass()));
+							attributeName, recordComponent.getName(), recordClass, targetType.getType(), value.getClass()));
 				}
 
 				args[i] = value;
@@ -2267,26 +2698,32 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 	}
 
-	private static float finiteFloat(@NonNull Number number) {
+	private static float checkedFloat(@NonNull Number number) {
 		requireNonNull(number);
 
 		float value = number.floatValue();
 
-		if (!Float.isFinite(value))
+		if (!Float.isFinite(value) && !isNonFiniteFloatingPoint(number))
 			throw new DatabaseException(format("Numeric value '%s' cannot be represented as finite float", number));
 
 		return value;
 	}
 
-	private static double finiteDouble(@NonNull Number number) {
+	private static double checkedDouble(@NonNull Number number) {
 		requireNonNull(number);
 
 		double value = number.doubleValue();
 
-		if (!Double.isFinite(value))
+		if (!Double.isFinite(value) && !isNonFiniteFloatingPoint(number))
 			throw new DatabaseException(format("Numeric value '%s' cannot be represented as finite double", number));
 
 		return value;
+	}
+
+	/** Native IEEE special values are representable; finite numbers must not overflow to infinity. */
+	private static boolean isNonFiniteFloatingPoint(@NonNull Number number) {
+		return number instanceof Float floatValue && !Float.isFinite(floatValue)
+				|| number instanceof Double doubleValue && !Double.isFinite(doubleValue);
 	}
 
 	@NonNull
@@ -2339,6 +2776,38 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 	}
 
+	private static final Pattern ISO_TIME_OFFSET_PREFIX = Pattern.compile("\\d{2}:\\d{2}(?::\\d{2}(?:[.,]\\d+)?)?\\s*(?:[+-]|[Zz])");
+	private static final Pattern ISO_TIMESTAMP_TEXT_PREFIX = Pattern.compile("[+-]?\\d{4,}-\\d{2}-\\d{2}(?:[Tt]|\\s+)");
+
+	/** A date-less time cannot select an offset from a zone whose rules vary by date. */
+	private static OffsetTime offsetTimeFromLocalTime(LocalTime value, ZoneId timeZone) {
+		if (!(timeZone.normalized() instanceof ZoneOffset offset))
+			throw new DatabaseException("Cannot map a date-less local time to OffsetTime using a variable-offset database time zone; "
+					+ "use LocalTime, an explicit-offset value, a fixed-offset database time zone, or a custom mapper");
+		return value.atOffset(offset);
+	}
+
+	private static OffsetTime offsetTimeFromString(String value, ZoneId timeZone) {
+		String trimmed = value.trim();
+		try {
+			return OffsetTime.parse(trimmed);
+		} catch (DateTimeParseException ignored) {
+			if (hasIsoTimeOffset(trimmed))
+				throw new DatabaseException("Cannot map malformed explicit-offset time text to OffsetTime");
+			return offsetTimeFromLocalTime(localTimeFromString(trimmed), timeZone);
+		}
+	}
+
+	private static boolean hasIsoTimeOffset(String value) {
+		return ISO_TIME_OFFSET_PREFIX.matcher(value.trim()).lookingAt();
+	}
+
+	private static boolean hasIsoTimestampOffset(String value) {
+		String trimmed = value.trim();
+		java.util.regex.Matcher separator = ISO_TIMESTAMP_TEXT_PREFIX.matcher(trimmed);
+		return separator.lookingAt() && hasIsoTimeOffset(trimmed.substring(separator.end()));
+	}
+
 	@NonNull
 	private static LocalDateTime localDateTimeFromString(@NonNull String value) {
 		requireNonNull(value);
@@ -2365,16 +2834,19 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(value);
 		requireNonNull(statementContext);
 		String trimmed = value.trim();
+		String normalized = trimmed.replace(' ', 'T');
 
 		try {
-			return Instant.parse(trimmed);
+			return Instant.parse(normalized);
 		} catch (DateTimeParseException ignored) {
 		}
 
 		try {
-			return OffsetDateTime.parse(trimmed).toInstant();
+			return OffsetDateTime.parse(normalized).toInstant();
 		} catch (DateTimeParseException ignored) {
 		}
+		if (hasIsoTimestampOffset(trimmed))
+			throw new DatabaseException("Cannot map malformed explicit-offset timestamp text to Instant");
 
 		return localDateTimeFromString(trimmed).atZone(statementContext.getTimeZone()).toInstant();
 	}
@@ -2385,20 +2857,21 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(value);
 		requireNonNull(statementContext);
 		String trimmed = value.trim();
+		String normalized = trimmed.replace(' ', 'T');
 
 		try {
-			return OffsetDateTime.parse(trimmed);
+			return OffsetDateTime.parse(normalized);
 		} catch (DateTimeParseException ignored) {
 		}
 
 		try {
-			return Instant.parse(trimmed).atZone(statementContext.getTimeZone()).toOffsetDateTime();
+			return Instant.parse(normalized).atZone(statementContext.getTimeZone()).toOffsetDateTime();
 		} catch (DateTimeParseException ignored) {
 		}
+		if (hasIsoTimestampOffset(trimmed))
+			throw new DatabaseException("Cannot map malformed explicit-offset timestamp text to OffsetDateTime");
 
-		LocalDateTime localDateTime = localDateTimeFromString(trimmed);
-		ZoneOffset offset = statementContext.getTimeZone().getRules().getOffset(localDateTime.atZone(statementContext.getTimeZone()).toInstant());
-		return localDateTime.atOffset(offset);
+		return localDateTimeFromString(trimmed).atZone(statementContext.getTimeZone()).toOffsetDateTime();
 	}
 
 	@NonNull
@@ -2505,11 +2978,24 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		if (value == null)
 			return null;
 
+		String text = value.trim();
+		// YearMonth.toString() omits '+' on expanded positive years, unlike its ISO parser.
+		if (text.matches("[1-9][0-9]{4,8}-[0-9]{2}")) text = "+" + text;
 		try {
-			return YearMonth.parse(value.trim());
+			return YearMonth.parse(text);
 		} catch (DateTimeParseException e) {
 			throw new DatabaseException(format("Unable to convert value '%s' to YearMonth", value), e);
 		}
+	}
+
+	private static ZoneOffset zoneOffsetFromValue(Object value) {
+		try {
+			ZoneId normalized = ZoneId.of(value.toString()).normalized();
+			if (normalized instanceof ZoneOffset offset) return offset;
+		} catch (DateTimeException failure) {
+			throw new DatabaseException("Unable to convert value to ZoneOffset; a fixed zone offset is required", failure);
+		}
+		throw new DatabaseException("Unable to convert value to ZoneOffset; a fixed zone offset is required");
 	}
 
 	@Nullable
@@ -2613,7 +3099,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	/**
 	 * Massages a {@link ResultSet} column label so it's easier to match against a JavaBean property name.
 	 * <p>
-	 * This implementation lowercases the label using the locale provided by {@link #getNormalizationLocale()}.
+	 * ASCII uppercase letters are folded independently of locale before the label is lowercased using
+	 * {@link #getNormalizationLocale()}. This keeps ordinary SQL/Java identifiers stable under locales such
+	 * as Turkish and Azerbaijani while retaining locale-sensitive handling of non-ASCII letters.
 	 *
 	 * @param columnLabel the {@link ResultSet} column label to massage
 	 * @return the massaged label
@@ -2621,16 +3109,31 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	@NonNull
 	protected String normalizeColumnLabel(@NonNull String columnLabel) {
 		requireNonNull(columnLabel);
-		return columnLabel.toLowerCase(getNormalizationLocale());
+		return lowercaseAsciiLetters(columnLabel).toLowerCase(getNormalizationLocale());
+	}
+
+	@NonNull
+	private static String lowercaseAsciiLetters(@NonNull String value) {
+		char[] folded = null;
+		for (int index = 0; index < value.length(); index++) {
+			char character = value.charAt(index);
+			if (character >= 'A' && character <= 'Z') {
+				if (folded == null) folded = value.toCharArray();
+				folded[index] = (char) (character + ('a' - 'A'));
+			}
+		}
+		return folded == null ? value : new String(folded);
 	}
 
 	/**
 	 * Massages a JavaBean property name to match standard database column name (camelCase -> camel_case).
 	 * <p>
-	 * Uses {@link #getNormalizationLocale()} to perform case-changing.
+	 * Uses {@link #normalizeColumnLabel(String)} to perform case-changing.
 	 * <p>
 	 * There may be multiple database column name mappings, for example property {@code address1} might map to both
-	 * {@code address1} and {@code address_1} column names.
+	 * {@code address1} and {@code address_1} column names. The literal property spelling is also a candidate,
+	 * so a quoted SQL alias such as {@code employeeId} matches the corresponding property. Digit-to-word
+	 * boundaries and acronym-to-word boundaries support names such as {@code sha256_hash} and {@code url_value}.
 	 *
 	 * @param propertyName the JavaBean property name to massage
 	 * @return the column names that match the JavaBean property name
@@ -2639,28 +3142,36 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	protected Set<@NonNull String> databaseColumnNamesForPropertyName(@NonNull String propertyName) {
 		requireNonNull(propertyName);
 
-		Set<String> normalizedPropertyNames = new HashSet<>(2);
+		Set<String> names = new HashSet<>(7);
+		names.add(normalizeColumnLabel(propertyName));
 
-		// Converts camelCase to camel_case
-		String replacement = "$1_$2";
+		// Keep historical spellings, including address1/address_1 and older acronym spellings.
+		String legacyCamel = CAMEL_CASE_PATTERN.matcher(propertyName).replaceAll("$1_$2");
+		addColumnNameCandidates(names, legacyCamel);
 
-		String normalizedPropertyName =
-				CAMEL_CASE_PATTERN.matcher(propertyName).replaceAll(replacement).toLowerCase(getNormalizationLocale());
-		normalizedPropertyNames.add(normalizedPropertyName);
+		// A digit can end the previous word just as a lowercase letter can: sha256Hash -> sha256_Hash.
+		String digitCamel = NUMBER_FOLLOWED_BY_CAPITAL_PATTERN.matcher(legacyCamel).replaceAll("$1_$2");
+		addColumnNameCandidates(names, digitCamel);
 
-		// Converts address1 to address_1
-		String normalizedNumberPropertyName = LETTER_FOLLOWED_BY_NUMBER_PATTERN.matcher(normalizedPropertyName).replaceAll(replacement);
-		normalizedPropertyNames.add(normalizedNumberPropertyName);
+		// Preserve the literal/legacy candidates while also supporting conventional acronym boundaries.
+		String acronymCamel = ACRONYM_WORD_BOUNDARY_PATTERN.matcher(propertyName).replaceAll("$1_$2");
+		acronymCamel = CAMEL_CASE_PATTERN.matcher(acronymCamel).replaceAll("$1_$2");
+		acronymCamel = NUMBER_FOLLOWED_BY_CAPITAL_PATTERN.matcher(acronymCamel).replaceAll("$1_$2");
+		addColumnNameCandidates(names, acronymCamel);
+		return names;
+	}
 
-		return normalizedPropertyNames;
+	private void addColumnNameCandidates(Set<String> candidates, String name) {
+		candidates.add(normalizeColumnLabel(name));
+		candidates.add(normalizeColumnLabel(LETTER_FOLLOWED_BY_NUMBER_PATTERN.matcher(name).replaceAll("$1_$2")));
 	}
 
 	/**
-	 * The locale to use when massaging JDBC column names for matching against JavaBean property names.
+	 * The locale to use after folding ASCII letters when matching JDBC column names to JavaBean property names.
 	 * <p>
 	 * Used by {@link #normalizeColumnLabel(String)}.
 	 *
-	 * @return the locale to use for massaging
+	 * @return the locale to use for non-ASCII case normalization
 	 */
 	@NonNull
 	protected Locale getNormalizationLocale() {
@@ -2800,6 +3311,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			if (raw == null) return null;
 
 			if (raw instanceof Timestamp ts) {
+				int infinity = postgresInfinityDirection(ctx, ts);
+				if (infinity != 0) return withTz
+						? (infinity > 0 ? OffsetDateTime.MAX : OffsetDateTime.MIN).toInstant()
+						: (infinity > 0 ? LocalDateTime.MAX : LocalDateTime.MIN).atZone(ctx.getTimeZone()).toInstant();
 				if (withTz)
 					return ts.toInstant();
 				// DO NOT use ts.toInstant() for WITHOUT TZ; interpret using DB zone
@@ -2809,20 +3324,19 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			if (raw instanceof OffsetDateTime odt) return odt.toInstant();
 			if (raw instanceof LocalDateTime ldt) return ldt.atZone(ctx.getTimeZone()).toInstant();
 			if (raw instanceof String s) {
-				// ISO-8601 string literal? Try parse to OffsetDateTime / LocalDateTime.
 				try {
-					return OffsetDateTime.parse(s).toInstant();
-				} catch (DateTimeParseException ignore) {
-				}
-				try {
-					return LocalDateTime.parse(s).atZone(ctx.getTimeZone()).toInstant();
-				} catch (DateTimeParseException ignore) {
+					return instantFromString(s, ctx);
+				} catch (DateTimeException | IllegalArgumentException ignore) {
 				}
 			}
 
 			// Last resort: try classic getter
 			Timestamp ts = rs.getTimestamp(col);
 			if (ts != null) {
+				int infinity = postgresInfinityDirection(ctx, ts);
+				if (infinity != 0) return withTz
+						? (infinity > 0 ? OffsetDateTime.MAX : OffsetDateTime.MIN).toInstant()
+						: (infinity > 0 ? LocalDateTime.MAX : LocalDateTime.MIN).atZone(ctx.getTimeZone()).toInstant();
 				if (withTz)
 					return ts.toInstant();
 				LocalDateTime ldt = ts.toLocalDateTime();
@@ -2846,11 +3360,22 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			if (withTz) {
 				OffsetDateTime got = tryGet(rs, col, OffsetDateTime.class);
 				if (got != null) return got;
+				int infinity = postgresInfinityDirection(ctx, rs.getObject(col));
+				if (infinity != 0) return infinity > 0 ? OffsetDateTime.MAX : OffsetDateTime.MIN;
 
 				// Try via Instant if driver only gives us Timestamp
 				Instant inst = asInstant(rs, col, ctx, true);
 				return inst == null ? null : inst.atOffset(ctx.getTimeZone().getRules().getOffset(inst));
 			} else {
+				Object raw = rs.getObject(col);
+				if (raw == null) return null;
+				if (raw instanceof String text) {
+					try {
+						return offsetDateTimeFromString(text, ctx);
+					} catch (DateTimeException | IllegalArgumentException ignore) {
+						// Non-ISO text may still use an explicitly configured classic JDBC format.
+					}
+				}
 				// A driver's OffsetDateTime conversion would attach its session/JVM zone, not the configured zone.
 				LocalDateTime ldt = asLocalDateTime(rs, col, ctx, false);
 				return ldt == null ? null : ldt.atZone(ctx.getTimeZone()).toOffsetDateTime();
@@ -2888,7 +3413,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			Object raw = rs.getObject(col);
 			if (raw == null) return null;
 
-			if (raw instanceof Timestamp ts) return ts.toLocalDateTime();
+			if (raw instanceof Timestamp ts) {
+				int infinity = postgresInfinityDirection(ctx, ts);
+				return infinity == 0 ? ts.toLocalDateTime() : infinity > 0 ? LocalDateTime.MAX : LocalDateTime.MIN;
+			}
 			if (raw instanceof OffsetDateTime odt) {
 				// normalize into DB zone then drop zone for stable wall time
 				return odt.atZoneSameInstant(ctx.getTimeZone()).toLocalDateTime();
@@ -2896,12 +3424,14 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			if (raw instanceof Instant inst) return inst.atZone(ctx.getTimeZone()).toLocalDateTime();
 			if (raw instanceof String s) {
 				try {
-					return LocalDateTime.parse(s);
+					return OffsetDateTime.parse(s.trim().replace(' ', 'T')).atZoneSameInstant(ctx.getTimeZone()).toLocalDateTime();
 				} catch (DateTimeParseException ignore) {
 				}
+				if (hasIsoTimestampOffset(s))
+					throw new DatabaseException("Cannot map malformed explicit-offset timestamp text to LocalDateTime");
 				try {
-					return OffsetDateTime.parse(s).atZoneSameInstant(ctx.getTimeZone()).toLocalDateTime();
-				} catch (DateTimeParseException ignore) {
+					return localDateTimeFromString(s);
+				} catch (DateTimeException | IllegalArgumentException ignore) {
 				}
 			}
 
@@ -2911,7 +3441,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			}
 
 			Timestamp ts = rs.getTimestamp(col);
-			return ts == null ? null : ts.toLocalDateTime();
+			if (ts == null) return null;
+			int infinity = postgresInfinityDirection(ctx, ts);
+			return infinity == 0 ? ts.toLocalDateTime() : infinity > 0 ? LocalDateTime.MAX : LocalDateTime.MIN;
 		}
 
 		/**
@@ -2951,15 +3483,22 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				LocalDateTime value = asLocalDateTime(rs, col, ctx, false);
 				return value == null ? null : value.toLocalDate();
 			}
-			return asLocalDate(rs, col);
+			return asLocalDate(rs, col, ctx);
 		}
 
 		public static LocalDate asLocalDate(ResultSet rs, int col) throws SQLException {
+			return asLocalDate(rs, col, null);
+		}
+
+		public static LocalDate asLocalDate(ResultSet rs, int col, @Nullable StatementContext<?> ctx) throws SQLException {
 			LocalDate d = tryGet(rs, col, LocalDate.class);
 			if (d != null) return d;
 			Object raw = rs.getObject(col);
 			if (raw == null) return null;
-			if (raw instanceof java.sql.Date sqlDate) return sqlDate.toLocalDate();
+			if (raw instanceof java.sql.Date sqlDate) {
+				int infinity = ctx == null ? 0 : postgresInfinityDirection(ctx, sqlDate);
+				return infinity == 0 ? sqlDate.toLocalDate() : infinity > 0 ? LocalDate.MAX : LocalDate.MIN;
+			}
 			if (raw instanceof String s) {
 				try {
 					return LocalDate.parse(s);
@@ -2967,7 +3506,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				}
 			}
 			java.sql.Date d2 = rs.getDate(col);
-			return d2 == null ? null : d2.toLocalDate();
+			if (d2 == null) return null;
+			int infinity = ctx == null ? 0 : postgresInfinityDirection(ctx, d2);
+			return infinity == 0 ? d2.toLocalDate() : infinity > 0 ? LocalDate.MAX : LocalDate.MIN;
 		}
 
 		public static LocalTime asLocalTime(ResultSet rs, int col, StatementContext<?> ctx, ResultSetMetaData metadata) throws SQLException {
@@ -2983,7 +3524,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			if (t != null) return t;
 			Object raw = rs.getObject(col);
 			if (raw == null) return null;
-			if (raw instanceof java.sql.Time sqlTime) return sqlTime.toLocalTime();
+			if (raw instanceof java.sql.Time sqlTime) return localTimeWithMilliseconds(sqlTime);
 			if (raw instanceof String s) {
 				try {
 					return LocalTime.parse(s);
@@ -2991,7 +3532,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				}
 			}
 			java.sql.Time t2 = rs.getTime(col);
-			return t2 == null ? null : t2.toLocalTime();
+			return t2 == null ? null : localTimeWithMilliseconds(t2);
 		}
 
 		public static OffsetTime asOffsetTime(ResultSet rs, int col, StatementContext<?> ctx, ResultSetMetaData resultSetMetaData) throws SQLException {
@@ -3014,30 +3555,39 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					} catch (DateTimeParseException ignore) {
 					}
 				}
+				throw new DatabaseException("Driver cannot read SQL TIME WITH TIME ZONE without losing its offset");
 			}
-			// If DB has plain TIME, attach DB zone offset at an arbitrary date (offset depends on date!)
+			Object raw = rs.getObject(col);
+			if (raw == null) return null;
+			if (raw instanceof OffsetTime offsetTime) return offsetTime;
+			if (raw instanceof String string) {
+				try {
+					return offsetTimeFromString(string, ctx.getTimeZone());
+				} catch (DateTimeException | IllegalArgumentException ignore) {
+					// Retain the driver's classic getter for explicitly configured, non-ISO time text.
+				}
+			}
+			// A plain TIME has no date with which to resolve regional zone rules.
 			LocalTime lt = asLocalTime(rs, col);
 			if (lt == null) return null;
-			// Choose a stable anchor instant to avoid DST-dependent offsets (use epoch)
-			Instant anchor = Instant.EPOCH;
-			ZoneOffset off = ctx.getTimeZone().getRules().getOffset(anchor);
-			return lt.atOffset(off);
+			return offsetTimeFromLocalTime(lt, ctx.getTimeZone());
 		}
 	}
 
-	@Nullable
-	private Boolean getNullableBoolean(@NonNull ResultSet resultSet, int columnIndex) throws SQLException {
-		Object value = resultSet.getObject(columnIndex);
-
-		if (value == null)
-			return null;
-		if (value instanceof Boolean b)
-			return b;
-		if (value instanceof Number number)
-			return decimalForNumericConversion(number).signum() != 0;
-
-		boolean v = resultSet.getBoolean(columnIndex);
-		return resultSet.wasNull() ? null : v;
+	/** Shared strict conversion for scalar, row and typed-container Boolean targets. */
+	private static Boolean booleanFromValue(Object value) {
+		if (value instanceof Boolean booleanValue) return booleanValue;
+		// Keep the established numeric rule: zero is false and any finite nonzero number is true.
+		if (value instanceof Number number) return decimalForNumericConversion(number).signum() != 0;
+		if (value instanceof String string) {
+			// PostgreSQL's Boolean input words, including unique prefixes. "o" is ambiguous between on/off.
+			return switch (string.strip().toLowerCase(Locale.ROOT)) {
+				case "true", "tru", "tr", "t", "yes", "ye", "y", "on", "1" -> Boolean.TRUE;
+				case "false", "fals", "fal", "fa", "f", "no", "n", "off", "of", "0" -> Boolean.FALSE;
+				default -> throw new DatabaseException("Cannot map text to boolean; expected true/false, yes/no, on/off, 1/0 or an unambiguous word prefix");
+			};
+		}
+		throw new DatabaseException("Cannot map a value of type " + value.getClass().getName() + " to boolean");
 	}
 
 	@Nullable
@@ -3264,6 +3814,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		List<ColumnBinding> bindings = new ArrayList<>(cols);
 		boolean hasFanOut = false;
 		int mappedColumnCount = 0;
+		List<String> unmappedColumns = this.failOnUnmappedColumns ? new ArrayList<>() : null;
 		Map<String, String> normalizedLabelsToRawLabels = new HashMap<>(cols);
 		for (int i = 1; i <= cols; i++) {
 			String rawLabel = resultSetMetaData.getColumnLabel(i);
@@ -3282,6 +3833,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			List<String> matchedProps = propertiesByLabel.get(labelNorm);
 
 			if (matchedProps == null || matchedProps.isEmpty()) {
+				if (unmappedColumns != null) unmappedColumns.add(rawLabel);
 				// No property claims this column - add a SKIP binding to keep behavior explicit
 				bindings.add(
 						new ColumnBinding(
@@ -3324,6 +3876,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 					throw new DatabaseException(format("Cannot resolve generic type %s for mapped property '%s' of %s. "
 							+ "Use a concrete subclass that binds its type parameters, an Object property, or a custom ResultSetMapper.",
 							ttype.getType().getTypeName(), prop, resultClass.getName()));
+				int[] mapperIndices = customColumnMapperIndicesFor(ttype);
+				if (builtInTargetType(ttype).getRawClass() == Optional.class || mapperIndices.length == 0)
+					rejectOptionalMappingTargets(ttype);
 
 				// Unboxed + boxed target, and primitive flag
 				final Class<?> rawTargetClassUnboxed = isRecord
@@ -3337,11 +3892,15 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				final int colIndexFinal = i;
 				final String labelFinal = labelNorm;
 
-				int[] mapperIndices = customColumnMapperIndicesFor(targetTypeFinal);
+				boolean typedDuckContainer = ctx.getDatabaseDialect() instanceof DuckDbDialect
+						&& (requiresRecursiveContainerConversion(targetTypeFinal) || targetTypeFinal.isArray());
+				final boolean deferredContainerType = typedDuckContainer && mapperIndices.length != 0;
+				final String containerTypeName = typedDuckContainer && !deferredContainerType
+						? optionalContainerTypeName(resultSetMetaData, i) : null;
 				// Callbacks may refer back to the mapper, so neither they nor the mapper belong in a cached plan.
 				Converter converter = (mapper, raw, rrs, cctx, ip, resources) -> mapper.convertColumn(
 						raw, targetTypeFinal, mapper.customColumnMappersAtIndices(mapperIndices), rrs, cctx, ip, resources,
-						colIndexFinal, labelFinal, jdbcType);
+						colIndexFinal, labelFinal, jdbcType, containerTypeName, deferredContainerType);
 
 
 				bindings.add(new ColumnBinding(i, recordArgIndex, setterMH, reader, converter,
@@ -3349,6 +3908,10 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			}
 		}
 
+		if (unmappedColumns != null && !unmappedColumns.isEmpty()
+				&& !(isRecord && mappedColumnCount == 0 && cols == 1 && isSingleStructColumn(resultSetMetaData)))
+			throw new DatabaseException(format("Unmapped source columns %s for %s; alias the columns, use a matching projection, "
+					+ "or disable failOnUnmappedColumns", unmappedColumns, resultClass.getName()));
 		RowPlan<T> plan = new RowPlan<>(isRecord, cols, hasFanOut, mappedColumnCount, bindings);
 		if (planCache != null) planCache.putIfAbsent(schemaSignature, plan);
 		return plan;

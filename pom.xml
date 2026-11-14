@@ -255,12 +255,34 @@
 					<breakBuildOnSourceIncompatibleModifications>true</breakBuildOnSourceIncompatibleModifications>
 				</configuration>
 				<executions>
+					<!-- Keep the deliberate 4.9.0 return-type break visible in an unfiltered report. -->
+					<execution>
+						<id>report-api-changes</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>cmp</goal>
+						</goals>
+						<configuration>
+							<breakBuildBasedOnSemanticVersioning>false</breakBuildBasedOnSemanticVersioning>
+							<breakBuildOnBinaryIncompatibleModifications>false</breakBuildOnBinaryIncompatibleModifications>
+							<breakBuildOnSourceIncompatibleModifications>false</breakBuildOnSourceIncompatibleModifications>
+						</configuration>
+					</execution>
 					<execution>
 						<id>check-api-compatibility</id>
 						<phase>verify</phase>
 						<goals>
 							<goal>cmp</goal>
 						</goals>
+						<configuration>
+							<parameter>
+								<excludes>
+									<!-- Approved 4.9.0 source/binary break: Object -> Optional<Object>.
+									     Remove when the compatibility baseline advances past 4.8.0. -->
+									<exclude>com.pyranid.ParameterRedactor#redactParameter(com.pyranid.StatementContext,java.lang.Integer,java.lang.Object)</exclude>
+								</excludes>
+							</parameter>
+						</configuration>
 					</execution>
 				</executions>
 			</plugin>
@@ -401,6 +423,12 @@
 					<groupId>org.slf4j</groupId>
 					<artifactId>slf4j-nop</artifactId>
 					<version>${slf4j.version}</version>
+					<scope>test</scope>
+				</dependency>
+				<dependency>
+					<groupId>com.zaxxer</groupId>
+					<artifactId>HikariCP</artifactId>
+					<version>7.0.2</version>
 					<scope>test</scope>
 				</dependency>
 			</dependencies>

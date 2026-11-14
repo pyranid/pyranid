@@ -20,6 +20,7 @@ import com.pyranid.JsonParameter.BindingPreference;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
+import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSetMetaData;
@@ -58,6 +59,20 @@ interface DatabaseDialect {
 	@NonNull
 	Boolean supportsSetObjectWithTargetSqlType();
 
+	/** Whether ambiguous instant-bearing parameters should use the configured zone's local timestamp. */
+	@NonNull
+	Boolean prefersTimestampWithoutTimeZone();
+
+	/**
+	 * Binds a normalized temporal parameter when the driver requires a specific representation.
+	 * Returns false without changing the statement when ordinary JDBC binding should be used.
+	 */
+	@NonNull
+	Boolean bindTemporalParameter(@NonNull PreparedStatement preparedStatement,
+															 @NonNull Integer parameterIndex,
+															 @NonNull Object parameter,
+															 @NonNull Integer sqlType) throws SQLException;
+
 	/**
 	 * Whether {@link java.time.OffsetTime} parameters must bind as ISO-8601 strings. Some drivers
 	 * (e.g. DuckDB) accept an {@code OffsetTime} at {@code setObject(...)} time but reject it at execute
@@ -87,6 +102,18 @@ interface DatabaseDialect {
 
 	@NonNull
 	Object normalizeUuid(@NonNull UUID uuid);
+
+	/** Whether UUID binding needs parameter metadata to distinguish character and binary storage. */
+	@NonNull
+	Boolean requiresUuidParameterSqlType();
+
+	/** Normalizes a UUID using a known target SQL type, or the dialect's fallback when unknown. */
+	@NonNull
+	Object normalizeUuid(@NonNull UUID uuid, @Nullable Integer sqlType);
+
+	/** Converts a decimal to an equivalent representation supported by the JDBC driver. */
+	@NonNull
+	BigDecimal normalizeBigDecimal(@NonNull BigDecimal value);
 
 	void bindJson(@NonNull PreparedStatement preparedStatement,
 								@NonNull Integer parameterIndex,
@@ -135,6 +162,7 @@ interface DatabaseDialect {
 																									@NonNull StatementContext<?> statementContext,
 																									@NonNull String @NonNull [] keyColumnNames) throws SQLException;
 
+	/** The configuration flag identifies an explicit per-query fetch size, including zero. */
 	void configureStreamingPreparedStatement(@NonNull PreparedStatement preparedStatement,
 																					 @NonNull DatabaseStreamState databaseStreamState,
 																					 @NonNull Boolean transactionPresent,

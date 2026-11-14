@@ -269,6 +269,7 @@ final class DefaultQuery implements Query {
 		Object statementId = this.id == null ? this.database.generateId() : this.id;
 		Statement statement = null;
 		String expandedSql = null;
+		List<String> commonParameterNames = null;
 
 		for (Map<@NonNull String, @Nullable Object> parameterGroup : parameterGroups) {
 			requireNonNull(parameterGroup);
@@ -293,10 +294,18 @@ final class DefaultQuery implements Query {
 			if (expandedSql == null) {
 				expandedSql = preparedQuery.statement.getSql();
 				statement = preparedQuery.statement;
+				commonParameterNames = new ArrayList<>(requireNonNull(statement.parameterNames()));
 			} else if (!expandedSql.equals(preparedQuery.statement.getSql())) {
 				throw new IllegalArgumentException(format(
 						"Inconsistent SQL after expanding parameters for batch execution; ensure collection sizes are consistent. SQL: %s",
 						this.originalSql));
+			}
+			List<String> groupNames = requireNonNull(preparedQuery.statement.parameterNames());
+			if (requireNonNull(commonParameterNames).size() != groupNames.size())
+				throw new IllegalArgumentException("Inconsistent expanded JDBC parameter count for batch execution");
+			for (int slot = 0; slot < groupNames.size(); ++slot) {
+				String commonName = commonParameterNames.get(slot);
+				if (commonName != null && !commonName.equals(groupNames.get(slot))) commonParameterNames.set(slot, null);
 			}
 
 			parametersAsList.add(Arrays.asList(preparedQuery.parameters));
@@ -304,6 +313,8 @@ final class DefaultQuery implements Query {
 
 		if (statement == null)
 			statement = Statement.of(statementId, buildPlaceholderSql());
+		else
+			statement = Statement.named(statement.getId(), statement.getSql(), requireNonNull(commonParameterNames));
 
 		return this.executor.executeBatch(statement, parametersAsList, effectivePreparedStatementCustomizer(), this.batchChunkSize, spiOverrides());
 	}
@@ -371,11 +382,12 @@ final class DefaultQuery implements Query {
 		validateBindingsForParsedSql(bindings, parsedSql);
 
 		if (parameterNames.isEmpty())
-			return new PreparedQuery(Statement.of(statementId, sqlFragments.get(0)), new Object[0]);
+			return new PreparedQuery(Statement.named(statementId, sqlFragments.get(0), List.of()), new Object[0]);
 
 		StringBuilder sql = new StringBuilder(this.originalSql.length() + parameterNames.size() * 2);
 		List<String> missingParameterNames = null;
 		List<Object> parameters = new ArrayList<>(parameterNames.size());
+		List<String> expandedParameterNames = new ArrayList<>(parameterNames.size());
 
 		for (int i = 0; i < parameterNames.size(); ++i) {
 			String parameterName = parameterNames.get(i);
@@ -420,6 +432,7 @@ final class DefaultQuery implements Query {
 					parameters.add(effectiveSecureParameter == null
 							? element
 							: Parameters.secure(element, SecureParameterSupport.maskOf(effectiveSecureParameter)));
+					expandedParameterNames.add(parameterName);
 				}
 			} else if (value instanceof Collection<?>) {
 				throw new IllegalArgumentException(format(
@@ -435,6 +448,7 @@ final class DefaultQuery implements Query {
 			} else {
 				sql.append('?');
 				parameters.add(secureParameter == null ? value : secureParameter);
+				expandedParameterNames.add(parameterName);
 			}
 		}
 
@@ -443,7 +457,7 @@ final class DefaultQuery implements Query {
 		if (missingParameterNames != null)
 			throw new IllegalArgumentException(format("Missing required named parameters %s for SQL: %s", missingParameterNames, this.originalSql));
 
-		return new PreparedQuery(Statement.of(statementId, sql.toString()), parameters.toArray());
+		return new PreparedQuery(Statement.named(statementId, sql.toString(), expandedParameterNames), parameters.toArray());
 	}
 
 	@NonNull
@@ -471,6 +485,11 @@ final class DefaultQuery implements Query {
 		if (!parsedSql.hasQuestionMarkOperators)
 			return parsedSql.sqlFragments;
 
+		// The lexer conservatively recognizes PostgreSQL operators. In other dialects those same
+		// characters are JDBC placeholders and would shift the named bindings if allowed through.
+		if (this.database.getDatabaseType() != DatabaseType.POSTGRESQL)
+			throw SqlCompiler.positionalParameterException(this.originalSql);
+
 		return this.database.getDatabaseDialect().sqlFragmentsForOperators(
 				parsedSql.hasQuestionMarkOperators,
 				parsedSql.sqlFragments,
@@ -495,11 +514,25 @@ final class DefaultQuery implements Query {
 			return this.parsedSqlVariants.duckDbParsedSql;
 		}
 
-		if (databaseType == DatabaseType.SQL_SERVER || databaseType == DatabaseType.SQLITE) {
+		if (databaseType == DatabaseType.SQLITE) {
+			if (this.parsedSqlVariants.nonNestingBracketIdentifierParseFailureMessage != null)
+				throw new IllegalArgumentException(this.parsedSqlVariants.nonNestingBracketIdentifierParseFailureMessage);
+
+			return this.parsedSqlVariants.nonNestingBracketIdentifierParsedSql;
+		}
+
+		if (databaseType == DatabaseType.SQL_SERVER) {
 			if (this.parsedSqlVariants.bracketIdentifierParseFailureMessage != null)
 				throw new IllegalArgumentException(this.parsedSqlVariants.bracketIdentifierParseFailureMessage);
 
 			return this.parsedSqlVariants.bracketIdentifierParsedSql;
+		}
+
+		if (databaseType == DatabaseType.ORACLE || databaseType == DatabaseType.GENERIC) {
+			if (this.parsedSqlVariants.nonNestingParseFailureMessage != null)
+				throw new IllegalArgumentException(this.parsedSqlVariants.nonNestingParseFailureMessage);
+
+			return this.parsedSqlVariants.nonNestingParsedSql;
 		}
 
 		if (this.parsedSqlVariants.standardParseFailureMessage != null)

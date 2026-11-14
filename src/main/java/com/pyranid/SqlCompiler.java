@@ -57,10 +57,14 @@ final class SqlCompiler {
 		ParsedSql mysqlParsedSql = null;
 		ParsedSql duckDbParsedSql = null;
 		ParsedSql bracketIdentifierParsedSql = null;
+		ParsedSql nonNestingParsedSql = null;
+		ParsedSql nonNestingBracketIdentifierParsedSql = null;
 		IllegalArgumentException standardParseFailure = null;
 		IllegalArgumentException mysqlParseFailure = null;
 		IllegalArgumentException duckDbParseFailure = null;
 		IllegalArgumentException bracketIdentifierParseFailure = null;
+		IllegalArgumentException nonNestingParseFailure = null;
+		IllegalArgumentException nonNestingBracketIdentifierParseFailure = null;
 
 		try {
 			standardParsedSql = parseNamedParameterSql(sql, SqlLexicalMode.STANDARD);
@@ -101,13 +105,34 @@ final class SqlCompiler {
 			bracketIdentifierParseFailure = standardParseFailure;
 		}
 
-		if (standardParsedSql == null && mysqlParsedSql == null && duckDbParsedSql == null && bracketIdentifierParsedSql == null)
+		if (requiresNonNestingLexicalVariant(sql)) {
+			try {
+				nonNestingParsedSql = parseNamedParameterSql(sql, SqlLexicalMode.NON_NESTING);
+			} catch (IllegalArgumentException e) {
+				nonNestingParseFailure = e;
+			}
+			try {
+				nonNestingBracketIdentifierParsedSql = parseNamedParameterSql(sql, SqlLexicalMode.NON_NESTING_BRACKET_IDENTIFIERS);
+			} catch (IllegalArgumentException e) {
+				nonNestingBracketIdentifierParseFailure = e;
+			}
+		} else {
+			nonNestingParsedSql = standardParsedSql;
+			nonNestingParseFailure = standardParseFailure;
+			nonNestingBracketIdentifierParsedSql = bracketIdentifierParsedSql;
+			nonNestingBracketIdentifierParseFailure = bracketIdentifierParseFailure;
+		}
+
+		if (standardParsedSql == null && mysqlParsedSql == null && duckDbParsedSql == null && bracketIdentifierParsedSql == null
+				&& nonNestingParsedSql == null && nonNestingBracketIdentifierParsedSql == null)
 			throw requireNonNull(standardParseFailure != null ? standardParseFailure
 					: mysqlParseFailure != null ? mysqlParseFailure : duckDbParseFailure);
 
 		ParsedSql fallbackParsedSql = standardParsedSql != null ? standardParsedSql
 				: mysqlParsedSql != null ? mysqlParsedSql
-				: duckDbParsedSql != null ? duckDbParsedSql : requireNonNull(bracketIdentifierParsedSql);
+				: duckDbParsedSql != null ? duckDbParsedSql
+				: bracketIdentifierParsedSql != null ? bracketIdentifierParsedSql
+				: nonNestingParsedSql != null ? nonNestingParsedSql : requireNonNull(nonNestingBracketIdentifierParsedSql);
 
 		ParsedSql effectiveStandardParsedSql = standardParsedSql == null
 				? fallbackParsedSql
@@ -121,31 +146,54 @@ final class SqlCompiler {
 		ParsedSql effectiveBracketIdentifierParsedSql = bracketIdentifierParsedSql == null
 				? fallbackParsedSql
 				: bracketIdentifierParsedSql;
+		ParsedSql effectiveNonNestingParsedSql = nonNestingParsedSql == null ? fallbackParsedSql : nonNestingParsedSql;
+		ParsedSql effectiveNonNestingBracketIdentifierParsedSql = nonNestingBracketIdentifierParsedSql == null
+				? fallbackParsedSql : nonNestingBracketIdentifierParsedSql;
 		Set<String> combinedParameterNames = new HashSet<>(effectiveStandardParsedSql.distinctParameterNames);
 		combinedParameterNames.addAll(effectiveMysqlParsedSql.distinctParameterNames);
 		combinedParameterNames.addAll(effectiveDuckDbParsedSql.distinctParameterNames);
 		combinedParameterNames.addAll(effectiveBracketIdentifierParsedSql.distinctParameterNames);
+		combinedParameterNames.addAll(effectiveNonNestingParsedSql.distinctParameterNames);
+		combinedParameterNames.addAll(effectiveNonNestingBracketIdentifierParsedSql.distinctParameterNames);
 		Set<String> distinctParameterNames = Set.copyOf(combinedParameterNames);
 
 		return new ParsedSqlVariants(effectiveStandardParsedSql,
 				effectiveMysqlParsedSql,
 				effectiveDuckDbParsedSql,
 				effectiveBracketIdentifierParsedSql,
+				effectiveNonNestingParsedSql,
+				effectiveNonNestingBracketIdentifierParsedSql,
 				standardParseFailure == null ? null : requireNonNull(standardParseFailure.getMessage()),
 				mysqlParseFailure == null ? null : requireNonNull(mysqlParseFailure.getMessage()),
 				duckDbParseFailure == null ? null : requireNonNull(duckDbParseFailure.getMessage()),
 				bracketIdentifierParseFailure == null ? null : requireNonNull(bracketIdentifierParseFailure.getMessage()),
+				nonNestingParseFailure == null ? null : requireNonNull(nonNestingParseFailure.getMessage()),
+				nonNestingBracketIdentifierParseFailure == null ? null : requireNonNull(nonNestingBracketIdentifierParseFailure.getMessage()),
 				distinctParameterNames);
 	}
 
 	private static boolean requiresMySqlLexicalVariant(@NonNull String sql) {
 		requireNonNull(sql);
-		return sql.indexOf('#') >= 0 || sql.indexOf("\\'") >= 0;
+		return sql.indexOf('#') >= 0 || sql.indexOf("\\'") >= 0 || sql.indexOf("\\\"") >= 0
+				|| requiresNonNestingLexicalVariant(sql);
 	}
 
 	private static boolean requiresDuckDbLexicalVariant(@NonNull String sql) {
 		requireNonNull(sql);
 		return sql.indexOf('[') >= 0;
+	}
+
+	/** A conservative hint: extra variants are needed only if a comment might contain another opener. */
+	private static boolean requiresNonNestingLexicalVariant(String sql) {
+		int opening = sql.indexOf("/*");
+		while (opening >= 0) {
+			int closing = sql.indexOf("*/", opening + 2);
+			int nested = sql.indexOf("/*", opening + 2);
+			if (nested >= 0 && (closing < 0 || nested < closing)) return true;
+			if (closing < 0) return false;
+			opening = sql.indexOf("/*", closing + 2);
+		}
+		return false;
 	}
 
 	static final class ParsedSqlVariants {
@@ -157,6 +205,10 @@ final class SqlCompiler {
 		final ParsedSql duckDbParsedSql;
 		@NonNull
 		final ParsedSql bracketIdentifierParsedSql;
+		@NonNull
+		final ParsedSql nonNestingParsedSql;
+		@NonNull
+		final ParsedSql nonNestingBracketIdentifierParsedSql;
 		@Nullable
 		final String standardParseFailureMessage;
 		@Nullable
@@ -165,6 +217,10 @@ final class SqlCompiler {
 		final String duckDbParseFailureMessage;
 		@Nullable
 		final String bracketIdentifierParseFailureMessage;
+		@Nullable
+		final String nonNestingParseFailureMessage;
+		@Nullable
+		final String nonNestingBracketIdentifierParseFailureMessage;
 		@NonNull
 		final Set<String> distinctParameterNames;
 
@@ -172,19 +228,27 @@ final class SqlCompiler {
 														@NonNull ParsedSql mysqlParsedSql,
 														@NonNull ParsedSql duckDbParsedSql,
 														@NonNull ParsedSql bracketIdentifierParsedSql,
+														@NonNull ParsedSql nonNestingParsedSql,
+														@NonNull ParsedSql nonNestingBracketIdentifierParsedSql,
 														@Nullable String standardParseFailureMessage,
 														@Nullable String mysqlParseFailureMessage,
 														@Nullable String duckDbParseFailureMessage,
 														@Nullable String bracketIdentifierParseFailureMessage,
+														@Nullable String nonNestingParseFailureMessage,
+														@Nullable String nonNestingBracketIdentifierParseFailureMessage,
 														@NonNull Set<String> distinctParameterNames) {
 			this.standardParsedSql = requireNonNull(standardParsedSql);
 			this.mysqlParsedSql = requireNonNull(mysqlParsedSql);
 			this.duckDbParsedSql = requireNonNull(duckDbParsedSql);
 			this.bracketIdentifierParsedSql = requireNonNull(bracketIdentifierParsedSql);
+			this.nonNestingParsedSql = requireNonNull(nonNestingParsedSql);
+			this.nonNestingBracketIdentifierParsedSql = requireNonNull(nonNestingBracketIdentifierParsedSql);
 			this.standardParseFailureMessage = standardParseFailureMessage;
 			this.mysqlParseFailureMessage = mysqlParseFailureMessage;
 			this.duckDbParseFailureMessage = duckDbParseFailureMessage;
 			this.bracketIdentifierParseFailureMessage = bracketIdentifierParseFailureMessage;
+			this.nonNestingParseFailureMessage = nonNestingParseFailureMessage;
+			this.nonNestingBracketIdentifierParseFailureMessage = nonNestingBracketIdentifierParseFailureMessage;
 			this.distinctParameterNames = Set.copyOf(requireNonNull(distinctParameterNames));
 		}
 	}
@@ -223,7 +287,9 @@ final class SqlCompiler {
 		STANDARD,
 		MYSQL,
 		DUCK_DB,
-		BRACKET_IDENTIFIERS
+		BRACKET_IDENTIFIERS,
+		NON_NESTING,
+		NON_NESTING_BRACKET_IDENTIFIERS
 	}
 
 	@NonNull
@@ -308,7 +374,9 @@ final class SqlCompiler {
 			}
 
 			if (blockCommentDepth > 0) {
-				if (c == '/' && i + 1 < sql.length() && sql.charAt(i + 1) == '*') {
+				if (c == '/' && i + 1 < sql.length() && sql.charAt(i + 1) == '*'
+						&& lexicalMode != SqlLexicalMode.MYSQL && lexicalMode != SqlLexicalMode.NON_NESTING
+						&& lexicalMode != SqlLexicalMode.NON_NESTING_BRACKET_IDENTIFIERS) {
 					sqlFragment.append("/*");
 					i += 2;
 					++blockCommentDepth;
@@ -355,6 +423,12 @@ final class SqlCompiler {
 
 			if (inDoubleQuote) {
 				sqlFragment.append(c);
+
+				if (lexicalMode == SqlLexicalMode.MYSQL && c == '\\' && i + 1 < sql.length()) {
+					sqlFragment.append(sql.charAt(i + 1));
+					i += 2;
+					continue;
+				}
 
 				if (c == '"') {
 					// Escaped quote: ""
@@ -448,7 +522,8 @@ final class SqlCompiler {
 				continue;
 			}
 
-			if ((c == 'Q' || c == 'q') && !isIdentifierContinuation(sql, i)
+			if ((c == 'Q' || c == 'q') && (!isIdentifierContinuation(sql, i)
+					|| i > 0 && (sql.charAt(i - 1) == 'N' || sql.charAt(i - 1) == 'n') && !isIdentifierContinuation(sql, i - 1))
 					&& i + 2 < sql.length() && sql.charAt(i + 1) == '\''
 					&& !Character.isWhitespace(sql.charAt(i + 2)) && sql.charAt(i + 2) != '\'') {
 				char openingDelimiter = sql.charAt(i + 2);
@@ -487,7 +562,8 @@ final class SqlCompiler {
 			// SQL Server and SQLite always treat brackets as quoted identifiers, including after
 			// expressions (implicit aliases) and WHERE. Other modes retain their subscript behavior.
 			if (lexicalMode != SqlLexicalMode.DUCK_DB && c == '['
-					&& (lexicalMode == SqlLexicalMode.BRACKET_IDENTIFIERS || !isBracketSubscriptStart(sql, i))) {
+					&& (lexicalMode == SqlLexicalMode.BRACKET_IDENTIFIERS || lexicalMode == SqlLexicalMode.NON_NESTING_BRACKET_IDENTIFIERS
+					|| !isBracketSubscriptStart(sql, i))) {
 				inBracketQuote = true;
 				bracketQuoteStartIndex = i;
 				sqlFragment.append(c);
@@ -508,15 +584,16 @@ final class SqlCompiler {
 			}
 
 			if (c == '?') {
-				if (isAllowedQuestionMarkOperator(sql, i, previousMeaningfulIndex)) {
+				boolean alreadyEscapedOperator = i + 1 < sql.length() && sql.charAt(i + 1) == '?';
+				if (isAllowedQuestionMarkOperator(sql, alreadyEscapedOperator ? i + 1 : i, previousMeaningfulIndex)) {
 					currentQuestionMarkOperatorIndexes.add(sqlFragment.length());
 					sqlFragment.append(c);
-					++i;
+					// pgjdbc SQL may already escape an operator as ??; normalize before dialect rendering.
+					i += alreadyEscapedOperator ? 2 : 1;
 					continue;
 				}
 
-				throw new IllegalArgumentException(format("Positional parameters ('?') are not supported. Use named parameters (e.g. ':id') and %s#bind. SQL: %s",
-						Query.class.getSimpleName(), sql));
+				throw positionalParameterException(sql);
 			}
 
 			if (c == ':' && i + 1 < sql.length() && sql.charAt(i + 1) == ':') {
@@ -561,6 +638,12 @@ final class SqlCompiler {
 
 		return new ParsedSql(List.copyOf(sqlFragments), List.copyOf(questionMarkOperatorFragmentIndexes),
 				List.copyOf(parameterNames), Set.copyOf(distinctParameterNames));
+	}
+
+	static IllegalArgumentException positionalParameterException(@NonNull String sql) {
+		requireNonNull(sql);
+		return new IllegalArgumentException(format("Positional parameters ('?') are not supported. Use named parameters (e.g. ':id') and %s#bind. SQL: %s",
+				Query.class.getSimpleName(), sql));
 	}
 
 	private static char oracleQuoteClosingDelimiter(char openingDelimiter) {
@@ -763,7 +846,8 @@ final class SqlCompiler {
 		}
 
 		String previousKeyword = keywordBefore(sql, previousIndex);
-		if (previousKeyword != null && QUESTION_MARK_PREFIX_KEYWORDS.contains(previousKeyword))
+		if (previousKeyword != null && QUESTION_MARK_PREFIX_KEYWORDS.contains(previousKeyword)
+				&& !isNamedParameterKeywordBefore(sql, previousIndex, previousKeyword))
 			return false;
 
 		String nextKeyword = keywordAfter(sql, nextIndex);

@@ -21,12 +21,19 @@ import org.jspecify.annotations.Nullable;
 
 import java.lang.reflect.InvocationTargetException;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 import static java.util.Objects.requireNonNull;
@@ -38,8 +45,15 @@ final class SqliteDialect extends UuidStringDialect {
 	@NonNull
 	static final SqliteDialect INSTANCE = new SqliteDialect();
 	@NonNull
+	private static final DateTimeFormatter INSTANT_TEXT_FORMAT =
+			DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSSSSSSSS'Z'", Locale.ROOT).withZone(ZoneOffset.UTC);
+	@NonNull
+	private static final DateTimeFormatter LOCAL_TIMESTAMP_TEXT_FORMAT =
+			DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSSSSSSSS", Locale.ROOT);
+	@NonNull
 	private static final Set<String> UNIQUE_CONSTRAINT_RESULT_CODES = Set.of(
 			"SQLITE_CONSTRAINT_PRIMARYKEY",
+			"SQLITE_CONSTRAINT_ROWID",
 			"SQLITE_CONSTRAINT_UNIQUE");
 	@NonNull
 	private static final Set<String> FOREIGN_KEY_RESULT_CODES = Set.of("SQLITE_CONSTRAINT_FOREIGNKEY");
@@ -63,6 +77,30 @@ final class SqliteDialect extends UuidStringDialect {
 			"SQLITE_LOCKED_VTAB");
 
 	private SqliteDialect() {}
+
+	@NonNull
+	@Override
+	public Boolean bindTemporalParameter(@NonNull PreparedStatement preparedStatement,
+																			@NonNull Integer parameterIndex,
+																			@NonNull Object parameter,
+																			@NonNull Integer sqlType) throws SQLException {
+		requireNonNull(preparedStatement);
+		requireNonNull(parameterIndex);
+		requireNonNull(parameter);
+		requireNonNull(sqlType);
+		// The binder has already resolved the WITHOUT TIME ZONE strategy into a LocalDateTime.
+		// Both local and instant-like values need consistent fractional widths so SQLite's textual
+		// comparisons agree with their order, including whole minutes, whole seconds and fractions.
+		if (parameter instanceof LocalDateTime local) {
+			preparedStatement.setString(parameterIndex, LOCAL_TIMESTAMP_TEXT_FORMAT.format(local));
+			return true;
+		}
+		Instant instant = parameter instanceof OffsetDateTime offset ? offset.toInstant()
+				: parameter instanceof Instant value ? value : null;
+		if (instant == null) return false;
+		preparedStatement.setString(parameterIndex, INSTANT_TEXT_FORMAT.format(instant));
+		return true;
+	}
 
 	/** Reads the existing SQLite connection's timestamp format without acquiring or closing a JDBC resource. */
 	@Nullable

@@ -47,6 +47,8 @@ public final class StatementContext<T> {
 	private final Statement statement;
 	@NonNull
 	private final List<@Nullable Object> parameters;
+	@NonNull
+	private final List<@Nullable String> parameterNames;
 	@Nullable
 	private final Class<T> resultSetRowType;
 	@NonNull
@@ -81,6 +83,26 @@ public final class StatementContext<T> {
 		this.parameters = builder.parameters == null
 				? List.of()
 				: Collections.unmodifiableList(new ArrayList<>(builder.parameters));
+		List<String> names = builder.parameterNames == null ? builder.statement.parameterNames() : builder.parameterNames;
+		int parameterCount = this.parameters.size();
+		if (builder.batchParameterGroups)
+			parameterCount = this.parameters.isEmpty() || !(this.parameters.get(0) instanceof List<?> group) ? 0 : group.size();
+		if (names != null) {
+			boolean matches = names.size() == parameterCount;
+			if (builder.batchParameterGroups)
+				for (Object parameterGroup : this.parameters)
+					if (!(parameterGroup instanceof List<?> group) || group.size() != names.size())
+						matches = false;
+			if (!matches) {
+				if (builder.parameterNames != null)
+					throw new IllegalArgumentException("Parameter names must match the expanded JDBC parameter count of every parameter group");
+				// A caller may reuse a captured Statement to build a different/manual diagnostic context.
+				// Optional inherited metadata must not make that formerly legal operation fail.
+				names = null;
+			}
+		}
+		this.parameterNames = names == null ? Collections.nCopies(parameterCount, null)
+				: Collections.unmodifiableList(new ArrayList<>(names));
 		this.resultSetRowType = builder.resultSetRowType;
 		this.databaseType = builder.databaseType;
 		this.databaseDialect = builder.databaseDialect;
@@ -104,11 +126,11 @@ public final class StatementContext<T> {
 
 	@Override
 	public int hashCode() {
-		return Objects.hash(getStatement(), getParameters(), getResultSetRowType(), getDatabaseType(), getTimeZone(), getAmbiguousTimestampBindingStrategy());
+		return Objects.hash(getStatement(), getParameters(), getParameterNames(), getResultSetRowType(), getDatabaseType(), getTimeZone(), getAmbiguousTimestampBindingStrategy());
 	}
 
 	@Override
-	public boolean equals(Object object) {
+	public boolean equals(@Nullable Object object) {
 		if (this == object)
 			return true;
 
@@ -119,6 +141,7 @@ public final class StatementContext<T> {
 
 		return Objects.equals(statementContext.getStatement(), getStatement())
 				&& Objects.equals(statementContext.getParameters(), getParameters())
+				&& Objects.equals(statementContext.getParameterNames(), getParameterNames())
 				&& Objects.equals(statementContext.getResultSetRowType(), getResultSetRowType())
 				&& Objects.equals(statementContext.getDatabaseType(), getDatabaseType())
 				&& Objects.equals(statementContext.getTimeZone(), getTimeZone())
@@ -126,6 +149,7 @@ public final class StatementContext<T> {
 	}
 
 	@Override
+	@NonNull
 	public String toString() {
 		List<String> components = new ArrayList<>(3);
 
@@ -157,10 +181,29 @@ public final class StatementContext<T> {
 	}
 
 	/**
+	 * Gets original query binding names in expanded JDBC slot order. Repeated bindings and IN-list
+	 * elements repeat their name; unknown names are {@code null}. The returned list is immutable.
+	 * <p>
+	 * For non-batch operations this aligns with {@link #getParameters()}. Batch parameters are grouped
+	 * there, while this list describes the slots shared by each group. A batch slot has a {@code null}
+	 * name if expansions assigned different original names to that slot across groups. Batch summaries
+	 * continue to omit individual values and do not invoke the redactor.
+	 *
+	 * @return immutable expanded-slot names, with {@code null} for unknown or conflicting names
+	 * @since 4.9.0
+	 */
+	@NonNull
+	public List<@Nullable String> getParameterNames() {
+		return this.parameterNames;
+	}
+
+	/**
 	 * Gets this statement's parameters rendered for diagnostics.
 	 * <p>
 	 * {@link SecureParameter} values render as their masks. Other non-batch values are rendered through the configured
-	 * {@link ParameterRedactor}. Batch executions render a bounded summary instead of individual group values.
+	 * {@link ParameterRedactor}; an empty Optional renders as {@code null} without removing its parameter slot.
+	 * A null Optional violates the redactor contract and fails immediately. Batch executions render a bounded summary
+	 * instead of individual group values.
 	 *
 	 * @return parameters rendered for diagnostics
 	 * @since 4.4.0
@@ -179,7 +222,8 @@ public final class StatementContext<T> {
 			if (secureParameter != null)
 				redactedParameters.add(SecureParameterSupport.maskOf(secureParameter));
 			else
-				redactedParameters.add(this.parameterRedactor.redactParameter(this, i, parameter));
+				redactedParameters.add(requireNonNull(this.parameterRedactor.redactParameter(this, i, this.parameterNames.get(i), parameter),
+						"ParameterRedactor must return a non-null Optional").orElse(null));
 		}
 
 		return Collections.unmodifiableList(redactedParameters);
@@ -295,6 +339,8 @@ public final class StatementContext<T> {
 		@Nullable
 		private List<@Nullable Object> parameters;
 		@Nullable
+		private List<@Nullable String> parameterNames;
+		@Nullable
 		private Class<T> resultSetRowType;
 		private boolean batchParameterGroups;
 		@Nullable
@@ -320,13 +366,29 @@ public final class StatementContext<T> {
 		}
 
 		@NonNull
-		public Builder parameters(Object @Nullable ... parameters) {
+		public Builder parameters(@Nullable Object @Nullable ... parameters) {
 			this.parameters = parameters == null ? null : Arrays.asList(parameters);
 			return this;
 		}
 
+		/**
+		 * Supplies expanded JDBC slot names for a manually built context. The count must match the
+		 * parameters (each group's width for a batch), and individual unknown names may be {@code null}.
+		 * Passing {@code null} inherits compatible query metadata when present, otherwise all names are unknown.
+		 * The list is copied when {@link #build()} is called.
+		 *
+		 * @param parameterNames expanded-slot names, or {@code null} to inherit available metadata
+		 * @return this builder
+		 * @since 4.9.0
+		 */
 		@NonNull
-		public Builder resultSetRowType(Class<T> resultSetRowType) {
+		public Builder parameterNames(@Nullable List<@Nullable String> parameterNames) {
+			this.parameterNames = parameterNames;
+			return this;
+		}
+
+		@NonNull
+		public Builder resultSetRowType(@Nullable Class<T> resultSetRowType) {
 			this.resultSetRowType = resultSetRowType;
 			return this;
 		}

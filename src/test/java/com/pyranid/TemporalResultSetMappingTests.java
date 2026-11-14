@@ -118,7 +118,7 @@ public class TemporalResultSetMappingTests {
 		OffsetDateTime zoned = OffsetDateTime.parse("2020-01-02T03:04:05.123456789+05:45");
 		for (boolean planCachingEnabled : new boolean[]{true, false}) {
 			Database database = database("jdbc_timestamp", planCachingEnabled);
-			assertTimestampTargets(database, TIMESTAMP_SQL, local, Timestamp.valueOf(local));
+			assertTimestampTargets(database, TIMESTAMP_SQL, local, Timestamp.from(local.atZone(DATABASE_ZONE).toInstant()));
 			assertTimestampTargets(database, ZONED_TIMESTAMP_SQL, zoned, Timestamp.from(zoned.toInstant()));
 			Assertions.assertEquals(Date.from(local.atZone(DATABASE_ZONE).toInstant()),
 					database.query(TIMESTAMP_SQL).bind("value", local).fetchObject(DateRow.class).orElseThrow().value());

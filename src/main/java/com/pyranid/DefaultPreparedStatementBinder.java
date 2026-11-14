@@ -21,6 +21,7 @@ import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
 import javax.annotation.concurrent.ThreadSafe;
+import java.math.BigDecimal;
 import java.sql.Array;
 import java.sql.Connection;
 import java.sql.ParameterMetaData;
@@ -42,6 +43,7 @@ import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Currency;
 import java.util.Date;
@@ -71,16 +73,17 @@ import static java.util.Objects.requireNonNull;
 @ThreadSafe
 class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 	private static final int MAX_SQL_CONTAINER_NESTING_DEPTH = 64;
+	private static final int[] NO_CUSTOM_PARAMETER_BINDERS = new int[0];
 	@NonNull
 	private final List<CustomParameterBinder> customParameterBinders;
 
-	// Cache: which binders apply for a given target type?
+	// Cache indices rather than callbacks, which can refer back to this binder or its Database.
 	@NonNull
-	private final ClassValue<List<CustomParameterBinder>> bindersByRawClassCache =
+	private final ClassValue<int[]> bindersByRawClassCache =
 			new ClassValue<>() {
 				@Override
-				protected List<CustomParameterBinder> computeValue(Class<?> type) {
-					return computeCustomBindersFor(TargetType.of(type));
+				protected int[] computeValue(Class<?> type) {
+					return computeCustomParameterBinderIndicesFor(TargetType.of(type));
 				}
 			};
 
@@ -169,9 +172,23 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 							+ "or use a concrete parameter type supported by the binder/driver (e.g. Parameters.sqlArrayOf(...) or Parameters.json(...)).",
 					typedParameter.getExplicitType(), typedParameter.getExplicitType()));
 
-		Object normalizedParameter = normalizeParameter(statementContext, unwrappedParameter);
+		Object normalizedParameter;
+		if (unwrappedParameter instanceof UUID uuid && statementContext.getDatabaseDialect().requiresUuidParameterSqlType()) {
+			Integer sqlType = determineParameterSqlType(parameterSqlTypeResolver, parameterIndex)
+					.map(ParameterSqlType::getSqlType).orElse(null);
+			normalizedParameter = statementContext.getDatabaseDialect().normalizeUuid(uuid, sqlType);
+		} else {
+			normalizedParameter = normalizeParameter(statementContext, unwrappedParameter);
+		}
 
 		if (normalizedParameter instanceof LocalDate localDate) {
+			if (determineParameterSqlType(parameterSqlTypeResolver, parameterIndex)
+					.map(ParameterSqlType::isTimestampWithTimeZone).orElse(false)) {
+				OffsetDateTime zoned = localDate.atStartOfDay(statementContext.getTimeZone()).toOffsetDateTime();
+				if (!trySetTemporalObject(statementContext, preparedStatement, parameterIndex, zoned, Types.TIMESTAMP_WITH_TIMEZONE))
+					preparedStatement.setTimestamp(parameterIndex, java.sql.Timestamp.from(zoned.toInstant()));
+				return;
+			}
 			if (!trySetTemporalObject(statementContext, preparedStatement, parameterIndex, localDate, Types.DATE))
 				preparedStatement.setDate(parameterIndex, java.sql.Date.valueOf(localDate)); // fallback
 
@@ -190,6 +207,13 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		if (normalizedParameter instanceof LocalDateTime localDateTime) {
+			if (determineParameterSqlType(parameterSqlTypeResolver, parameterIndex)
+					.map(ParameterSqlType::isTimestampWithTimeZone).orElse(false)) {
+				OffsetDateTime zoned = localDateTime.atZone(statementContext.getTimeZone()).toOffsetDateTime();
+				if (!trySetTemporalObject(statementContext, preparedStatement, parameterIndex, zoned, Types.TIMESTAMP_WITH_TIMEZONE))
+					preparedStatement.setTimestamp(parameterIndex, java.sql.Timestamp.from(zoned.toInstant()));
+				return;
+			}
 			if (!trySetTemporalObject(statementContext, preparedStatement, parameterIndex, localDateTime, Types.TIMESTAMP))
 				preparedStatement.setTimestamp(parameterIndex, java.sql.Timestamp.valueOf(localDateTime)); // fallback
 
@@ -359,8 +383,9 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 																											 @NonNull Optional<ParameterSqlType> sqlTypeOptional) {
 		requireNonNull(statementContext);
 		requireNonNull(sqlTypeOptional);
-		return statementContext.getAmbiguousTimestampBindingStrategy() == AmbiguousTimestampBindingStrategy.TIMESTAMP_WITHOUT_TIME_ZONE
-				&& (sqlTypeOptional.isEmpty() || sqlTypeOptional.get().isUnknown());
+		return !sqlTypeOptional.map(ParameterSqlType::isTimestampWithTimeZone).orElse(false)
+				&& (statementContext.getDatabaseDialect().prefersTimestampWithoutTimeZone()
+				|| statementContext.getAmbiguousTimestampBindingStrategy() == AmbiguousTimestampBindingStrategy.TIMESTAMP_WITHOUT_TIME_ZONE);
 	}
 
 	@NonNull
@@ -640,6 +665,10 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		requireNonNull(parameterIndex);
 		requireNonNull(sqlType);
 
+		if (parameter != null && statementContext.getDatabaseDialect()
+				.bindTemporalParameter(preparedStatement, parameterIndex, parameter, sqlType))
+			return true;
+
 		if (!statementContext.getDatabaseDialect().supportsSetObjectWithTargetSqlType())
 			return trySetObject(preparedStatement, parameterIndex, parameter);
 
@@ -887,9 +916,6 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			return typeName.toUpperCase(Locale.ROOT).contains("TIMESTAMP") && !isTimestampWithTimeZone();
 		}
 
-		private boolean isUnknown() {
-			return getSqlType() == Types.OTHER && this.typeName == null;
-		}
 	}
 
 	/** Compatibility fallbacks must not hide a driver rollback, lost connection, or cancellation. */
@@ -1024,23 +1050,24 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		if (getCustomParameterBinders().isEmpty())
 			return List.of();
 
-		if (targetType.getTypeArguments().isEmpty())
-			return this.bindersByRawClassCache.get(targetType.getRawClass());
-
-		// Avoid caching parameterized types to prevent holding user classes under system raw types.
-		return computeCustomBindersFor(targetType);
+		// Non-Class declarations can carry generic components, bounds or owner arguments even
+		// when getTypeArguments() is empty; they must not share erased applicability entries.
+		int[] matches = targetType.getType() instanceof Class<?>
+				? this.bindersByRawClassCache.get(targetType.getRawClass())
+				: computeCustomParameterBinderIndicesFor(targetType);
+		if (matches.length == 0) return List.of();
+		List<CustomParameterBinder> candidates = new ArrayList<>(matches.length);
+		for (int index : matches) candidates.add(getCustomParameterBinders().get(index));
+		return List.copyOf(candidates);
 	}
 
-	@NonNull
-	private List<CustomParameterBinder> computeCustomBindersFor(@NonNull TargetType targetType) {
-		requireNonNull(targetType);
-
-		if (getCustomParameterBinders().isEmpty())
-			return List.of();
-
-		return getCustomParameterBinders().stream()
-				.filter(b -> b.appliesTo(targetType))
-				.toList();
+	private int[] computeCustomParameterBinderIndicesFor(TargetType targetType) {
+		List<CustomParameterBinder> binders = getCustomParameterBinders();
+		int[] matches = new int[binders.size()];
+		int count = 0;
+		for (int index = 0; index < binders.size(); index++)
+			if (binders.get(index).appliesTo(targetType)) matches[count++] = index;
+		return count == 0 ? NO_CUSTOM_PARAMETER_BINDERS : Arrays.copyOf(matches, count);
 	}
 
 	/**
@@ -1058,13 +1085,18 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		requireNonNull(statementContext);
 		requireNonNull(parameter);
 
+		if (parameter instanceof Character character)
+			return character.toString();
+		if (parameter instanceof BigDecimal decimal)
+			return statementContext.getDatabaseDialect().normalizeBigDecimal(decimal);
+
 		// Coerce to java.time whenever possible
 		if (parameter instanceof java.sql.Timestamp timestamp)
 			return timestamp.toInstant();
 		if (parameter instanceof java.sql.Date date)
 			return date.toLocalDate();
 		if (parameter instanceof java.sql.Time time)
-			return time.toLocalTime();
+			return time.toLocalTime().withNano((int) Math.floorMod(time.getTime(), 1000L) * 1_000_000);
 		if (parameter instanceof Date date)
 			return Instant.ofEpochMilli(date.getTime());
 		if (parameter instanceof ZonedDateTime zonedDateTime)

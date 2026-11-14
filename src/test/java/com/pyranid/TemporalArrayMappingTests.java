@@ -78,7 +78,7 @@ class TemporalArrayMappingTests {
 						assertEquals(Set.of(expected), database.query(array).fetchObject(InstantSet.class).orElseThrow().value());
 						assertArrayEquals(new Instant[]{expected}, database.query(array).fetchObject(Instant[].class).orElseThrow());
 						assertEquals(List.of(java.sql.Date.valueOf(date)), database.query(array).fetchObject(SqlDates.class).orElseThrow().value());
-						assertEquals(List.of(Timestamp.valueOf(local)), database.query(array).fetchObject(SqlTimestamps.class).orElseThrow().value());
+						assertEquals(List.of(Timestamp.from(expected)), database.query(array).fetchObject(SqlTimestamps.class).orElseThrow().value());
 						assertEquals(List.of(local), database.query(array).fetchObject(LocalDateTimes.class).orElseThrow().value());
 						assertEquals(List.of(Date.from(expected)), database.query(array).fetchObject(Dates.class).orElseThrow().value());
 					}

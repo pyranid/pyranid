@@ -66,7 +66,7 @@ public class SecureParameterTests {
 		Database db = Database.with(createInMemoryDataSource("secure_context_masks"), DatabaseType.GENERIC)
 				.parameterRedactor((statementContext, parameterIndex, parameter) -> {
 					redactorCalls.incrementAndGet();
-					return format("<nonsecure:%s>", parameterIndex);
+					return Optional.of(format("<nonsecure:%s>", parameterIndex));
 				})
 				.build();
 		StatementContext<?> statementContext = StatementContext.with(Statement.of("secure-context", "SELECT * FROM t WHERE token = ? AND status = ?"), db)
@@ -117,7 +117,7 @@ public class SecureParameterTests {
 		Database db = Database.with(createInMemoryDataSource("secure_optional_display"), DatabaseType.GENERIC)
 				.parameterRedactor((statementContext, parameterIndex, parameter) -> {
 					redactorCalls.incrementAndGet();
-					return "<nonsecure>";
+					return Optional.of("<nonsecure>");
 				})
 				.build();
 		SecureParameter secureParameter = Parameters.secure("raw-token", "<token>");
@@ -205,7 +205,7 @@ public class SecureParameterTests {
 					redactorCalls.incrementAndGet();
 					Assertions.assertEquals(0, parameterIndex);
 					Assertions.assertTrue(parameter instanceof List<?>);
-					return "<list>";
+					return Optional.of("<list>");
 				})
 				.build();
 		StatementContext<?> statementContext = StatementContext.with(Statement.of("top-level-list", "SELECT ?"), db)
@@ -223,7 +223,7 @@ public class SecureParameterTests {
 		Database db = Database.with(createInMemoryDataSource("secure_batch_summary"), DatabaseType.GENERIC)
 				.parameterRedactor((statementContext, parameterIndex, parameter) -> {
 					redactorCalls.incrementAndGet();
-					return "<nonsecure>";
+					return Optional.of("<nonsecure>");
 				})
 				.statementLogger(statementLogReference::set)
 				.build();

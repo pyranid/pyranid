@@ -92,14 +92,10 @@ public final class Transaction {
 	private volatile CompletionPhase completionPhase;
 	@NonNull
 	private final AtomicBoolean commitSerializationFailure;
-	// Written only by the ownership guard that runs ahead of the JDBC commit, so completion can prove the conflict it is
-	// handling preceded any commit attempt. Holds the instance rather than a flag so a conflict raised anywhere else can
-	// never be mistaken for this one.
-	@Nullable
-	private volatile SavepointScopeConflictException savepointScopeConflictBeforeCommit;
-	@Nullable
-	private volatile Throwable validationFailureBeforeCommit;
+	// Set at the actual JDBC dispatch and acknowledgment boundaries, independently of completion diagnostics.
+	private volatile boolean physicalCommitAttempted;
 	private volatile boolean physicalCommitSucceeded;
+	private volatile boolean physicalRollbackSucceeded;
 	// Guarded by connectionLock. These describe the existing physical connection, never ambient work.
 	@Nullable
 	private Throwable firstSuspectFailure;
@@ -144,7 +140,6 @@ public final class Transaction {
 		this.lifecycleLock = new ReentrantLock();
 		this.completionPhase = CompletionPhase.ACTIVE;
 		this.commitSerializationFailure = new AtomicBoolean(false);
-		this.savepointScopeConflictBeforeCommit = null;
 		this.physicalTransactionBeginState = PhysicalTransactionBeginState.NOT_STARTED;
 		this.physicalTransactionBeginFailure = null;
 		this.physicalRollbackPermitted = false;
@@ -504,23 +499,18 @@ public final class Transaction {
 			}
 
 			// The public connection accessor rejects COMPLETING. Internal completion owns the existing handle, so it applies
-			// the savepoint-scope guard itself. The guard runs outside the physical commit attempt below because a conflict
-			// raised here proves nothing was committed, which is what lets completion report a rollback instead of an
-			// indeterminate outcome, and because commit-failure metrics must count only a failed commit attempt.
-			assertSavepointScopeAccessBeforeCommit();
-			try {
-				TransactionCompletionValidation.validate(requireNonNull(this.connection), this.databaseType,
-						this.firstSuspectFailure, this.completionValidationRequired);
-			} catch (RuntimeException | Error failure) {
-				this.validationFailureBeforeCommit = failure;
-				throw failure;
-			}
+			// the savepoint-scope guard itself. Guards, validation and pre-dispatch diagnostics cannot make the commit
+			// outcome uncertain because none has issued the physical commit yet.
+			assertSavepointScopeAccess();
+			TransactionCompletionValidation.validate(requireNonNull(this.connection), this.databaseType,
+					this.firstSuspectFailure, this.completionValidationRequired);
 
 			LOGGER.finer("Committing transaction...");
 
 			long startTime = nanoTime();
 
 			try {
+				this.physicalCommitAttempted = true;
 				requireNonNull(this.connection).commit();
 				this.physicalCommitSucceeded = true;
 			} catch (SQLException e) {
@@ -549,10 +539,12 @@ public final class Transaction {
 		return this.physicalCommitSucceeded;
 	}
 
-	boolean didSkipCommitBeforePhysicalAttempt(@NonNull Throwable commitFailure) {
-		requireNonNull(commitFailure);
-		return this.validationFailureBeforeCommit == commitFailure
-				|| didSkipCommitForSavepointScopeConflict(commitFailure);
+	boolean didAttemptPhysicalCommit() {
+		return this.physicalCommitAttempted;
+	}
+
+	boolean didPhysicalRollbackSucceed() {
+		return this.physicalRollbackSucceeded;
 	}
 
 	void recordSuspectFailure(@NonNull Throwable failure) {
@@ -580,14 +572,6 @@ public final class Transaction {
 			throw new IllegalStateException("Transaction connection lock must be held while recording completion evidence");
 	}
 
-	boolean didSkipCommitForSavepointScopeConflict(@NonNull Throwable commitFailure) {
-		requireNonNull(commitFailure);
-
-		// Identity, never type or message: a conflict raised anywhere a JDBC commit could already have been issued must stay
-		// indeterminate, and a hostile throwable's accessors are never consulted.
-		return this.savepointScopeConflictBeforeCommit == commitFailure;
-	}
-
 	void rollback() {
 		getConnectionLock().lock();
 
@@ -612,8 +596,7 @@ public final class Transaction {
 
 			try {
 				requireNonNull(this.connection).rollback();
-				getMetricsCollectorDispatcher().didRollbackPhysicalTransaction(this, getDatabaseType(), Duration.ofNanos(nanoTime() - startTime));
-				LOGGER.finer("Transaction rolled back.");
+				this.physicalRollbackSucceeded = true;
 			} catch (SQLException e) {
 				DatabaseException wrapped = databaseException("Unable to roll back transaction", e);
 				getMetricsCollectorDispatcher().didFailToRollbackPhysicalTransaction(this, getDatabaseType(), Duration.ofNanos(nanoTime() - startTime), wrapped);
@@ -622,6 +605,8 @@ public final class Transaction {
 				getMetricsCollectorDispatcher().didFailToRollbackPhysicalTransaction(this, getDatabaseType(), Duration.ofNanos(nanoTime() - startTime), e);
 				throw e;
 			}
+			getMetricsCollectorDispatcher().didRollbackPhysicalTransaction(this, getDatabaseType(), Duration.ofNanos(nanoTime() - startTime));
+			LOGGER.finer("Transaction rolled back.");
 		} finally {
 			getConnectionLock().unlock();
 		}
@@ -676,110 +661,102 @@ public final class Transaction {
 	private Connection beginPhysicalTransaction() {
 		long startTime = nanoTime();
 		getMetricsCollectorDispatcher().willAcquireTransactionConnection(this, getDatabaseType());
-
+		MetricsCollector.PhysicalTransactionBeginFailurePhase phase = MetricsCollector.PhysicalTransactionBeginFailurePhase.ACQUIRE_CONNECTION;
 		try {
-			this.connection = getDataSource().getConnection();
-		} catch (SQLException e) {
-			DatabaseException wrapped = databaseException("Unable to acquire database connection", e);
-			Duration acquisitionDuration = Duration.ofNanos(nanoTime() - startTime);
-			getMetricsCollectorDispatcher().didFailToAcquireTransactionConnection(this, getDatabaseType(), acquisitionDuration, wrapped);
-			getMetricsCollectorDispatcher().didFailToBeginPhysicalTransaction(this, getTransactionIsolation(),
-					MetricsCollector.PhysicalTransactionBeginFailurePhase.ACQUIRE_CONNECTION, getDatabaseType(), wrapped);
-			throw wrapped;
-		} catch (RuntimeException e) {
-			Duration acquisitionDuration = Duration.ofNanos(nanoTime() - startTime);
-			getMetricsCollectorDispatcher().didFailToAcquireTransactionConnection(this, getDatabaseType(), acquisitionDuration, e);
-			getMetricsCollectorDispatcher().didFailToBeginPhysicalTransaction(this, getTransactionIsolation(),
-					MetricsCollector.PhysicalTransactionBeginFailurePhase.ACQUIRE_CONNECTION, getDatabaseType(), e);
-			throw e;
-		}
 
-		this.connectionAcquiredAtNanos = nanoTime();
-		getMetricsCollectorDispatcher().didAcquireTransactionConnection(this, getDatabaseType(), Duration.ofNanos(this.connectionAcquiredAtNanos - startTime));
-
-		// Keep track of the initial setting for autocommit since it might need to get changed from "true" to "false" for
-		// the duration of the transaction and then back to "true" post-transaction.
-		try {
-			this.initialAutoCommit = this.connection.getAutoCommit();
-			this.physicalRollbackPermitted = !this.initialAutoCommit;
-		} catch (SQLException e) {
-			DatabaseException wrapped = databaseException("Unable to determine database connection autocommit setting", e);
-			getMetricsCollectorDispatcher().didFailToBeginPhysicalTransaction(this, getTransactionIsolation(),
-					MetricsCollector.PhysicalTransactionBeginFailurePhase.READ_INITIAL_AUTOCOMMIT, getDatabaseType(), wrapped);
-			throw wrapped;
-		}
-
-		// Track initial isolation
-		try {
-			this.initialTransactionIsolationJdbcLevel = this.connection.getTransactionIsolation();
-		} catch (SQLException e) {
-			DatabaseException wrapped = databaseException("Unable to determine database connection transaction isolation", e);
-			getMetricsCollectorDispatcher().didFailToBeginPhysicalTransaction(this, getTransactionIsolation(),
-					MetricsCollector.PhysicalTransactionBeginFailurePhase.READ_INITIAL_ISOLATION, getDatabaseType(), wrapped);
-			throw wrapped;
-		}
-
-		try {
-			this.initialReadOnly = this.connection.isReadOnly();
-		} catch (SQLException e) {
-			DatabaseException wrapped = databaseException("Unable to determine database connection read-only setting", e);
-			getMetricsCollectorDispatcher().didFailToBeginPhysicalTransaction(this, getTransactionIsolation(),
-					MetricsCollector.PhysicalTransactionBeginFailurePhase.READ_INITIAL_READ_ONLY, getDatabaseType(), wrapped);
-			throw wrapped;
-		}
-
-		Boolean desiredReadOnly = getTransactionOptions().getReadOnly().orElse(null);
-
-		if (desiredReadOnly != null && !desiredReadOnly.equals(this.initialReadOnly)) {
 			try {
-				this.connection.setReadOnly(desiredReadOnly);
-				this.readOnlyWasChanged.set(true);
+				Connection candidate = getDataSource().getConnection();
+				TransactionCoordinator.assertIndependentConnection(this, candidate);
+				this.connection = candidate;
 			} catch (SQLException e) {
-				DatabaseException wrapped = databaseException(format("Unable to set database connection read-only value to '%s'", desiredReadOnly), e);
-				getMetricsCollectorDispatcher().didFailToBeginPhysicalTransaction(this, getTransactionIsolation(),
-						MetricsCollector.PhysicalTransactionBeginFailurePhase.SET_READ_ONLY, getDatabaseType(), wrapped);
+				DatabaseException wrapped = databaseException("Unable to acquire database connection", e);
 				throw wrapped;
 			}
-		}
 
-		// Immediately flip autocommit to false if needed...if initially true, it will get set back to true by Database at
-		// the end of the transaction
-		if (this.initialAutoCommit) {
+			this.connectionAcquiredAtNanos = nanoTime();
+			getMetricsCollectorDispatcher().didAcquireTransactionConnection(this, getDatabaseType(), Duration.ofNanos(this.connectionAcquiredAtNanos - startTime));
+
+			// Keep track of the initial setting for autocommit since it might need to get changed from "true" to "false" for
+			// the duration of the transaction and then back to "true" post-transaction.
+			phase = MetricsCollector.PhysicalTransactionBeginFailurePhase.READ_INITIAL_AUTOCOMMIT;
 			try {
-				setAutoCommit(false);
-				this.physicalRollbackPermitted = true;
-			} catch (DatabaseException e) {
-				getMetricsCollectorDispatcher().didFailToBeginPhysicalTransaction(this, getTransactionIsolation(),
-						MetricsCollector.PhysicalTransactionBeginFailurePhase.SET_AUTOCOMMIT_FALSE, getDatabaseType(), e);
-				throw e;
+				this.initialAutoCommit = this.connection.getAutoCommit();
+				this.physicalRollbackPermitted = !this.initialAutoCommit;
+			} catch (SQLException e) {
+				DatabaseException wrapped = databaseException("Unable to determine database connection autocommit setting", e);
+				throw wrapped;
 			}
-		}
 
-		// Apply requested isolation if not DEFAULT and different from current
-		TransactionIsolation desiredTransactionIsolation = getTransactionIsolation();
+			// Track initial isolation
+			phase = MetricsCollector.PhysicalTransactionBeginFailurePhase.READ_INITIAL_ISOLATION;
+			try {
+				this.initialTransactionIsolationJdbcLevel = this.connection.getTransactionIsolation();
+			} catch (SQLException e) {
+				DatabaseException wrapped = databaseException("Unable to determine database connection transaction isolation", e);
+				throw wrapped;
+			}
 
-		if (desiredTransactionIsolation != TransactionIsolation.DEFAULT) {
-			// Safe; only DEFAULT has a null value
-			int desiredJdbcLevel = desiredTransactionIsolation.getJdbcLevel().get();
-			// Apply only if different from current (or current unknown)
-			if (this.initialTransactionIsolationJdbcLevel == null || this.initialTransactionIsolationJdbcLevel.intValue() != desiredJdbcLevel) {
+			phase = MetricsCollector.PhysicalTransactionBeginFailurePhase.READ_INITIAL_READ_ONLY;
+			try {
+				this.initialReadOnly = this.connection.isReadOnly();
+			} catch (SQLException e) {
+				DatabaseException wrapped = databaseException("Unable to determine database connection read-only setting", e);
+				throw wrapped;
+			}
+
+			Boolean desiredReadOnly = getTransactionOptions().getReadOnly().orElse(null);
+
+			if (desiredReadOnly != null && !desiredReadOnly.equals(this.initialReadOnly)) {
+				phase = MetricsCollector.PhysicalTransactionBeginFailurePhase.SET_READ_ONLY;
 				try {
-					// In the future, we might check supportsTransactionIsolationLevel via DatabaseMetaData first.
-					// Probably want to calculate that at Database init time and cache it off
-					this.connection.setTransactionIsolation(desiredJdbcLevel);
-					this.transactionIsolationWasChanged.set(true);
+					this.connection.setReadOnly(desiredReadOnly);
+					this.readOnlyWasChanged.set(true);
 				} catch (SQLException e) {
-					DatabaseException wrapped = databaseException(format("Unable to set transaction isolation to %s", desiredTransactionIsolation.name()), e);
-					getMetricsCollectorDispatcher().didFailToBeginPhysicalTransaction(this, getTransactionIsolation(),
-							MetricsCollector.PhysicalTransactionBeginFailurePhase.SET_ISOLATION, getDatabaseType(), wrapped);
+					DatabaseException wrapped = databaseException(format("Unable to set database connection read-only value to '%s'", desiredReadOnly), e);
 					throw wrapped;
 				}
 			}
-		}
 
-		this.physicalTransactionBeginState = PhysicalTransactionBeginState.READY;
-		getMetricsCollectorDispatcher().didBeginPhysicalTransaction(this, getTransactionIsolation(), getDatabaseType());
-		return requireNonNull(this.connection);
+			// Immediately flip autocommit to false if needed...if initially true, it will get set back to true by Database at
+			// the end of the transaction
+			if (this.initialAutoCommit) {
+				phase = MetricsCollector.PhysicalTransactionBeginFailurePhase.SET_AUTOCOMMIT_FALSE;
+				setAutoCommit(false);
+				this.physicalRollbackPermitted = true;
+			}
+
+			// Apply requested isolation if not DEFAULT and different from current
+			TransactionIsolation desiredTransactionIsolation = getTransactionIsolation();
+
+			if (desiredTransactionIsolation != TransactionIsolation.DEFAULT) {
+				// Safe; only DEFAULT has a null value
+				int desiredJdbcLevel = desiredTransactionIsolation.getJdbcLevel().get();
+				// Apply only if different from current (or current unknown)
+				if (this.initialTransactionIsolationJdbcLevel == null || this.initialTransactionIsolationJdbcLevel.intValue() != desiredJdbcLevel) {
+					phase = MetricsCollector.PhysicalTransactionBeginFailurePhase.SET_ISOLATION;
+					try {
+						// In the future, we might check supportsTransactionIsolationLevel via DatabaseMetaData first.
+						// Probably want to calculate that at Database init time and cache it off
+						this.connection.setTransactionIsolation(desiredJdbcLevel);
+						this.transactionIsolationWasChanged.set(true);
+					} catch (SQLException e) {
+						DatabaseException wrapped = databaseException(format("Unable to set transaction isolation to %s", desiredTransactionIsolation.name()), e);
+						throw wrapped;
+					}
+				}
+			}
+
+			this.physicalTransactionBeginState = PhysicalTransactionBeginState.READY;
+			getMetricsCollectorDispatcher().didBeginPhysicalTransaction(this, getTransactionIsolation(), getDatabaseType());
+			return requireNonNull(this.connection);
+		} catch (RuntimeException | Error failure) {
+			if (phase == MetricsCollector.PhysicalTransactionBeginFailurePhase.ACQUIRE_CONNECTION)
+				getMetricsCollectorDispatcher().didFailToAcquireTransactionConnection(this, getDatabaseType(),
+						Duration.ofNanos(nanoTime() - startTime), failure);
+			getMetricsCollectorDispatcher().didFailToBeginPhysicalTransaction(this, getTransactionIsolation(),
+					phase, getDatabaseType(), failure);
+			throw failure;
+		}
 	}
 
 	boolean didPhysicalTransactionBeginFail() {
@@ -935,6 +912,11 @@ public final class Transaction {
 		}
 	}
 
+	/** A volatile identity snapshot avoids acquiring an enclosing transaction's JDBC lock during begin. */
+	boolean hasExistingConnectionIdentity(Connection candidate) {
+		return candidate != null && this.connection == candidate;
+	}
+
 	void clearConnection() {
 		getConnectionLock().lock();
 
@@ -1048,17 +1030,6 @@ public final class Transaction {
 		if (this.savepointScopeOwner != null && this.savepointScopeOwner != Thread.currentThread())
 			throw new SavepointScopeConflictException(format(
 					"Transaction %s has an active savepoint scope on another thread; JDBC work must wait until that scope finishes", id()));
-	}
-
-	// Commit's guard has its own call site so the recorded conflict is itself proof of ordering: this runs before the JDBC
-	// commit is issued and nowhere else. A conflict from any other path leaves the field untouched.
-	private void assertSavepointScopeAccessBeforeCommit() {
-		try {
-			assertSavepointScopeAccess();
-		} catch (SavepointScopeConflictException e) {
-			this.savepointScopeConflictBeforeCommit = e;
-			throw e;
-		}
 	}
 
 	private void releaseSavepointAfterSuccess(@NonNull Savepoint savepoint) {

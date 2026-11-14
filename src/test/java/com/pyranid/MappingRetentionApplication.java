@@ -12,6 +12,7 @@ package com.pyranid;
 import javax.sql.DataSource;
 import java.lang.reflect.Proxy;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.Types;
@@ -22,6 +23,23 @@ public final class MappingRetentionApplication {
 	public record Row(Long id) {}
 
 	public static String exercise(String mode, DataSource source) throws Exception {
+		if (mode.equals("binder")) {
+			Database[] owner = new Database[1];
+			CustomParameterBinder callback = new CustomParameterBinder() {
+				@Override public Boolean appliesTo(TargetType type) { return type.matchesClass(String.class); }
+				@Override public BindingResult bind(StatementContext<?> context, PreparedStatement statement,
+						Integer index, Object value) throws java.sql.SQLException {
+					if (owner[0] == null) throw new AssertionError("Custom binder lost its Database");
+					statement.setString(index, value.toString());
+					return BindingResult.handled();
+				}
+			};
+			PreparedStatementBinder binder = PreparedStatementBinder.withCustomParameterBinders(List.of(callback));
+			Database database = Database.with(source, DatabaseType.GENERIC).preparedStatementBinder(binder).build();
+			owner[0] = database;
+			bind(binder, database);
+			return mode;
+		}
 		if (mode.equals("pgobject")) {
 			Connection connection = (Connection) Proxy.newProxyInstance(Connection.class.getClassLoader(),
 					new Class<?>[]{Connection.class}, (proxy, method, arguments) -> {
@@ -61,6 +79,21 @@ public final class MappingRetentionApplication {
 			}
 		} else throw new AssertionError("Unknown retention mode " + mode);
 		return mode;
+	}
+
+	static void bind(PreparedStatementBinder binder, Database database) throws Exception {
+		StatementContext<?> context = StatementContext.with(Statement.of("binder-retention", "SELECT :value"), database).build();
+		try (PreparedStatement statement = (PreparedStatement) Proxy.newProxyInstance(PreparedStatement.class.getClassLoader(),
+				new Class<?>[]{PreparedStatement.class}, (proxy, method, arguments) -> switch (method.getName()) {
+					case "setString" -> {
+						if (!"value".equals(arguments[1])) throw new AssertionError("Incorrect bound value");
+						yield null;
+					}
+					case "close" -> null;
+					default -> throw new AssertionError("Unexpected binding call: " + method);
+				})) {
+			binder.bindParameter(context, statement, 1, "value");
+		}
 	}
 
 	private static <T> T map(Database database, Class<T> type, Object value, String label) throws Exception {

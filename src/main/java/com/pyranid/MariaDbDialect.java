@@ -29,6 +29,7 @@ import static java.util.Objects.requireNonNull;
 final class MariaDbDialect extends MySqlFamilyDialect {
 	@NonNull
 	static final MariaDbDialect INSTANCE = new MariaDbDialect();
+	private static final int DEFAULT_STREAM_FETCH_SIZE = 256;
 
 	private MariaDbDialect() {}
 
@@ -41,5 +42,8 @@ final class MariaDbDialect extends MySqlFamilyDialect {
 		requireNonNull(databaseStreamState);
 		requireNonNull(transactionPresent);
 		requireNonNull(queryFetchSizeConfigured);
+
+		if (!queryFetchSizeConfigured && preparedStatement.getFetchSize() <= 0)
+			preparedStatement.setFetchSize(DEFAULT_STREAM_FETCH_SIZE);
 	}
 }

@@ -19,16 +19,20 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.Reader;
 import java.lang.ref.WeakReference;
+import java.lang.reflect.Modifier;
 import java.sql.Array;
 import java.sql.Blob;
 import java.sql.Clob;
 import java.sql.SQLException;
+import java.sql.SQLXML;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.Struct;
 import java.sql.Types;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Collections;
 import java.util.IdentityHashMap;
@@ -39,10 +43,13 @@ import java.util.Set;
 final class MappingResources implements AutoCloseable {
 	private final long maxBytes;
 	private final long maxCharacters;
+	private final boolean detachLobValues;
 	private final @Nullable MappingResources parent;
 	private @Nullable Map<Object, Object> materialized;
+	private @Nullable Map<Object, Object> detachedContainers;
 	private @Nullable Map<Object, Object> arrayTypes;
-	private @Nullable Map<Object, String> structTypes;
+	private @Nullable Map<Array, SqlArrayExtraction> sqlArrayExtractions;
+	private @Nullable Map<Object, String> containerTypeNames;
 	private @Nullable Set<Object> owned;
 	private @Nullable Set<Object> borrowed;
 	private boolean opaqueBorrow;
@@ -57,7 +64,7 @@ final class MappingResources implements AutoCloseable {
 			this.inUse = true;
 			return this;
 		}
-		if (this.nested == null) this.nested = new MappingResources(this.maxBytes, this.maxCharacters, this);
+		if (this.nested == null) this.nested = new MappingResources(this.maxBytes, this.maxCharacters, this.detachLobValues, this);
 		return this.nested.acquire();
 	}
 
@@ -70,7 +77,8 @@ final class MappingResources implements AutoCloseable {
 	}
 
 	void registerArrayType(@Nullable Object value, int jdbcType) {
-		if (value == null || !value.getClass().isArray() || jdbcType == Types.OTHER || jdbcType == Types.ARRAY) return;
+		if (value == null || (!value.getClass().isArray() && !(value instanceof Collection<?>))
+				|| jdbcType == Types.OTHER || jdbcType == Types.ARRAY) return;
 		if (this.arrayTypes == null) this.arrayTypes = new IdentityHashMap<>();
 		Object previous = this.arrayTypes.get(value);
 		this.arrayTypes.put(value, previous instanceof TimeArrayValues timeValues
@@ -83,12 +91,38 @@ final class MappingResources implements AutoCloseable {
 	}
 
 	void copyArrayType(Object original, @Nullable Object converted) {
-		if (converted != null && converted != original && converted.getClass().isArray()
+		if (converted != null && converted != original && (converted.getClass().isArray() || converted instanceof Collection<?>)
 				&& this.arrayTypes != null && this.arrayTypes.containsKey(original))
 			this.arrayTypes.put(converted, this.arrayTypes.get(original));
 	}
 
 	private record TimeArrayValues(int jdbcType, Object valuesOrFailure) {}
+
+	record SqlArrayExtraction(@Nullable Object values, @Nullable Object typeMetadata, @Nullable Throwable failure) {}
+
+	@Nullable SqlArrayExtraction sqlArrayExtraction(Array array) {
+		SqlArrayExtraction extraction = this.parent != null ? this.parent.sqlArrayExtraction(array)
+				: this.sqlArrayExtractions == null ? null : this.sqlArrayExtractions.get(array);
+		if (extraction != null && extraction.values != null && extraction.typeMetadata != null) {
+			if (this.arrayTypes == null) this.arrayTypes = new IdentityHashMap<>();
+			this.arrayTypes.put(extraction.values, extraction.typeMetadata);
+		}
+		return extraction;
+	}
+
+	void rememberSqlArrayExtraction(Array array, @Nullable Object values, @Nullable Throwable failure) {
+		Object metadata = this.arrayTypes == null ? null : this.arrayTypes.get(values);
+		rememberSqlArrayExtraction(array, new SqlArrayExtraction(values, metadata, failure));
+	}
+
+	private void rememberSqlArrayExtraction(Array array, SqlArrayExtraction extraction) {
+		if (this.parent != null) {
+			this.parent.rememberSqlArrayExtraction(array, extraction);
+			return;
+		}
+		if (this.sqlArrayExtractions == null) this.sqlArrayExtractions = new IdentityHashMap<>();
+		this.sqlArrayExtractions.put(array, extraction);
+	}
 
 	void registerArrayTimeValues(Object original, Object valuesOrFailure) {
 		int jdbcType = arrayType(original);
@@ -106,13 +140,22 @@ final class MappingResources implements AutoCloseable {
 	}
 
 	void registerStructType(Object value, @Nullable String typeName) {
+		registerContainerType(value, typeName);
+	}
+
+	/** SQL declarations for STRUCT/MAP values and their nested containers, scoped to one row. */
+	void registerContainerType(Object value, @Nullable String typeName) {
 		if (typeName == null) return;
-		if (this.structTypes == null) this.structTypes = new IdentityHashMap<>();
-		this.structTypes.put(value, typeName);
+		if (this.containerTypeNames == null) this.containerTypeNames = new IdentityHashMap<>();
+		this.containerTypeNames.put(value, typeName);
 	}
 
 	@Nullable String structType(Object value) {
-		return this.structTypes == null ? null : this.structTypes.get(value);
+		return containerType(value);
+	}
+
+	@Nullable String containerType(Object value) {
+		return this.containerTypeNames == null ? null : this.containerTypeNames.get(value);
 	}
 
 	void copyStructType(Object original, Object converted) {
@@ -125,18 +168,23 @@ final class MappingResources implements AutoCloseable {
 	}
 
 	MappingResources(@Nullable Long maxBytes, @Nullable Long maxCharacters) {
-		this(maxBytes, maxCharacters, null);
+		this(maxBytes, maxCharacters, false);
 	}
 
-	private MappingResources(@Nullable Long maxBytes, @Nullable Long maxCharacters, @Nullable MappingResources parent) {
+	MappingResources(@Nullable Long maxBytes, @Nullable Long maxCharacters, boolean detachLobValues) {
+		this(maxBytes, maxCharacters, detachLobValues, null);
+	}
+
+	private MappingResources(@Nullable Long maxBytes, @Nullable Long maxCharacters, boolean detachLobValues, @Nullable MappingResources parent) {
 		this.parent = parent;
+		this.detachLobValues = detachLobValues;
 		// Even an explicitly unbounded Java value must fit in its array/string representation.
 		this.maxBytes = Math.min(maxBytes == null ? Long.MAX_VALUE : maxBytes, Integer.MAX_VALUE - 8L);
 		this.maxCharacters = Math.min(maxCharacters == null ? Long.MAX_VALUE : maxCharacters, Integer.MAX_VALUE - 8L);
 	}
 
 	void borrow(@Nullable Object value) {
-		if (!(value instanceof Blob || value instanceof Clob || value instanceof Struct || value instanceof Array
+		if (!(value instanceof Blob || value instanceof Clob || value instanceof SQLXML || value instanceof Struct || value instanceof Array
 				|| value instanceof Object[] || value instanceof Iterable<?> || value instanceof Map<?, ?>)) return;
 		// A nested custom hook can retain a handle already owned by an active outer row.
 		if (this.parent != null) this.parent.borrow(value);
@@ -161,13 +209,19 @@ final class MappingResources implements AutoCloseable {
 		if (raw == null)
 			return null;
 		boolean binary = target == byte[].class && (raw instanceof Blob || jdbcType == Types.BLOB);
-		boolean character = target == String.class && (raw instanceof Clob || jdbcType == Types.CLOB || jdbcType == Types.NCLOB);
+		boolean character = target == String.class && (raw instanceof Clob || raw instanceof SQLXML
+				|| jdbcType == Types.CLOB || jdbcType == Types.NCLOB || jdbcType == Types.SQLXML);
 		if (!binary && !character)
 			return raw;
 		long byteLimit = bounded ? this.maxBytes : Integer.MAX_VALUE - 8L;
 		long characterLimit = bounded ? this.maxCharacters : Integer.MAX_VALUE - 8L;
-		if (this.materialized != null && this.materialized.containsKey(raw)) {
-			Object existing = this.materialized.get(raw);
+		// SQLXML can permit only one read. Nested mapping in an opted-in row shares successful
+		// XML reads with that active row, while ownership stays with the scope that acquired it.
+		MappingResources memoScope = this;
+		if (this.detachLobValues && raw instanceof SQLXML)
+			while (memoScope.parent != null) memoScope = memoScope.parent;
+		if (memoScope.materialized != null && memoScope.materialized.containsKey(raw)) {
+			Object existing = memoScope.materialized.get(raw);
 			// Native/dialect results may have been materialized without a typed-target limit.
 			if (binary && existing instanceof byte[] bytes) checkLength(bytes.length, byteLimit, location, "byte[]", "bytes");
 			if (character && existing instanceof String string) checkLength(string.length(), characterLimit, location, "String", "UTF-16 code units");
@@ -200,6 +254,9 @@ final class MappingResources implements AutoCloseable {
 				} finally {
 					closeStream(reader, primary);
 				}
+			} else if (raw instanceof SQLXML xml && character) {
+				own(xml);
+				value = readXml(xml, location, characterLimit);
 			} else if (raw instanceof byte[] bytes && binary) {
 				checkLength(bytes.length, byteLimit, location, "byte[]", "bytes");
 			} else if (raw instanceof String string && character) {
@@ -209,9 +266,30 @@ final class MappingResources implements AutoCloseable {
 			throw DatabaseException.wrapSafely("Unable to materialize LOB at " + location + " as " + target.getTypeName(),
 					failure, DatabaseDialect.forExceptionCause(failure));
 		}
-		if (this.materialized == null) this.materialized = new IdentityHashMap<>();
-		this.materialized.put(raw, value);
+		if (memoScope.materialized == null) memoScope.materialized = new IdentityHashMap<>();
+		memoScope.materialized.put(raw, value);
 		return value;
+	}
+
+	private @Nullable String readXml(SQLXML xml, String location, long limit) throws SQLException, IOException {
+		Reader reader;
+		try {
+			reader = xml.getCharacterStream();
+		} catch (SQLException | UnsupportedOperationException | AbstractMethodError unsupported) {
+			if (!JdbcFallbacks.isExecutionFallbackSafe(unsupported)) throw unsupported;
+			String value = xml.getString();
+			if (value != null) checkLength(value.length(), limit, location, "String", "UTF-16 code units");
+			return value;
+		}
+		Throwable primary = null;
+		try {
+			return readCharacters(reader, location, limit);
+		} catch (IOException | RuntimeException | Error failure) {
+			primary = failure;
+			throw failure;
+		} finally {
+			closeStream(reader, primary);
+		}
 	}
 
 	/** Driver streams can rethrow their read failure from close; never self-suppress it. */
@@ -227,10 +305,93 @@ final class MappingResources implements AutoCloseable {
 
 	/** Native Map/Object targets keep dialect normalization without changing the typed LOB policy. */
 	@Nullable Object nativeValue(@Nullable Object raw, DatabaseDialect dialect) {
+		return nativeValue(raw, dialect, Types.OTHER, "native result value");
+	}
+
+	@Nullable Object nativeValue(@Nullable Object raw, DatabaseDialect dialect, int jdbcType, String location) {
 		if (raw == null) return null;
+		if (this.detachLobValues) {
+			Object value = dialect instanceof DuckDbDialect duck ? duck.unwrapForTypedMapping(raw, this) : dialect.unwrapResultSetValue(raw);
+			return detachLobs(value, jdbcType, location);
+		}
 		borrow(raw);
 		if (!(dialect instanceof DuckDbDialect duck)) return dialect.unwrapResultSetValue(raw);
 		return nativeDuckValue(duck.unwrapForTypedMapping(raw));
+	}
+
+	boolean detachesLobValues() { return this.detachLobValues; }
+
+	/** Copies native Java containers while preserving aliases/cycles and detaching every visible LOB. */
+	@Nullable Object detachLobs(@Nullable Object value, int jdbcType, String location) {
+		if (value == null) return null;
+		if (value instanceof Blob)
+			return materialize(value, byte[].class, jdbcType, location);
+		if (value instanceof Clob || value instanceof SQLXML)
+			return materialize(value, String.class, jdbcType, location);
+		if (jdbcType == Types.BLOB) {
+			if (!(value instanceof byte[])) throw new DatabaseException("Driver exposed an unsupported binary LOB representation at " + location);
+			return materialize(value, byte[].class, jdbcType, location);
+		}
+		if (jdbcType == Types.CLOB || jdbcType == Types.NCLOB || jdbcType == Types.SQLXML) {
+			if (!(value instanceof String)) throw new DatabaseException("Driver exposed an unsupported character LOB representation at " + location);
+			return materialize(value, String.class, jdbcType, location);
+		}
+		if (!(value instanceof Object[] || value instanceof Collection<?> || value instanceof Map<?, ?>)) return value;
+		if (this.detachedContainers == null) this.detachedContainers = new IdentityHashMap<>();
+		if (this.detachedContainers.containsKey(value)) {
+			// An aliased driver array can acquire more specific base metadata after its first extraction.
+			// Recheck known LOB bounds even when its detached container is already memoized.
+			int elementJdbcType = arrayType(value);
+			if (elementJdbcType == Types.BLOB || elementJdbcType == Types.CLOB || elementJdbcType == Types.NCLOB || elementJdbcType == Types.SQLXML) {
+				if (value instanceof Object[] elements)
+					for (Object element : elements) detachLobs(element, elementJdbcType, location + " element");
+				else if (value instanceof Collection<?> elements)
+					for (Object element : elements) detachLobs(element, elementJdbcType, location + " element");
+			}
+			return this.detachedContainers.get(value);
+		}
+		if (value instanceof Object[] elements) {
+			// Native scalar/primitive arrays retain their class; LOB/container elements may change type.
+			Class<?> leaf = value.getClass().getComponentType();
+			while (leaf.isArray()) leaf = leaf.getComponentType();
+			boolean stable = leaf.isPrimitive() || (Modifier.isFinal(leaf.getModifiers())
+					&& !Blob.class.isAssignableFrom(leaf) && !Clob.class.isAssignableFrom(leaf)
+					&& !SQLXML.class.isAssignableFrom(leaf) && !Map.class.isAssignableFrom(leaf)
+					&& !Collection.class.isAssignableFrom(leaf));
+			Object[] result = stable ? elements.clone() : new Object[elements.length];
+			rememberDetachedContainer(value, result);
+			int elementJdbcType = arrayType(value);
+			for (int i = 0; i < elements.length; i++) result[i] = detachLobs(elements[i], elementJdbcType, location + " element " + i);
+			return result;
+		}
+		if (value instanceof Map<?, ?> entries) {
+			Map<Object, Object> result = new LinkedHashMap<>(entries.size());
+			rememberDetachedContainer(value, result);
+			for (Map.Entry<?, ?> entry : entries.entrySet()) {
+				Object key = detachLobs(entry.getKey(), Types.OTHER, location + " map key");
+				Object mapped = detachLobs(entry.getValue(), Types.OTHER, location + " map value");
+				if (result.containsKey(key)) throw new DatabaseException("Native MAP contains duplicate keys after LOB detachment");
+				result.put(key, mapped);
+			}
+			return result;
+		}
+		Collection<?> elements = (Collection<?>) value;
+		Collection<Object> result = value instanceof Set<?> ? new LinkedHashSet<>(elements.size()) : new ArrayList<>(elements.size());
+		rememberDetachedContainer(value, result);
+		int index = 0;
+		int elementJdbcType = arrayType(value);
+		for (Object element : elements) {
+			Object mapped = detachLobs(element, elementJdbcType, location + " element " + index++);
+			if (!result.add(mapped)) throw new DatabaseException("Native SET contains duplicate elements after LOB detachment");
+		}
+		return result;
+	}
+
+	private void rememberDetachedContainer(Object original, Object detached) {
+		this.detachedContainers.put(original, detached);
+		this.detachedContainers.put(detached, detached);
+		copyArrayType(original, detached);
+		copyStructType(original, detached);
 	}
 
 	private @Nullable Object nativeDuckValue(@Nullable Object value) {
@@ -281,7 +442,7 @@ final class MappingResources implements AutoCloseable {
 		}
 	}
 
-	private boolean isBorrowed(Object resource) {
+	boolean isBorrowed(Object resource) {
 		return this.opaqueBorrow || (this.borrowed != null && this.borrowed.contains(resource))
 				|| (this.parent != null && this.parent.isBorrowed(resource));
 	}
@@ -351,6 +512,7 @@ final class MappingResources implements AutoCloseable {
 					try {
 						if (resource instanceof Blob blob) blob.free();
 						else if (resource instanceof Clob clob) clob.free();
+						else if (resource instanceof SQLXML xml) xml.free();
 					} catch (SQLException | RuntimeException | Error failure) {
 						if (failure == primary) continue;
 						if (cleanupFailure == null) cleanupFailure = failure;
@@ -363,8 +525,10 @@ final class MappingResources implements AutoCloseable {
 			this.owned = null;
 			this.borrowed = null;
 			this.materialized = null;
+			this.detachedContainers = null;
 			this.arrayTypes = null;
-			this.structTypes = null;
+			this.sqlArrayExtractions = null;
+			this.containerTypeNames = null;
 			this.opaqueBorrow = false;
 			this.inUse = false;
 		}

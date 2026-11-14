@@ -105,6 +105,7 @@ public final class StatementLog<T> {
 	}
 
 	@Override
+	@NonNull
 	public String toString() {
 		List<String> components = new ArrayList<>(8);
 
@@ -146,7 +147,7 @@ public final class StatementLog<T> {
 	}
 
 	@Override
-	public boolean equals(Object object) {
+	public boolean equals(@Nullable Object object) {
 		if (this == object)
 			return true;
 
@@ -196,6 +197,7 @@ public final class StatementLog<T> {
 	 *
 	 * @return how long it took to execute the SQL statement, if available
 	 */
+	@NonNull
 	public Optional<Duration> getExecutionDuration() {
 		return Optional.ofNullable(this.executionDuration);
 	}
@@ -205,6 +207,7 @@ public final class StatementLog<T> {
 	 *
 	 * @return how long it took to extract data from the {@link java.sql.ResultSet}, if available
 	 */
+	@NonNull
 	public Optional<Duration> getResultSetMappingDuration() {
 		return Optional.ofNullable(this.resultSetMappingDuration);
 	}
@@ -319,6 +322,7 @@ public final class StatementLog<T> {
 		 * @param preparationDuration how long it took to bind data to a {@link java.sql.PreparedStatement}, if available
 		 * @return this {@code Builder}, for chaining
 		 */
+		@NonNull
 		public Builder preparationDuration(@Nullable Duration preparationDuration) {
 			this.preparationDuration = preparationDuration;
 			return this;
@@ -330,6 +334,7 @@ public final class StatementLog<T> {
 		 * @param executionDuration how long it took to execute a SQL statement, if available
 		 * @return this {@code Builder}, for chaining
 		 */
+		@NonNull
 		public Builder executionDuration(@Nullable Duration executionDuration) {
 			this.executionDuration = executionDuration;
 			return this;
@@ -341,6 +346,7 @@ public final class StatementLog<T> {
 		 * @param resultSetMappingDuration how long it took to extract data from a {@link java.sql.ResultSet}, if available
 		 * @return this {@code Builder}, for chaining
 		 */
+		@NonNull
 		public Builder resultSetMappingDuration(@Nullable Duration resultSetMappingDuration) {
 			this.resultSetMappingDuration = resultSetMappingDuration;
 			return this;
@@ -366,6 +372,7 @@ public final class StatementLog<T> {
 		 * @param batchSize how many records were processed as part of the batch operation, if available
 		 * @return this {@code Builder}, for chaining
 		 */
+		@NonNull
 		public Builder batchSize(@Nullable Integer batchSize) {
 			this.batchSize = batchSize;
 			return this;
@@ -377,6 +384,7 @@ public final class StatementLog<T> {
 		 * @param exception the exception that occurred during SQL statement execution, if available
 		 * @return this {@code Builder}, for chaining
 		 */
+		@NonNull
 		public Builder exception(@Nullable Exception exception) {
 			this.exception = exception;
 			return this;

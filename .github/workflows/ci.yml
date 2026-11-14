@@ -65,28 +65,33 @@ jobs:
         include:
           - name: PostgreSQL
             profiles: integration
-            test: PostgreSqlIntegrationIT,PostgreSqlTransactionOutcomeIT,PostgreSqlParameterMetadataIT,PostgreSqlNullArrayIT,PostgreSqlLockClassificationIT,PostgreSqlBatchMetadataIT,PostgreSqlNotificationFragmentedFrameIT,NotificationSupervisorReleaseIT
+            test: PostgreSqlIntegrationIT,PostgreSqlTransactionOutcomeIT,PostgreSqlParameterMetadataIT,PostgreSqlNullArrayIT,PostgreSqlLockClassificationIT,PostgreSqlBatchMetadataIT,PostgreSqlExceptionPositionIT,PostgreSqlSqlStateRedactionIT,PostgreSqlFloatingPointIT,PostgreSqlLexicalIT,PostgreSqlNotificationSanitationIT,PostgreSqlTypeRecipesIT,PostgreSqlIntervalRecipesIT,PostgreSqlProcedureRecipesIT,PostgreSqlMappingOptionsIT,ParameterNameRedactionIT,PostgreSqlTransactionRecipesIT,PostgreSqlBulkIdRecipesIT,PostgreSqlTenantContextIT,TemporalZoneResolutionIT,PostgreSqlTemporalRoundTripIT,PostgreSqlInfinityMappingIT,LocalTemporalZoneIT,PostgreSqlStreamingIT,PostgreSqlIdleSessionTimeoutIT,PostgreSqlNotificationFragmentedFrameIT,NotificationSupervisorReleaseIT
             experimental: false
           - name: PostgreSQL metadata (New York)
             profiles: integration
             test: PostgreSqlParameterMetadataIT
             extraArgs: -Duser.timezone=America/New_York -Dtest=ParameterMetadataSafetyTests
             experimental: false
+          - name: Temporal (New York)
+            profiles: integration
+            test: PostgreSqlTemporalRoundTripIT,TemporalZoneResolutionIT,PostgreSqlTypeRecipesIT,PostgreSqlIntervalRecipesIT,PostgreSqlProcedureRecipesIT,YearMonthZoneOffsetMappingIT,PostgreSqlFloatingPointIT,DuckDbFloatingPointIT,PostgreSqlInfinityMappingIT,DuckDbTimestampRoundTripIT,DuckDbTypedMapIT,LocalTemporalZoneIT,MySqlTemporalBindingIT,SqliteTemporalOrderingIT,SqliteIntegrationIT,TemporalArrayMappingIntegrationIT
+            extraArgs: -Duser.timezone=America/New_York -Dtest=TemporalParameterBindingTests,TemporalResultSetMappingTests,TemporalArrayMappingTests,LocalTemporalRoundTripTests,TimestampRoundTripTests,TimeRoundTripTests,PostgreSqlTemporalArrayTests,VendorLocalTimeBindingTests,MySqlSqliteTemporalBindingTests,LegacyTemporalRangeTests,TypedMapMappingTests,TemporalColumnTypeDetectionTests,TemporalZoneResolutionTests,YearMonthZoneOffsetMappingTests,FloatingPointMappingTests
+            experimental: false
           - name: MySQL
             profiles: integration
-            test: MySqlIntegrationIT
+            test: MySqlIntegrationIT,MySqlTemporalBindingIT,MySqlStreamingIT,MySqlLexicalIT,MySqlUuidRecipesIT
             experimental: false
           - name: SQLite
             profiles: integration
-            test: SqliteIntegrationIT
+            test: SqliteIntegrationIT,SqliteLexicalIT,SqliteReadOnlyConfigurationIT,ScriptExecutionRecipesIT,MappingOptionsIT,SqliteRowIdClassificationIT,YearMonthZoneOffsetMappingIT,OptionalTargetValidationIT,SqliteTemporalOrderingIT,PositionalParameterGuardIT,BooleanTextMappingIT,BeanFieldAnnotationIT,BeanPropertyNamingIT,MappingLocaleNormalizationIT
             experimental: false
           - name: DuckDB
             profiles: integration
-            test: DuckDbIntegrationIT,DuckDbTransactionOutcomeIT,DuckDbMetricsIntegrationIT,DuckDbCommitClassificationIT,LobMappingIntegrationIT,TemporalArrayMappingIntegrationIT
+            test: DuckDbIntegrationIT,DuckDbTransactionOutcomeIT,DuckDbMetricsIntegrationIT,DuckDbCommitClassificationIT,DuckDbTimestampRoundTripIT,DuckDbScalarParameterIT,DuckDbFloatingPointIT,DuckDbLexicalIT,DuckDbTypedMapIT,GenericRecordMappingIT,ScriptExecutionRecipesIT,MappingOptionsIT,BooleanTextMappingIT,LobMappingIntegrationIT,TemporalArrayMappingIntegrationIT
             experimental: false
           - name: MariaDB
             profiles: integration,it-mariadb
-            test: MariaDbIntegrationIT,MariaDbSignalClassificationIT
+            test: MariaDbIntegrationIT,MariaDbSignalClassificationIT,MariaDbTemporalBindingIT,MariaDbStreamingIT,MariaDbLexicalIT,MariaDbUuidRecipesIT
             experimental: false
           - name: YugabyteDB
             profiles: integration,it-yugabyte
@@ -94,11 +99,13 @@ jobs:
             experimental: true
           - name: SQL Server
             profiles: integration,it-sqlserver
-            test: SqlServerIntegrationIT
+            test: SqlServerIntegrationIT,SqlServerTemporalCorrectnessIT,SqlServerRecipeIT,SqlServerLexicalIT
+            extraArgs: -Duser.timezone=America/New_York
             experimental: true
           - name: Oracle
             profiles: integration,it-oracle
-            test: OracleIntegrationIT
+            test: OracleIntegrationIT,OracleTemporalCorrectnessIT,OracleUuidBindingIT,OracleLexicalIT,OracleMappingOptionsIT
+            extraArgs: -Duser.timezone=America/New_York
             experimental: true
     steps:
       - name: Check out

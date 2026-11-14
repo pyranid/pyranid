@@ -24,12 +24,17 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 import static java.util.Objects.requireNonNull;
 
@@ -40,8 +45,30 @@ final class PostgresDialect extends GenericDialect {
 	@NonNull
 	static final PostgresDialect INSTANCE = new PostgresDialect();
 	private static final int DEFAULT_STREAM_FETCH_SIZE = 256;
+	private static final Pattern TIMESTAMP_ARRAY_ELEMENT_TYPE = Pattern.compile(
+			"(?:(?:(?i:pg_catalog)|\"pg_catalog\")\\s*\\.\\s*)?(?:(?i:timestamp(?:\\s+without\\s+time\\s+zone)?)|\"timestamp\")");
 
 	private PostgresDialect() {}
+
+	@NonNull
+	@Override
+	public Object normalizeSqlArrayElement(@NonNull String baseTypeName,
+			@NonNull Object element, @NonNull ZoneId timeZone) {
+		requireNonNull(baseTypeName);
+		requireNonNull(element);
+		requireNonNull(timeZone);
+
+		// pgjdbc formats instant-bearing array elements directly. For a zone-less timestamp that
+		// would store UTC wall time instead of the Database zone used by the corresponding scalar.
+		// Do not guess the semantics of a domain, a user-defined type, or a zoned timestamp.
+		if (TIMESTAMP_ARRAY_ELEMENT_TYPE.matcher(baseTypeName.trim()).matches()) {
+			if (element instanceof Instant instant)
+				return LocalDateTime.ofInstant(instant, timeZone);
+			if (element instanceof OffsetDateTime offsetDateTime)
+				return LocalDateTime.ofInstant(offsetDateTime.toInstant(), timeZone);
+		}
+		return element;
+	}
 
 	@NonNull
 	@Override
@@ -152,7 +179,7 @@ final class PostgresDialect extends GenericDialect {
 		requireNonNull(transactionPresent);
 		requireNonNull(queryFetchSizeConfigured);
 
-		if (!databaseStreamState.isManagedTransactionStarted() || transactionPresent || queryFetchSizeConfigured)
+		if (queryFetchSizeConfigured)
 			return;
 
 		if (preparedStatement.getFetchSize() <= 0)
@@ -223,9 +250,9 @@ final class PostgresDialect extends GenericDialect {
 					.severity(serverErrorMessageText(serverErrorMessage, "getSeverity"))
 					.table(serverErrorMessageText(serverErrorMessage, "getTable"))
 					.where(serverErrorMessageText(serverErrorMessage, "getWhere"))
-					.internalPosition(serverErrorMessageNumber(serverErrorMessage, "getInternalPosition"))
+					.internalPosition(serverErrorMessagePosition(serverErrorMessage, "getInternalPosition"))
 					.line(serverErrorMessageNumber(serverErrorMessage, "getLine"))
-					.position(serverErrorMessageNumber(serverErrorMessage, "getPosition"));
+					.position(serverErrorMessagePosition(serverErrorMessage, "getPosition"));
 
 			String sqlState = serverErrorMessageText(serverErrorMessage, "getSQLState");
 
@@ -381,6 +408,14 @@ final class PostgresDialect extends GenericDialect {
 		Integer value = PostgresDriverSupport.serverErrorMessageAttribute(
 				serverErrorMessage, accessorName, Integer.class);
 		return value == null ? 0 : value;
+	}
+
+	@Nullable
+	private Integer serverErrorMessagePosition(@NonNull Object serverErrorMessage,
+			@NonNull String accessorName) {
+		int position = serverErrorMessageNumber(serverErrorMessage, accessorName);
+		// PostgreSQL positions are one-based; driver zero values mean the field was absent.
+		return position > 0 ? position : null;
 	}
 
 	@NonNull

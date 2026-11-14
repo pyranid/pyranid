@@ -1684,6 +1684,8 @@ public final class Database {
 		 * targets. It also applies to ambiguous timestamp bindings if
 		 * {@link #ambiguousTimestampBindingStrategy(AmbiguousTimestampBindingStrategy)} is configured with
 		 * {@link AmbiguousTimestampBindingStrategy#TIMESTAMP_WITHOUT_TIME_ZONE}.
+		 * MySQL/MariaDB ambiguous instant-bearing parameters also use this zone. Local dates and date-times bound to
+		 * known zoned timestamps are interpreted in this zone, as are zone-less results mapped to {@link java.sql.Timestamp}.
 		 * <p>
 		 * If {@code null}, Pyranid uses {@link ZoneId#systemDefault()}.
 		 *
@@ -1707,6 +1709,9 @@ public final class Database {
 		 * {@link AmbiguousTimestampBindingStrategy#TIMESTAMP_WITHOUT_TIME_ZONE} for drivers or proxies that
 		 * cannot provide identifying parameter metadata when your target columns are zone-less {@code TIMESTAMP}
 		 * values that should be interpreted in {@link #timeZone(ZoneId)}.
+		 * Non-timestamp metadata such as {@code VARCHAR} or {@code DATE} is also ambiguous for these values.
+		 * MySQL and MariaDB prefer local timestamps in the configured zone regardless of this preference when the
+		 * metadata does not positively identify a zoned timestamp. SQLite's zoned/ambiguous path uses canonical UTC text.
 		 *
 		 * @param ambiguousTimestampBindingStrategy strategy to use, or {@code null} for the default
 		 * @return this {@code Builder}, for chaining
@@ -1810,6 +1815,9 @@ public final class Database {
 		 * of {@code 0} uses the driver's default fetch-size behavior. Per-query {@link Query#fetchSize(Integer)}
 		 * settings override this value, and {@link Query#customize(PreparedStatementCustomizer)} can override both
 		 * settings before parameter binding.
+		 * Streaming queries may replace this default with dialect streaming settings, including when it is zero.
+		 * Use per-query {@code fetchSize(0)} to request driver-default stream behavior, which may buffer results.
+		 * MySQL streams keep row streaming for positive hints unless Connector/J cursor fetching is positively enabled.
 		 *
 		 * @param fetchSize fetch size to apply by default, or {@code null} to leave unset
 		 * @return this {@code Builder}, for chaining

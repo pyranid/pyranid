@@ -29,6 +29,7 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.Types;
 import java.time.OffsetTime;
+import java.time.ZoneOffset;
 import java.util.Locale;
 import java.util.WeakHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -356,17 +357,19 @@ public class RowPlanningCacheTests {
 		);
 	}
 
-	// ---------- (Optional) TIME WITHOUT TZ to OffsetTime determinism ----------
-	// This test documents the DST nondeterminism; enable after fixing TemporalReaders.asOffsetTime anchor.
+	// ---------- TIME WITHOUT TZ to OffsetTime with a fixed database offset ----------
 	@Test
 	public void testTimeWithoutTzToOffsetTime_StableOffset() {
-		Database db = db(true, "time_to_offsettime");
-				db.query("CREATE TABLE t (clock TIME)").execute();
-				db.query("INSERT INTO t (clock) VALUES (TIME '12:34:56')").execute();
-		// Expect a deterministic offset choice; exact value depends on DB zone but should be stable across runs
+		ZoneOffset offset = ZoneOffset.ofHoursMinutes(5, 45);
+		Database db = Database.with(createInMemoryDataSource("time_to_offsettime"), DatabaseType.GENERIC)
+				.timeZone(offset)
+				.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(true).build())
+				.build();
+		db.query("CREATE TABLE t (clock TIME)").execute();
+		db.query("INSERT INTO t (clock) VALUES (TIME '12:34:56')").execute();
 		OffsetTime ot = db.query("SELECT clock FROM t")
 				.fetchObject(OffsetTime.class)
 				.orElseThrow();
-		Assertions.assertNotNull(ot);
+		Assertions.assertEquals(OffsetTime.of(12, 34, 56, 0, offset), ot);
 	}
 }

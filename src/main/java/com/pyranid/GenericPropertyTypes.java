@@ -23,7 +23,11 @@ final class GenericPropertyTypes {
 	private GenericPropertyTypes() {}
 
 	static Type resolve(Class<?> resultClass, Class<?> declaringClass, Type memberType) {
-		Map<TypeVariable<?>, Type> bindings = bindingsFor(resultClass, declaringClass, Map.of(), new HashSet<>());
+		return resolve((Type) resultClass, declaringClass, memberType);
+	}
+
+	static Type resolve(Type resultType, Class<?> declaringClass, Type memberType) {
+		Map<TypeVariable<?>, Type> bindings = bindingsFor(resultType, declaringClass, Map.of(), new HashSet<>());
 		return substitute(memberType, bindings == null ? Map.of() : bindings, new HashSet<>());
 	}
 

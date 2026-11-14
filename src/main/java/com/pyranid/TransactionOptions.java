@@ -86,6 +86,9 @@ public final class TransactionOptions {
 	 * <p>
 	 * {@code true} requests a read-only transaction, {@code false} requests a read-write transaction, and {@code null}
 	 * leaves the connection's read-only state unchanged.
+	 * Drivers may reject changes on an open connection. In particular, SQLite's default JDBC configuration and
+	 * DuckDB require read-only mode to be configured when opening the database connection. Use a separately
+	 * configured read-only data source and leave this option {@code null} to inherit its state.
 	 *
 	 * @param readOnly read-only setting to apply
 	 * @return a transaction options builder

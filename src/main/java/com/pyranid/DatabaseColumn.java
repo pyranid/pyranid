@@ -27,19 +27,26 @@ import java.lang.annotation.Target;
  * Allows specification of alternate column names for resultset mapping.
  * <p>
  * Useful in situations where column names are ugly, inconsistent, or do not map well to camel-case Java property names.
+ * Aliases are additive to the standard name candidates.
+ * <p>
+ * On a JavaBean, the annotated instance field must identify exactly one writable property exposed by a public
+ * instance setter. Matching includes JavaBeans capitalization and primitive-boolean fields such as
+ * {@code isActive} with {@code setActive(boolean)}. The mapper invokes the setter rather than writing the field.
+ * An unmatched, ambiguous or static annotated bean field is a mapping-metadata error, even if that field's
+ * aliases are absent from the selected columns. Record-component annotations do not require setters.
  * <p>
  * For example:
  *
  * <pre>
- * class Example {
+ * public class Example {
  *   &#064;DatabaseColumn({ &quot;systok&quot;, &quot;sys_tok&quot; })
- *   UUID systemToken;
+ *   private UUID systemToken;
  *
- *   UUID getSystemToken() {
+ *   public UUID getSystemToken() {
  *     return systemToken;
  *   }
  *
- *   void setSystemToken(UUID systemToken) {
+ *   public void setSystemToken(UUID systemToken) {
  *     this.systemToken = systemToken;
  *   }
  * }

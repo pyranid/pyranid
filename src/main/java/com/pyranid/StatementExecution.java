@@ -64,7 +64,12 @@ final class StatementExecution {
 		}
 		boolean alreadyAcquired = this.transaction.isPresent() && this.transaction.get().hasConnection();
 		if (this.transaction.isPresent()) {
-			this.connection = this.transaction.get().getConnection();
+			try {
+				this.connection = this.transaction.get().getConnection();
+			} finally {
+				// The first statement owns lazy acquisition/begin time even when either phase fails.
+				this.acquisitionDuration = alreadyAcquired ? null : since(this.started);
+			}
 		} else {
 			this.metrics.willAcquireStatementConnection(this.context);
 			try {
@@ -74,20 +79,20 @@ final class StatementExecution {
 						this.connections.dialect());
 				acquisitionFailed(wrapped);
 				throw wrapped;
-			} catch (RuntimeException e) {
+			} catch (RuntimeException | Error e) {
 				acquisitionFailed(e);
 				throw e;
 			}
 		}
-		this.acquisitionDuration = alreadyAcquired ? null : since(this.started);
 		if (this.transaction.isEmpty()) {
+			this.acquisitionDuration = since(this.started);
 			this.heldSince = this.clock.getAsLong();
 			this.metrics.didAcquireStatementConnection(this.context, this.acquisitionDuration);
 		}
 		return this.connection;
 	}
 
-	private void acquisitionFailed(RuntimeException failure) {
+	private void acquisitionFailed(Throwable failure) {
 		this.acquisitionDuration = since(this.started);
         // No connection was acquired, so ownership has ended before terminal acquisition metrics.
         this.elapsedDuration = this.acquisitionDuration;

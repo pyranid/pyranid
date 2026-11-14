@@ -80,6 +80,16 @@ final class TransactionCoordinator {
 		return transactionStack != null && !transactionStack.isEmpty();
 	}
 
+	/** Reject a proven shared lease before the inner boundary can change or dispose of the owner's handle. */
+	static void assertIndependentConnection(Transaction transaction, Connection candidate) {
+		Deque<Transaction> transactionStack = TRANSACTION_STACK_HOLDER.get();
+		if (transactionStack == null) return;
+		for (Transaction enclosing : transactionStack)
+			if (enclosing != transaction && enclosing.hasExistingConnectionIdentity(candidate))
+				throw new DatabaseException("DataSource returned a connection already owned by an enclosing transaction. "
+						+ "Independent transactions require exclusive connection leases; use participate or withSavepoint to share an existing transaction.");
+	}
+
 	@NonNull
 	private Deque<Transaction> transactionStackForPush() {
 		Deque<Transaction> transactionStack = TRANSACTION_STACK_HOLDER.get();
@@ -184,9 +194,9 @@ final class TransactionCoordinator {
 						transaction.commit();
 					} catch (Throwable e) {
 						// Preserve the physical driver's acknowledgment even if success diagnostics subsequently fail.
-						// Identity-based pre-commit refusals are distinct from an uncertain issued commit.
+						// Only dispatching the JDBC commit can make an unacknowledged commit uncertain.
 						committed = transaction.didPhysicalCommitSucceed();
-						commitFailed = !committed && !transaction.didSkipCommitBeforePhysicalAttempt(e);
+						commitFailed = !committed && transaction.didAttemptPhysicalCommit();
 						throw e;
 					}
 					committed = true;
@@ -242,11 +252,12 @@ final class TransactionCoordinator {
 			boolean hadPhysicalTransaction = false;
 			boolean physicalTransactionBeganSuccessfully = false;
 			boolean completionFailed = commitFailed || rollbackFailed;
-			boolean commitSerializationFailureRolledBack = commitFailed && !rollbackFailed
+			boolean physicalRollbackKnown = !rollbackFailed || transaction.didPhysicalRollbackSucceed();
+			boolean commitSerializationFailureRolledBack = commitFailed && physicalRollbackKnown
 					&& transaction.didCommitFailWithSerializationFailure();
 			boolean transactionOutcomeIndeterminate =
 					(commitFailed && !commitSerializationFailureRolledBack)
-							|| (rollbackFailed && transaction.couldApplicationWorkHaveExecuted());
+							|| (!physicalRollbackKnown && transaction.couldApplicationWorkHaveExecuted());
 			boolean discardConnection = completionFailed || transaction.didPhysicalTransactionBeginFail();
 			TransactionResult result = transactionResult(committed, transactionOutcomeIndeterminate);
 

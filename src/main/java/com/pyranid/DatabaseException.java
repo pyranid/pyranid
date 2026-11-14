@@ -160,9 +160,10 @@ public class DatabaseException extends RuntimeException {
 	}
 
 	/**
-	 * Package-private constructor which applies a best-effort diagnostic redactor to every String metadata field
+	 * Package-private constructor which applies a best-effort diagnostic redactor to driver-text metadata fields
 	 * extracted from the cause - used by {@link Database} to scrub verbatim occurrences of {@link SecureParameter}
-	 * values that the database driver may have echoed into its error text.
+	 * values that the database driver may have echoed into its error text. The operational SQLState code is preserved
+	 * verbatim so classification and application error policies can inspect it independently of parameter text.
 	 * <p>
 	 * The {@code message} is deliberately NOT re-scrubbed here: the caller is expected to have scrubbed the raw
 	 * driver text before composing the message (scrubbing must run before whitespace-collapsing/truncation), and
@@ -190,7 +191,7 @@ public class DatabaseException extends RuntimeException {
 		DatabaseExceptionMetadata metadata = databaseDialect.databaseExceptionMetadata(diagnosticCause);
 
 		this.errorCode = metadata.errorCode;
-		this.sqlState = applyDiagnosticRedactor(diagnosticRedactor, metadata.sqlState);
+		this.sqlState = metadata.sqlState;
 		this.column = applyDiagnosticRedactor(diagnosticRedactor, metadata.column);
 		this.constraint = applyDiagnosticRedactor(diagnosticRedactor, metadata.constraint);
 		this.datatype = applyDiagnosticRedactor(diagnosticRedactor, metadata.datatype);
@@ -225,7 +226,7 @@ public class DatabaseException extends RuntimeException {
 		super(message, cause);
 
 		this.errorCode = cause.errorCode;
-		this.sqlState = applyDiagnosticRedactor(diagnosticRedactor, cause.sqlState);
+		this.sqlState = cause.sqlState;
 		this.column = applyDiagnosticRedactor(diagnosticRedactor, cause.column);
 		this.constraint = applyDiagnosticRedactor(diagnosticRedactor, cause.constraint);
 		this.datatype = applyDiagnosticRedactor(diagnosticRedactor, cause.datatype);
@@ -344,6 +345,7 @@ public class DatabaseException extends RuntimeException {
 
 	/**
 	 * Shorthand for {@link SQLException#getSQLState()} if this exception was caused by a {@link SQLException}.
+	 * The available operational code is preserved verbatim; secure-parameter literal scrubbing does not modify it.
 	 *
 	 * @return the value of {@link SQLException#getSQLState()}, or empty if not available
 	 */
@@ -495,7 +497,7 @@ public class DatabaseException extends RuntimeException {
 	}
 
 	/**
-	 * @return the value of the offending {@code internalPosition}, or empty if not available
+	 * @return the positive, one-based character position within the internal query, or empty if the server supplied none
 	 * @since 1.0.12
 	 */
 	@NonNull
@@ -531,7 +533,7 @@ public class DatabaseException extends RuntimeException {
 	}
 
 	/**
-	 * @return the value of the offending {@code position}, or empty if not available
+	 * @return the positive, one-based character position within the submitted query, or empty if the server supplied none
 	 * @since 1.0.12
 	 */
 	@NonNull

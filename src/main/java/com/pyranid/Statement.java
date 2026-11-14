@@ -17,8 +17,12 @@
 package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 
 import javax.annotation.concurrent.ThreadSafe;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Objects;
 
 import static java.lang.String.format;
@@ -36,14 +40,19 @@ public final class Statement {
 	private final Object id;
 	@NonNull
 	private final String sql;
+	@Nullable
+	private final List<@Nullable String> parameterNames;
 
 	private Statement(@NonNull Object id,
-										@NonNull String sql) {
+										@NonNull String sql,
+										@Nullable List<@Nullable String> parameterNames) {
 		requireNonNull(id);
 		requireNonNull(sql);
 
 		this.id = id;
 		this.sql = sql;
+		this.parameterNames = parameterNames == null ? null
+				: Collections.unmodifiableList(new ArrayList<>(parameterNames));
 	}
 
 	/**
@@ -59,7 +68,19 @@ public final class Statement {
 		requireNonNull(id);
 		requireNonNull(sql);
 
-		return new Statement(id, sql);
+		return new Statement(id, sql, null);
+	}
+
+	/** Named-slot metadata belongs to an execution, never to the parsed-SQL cache or public value identity. */
+	@NonNull
+	static Statement named(@NonNull Object id, @NonNull String sql,
+			@NonNull List<@Nullable String> parameterNames) {
+		return new Statement(id, sql, requireNonNull(parameterNames));
+	}
+
+	@Nullable
+	List<@Nullable String> parameterNames() {
+		return this.parameterNames;
 	}
 
 	@Override
