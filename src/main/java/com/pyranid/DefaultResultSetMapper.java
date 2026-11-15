@@ -109,6 +109,11 @@ import static java.util.stream.Collectors.toSet;
  */
 @ThreadSafe
 class DefaultResultSetMapper implements ResultSetMapper {
+	// pgjdbc's DATE_POSITIVE_INFINITY / DATE_NEGATIVE_INFINITY epoch-millisecond sentinels
+	// (PGStatement, verified against 42.7.14). Local literals avoid a constant-pool driver class edge
+	// despite javac's compile-time inlining of the driver's public fields.
+	private static final long POSTGRES_DATE_POSITIVE_INFINITY = 9_223_372_036_825_200_000L;
+	private static final long POSTGRES_DATE_NEGATIVE_INFINITY = -9_223_372_036_832_400_000L;
 	@NonNull
 	private static final Map<Class<?>, Class<?>> WRAPPER_CLASSES_BY_PRIMITIVE_CLASS;
 	private static final int[] NO_CUSTOM_COLUMN_MAPPERS = new int[0];
@@ -213,27 +218,27 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	// Cursor identity remains reusable even when a driver creates fresh metadata objects for each row.
 	private final Map<WeakIdentityKey<ResultSet>, Map<WeakIdentityKey<DatabaseDialect>, String>> schemaSignaturesByResultSet = new HashMap<>();
 	private final ReferenceQueue<ResultSet> schemaSignatureResultSets = new ReferenceQueue<>();
-	// Nested mapping shares ownership bookkeeping, but no mapper-owned value remains on a worker afterward.
-	private final ThreadLocal<MappingResources> mappingResources = new ThreadLocal<>();
+	// A search key is never stored. Its temporary strong referent is guarded by the schema lock and cleared before
+	// releasing that lock; no driver, dialect or application callback runs while it is in use.
+	private final LookupIdentityKey schemaSignatureLookup = new LookupIdentityKey();
+	// A worker retains only a plain JDK weak reference, never a library-owned scope/loader strongly. An active
+	// mapping keeps its scope alive locally; idle empty scopes are reusable until the collector discards them.
+	private final ThreadLocal<WeakReference<MappingResources>> mappingResources = new ThreadLocal<>();
 
 	private MappingResources acquireMappingResources() {
-		MappingResources resources = this.mappingResources.get();
+		WeakReference<MappingResources> cached = this.mappingResources.get();
+		MappingResources resources = cached == null ? null : cached.get();
 		if (resources == null) {
 			resources = new MappingResources(this.maxLobBytes, this.maxLobCharacters, this.detachLobValues);
-			this.mappingResources.set(resources);
+			this.mappingResources.set(new WeakReference<>(resources));
 		}
 		return resources.acquire();
 	}
 
 	private void releaseMappingResources(MappingResources resources, @Nullable Throwable failure) throws SQLException {
-		try {
-			resources.close(failure);
-		} finally {
-			// Recursive calls acquire a child scope. Only the root's close ends this mapper's thread association.
-			if (this.mappingResources.get() == resources) {
-				this.mappingResources.remove();
-			}
-		}
+		// close's finally clears every row value/handle and the in-use flag, including when cleanup throws. A child
+		// scope closes independently without removing the weak root needed by its still-active enclosing mapping.
+		resources.close(failure);
 	}
 
 	static {
@@ -910,29 +915,63 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(resultSet);
 		requireNonNull(resultSetMetaData);
 
-		ReentrantLock lock = getSchemaSignatureByResultSetMetaDataLock();
 		DatabaseDialect dialect = statementContext.getDatabaseDialect();
-		WeakIdentityKey<ResultSet> lookup = new WeakIdentityKey<>(resultSet, null);
-		WeakIdentityKey<DatabaseDialect> dialectKey = new WeakIdentityKey<>(dialect, null);
+		Object memo = statementContext.schemaSignatureMemo();
+		if (memo instanceof SchemaSignatureMemo signatureMemo && signatureMemo.matches(this, resultSet, dialect)) {
+			clearExpiredResultSetSignaturesIfNeeded();
+			return signatureMemo.signature;
+		}
+
+		ReentrantLock lock = getSchemaSignatureByResultSetMetaDataLock();
+		String signature;
 		lock.lock();
 		try {
 			clearExpiredResultSetSignatures();
-			Map<WeakIdentityKey<DatabaseDialect>, String> signatures = this.schemaSignaturesByResultSet.get(lookup);
-			if (signatures != null) signatures.keySet().removeIf(key -> key.refersTo(null));
-			String signature = signatures == null ? null : signatures.get(dialectKey);
-			if (signature != null) return signature;
+			this.schemaSignatureLookup.set(resultSet);
+			Map<WeakIdentityKey<DatabaseDialect>, String> signatures = this.schemaSignaturesByResultSet.get(this.schemaSignatureLookup);
+			this.schemaSignatureLookup.set(dialect);
+			signature = signatures == null ? null : signatures.get(this.schemaSignatureLookup);
+			// Pruning on a miss keeps expired dialect entries bounded without allocating an iterator for every row.
+			if (signature == null && signatures != null) signatures.keySet().removeIf(key -> key.refersTo(null));
 		} finally {
+			this.schemaSignatureLookup.clear();
 			lock.unlock();
 		}
 
-		String signature = schemaSignatureFor(statementContext, resultSetMetaData);
+		if (signature == null) {
+			signature = schemaSignatureFor(statementContext, resultSetMetaData);
+			lock.lock();
+			try {
+				clearExpiredResultSetSignatures();
+				this.schemaSignatureLookup.set(resultSet);
+				Map<WeakIdentityKey<DatabaseDialect>, String> signatures = this.schemaSignaturesByResultSet.get(this.schemaSignatureLookup);
+				if (signatures == null) {
+					signatures = new HashMap<>();
+					this.schemaSignaturesByResultSet.put(new WeakIdentityKey<>(resultSet, this.schemaSignatureResultSets), signatures);
+				}
+				this.schemaSignatureLookup.set(dialect);
+				String existing = signatures.get(this.schemaSignatureLookup);
+				if (existing == null) signatures.put(new WeakIdentityKey<>(dialect, null), signature);
+				else signature = existing;
+			} finally {
+				this.schemaSignatureLookup.clear();
+				lock.unlock();
+			}
+		}
+		// Publish only weak execution identities after leaving the shared cache lock. Concurrent manual reuse of a
+		// context can replace this hint, but each reader verifies all three identities before using its immutable value.
+		statementContext.schemaSignatureMemo(new SchemaSignatureMemo(this, resultSet, dialect, signature));
+		return signature;
+	}
+
+	private void clearExpiredResultSetSignaturesIfNeeded() {
+		Reference<? extends ResultSet> expired = this.schemaSignatureResultSets.poll();
+		if (expired == null) return;
+		ReentrantLock lock = getSchemaSignatureByResultSetMetaDataLock();
 		lock.lock();
 		try {
+			this.schemaSignaturesByResultSet.remove(expired);
 			clearExpiredResultSetSignatures();
-			Map<WeakIdentityKey<DatabaseDialect>, String> signatures = this.schemaSignaturesByResultSet.computeIfAbsent(
-					new WeakIdentityKey<>(resultSet, this.schemaSignatureResultSets), ignored -> new HashMap<>());
-			String existing = signatures.putIfAbsent(dialectKey, signature);
-			return existing == null ? signature : existing;
 		} finally {
 			lock.unlock();
 		}
@@ -2394,9 +2433,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 
 	private static int postgresInfinityDirection(StatementContext<?> context, Object value) {
 		if (!(context.getDatabaseDialect() instanceof PostgresDialect) || !(value instanceof Date date)) return 0;
-		// Constants are inlined; loading this mapper does not require the optional PostgreSQL driver.
-		if (date.getTime() == org.postgresql.PGStatement.DATE_POSITIVE_INFINITY) return 1;
-		if (date.getTime() == org.postgresql.PGStatement.DATE_NEGATIVE_INFINITY) return -1;
+		if (date.getTime() == POSTGRES_DATE_POSITIVE_INFINITY) return 1;
+		if (date.getTime() == POSTGRES_DATE_NEGATIVE_INFINITY) return -1;
 		return 0;
 	}
 
@@ -3710,8 +3748,31 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 	}
 
+	/** One execution's hint never owns the mapper, cursor or dialect it describes. */
+	private static final class SchemaSignatureMemo {
+		private final WeakReference<DefaultResultSetMapper> mapper;
+		private final WeakReference<ResultSet> resultSet;
+		private final WeakReference<DatabaseDialect> dialect;
+		private final String signature;
+
+		SchemaSignatureMemo(DefaultResultSetMapper mapper, ResultSet resultSet, DatabaseDialect dialect, String signature) {
+			this.mapper = new WeakReference<>(mapper);
+			this.resultSet = new WeakReference<>(resultSet);
+			this.dialect = new WeakReference<>(dialect);
+			this.signature = signature;
+		}
+
+		boolean matches(DefaultResultSetMapper mapper, ResultSet resultSet, DatabaseDialect dialect) {
+			return this.mapper.refersTo(mapper) && this.resultSet.refersTo(resultSet) && this.dialect.refersTo(dialect);
+		}
+	}
+
+	private interface IdentityKey {
+		@Nullable Object referent();
+	}
+
 	/** Cache lookups never invoke driver/dialect equals or hashCode, nor retain them through cache values. */
-	private static final class WeakIdentityKey<T> extends WeakReference<T> {
+	private static final class WeakIdentityKey<T> extends WeakReference<T> implements IdentityKey {
 		private final int hash;
 
 		WeakIdentityKey(T referent, @Nullable ReferenceQueue<? super T> queue) {
@@ -3720,11 +3781,34 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		}
 
 		@Override public int hashCode() { return this.hash; }
+		@Override public @Nullable Object referent() { return get(); }
 
 		@Override public boolean equals(@Nullable Object other) {
 			if (this == other) return true;
 			T referent = get();
-			return referent != null && other instanceof WeakIdentityKey<?> key && referent == key.get();
+			return referent != null && other instanceof IdentityKey key && referent == key.referent();
+		}
+	}
+
+	/** Lock-confined, reusable search state; stored cache keys always remain weak references. */
+	private static final class LookupIdentityKey implements IdentityKey {
+		@Nullable private Object referent;
+		private int hash;
+
+		void set(Object referent) {
+			this.referent = referent;
+			this.hash = System.identityHashCode(referent);
+		}
+
+		void clear() {
+			this.referent = null;
+			this.hash = 0;
+		}
+
+		@Override public @Nullable Object referent() { return this.referent; }
+		@Override public int hashCode() { return this.hash; }
+		@Override public boolean equals(@Nullable Object other) {
+			return this == other || this.referent != null && other instanceof IdentityKey key && this.referent == key.referent();
 		}
 	}
 

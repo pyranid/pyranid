@@ -170,12 +170,18 @@ public final class Database {
 	 * <p>
 	 * The transaction will be automatically rolled back if an exception bubbles out of {@code transactionalOperation}.
 	 * <p>
+	 * On PostgreSQL and DuckDB, pre-commit validation can refuse commit even when the callback returns normally:
+	 * the transaction may be aborted, or a required check may be unable to establish transaction usability.
+	 * Pyranid attempts the normal rollback path and this method throws {@link DatabaseException}; handling a
+	 * statement failure inside the callback does not guarantee successful completion.
+	 * <p>
 	 * Nested calls to {@code transaction(...)} are independent transactions with independent JDBC connections; they do
 	 * not automatically join an outer transaction. Use {@link #participate(Transaction, TransactionalOperation)} to join an
 	 * existing transaction explicitly. A transaction is scoped to the {@link DataSource} instance that created it; a
 	 * {@link Database} using a different {@link DataSource} fails fast instead of joining it.
 	 *
 	 * @param transactionalOperation the operation to perform transactionally
+	 * @throws DatabaseException if pre-commit validation detects an aborted transaction or cannot establish usability
 	 */
 	public void transaction(@NonNull TransactionalOperation transactionalOperation) {
 		requireNonNull(transactionalOperation);
@@ -191,6 +197,11 @@ public final class Database {
 	 * <p>
 	 * The transaction will be automatically rolled back if an exception bubbles out of {@code transactionalOperation}.
 	 * <p>
+	 * On PostgreSQL and DuckDB, pre-commit validation can refuse commit even when the callback returns normally:
+	 * the transaction may be aborted, or a required check may be unable to establish transaction usability.
+	 * Pyranid attempts the normal rollback path and this method throws {@link DatabaseException}; handling a
+	 * statement failure inside the callback does not guarantee successful completion.
+	 * <p>
 	 * Nested calls to {@code transaction(...)} are independent transactions with independent JDBC connections; they do
 	 * not automatically join an outer transaction. Use {@link #participate(Transaction, TransactionalOperation)} to join an
 	 * existing transaction explicitly. A transaction is scoped to the {@link DataSource} instance that created it; a
@@ -198,6 +209,7 @@ public final class Database {
 	 *
 	 * @param transactionOptions     options to apply to the transaction
 	 * @param transactionalOperation the operation to perform transactionally
+	 * @throws DatabaseException if pre-commit validation detects an aborted transaction or cannot establish usability
 	 * @since 4.2.0
 	 */
 	public void transaction(@NonNull TransactionOptions transactionOptions,
@@ -216,6 +228,11 @@ public final class Database {
 	 * <p>
 	 * The transaction will be automatically rolled back if an exception bubbles out of {@code transactionalOperation}.
 	 * <p>
+	 * On PostgreSQL and DuckDB, pre-commit validation can refuse commit even when the callback returns normally:
+	 * the transaction may be aborted, or a required check may be unable to establish transaction usability.
+	 * Pyranid attempts the normal rollback path and this method throws {@link DatabaseException}; handling a
+	 * statement failure inside the callback does not guarantee successful completion.
+	 * <p>
 	 * Nested calls to {@code transaction(...)} are independent transactions with independent JDBC connections; they do
 	 * not automatically join an outer transaction. Use {@link #participate(Transaction, ReturningTransactionalOperation)} to
 	 * join an existing transaction explicitly. A transaction is scoped to the {@link DataSource} instance that created it; a
@@ -224,6 +241,7 @@ public final class Database {
 	 * @param transactionalOperation the operation to perform transactionally
 	 * @param <T>                    the type to be returned
 	 * @return the result of the transactional operation
+	 * @throws DatabaseException if pre-commit validation detects an aborted transaction or cannot establish usability
 	 */
 	@NonNull
 	public <T> Optional<T> transaction(@NonNull ReturningTransactionalOperation<T> transactionalOperation) {
@@ -235,6 +253,12 @@ public final class Database {
 	 * Performs an operation transactionally with the given options, optionally returning a value.
 	 * <p>
 	 * The transaction will be automatically rolled back if an exception bubbles out of {@code transactionalOperation}.
+	 * <p>
+	 * On PostgreSQL and DuckDB, pre-commit validation can refuse commit even when the callback returns normally:
+	 * the transaction may be aborted, or a required check may be unable to establish transaction usability.
+	 * Pyranid attempts the normal rollback path and this method throws {@link DatabaseException}; handling a
+	 * statement failure inside the callback does not guarantee successful completion.
+	 * <p>
 	 * Ordinary failure-derived interruption is restored after cleanup and post-transaction hooks, only when no enclosing
 	 * Pyranid transaction remains bound. Handling a nested failure does not defer cancellation to the outer boundary;
 	 * callers that intend cancellation must rethrow or restore the flag. A final propagating {@link Error} restores its
@@ -249,6 +273,7 @@ public final class Database {
 	 * @param transactionalOperation the operation to perform transactionally
 	 * @param <T>                    the type to be returned
 	 * @return the result of the transactional operation
+	 * @throws DatabaseException if pre-commit validation detects an aborted transaction or cannot establish usability
 	 * @since 4.2.0
 	 */
 	@NonNull
@@ -260,7 +285,12 @@ public final class Database {
 	/**
 	 * Performs one independent transaction attempt and returns its database outcome and invocation failure.
 	 * Uses the default options and performs no automatic retry. A normal rollback-only callback has no failure;
-	 * a committed transaction can retain a cleanup or hook failure. A final {@link Error} still escapes.
+	 * a committed transaction can retain a cleanup or hook failure.
+	 * <p>
+	 * On PostgreSQL and DuckDB, pre-commit validation can refuse commit after a normal callback return if the
+	 * transaction is aborted or a required check cannot establish usability. The refusal is retained in the outcome's
+	 * failure. Acknowledged rollback reports {@link TransactionResult#ROLLED_BACK}; failed rollback after application
+	 * work could have executed reports {@link TransactionResult#IN_DOUBT}. A final {@link Error} still escapes.
 	 *
 	 * @param operation the transactional operation
 	 * @return the completed transaction outcome, with no attempted value
@@ -275,6 +305,11 @@ public final class Database {
 	 * Performs one independent transaction attempt with explicit options, returning its result and ordinary failure.
 	 * Argument validation still throws normally; an operational acquisition/begin failure produces an outcome.
 	 * Nested calls own independent connections. Use {@code participate(...)} to join a transaction explicitly.
+	 * <p>
+	 * On PostgreSQL and DuckDB, pre-commit validation can refuse commit after a normal callback return if the
+	 * transaction is aborted or a required check cannot establish usability. The refusal is retained in the outcome's
+	 * failure. Acknowledged rollback reports {@link TransactionResult#ROLLED_BACK}; failed rollback after application
+	 * work could have executed reports {@link TransactionResult#IN_DOUBT}. A final {@link Error} still escapes.
 	 *
 	 * @param options transaction options
 	 * @param operation the transactional operation
@@ -296,6 +331,11 @@ public final class Database {
 	 * Performs one independent transaction attempt and retains the value returned normally by its callback.
 	 * The attempted value is available even if completion rolls back, becomes uncertain or fails after commit.
 	 * Uses default options; see the options overload for failure and interruption semantics.
+	 * <p>
+	 * On PostgreSQL and DuckDB, pre-commit validation can refuse commit after a normal callback return if the
+	 * transaction is aborted or a required check cannot establish usability. The refusal is retained in the outcome's
+	 * failure. Acknowledged rollback reports {@link TransactionResult#ROLLED_BACK}; failed rollback after application
+	 * work could have executed reports {@link TransactionResult#IN_DOUBT}. A final {@link Error} still escapes.
 	 *
 	 * @param operation the transactional operation
 	 * @param <T> the callback value type
@@ -326,6 +366,11 @@ public final class Database {
 	 * This method never retries and does not join an ambient transaction. Do not combine it with retries by nesting
 	 * it inside {@code transactionWithRetry(...)}: that creates an independent transaction. An uncertain result needs
 	 * application reconciliation under the original durable operation identity; it does not authorize replay.
+	 * <p>
+	 * On PostgreSQL and DuckDB, pre-commit validation can refuse commit after a normal callback return if the
+	 * transaction is aborted or a required check cannot establish usability. The refusal is retained in the outcome's
+	 * failure. Acknowledged rollback reports {@link TransactionResult#ROLLED_BACK}; failed rollback after application
+	 * work could have executed reports {@link TransactionResult#IN_DOUBT}. A final {@link Error} still escapes.
 	 *
 	 * @param options transaction options
 	 * @param operation the transactional operation
@@ -777,6 +822,12 @@ public final class Database {
 	 * <p>
 	 * If this thread is interrupted while waiting for another participant to release the transaction connection, Pyranid
 	 * restores the interrupt flag and throws {@link DatabaseException}.
+	 * <p>
+	 * Failure-derived interruption from the callback is restored after removing this participation context only
+	 * when no Pyranid transaction remains bound on the calling thread. Same-thread participation inside its
+	 * owner does not newly publish that flag; already-pending flags are preserved. If a caller handles the
+	 * failure inside the owner and intends cancellation, it must rethrow or restore the flag explicitly.
+	 * Handled failures do not queue later interruption restoration; the owner is still marked rollback-only.
 	 *
 	 * @param transaction            the transaction in which to participate
 	 * @param transactionalOperation the operation that should participate in the transaction
@@ -804,6 +855,12 @@ public final class Database {
 	 * <p>
 	 * If this thread is interrupted while waiting for another participant to release the transaction connection, Pyranid
 	 * restores the interrupt flag and throws {@link DatabaseException}.
+	 * <p>
+	 * Failure-derived interruption from the callback is restored after removing this participation context only
+	 * when no Pyranid transaction remains bound on the calling thread. Same-thread participation inside its
+	 * owner does not newly publish that flag; already-pending flags are preserved. If a caller handles the
+	 * failure inside the owner and intends cancellation, it must rethrow or restore the flag explicitly.
+	 * Handled failures do not queue later interruption restoration; the owner is still marked rollback-only.
 	 *
 	 * @param transaction            the transaction in which to participate
 	 * @param transactionalOperation the operation that should participate in the transaction
@@ -1244,7 +1301,7 @@ public final class Database {
 	 * parameter binding and redaction, statement logging, timeout configuration, and metrics. Payload nullability
 	 * and null/empty-string handling are database-specific; Pyranid performs no generic normalization.
 	 * <p>
-	 * On PostgreSQL this executes bound {@code pg_notify(?, ?)} SQL. PostgreSQL converts a null payload to the empty
+	 * On PostgreSQL this executes bound {@code pg_catalog.pg_notify(?, ?)} SQL. PostgreSQL converts a null payload to the empty
 	 * string. Delivery occurs only after commit and is discarded by rollback; notification delivery itself remains
 	 * non-durable and may be coalesced.
 	 *

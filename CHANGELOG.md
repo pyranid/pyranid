@@ -2,6 +2,8 @@
 
 All notable changes to Pyranid will be documented in this file.
 
+<a id="release-4-9-0"></a>
+
 ## 4.9.0-SNAPSHOT
 
 ### Added
@@ -27,107 +29,50 @@ All notable changes to Pyranid will be documented in this file.
   Optional.of(value), Optional.ofNullable(value), or Optional.empty() instead of a bare object/null. Empty means
   a null diagnostic display entry; it never omits or shifts a parameter slot. A null Optional violates the contract.
   This deliberately breaks source and binary compatibility with 4.8.0 redactor implementations and direct callers;
-  update and recompile them. Built-in none()/redactAll() factories keep their existing configuration call sites.
-
-### Fixed
-
-- Transaction completion preserves an acknowledged physical rollback even if subsequent success logging fails.
-  Commit uncertainty now requires actual JDBC commit dispatch; a pre-dispatch diagnostic failure can roll back
-  with a known outcome. Success/failure metrics follow the physical call, preserving original failure identities.
-- Nested generic records retain resolved type arguments through direct STRUCT, List and typed Map conversion,
-  including inherited generic bean properties and DuckDB local/zoned timestamp normalization; canonical
-  constructors retain their erased parameter signatures.
-- Custom binder/mapper applicability preserves generic arrays, wildcard bounds and type variables instead of
-  caching them under erased classes. Binder ClassValue entries store callback indices rather than callback owners,
-  preventing a callback-to-Database ownership cycle from retaining an otherwise unreachable binder.
-- Unsupported single-column Duration/Period/MonthDay targets point to CustomColumnMapper rather than bean setters.
-- Added tested PostgreSQL fixed-time interval, CALL OUT and transaction-bound refcursor recipes; complete-command
-  script guidance with SQLite first-statement and rollback controls; bean hooks, record injection/private lookups,
-  immutable projections and typed scalar SQL-array list recipes. No script/procedure API or runtime dependency added.
-- Typed SQL ARRAY elements identified as BLOB/CLOB/NCLOB now enforce their existing materialization limits
-  even when the driver already returned byte[]/String. Ordinary VARCHAR/VARBINARY arrays and the existing
-  typed SQLXML policy retain their behavior; handled custom array outputs remain opaque.
+  update and recompile them, including dependent libraries. Old implementations/lambdas can throw AbstractMethodError
+  on their first diagnostic invocation; old direct Object-returning bytecode can throw NoSuchMethodError. A recompiled
+  caller assigning the result to Object still compiles but receives an Optional. Audit those callers explicitly.
+  Built-in none()/redactAll() factories keep their existing configuration call sites.
 - Independent transactions reject a proven connection reference already owned by an ambient transaction before
   reading/changing JDBC state or assuming ownership. A handled rejection leaves the original owner usable;
   distinct wrappers and unrelated threads still require correct exclusive leasing by the DataSource.
 - SQL comment parsing follows the configured dialect: PostgreSQL/DuckDB/SQL Server retain nesting;
   Generic, MySQL/MariaDB, Oracle and SQLite end comments at the first closer. Dialect variants retain
   their own parameter bindings, positional-placeholder checks and parse-cache behavior.
-- MySQL/MariaDB default-mode double-quoted strings recognize backslash escapes. Oracle national
-  alternative quotes (nq/NQ) protect embedded quotes, parameter-like text and question marks.
 - PostgreSQL pgjdbc-style question-mark escapes are accepted without being escaped again. Raw and
   pre-escaped operators retain named binding order, including operands with names such as :where.
 - Listener setup rolls back inherited PostgreSQL server transactions even when JDBC reports autocommit,
   before clearing registrations and issuing LISTEN. Sanitation failures discard the connection.
-- Lazy transaction acquisition/begin failures retain statement acquisition timing. Unchecked exceptions
-  and Errors emit acquisition/begin failure metrics with the failing phase, without changing propagation.
 - Statement metrics pair each executor attempt with one terminal statement callback, including early
   failures and streaming operations. Stream completion/cleanup failures propagate as DatabaseException
   when no primary exception or Error controls propagation; raw causes and transaction failure identity remain available.
 - StatementLog/StatementContext diagnostics and builders complete reference nullness annotations,
   preserving nullable row-type clearing, nullable parameter values and fluent non-null builder returns.
-- Per-query ResultSetMapper Javadocs use a compiling implementation of the generic mapping method.
-  Corrected read-only and temporal configuration guidance, and added tested PostgreSQL enum and
-  MySQL/MariaDB binary UUID recipes without changing their default binding representation.
-- Result mapping preserves native Float/Double NaN, infinities and signed zero while still rejecting finite
-  numeric overflow. Scalar, row and typed-container conversions follow the same floating-point rule.
-- YearMonth reads accept unsigned expanded positive years emitted by YearMonth.toString(), retaining the
-  existing parameter storage format. ZoneOffset is recognized as a scalar target and accepts fixed-zone aliases.
 - Unsupported Optional-valued built-in mapping targets fail during planning, including selected SQL NULLs,
   with guidance to use nullable underlying values or a custom ResultSetMapper. Manual whole-shape column
   mappers retain their override; their built-in fallback still rejects unsupported Optional trees.
 - Zone-less OffsetDateTime text uses normal zone gap/overlap resolution consistently with Instant. Date-less
   TIME to OffsetTime conversion requires a fixed-offset database zone instead of inventing a historical offset;
   explicit source offsets remain intact.
-- SQLState codes retain their original value during secure-parameter diagnostic scrubbing and rewrapping, so
-  overlapping secure values cannot corrupt error-handling policies. Data-bearing diagnostic text remains scrubbed.
-- SQLite rowid collisions (`SQLITE_CONSTRAINT_ROWID`) classify as unique constraint violations, alongside
-  primary-key and unique-index collisions.
-- PostgreSQL absent error positions return empty optionals rather than zero; positive one-based query/internal
-  positions retain their reported values.
-- Typed Map-valued record components and bean properties recursively convert keys, values and nested containers,
-  preserving insertion order and nulls while rejecting converted-key collisions and incompatible map targets.
-  DuckDB MAP/STRUCT temporal declarations retain the correct zone semantics; nested timestamp type names no longer
-  misclassify the whole container as a scalar timestamp. Raw/native Maps retain their established normalization.
-  Repeated JDBC Array handles reuse one row-scoped extraction and preserve cleanup failures without double-freeing.
 - Legacy temporal mapping rejects PostgreSQL infinity and unrepresentable dates/instants instead of returning
   wrapped years. SQL Date checks its four-digit positive year and calendar round trip; Timestamp checks lossless
   instant conversion. Matching java.time infinity sentinels, native values and handled custom results remain available.
 - Oracle UUID parameters bind as canonical text for positively identified character JDBC targets, including
   character LOBs. RAW and unknown targets retain 16-byte binding, and custom binders keep precedence.
-- Bean field `@DatabaseColumn` aliases resolve to writable JavaBeans properties, including primitive boolean
-  `isActive`/`setActive` and `xCoordinate`/`setXCoordinate` naming. Invalid, static, ambiguous or competing
-  annotations fail clearly instead of silently losing aliases. Inheritance, visibility/generic bridges,
-  record components and intentional alias fan-out retain their existing behavior.
 - Default name candidates include literal Java property aliases, digit-to-word boundaries such as `sha256_hash`,
   and acronym boundaries such as `url_value`. Historical naming candidates remain supported.
 - ASCII column/property casing is locale-independent before configured Unicode lowercasing, preventing Turkish
   and Azerbaijani locale settings from breaking ordinary `ID`/`id` mappings. Map keys, STRUCT attributes and
   duplicate-name detection use the same normalization.
-- Named queries reject stray unquoted positional `?` slots in non-PostgreSQL dialects before JDBC acquisition,
-  including slots after expression operators. PostgreSQL question-mark operators and protected text retain their
-  existing handling, and generated named/IN-list placeholders retain their binding order.
 - Boolean text mapping uses one strict, case-insensitive rule across scalar, record, bean and typed-container
   targets: true/false, yes/no, on/off, 1/0 and unambiguous word prefixes. Invalid text no longer silently maps
   to false. Native Boolean/numeric conversion, null rules and custom mapper precedence are preserved.
-- Character parameters normalize to single-character strings after custom binder selection, including primitive
-  char IN lists and SQL ARRAY/STRUCT values.
-- DuckDB negative-scale decimal parameters normalize exactly to scale zero. Unsupported JDBC decimal precision
-  or scale fails before binding, preventing silent SQL NULL values and enormous negative-scale coefficient
-  expansion. Supported nonnegative decimals and other dialects keep their original representation.
 - PostgreSQL streaming queries apply the default fetch size of 256 inside enclosing transactions as well as
   standalone streams. MariaDB streams also use a positive default of 256, enabling incremental driver reads.
   Explicit query sizes, including zero, and positive PostgreSQL/MariaDB inherited or customizer values are preserved.
 - MySQL streams retain row streaming for positive fetch-size hints unless Connector/J confirms cursor fetching
   and Pyranid recognizes a server-prepared statement. Opaque wrappers and client-emulated prepares keep the streaming
   sentinel instead of accidentally buffering the whole result. Optional inspection preserves terminal failures.
-- Large-update and batch execution fall back only on explicit unsupported-method signals without conflicting
-  failure evidence. General SQL exceptions, including SQLState `0A`/`HYC00`, nested capability exceptions and
-  error text containing "unsupported", "not supported" or "not implemented", propagate without executing again
-  or changing the cached capability. This prevents failed batches appearing to succeed and unsafe repeated updates.
-- Execution capability checks reject batch-failure evidence even when nested diagnostics report no SQLState or an
-  unsupported-feature state. They retain observed interruption and committed/in-doubt outcomes across changing
-  diagnostic accessors, so later wrapping cannot lose cancellation or admit an unsafe transaction retry.
 - PostgreSQL and DuckDB transactions no longer issue commit after an observable handled statement failure aborted
   the transaction. PostgreSQL reads driver state where available; DuckDB and the PostgreSQL fallback conditionally
   validate the existing connection after recorded failures or participating raw/custom JDBC access. Usable transactions,
@@ -139,18 +84,99 @@ All notable changes to Pyranid will be documented in this file.
 - Traditional transaction failures now restore interruption after connection cleanup and post-transaction hooks,
   and only when no enclosing transaction remains. Retained interruption evidence blocks retry before user policy
   invocation, even when the thread flag has not been published. Participation retains its rollback-only contract.
+- DatabaseException.toString() omits PostgreSQL detail, hint, internal query and context fields; explicit diagnostic
+  accessors remain available. Record-construction errors describe component names and types without printing row values.
+- MySQL-family instant-bearing parameters use the configured database zone's local timestamp when metadata does
+  not identify a zoned target. The `TIMESTAMP_WITHOUT_TIME_ZONE` strategy now also applies to generic metadata
+  such as VARCHAR/DATE; positive zoned-timestamp metadata keeps precedence.
+- LocalDate/LocalDateTime parameters use the configured database zone when metadata identifies a zoned timestamp.
+  Timestamp result targets use the same instant semantics as Timestamp parameters, avoiding JVM-zone drift on
+  read-modify-write through scalar, record, bean and typed-array mappings.
+- SQLite instant-bearing writes use fixed-width UTC timestamp text with nine fractional digits. LocalDateTime
+  writes, including the WITHOUT TIME ZONE strategy, use fixed-width local text. Fractional width no longer changes
+  the sort order of values written in the same representation for years 0000–9999.
+- TargetType.getArrayComponentType() prefers the declared GenericArrayType component before the erased array
+  class, preserving parameterized components, bounds and type variables for custom binder/mapper selection.
+
+### Fixed
+
+- PostgreSQL metadata protection no longer permanently marks a recovered transaction rollback-only when
+  an internal savepoint is rejected with `25P02` and consistent prior statement-error evidence. Uncertain
+  establishment failures and failed rollback/release cleanup still fence the owning transaction.
+- Managed PostgreSQL binds resolve trusted built-in parameter metadata in one protected snapshot before
+  setters, reusing type/name results across batch groups and chunks. Custom/opaque binding paths retain
+  ordered, protected late resolution. LocalDate/LocalDateTime skip metadata on SQLite/MySQL/MariaDB;
+  dialects with zoned targets retain configured-zone coercion and Oracle UUID target typing is unchanged.
+- Timestamp type-name detection reuses a compiled pattern and skips regex matching for ordinary SQL types,
+  avoiding repeated pattern compilation during uncached or churned mapping plans.
+- Repeated rows reuse weak execution-local schema hints and empty mapping scopes, avoiding shared-cache
+  contention and per-row scope allocation while preserving cursor, mapper and application-loader reclamation.
+- PostgreSQL pre-commit checks cache reflective state-reader metadata by the actual driver class and reuse
+  stable implemented driver interfaces. Each check still reads live state; pooled-driver selection and
+  context-class-loader discovery remain dynamic, without retaining otherwise unreachable application loaders.
+- PostgreSQL infinity mapping uses local sentinel constants, removing the mapper's optional PGStatement
+  class-file dependency while preserving existing java.time and legacy temporal conversion behavior.
+- Transaction completion preserves an acknowledged physical rollback even if subsequent success logging fails.
+  Commit uncertainty now requires actual JDBC commit dispatch; a pre-dispatch diagnostic failure can roll back
+  with a known outcome. Success/failure metrics follow the physical call, preserving original failure identities.
+- Nested generic records retain resolved type arguments through direct STRUCT, List and typed Map conversion,
+  including inherited generic bean properties and DuckDB local/zoned timestamp normalization; canonical
+  constructors retain their erased parameter signatures.
+- Custom binder/mapper applicability preserves generic arrays, wildcard bounds and type variables instead of
+  caching them under erased classes. Binder ClassValue entries store callback indices rather than callback owners,
+  preventing a callback-to-Database ownership cycle from retaining an otherwise unreachable binder.
+- Unsupported single-column Duration/Period/MonthDay targets point to CustomColumnMapper rather than bean setters.
+- Typed SQL ARRAY elements identified as BLOB/CLOB/NCLOB now enforce their existing materialization limits
+  even when the driver already returned byte[]/String. Ordinary VARCHAR/VARBINARY arrays and the existing
+  typed SQLXML policy retain their behavior; handled custom array outputs remain opaque.
+- MySQL/MariaDB default-mode double-quoted strings recognize backslash escapes. Oracle national
+  alternative quotes (nq/NQ) protect embedded quotes, parameter-like text and question marks.
+- Lazy transaction acquisition/begin failures retain statement acquisition timing. Unchecked exceptions
+  and Errors emit acquisition/begin failure metrics with the failing phase, without changing propagation.
+- Result mapping preserves native Float/Double NaN, infinities and signed zero while still rejecting finite
+  numeric overflow. Scalar, row and typed-container conversions follow the same floating-point rule.
+- YearMonth reads accept unsigned expanded positive years emitted by YearMonth.toString(), retaining the
+  existing parameter storage format. ZoneOffset is recognized as a scalar target and accepts fixed-zone aliases.
+- SQLState codes retain their original value during secure-parameter diagnostic scrubbing and rewrapping, so
+  overlapping secure values cannot corrupt error-handling policies. Data-bearing diagnostic text remains scrubbed.
+- SQLite rowid collisions (`SQLITE_CONSTRAINT_ROWID`) classify as unique constraint violations, alongside
+  primary-key and unique-index collisions.
+- PostgreSQL absent error positions return empty optionals rather than zero; positive one-based query/internal
+  positions retain their reported values.
+- Typed Map-valued record components and bean properties recursively convert keys, values and nested containers,
+  preserving insertion order and nulls while rejecting converted-key collisions and incompatible map targets.
+  DuckDB MAP/STRUCT temporal declarations retain the correct zone semantics; nested timestamp type names no longer
+  misclassify the whole container as a scalar timestamp. Raw/native Maps retain their established normalization.
+  Repeated JDBC Array handles reuse one row-scoped extraction and preserve cleanup failures without double-freeing.
+- Bean field `@DatabaseColumn` aliases resolve to writable JavaBeans properties, including primitive boolean
+  `isActive`/`setActive` and `xCoordinate`/`setXCoordinate` naming. Invalid, static, ambiguous or competing
+  annotations fail clearly instead of silently losing aliases. Inheritance, visibility/generic bridges,
+  record components and intentional alias fan-out retain their existing behavior.
+- Named queries reject stray unquoted positional `?` slots in non-PostgreSQL dialects before JDBC acquisition,
+  including slots after expression operators. PostgreSQL question-mark operators and protected text retain their
+  existing handling, and generated named/IN-list placeholders retain their binding order.
+- Character parameters normalize to single-character strings after custom binder selection, including primitive
+  char IN lists and SQL ARRAY/STRUCT values.
+- DuckDB negative-scale decimal parameters normalize exactly to scale zero. Unsupported JDBC decimal precision
+  or scale fails before binding, preventing silent SQL NULL values and enormous negative-scale coefficient
+  expansion. Supported nonnegative decimals and other dialects keep their original representation.
+- Large-update and batch execution fall back only on explicit unsupported-method signals without conflicting
+  failure evidence. General SQL exceptions, including SQLState `0A`/`HYC00`, nested capability exceptions and
+  error text containing "unsupported", "not supported" or "not implemented", propagate without executing again
+  or changing the cached capability. This prevents failed batches appearing to succeed and unsafe repeated updates.
+- Execution capability checks reject batch-failure evidence even when nested diagnostics report no SQLState or an
+  unsupported-feature state. They retain observed interruption and committed/in-doubt outcomes across changing
+  diagnostic accessors, so later wrapping cannot lose cancellation or admit an unsafe transaction retry.
 - PostgreSQL parameter metadata inspection is protected by an internal savepoint in manual-commit mode, so an
   optional describe failure cannot abort otherwise valid temporal SQL. Batch groups and chunks reuse one
   prepared-statement resolver instead of requesting parameter metadata once per row.
 - Negative JDBC update counts are reported as unknown affected counts in metrics, including generated-key paths.
   Public update results retain the driver's count. Enabled metrics no longer turn DuckDB DDL or SET into failures.
 - Row-plan converters and scalar/driver reflection caches no longer retain discarded mappers or application
-  class loaders through ClassValue cycles. Mapping resource state is removed from pooled workers after each
-  outermost mapping scope, and weak cursor identity memoization preserves schema reuse.
+  class loaders through ClassValue cycles. Idle pooled workers retain only JDK weak references to empty mapping
+  scopes, allowing mapper/loader reclamation; weak cursor identity memoization preserves schema reuse.
 - PostgreSQL notification sends explicitly call `pg_catalog.pg_notify`, preventing search-path overloads from
   intercepting the built-in function.
-- Automatic exception rendering omits PostgreSQL detail, hint, internal query and context fields; explicit diagnostic
-  accessors remain available. Record-construction errors describe component names and types without printing row values.
 - Inherited JavaBean setter types are resolved against the concrete row class, including superclass/interface and
   owner bindings, nested collections and generic arrays. Conversion and setter validation now use the resolved
   type instead of silently storing values under an erased `Object` signature.
@@ -171,15 +197,6 @@ All notable changes to Pyranid will be documented in this file.
   fields use the existing secure-parameter scrubber.
 - DuckDB commit-time primary-key/unique violations classify as unique constraint failures. A duplicate value containing
   `conflict` no longer makes that failure transient or a serialization failure; commit uncertainty still prevents replay.
-- MySQL-family instant-bearing parameters use the configured database zone's local timestamp when metadata does
-  not identify a zoned target. The `TIMESTAMP_WITHOUT_TIME_ZONE` strategy now also applies to generic metadata
-  such as VARCHAR/DATE; positive zoned-timestamp metadata keeps precedence.
-- LocalDate/LocalDateTime parameters use the configured database zone when metadata identifies a zoned timestamp.
-  Timestamp result targets use the same instant semantics as Timestamp parameters, avoiding JVM-zone drift on
-  read-modify-write through scalar, record, bean and typed-array mappings.
-- SQLite instant-bearing writes use fixed-width UTC timestamp text with nine fractional digits. LocalDateTime
-  writes, including the WITHOUT TIME ZONE strategy, use fixed-width local text. Fractional width no longer changes
-  the sort order of values written in the same representation for years 0000–9999.
 - PostgreSQL recognized built-in `timestamp` array elements convert instant-bearing values through the configured
   database zone, consistently with scalar zone-less timestamps. Domains and user-defined names are not inferred.
 - Legacy Time parameters and result targets preserve milliseconds. Oracle LocalTime binding uses its native
@@ -194,6 +211,11 @@ All notable changes to Pyranid will be documented in this file.
   when building a nullable display list. Recompile implementations and direct callers against 4.9.0; this is an
   intentional source/binary break in this minor release. Both overloads reject null Optional results during
   diagnostic rendering; SQL-error diagnostics retain their existing fail-closed fallback and original SQL failure.
+  An old implementation/lambda can throw AbstractMethodError when diagnostics first invoke it, and old direct callers
+  targeting the Object-returning descriptor can throw NoSuchMethodError. Recompiled calls assigned to Object can
+  silently receive an Optional; inspect those call sites. The exact three-argument erased method signature is the
+  only approved japicmp exception; the unfiltered API report still exposes the break. Built-in none()/redactAll()
+  calls need no source migration. See COMPATIBILITY.md for the deliberate minor-release exception.
 - The new mapping options default to false. Strict mapping validates selected source columns, not completeness
   of target members. Detached native LOB results can change container element/array representations when enabled;
   driver allocation and aggregate result size remain outside per-LOB materialization bounds.
@@ -246,7 +268,9 @@ All notable changes to Pyranid will be documented in this file.
 - Traditional `transaction(...)` now throws when PostgreSQL/DuckDB pre-commit detection finds an aborted transaction,
   or a required usability check fails. Previously a swallowed statement error could return normally despite discarded
   work. A failed validation conservatively refuses commit without claiming that every validation error proves an abort.
-  There is no opt-out. Other dialects retain their existing transaction-continuity behavior.
+  There is no opt-out. A refusal can inherit a handled failure's retry classification, so transactionWithRetry can
+  rerun a callback that swallowed a retryable serialization/deadlock failure. Account for repeated external effects.
+  Other dialects retain their existing transaction-continuity behavior.
 - The outcome API never retries and does not join an enclosing transaction. `ROLLED_BACK` alone does not authorize
   replay; independently committed work and external effects remain application responsibilities. Use the original
   durable operation identity to resolve `IN_DOUBT`, rather than replaying under a new identity.
@@ -256,8 +280,9 @@ All notable changes to Pyranid will be documented in this file.
   Final propagating boundary `Error`s retain their interruption-restoration behavior. Handling a nested ordinary
   failure does not queue deferred cancellation; callers that intend cancellation must restore the flag or rethrow.
 - Commit failures identified only by vendor codes or message text, including Oracle `8177`, SQL Server `3960` and
-  DuckDB conflicts without a primary `40001`, no longer qualify as proven serialization aborts at commit. Statement
-  diagnostics and body-failure retry classification remain independent of this stricter commit proof.
+  DuckDB commit-time conflicts, no longer qualify as proven serialization aborts at commit. With the current DuckDB
+  driver, commit conflicts supply no SQLState and remain IN_DOUBT; none automatically retry. Statement diagnostics
+  and body-failure retry classification remain independent of this stricter commit proof.
 - Timeout/transient retry policies can now recognize PostgreSQL `55P03` and Oracle `54`/`30006` body failures;
   transient policies also recognize SQL Server `3960`, which does not itself satisfy a timeout policy. These flags
   do not authorize another attempt after `COMMITTED` or `IN_DOUBT`.
@@ -270,12 +295,15 @@ All notable changes to Pyranid will be documented in this file.
 - DuckDB commit-time duplicate-key failures remain `IN_DOUBT`, even when the unique classifier identifies the cause;
   resolve the original durable operation identity before deciding what to do next.
 - When an opaque PostgreSQL wrapper prevents driver-state reads, fallback validation depends on a recorded/escaped
-  failure or raw/custom JDBC access. Parameter describes now have internal savepoint protection; other built-in
-  compatibility paths that internally swallow type lookup, SQL ARRAY
-  metadata or typed-getter failures can still miss an abort if neither trigger exists. pgjdbc type-cache misses can
+  failure or raw/custom JDBC access. These triggers coalesce into at most one internal SELECT 1 before completion;
+  readable usable PostgreSQL state avoids the query, and healthy built-in-only work needs none. Parameter describes
+  now have internal savepoint protection; other built-in compatibility paths that internally swallow type lookup,
+  SQL ARRAY metadata or typed-getter failures can still miss an abort if neither trigger exists. pgjdbc type-cache misses can
   execute catalog SQL. Readable PostgreSQL state covers these aborts; qualify opaque driver/pool combinations.
-- API compatibility now compares against 4.8.0, without the exclusions for APIs removed in that release. CI also
-  executes the DuckDB LOB and temporal-array regression suites and a targeted PostgreSQL metadata leg with a
+- API compatibility now compares against 4.8.0, without the exclusions for APIs removed in that release. The approved
+  three-argument ParameterRedactor return-type change has one exact-method exception; the unfiltered report retains
+  that incompatibility. CI also executes the DuckDB LOB and temporal-array regression suites and a targeted
+  PostgreSQL metadata leg with a
   non-UTC JVM timezone.
 - A selected JavaBean property with unresolved type variables now fails clearly at mapping-plan construction.
   Use a concrete subclass that binds those variables, an intentional `Object`/raw collection property, or a custom
@@ -284,14 +312,45 @@ All notable changes to Pyranid will be documented in this file.
   MySQL-family writes without identifying metadata. Existing values written with earlier zone drift are not
   repaired automatically. Native Object/custom-mapper inputs retain JDBC representations; use LocalDateTime for
   unchanged wall-clock values. Local zoned-target binding follows Java's gap-forward/earlier-overlap rules.
-- SQLite text written before 4.9 remains readable. Normalize stored values to one representation before mixing
-  old and new formats in textual ORDER BY or range predicates; Pyranid performs no automatic data migration.
+- SQLite text written before 4.9 remains readable, but 4.9's fixed-width writes change stored representations.
+  Equality predicates, joins, UNIQUE/ON CONFLICT keys, GROUP BY/DISTINCT, optimistic-lock predicates, ORDER BY and
+  ranges can distinguish legacy and canonical text for the same timestamp. A fetched value rebound with 4.9 can
+  therefore match no legacy row, and uniqueness checks can admit a logical duplicate. Instant-bearing writes normalize
+  offsets to UTC; store an original offset separately if the application needs it. Choose one local-wall-clock or
+  instant representation per column and migrate existing data before mixed-version use. The
+  [tested SQLite migration recipe](docs/sqlite-timestamp-migration.md) preserves nanoseconds, preflights canonical-key
+  collisions and rolls back on failure. Pyranid performs no automatic data migration.
+- Oracle UUID bindings to identified character targets now use 36-character canonical text, while RAW(16) and unknown
+  targets retain binary binding. Legacy 32-hex-digit character rows no longer match WHERE id = :uuid; migrate their
+  values and any referencing keys. Widen CHAR(32)/VARCHAR2(32) columns before canonical inserts or they can fail with
+  ORA-12899. Audit case/duplicate collisions and constraints during migration; binding uuid.toString() explicitly also
+  requires a compatible text schema.
 - LocalDate/LocalDateTime parameters with unavailable or non-identifying zoned-target metadata still depend on
   the connection/session zone when SQL supplies the zone; keep it consistent with `Database.timeZone`.
 - For SQL Server legacy DATETIME equality and optimistic-lock predicates, configure the driver's
   [datetimeParameterType=datetime](https://learn.microsoft.com/en-us/sql/connect/jdbc/setting-the-connection-properties?view=sql-server-ver17#datetimeparametertype)
   connection property. The default DATETIME2 parameter type can compare differently from stored DATETIME values.
   The setting affects other date/timestamp parameters on that connection and can reduce their precision.
+- Legacy temporal reads are stricter in 4.9: PostgreSQL infinity and out-of-range/unrepresentable values now
+  throw DatabaseException for java.sql.Timestamp, java.sql.Date and java.util.Date targets instead of returning
+  wrapped years or unusable legacy sentinels. Use the matching native java.time target for PostgreSQL's
+  minimum/maximum sentinels, or a custom mapper with an explicit policy. The existing matching java.time,
+  native-value and handled custom-result contracts are unchanged; these checks also apply in typed containers.
+- participate() now follows the ambient-transaction rule for failure-derived interruption. A callback failure
+  retaining interruption does not newly publish the flag while the owning or another enclosing transaction
+  remains bound on that thread; a worker with no remaining ambient transaction restores it on exit. Already
+  pending flags, including actual interruptible lock-wait cancellation, are preserved. The participation failure
+  still marks its owner rollback-only. If application code handles it inside the owner and intends cancellation,
+  rethrow or restore the flag explicitly; no later restoration is queued for a handled failure.
+- Custom binder/mapper code inspecting TargetType.getArrayComponentType() now sees a declared generic
+  component when one exists, such as List<String> for List<String>[], instead of its erased Class. Do not assume
+  the returned getType() is always a Class or key generic selections only by raw component class. Use
+  getRawClass() deliberately when erasure is the intended policy; ordinary non-generic arrays keep their shape.
+- MySQL Connector/J connectionTimeZone does not set Database.timeZone, which defaults to the JVM zone.
+  Configuring a connection for UTC while leaving a Database at a non-UTC JVM default does not align those
+  settings. Choose Database.timeZone explicitly for the column/session wall-clock policy and verify the actual
+  session time_zone. Driver conversion settings and direct JDBC temporal getters are a separate concern;
+  MariaDB Connector/J has its own version-specific settings and defaults. Existing data is not rewritten.
 
 ### Documentation
 
@@ -307,6 +366,12 @@ All notable changes to Pyranid will be documented in this file.
 - Removed the recommendation to recover MySQL upsert IDs through JDBC-generated keys, including the
   `LAST_INSERT_ID(id)` idiom. A connection-pinned `execute()` plus `SELECT LAST_INSERT_ID()` recipe and exact
   insert/update key regressions cover the supported alternative.
+- Added tested PostgreSQL fixed-time interval, CALL OUT and transaction-bound refcursor recipes; complete-command
+  script guidance with SQLite first-statement and rollback controls; bean hooks, record injection/private lookups,
+  immutable projections and typed scalar SQL-array list recipes. No script/procedure API or runtime dependency added.
+- Per-query ResultSetMapper Javadocs use a compiling implementation of the generic mapping method.
+  Corrected read-only and temporal configuration guidance, and added tested PostgreSQL enum and
+  MySQL/MariaDB binary UUID recipes without changing their default binding representation.
 
 ## 4.8.0
 

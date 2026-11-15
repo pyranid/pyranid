@@ -42,6 +42,7 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Predicate;
+import java.util.regex.Pattern;
 
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
@@ -52,6 +53,8 @@ import static java.util.Objects.requireNonNull;
 class GenericDialect implements DatabaseDialect {
 	@NonNull
 	static final GenericDialect INSTANCE = new GenericDialect();
+	private static final Pattern TIMESTAMP_WITH_TIME_ZONE_NAME = Pattern.compile(
+			"TIMESTAMP(?:\\s*\\(\\s*\\d+\\s*\\))?\\s+WITH\\s+(?:LOCAL\\s+)?TIME\\s+ZONE");
 
 	protected GenericDialect() {}
 
@@ -368,7 +371,8 @@ class GenericDialect implements DatabaseDialect {
 		String normalizedTypeName = typeName.trim().toUpperCase(Locale.ROOT);
 		// Container declarations can contain zoned timestamp names without being timestamps.
 		return normalizedTypeName.equals("TIMESTAMPTZ")
-				|| normalizedTypeName.matches("TIMESTAMP(?:\\s*\\(\\s*\\d+\\s*\\))?\\s+WITH\\s+(?:LOCAL\\s+)?TIME\\s+ZONE");
+				|| normalizedTypeName.startsWith("TIMESTAMP")
+				&& TIMESTAMP_WITH_TIME_ZONE_NAME.matcher(normalizedTypeName).matches();
 	}
 
 	protected boolean hasErrorCode(@NonNull DatabaseExceptionMetadata metadata,

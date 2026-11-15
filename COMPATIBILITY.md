@@ -1,9 +1,10 @@
 # Compatibility Policy
 
-Pyranid follows [Semantic Versioning](https://semver.org/):
+Pyranid uses [Semantic Versioning](https://semver.org/) as its normal compatibility policy.
+Explicit exceptions are documented below and in the CHANGELOG:
 
 * **Major** (`5.0.0`): may remove or incompatibly change public API. Migration notes provided in the CHANGELOG.
-* **Minor** (`4.6.0`): additive public API and behavior changes documented under "Migration Notes" in the CHANGELOG.
+* **Minor** (`4.6.0`): normally additive public API and behavior changes documented under "Migration Notes" in the CHANGELOG; intentional compatibility exceptions require an explicit migration contract.
 * **Patch** (`4.6.1`): fixes only; no new public API.
 
 ## What counts as public API
@@ -19,7 +20,11 @@ API compatibility is machine-checked on every build by the
 [japicmp](https://siom79.github.io/japicmp/) Maven plugin (see `pom.xml`), configured to fail the build on
 binary- or source-incompatible changes and to validate the version number against the nature of the change
 (`breakBuildBasedOnSemanticVersioning`). The comparison baseline is pinned via the `japicmp.baseline.version`
-property.
+property. The current baseline is the released **4.8.0** artifact. The old exclusions for APIs removed
+in 4.8.0 have been removed. The checked report excludes only
+`ParameterRedactor#redactParameter(StatementContext, Integer, Object)` for the approved 4.9.0 return-type
+change; every other public member is gated. The separate unfiltered API report still exposes this break.
+Remove that exact-method exception when the baseline advances beyond 4.8.0.
 
 ### Intentional breaks in 4.7.0
 
@@ -51,9 +56,9 @@ inspecting the generic interfaces of a callback implementation compiled against 
 fail on the new two-argument declaration. Recompile such implementations. Source that explicitly names the
 interface must add `Connection` as its first type argument.
 
-The comparison baseline is now the released 4.7.0 artifact. Its old exclusions have been removed. The four
-intentional method removals listed below have narrowly scoped exclusions; all other public members are gated
-against that release.
+At the start of the 4.8.0 cycle, the comparison baseline advanced to 4.7.0. The four intentional removals
+listed below had narrowly scoped exceptions during that cycle. They are now part of the 4.8.0 baseline and
+no longer have compatibility-check exclusions.
 
 ### Intentional API and behavior changes in 4.8.0
 
@@ -62,7 +67,8 @@ against that release.
 `Database.Builder.databaseType(...)`. Both arguments are required and must be non-null; the database type
 is fixed when the builder is created. Autodetection has been removed, including the public
 `DatabaseType.fromDataSource(...)` and `DatabaseType.fromConnection(...)` helpers. These four removed methods
-are excluded individually from japicmp. Update construction calls and recompile consumers against 4.8.0.
+had individual japicmp exceptions in the 4.8.0 cycle; those exceptions were removed when the baseline
+advanced to 4.8.0. Update construction calls and recompile consumers against 4.8.0.
 Choose `DatabaseType.GENERIC` explicitly for a database without dedicated dialect support. Building a
 `Database` and reading its type do not acquire connections.
 
@@ -73,6 +79,36 @@ substantially and are not extension points. Existing custom mapping SPIs keep th
 
 Java 17 remains the minimum runtime, and core retains zero runtime dependencies. Refer to the 4.8.0 changelog
 migration notes for LOB ownership, scoped savepoint thread ownership, timing semantics, and notification lifecycle.
+
+### Intentional API and storage changes in 4.9.0
+
+4.9.0 is another explicitly documented exception to the usual minor-release compatibility expectation.
+`ParameterRedactor.redactParameter(StatementContext<?>, Integer, Object)` now returns non-null
+`Optional<Object>` instead of `Object`. The new name-aware four-argument overload also returns
+`Optional<Object>` and delegates to the three-argument functional method. Implementations and lambdas must
+return `Optional.of(value)`, `Optional.ofNullable(value)` or `Optional.empty()`. Empty displays a null slot;
+a null Optional violates the contract. Built-in `none()` and `redactAll()` configuration calls are unchanged.
+
+Update and recompile redactor implementations, direct callers and dependent libraries against 4.9.0.
+A redactor lambda or implementation compiled against 4.8.0 can fail with `AbstractMethodError` when it is
+first invoked by diagnostics; this need not fail at startup. Old direct bytecode targeting the Object-returning
+method descriptor can fail with `NoSuchMethodError`. A source call assigned to `Object` still compiles after
+upgrading but now receives an Optional, so audit direct callers rather than relying on compilation alone.
+On a SQL-error diagnostic path, Pyranid preserves the original SQL failure and uses its fail-closed parameter
+display fallback; that containment does not make an old implementation compatible.
+
+Legacy temporal reads into `java.sql.Timestamp`, `java.sql.Date` or `java.util.Date` now fail for PostgreSQL infinity and unrepresentable values; matching native `java.time` sentinels retain their existing contract. Failure-derived interruption from `participate()` is not newly published while an owner remains bound on the same thread; handled cancellation requires an explicit rethrow or re-interrupt. Custom hooks inspecting `TargetType.getArrayComponentType()` receive the declared generic component before erasure. These are behavior migrations, documented in the [4.9.0 migration notes](CHANGELOG.md#release-4-9-0).
+
+SQLite's fixed-width timestamp writes are a storage-format migration. Reading legacy text still works,
+but equality predicates, joins, `UNIQUE`/`ON CONFLICT` keys, `GROUP BY`/`DISTINCT`, optimistic-lock comparisons,
+ordering and ranges can distinguish old and new strings representing the same value. Instant-bearing writes
+normalize to UTC and do not preserve the original offset. Choose local-wall-clock versus instant semantics
+per column, normalize existing text with full precision, and check for canonical-key collisions before rewriting.
+Use the [tested SQLite migration recipe](docs/sqlite-timestamp-migration.md); no automatic data migration occurs.
+
+Oracle UUID values in identified character columns now bind as canonical 36-character UUID text. Existing
+32-hex-digit character data and 32-character column widths need migration; RAW(16) storage is unchanged.
+See the [4.9.0 migration notes](CHANGELOG.md#release-4-9-0). Java 17 remains the minimum runtime.
 
 ### Historical compatibility notes
 

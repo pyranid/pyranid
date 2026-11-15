@@ -27,7 +27,7 @@ class TemporalColumnTypeDetectionTests {
 
 	@Test
 	void containerAndOtherTypeNamesDoNotBecomeScalarZonedTimestamps() throws SQLException {
-		for (String name : List.of("MAP(TIMESTAMP, TIMESTAMP WITH TIME ZONE)",
+		for (String name : List.of("INTEGER", "VARCHAR", "MAP(TIMESTAMP, TIMESTAMP WITH TIME ZONE)",
 				"STRUCT(local TIMESTAMP, zoned TIMESTAMPTZ)", "TIMESTAMPTZ[]", "TIMESTAMP WITH TIME ZONE[]",
 				"TIMESTAMP(6) WITH TIME ZONE[2]", "my_timestamptz", "TIMESTAMP", "TIME WITH TIME ZONE"))
 			assertFalse(GenericDialect.INSTANCE.isTimestampWithTimeZone(metadata(Types.JAVA_OBJECT, name), 1), name);

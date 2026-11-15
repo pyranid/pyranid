@@ -41,6 +41,9 @@ public final class MapperRetentionProbe {
 		Database database = Database.with(source, DatabaseType.GENERIC).build();
 		awaitCollection(discardCursors(database), "cursors of a retained mapper");
 		Reference.reachabilityFence(database);
+		List<StatementContext<?>> retainedContexts = new ArrayList<>();
+		awaitCollection(discardExecutionMemos(source, retainedContexts), "mappers, owners and cursors of retained execution contexts");
+		Reference.reachabilityFence(retainedContexts);
 
 		ExecutorService worker = Executors.newSingleThreadExecutor(runnable -> {
 			Thread thread = new Thread(runnable, "retention-probe-worker");
@@ -128,6 +131,25 @@ public final class MapperRetentionProbe {
 				database.getResultSetMapper().map(context, cursor, Row.class, database.getInstanceProvider()).orElseThrow();
 				references.add(new WeakReference<>(cursor));
 			}
+		}
+		return references;
+	}
+
+	private static List<WeakReference<?>> discardExecutionMemos(DataSource source,
+			List<StatementContext<?>> retainedContexts) throws Exception {
+		List<WeakReference<?>> references = new ArrayList<>();
+		for (int index = 0; index < 20; index++) {
+			ResultSetMapper mapper = ResultSetMapper.withDefaultConfiguration();
+			Database database = Database.with(source, DatabaseType.GENERIC).resultSetMapper(mapper).build();
+			StatementContext<Row> context = StatementContext.<Row>with(Statement.of("retained-context", "SELECT id"), database)
+					.resultSetRowType(Row.class).build();
+			try (var cursor = MappingRetentionApplication.cursor(1, "id")) {
+				mapper.map(context, cursor, Row.class, database.getInstanceProvider()).orElseThrow();
+				references.add(new WeakReference<>(cursor));
+			}
+			retainedContexts.add(context);
+			references.add(new WeakReference<>(mapper));
+			references.add(new WeakReference<>(database));
 		}
 		return references;
 	}

@@ -70,8 +70,10 @@ final class MappingResources implements AutoCloseable {
 
 	int scalarJdbcType(ResultSet resultSet, ResultSetMetaData metadata) throws SQLException {
 		if (this.scalarResultSet == null || this.scalarResultSet.get() != resultSet) {
-			this.scalarJdbcType = metadata.getColumnType(1);
-			this.scalarResultSet = new WeakReference<>(resultSet);
+			int jdbcType = metadata.getColumnType(1);
+			WeakReference<ResultSet> cursor = new WeakReference<>(resultSet);
+			this.scalarJdbcType = jdbcType;
+			this.scalarResultSet = cursor;
 		}
 		return this.scalarJdbcType;
 	}

@@ -38,13 +38,13 @@ public enum TransactionResult {
 	 */
 	ROLLED_BACK,
 	/**
-	 * Pyranid cannot prove the final database outcome because the commit attempt failed without narrow affirmative
-	 * serialization-abort evidence followed by successful rollback, or because rollback failed after application transaction work could have
-	 * executed. The commit attempt need not have reached the driver: once application transaction work could have executed,
-	 * a failure anywhere on the commit path is reported here unless it is one of the provable cases named under
-	 * {@link #ROLLED_BACK}. General serialization diagnostics, including a secondary {@code 40001} under an uncertain
-	 * primary commit failure, do not by themselves prove rollback. Validation success likewise does not prove that a
-	 * later failed commit aborted.
+	 * Pyranid cannot prove the final database outcome because an issued JDBC commit failed without narrow affirmative
+	 * serialization-abort evidence followed by acknowledged rollback, or because rollback was not acknowledged after
+	 * application transaction work could have executed. A failure before JDBC commit dispatch does not make the outcome
+	 * uncertain when the follow-up rollback succeeds. Acknowledged commit or rollback retains its known database result
+	 * even if subsequent diagnostics fail. General serialization diagnostics, including a secondary {@code 40001} under
+	 * an uncertain primary commit failure, do not by themselves prove rollback. Validation success likewise does not prove
+	 * that a later failed commit aborted.
 	 * <p>
 	 * For example, the database may have committed successfully but the client may not have received the acknowledgement, or
 	 * rollback may have failed before the database confirmed that pending work was discarded.

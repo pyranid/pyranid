@@ -83,7 +83,7 @@ jobs:
             experimental: false
           - name: SQLite
             profiles: integration
-            test: SqliteIntegrationIT,SqliteLexicalIT,SqliteReadOnlyConfigurationIT,ScriptExecutionRecipesIT,MappingOptionsIT,SqliteRowIdClassificationIT,YearMonthZoneOffsetMappingIT,OptionalTargetValidationIT,SqliteTemporalOrderingIT,PositionalParameterGuardIT,BooleanTextMappingIT,BeanFieldAnnotationIT,BeanPropertyNamingIT,MappingLocaleNormalizationIT
+            test: SqliteIntegrationIT,SqliteLexicalIT,SqliteReadOnlyConfigurationIT,ScriptExecutionRecipesIT,MappingOptionsIT,SqliteRowIdClassificationIT,YearMonthZoneOffsetMappingIT,OptionalTargetValidationIT,SqliteTemporalOrderingIT,SqliteTimestampMigrationIT,PositionalParameterGuardIT,BooleanTextMappingIT,BeanFieldAnnotationIT,BeanPropertyNamingIT,MappingLocaleNormalizationIT
             experimental: false
           - name: DuckDB
             profiles: integration

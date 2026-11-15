@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.ResourceLock;
 
 import javax.sql.DataSource;
+import java.math.BigDecimal;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
@@ -19,6 +20,7 @@ import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.Date;
 import java.util.List;
@@ -78,6 +80,63 @@ abstract class MySqlFamilyTemporalIntegrationSupport {
 						} finally {
 							database.query("DROP TABLE " + table).execute();
 						}
+					}
+				}
+			}
+		} finally {
+			TimeZone.setDefault(previous);
+		}
+	}
+
+	@Test
+	void configuredDatabaseZoneIsIndependentOfDriverConnectionZoneAndJvmDefault() throws Exception {
+		TimeZone previous = TimeZone.getDefault();
+		try {
+			TimeZone.setDefault(TimeZone.getTimeZone("America/New_York"));
+			Instant instant = Instant.parse("2024-07-01T12:34:56.123456Z");
+			BigDecimal epoch = BigDecimal.valueOf(instant.getEpochSecond()).add(BigDecimal.valueOf(instant.getNano(), 9));
+			for (String mode : prepareModes()) {
+				for (String driverZone : List.of("America/Los_Angeles", "UTC")) {
+					String options = mode + "&connectionTimeZone=" + driverZone
+							+ "&forceConnectionTimeZoneToSession=false&preserveInstants=true";
+					DataSource source = source(options, false);
+					Database defaultZone = Database.with(source, databaseType()).build();
+					assertEquals(ZoneId.of("America/New_York"), defaultZone.getTimeZone(), "Pyranid defaults to the JVM zone, not connectionTimeZone");
+					Database database = Database.with(source, databaseType()).timeZone(ZoneOffset.UTC).build();
+					String table = "explicit_zone_" + UUID.randomUUID().toString().replace("-", "");
+					database.query("CREATE TABLE " + table + " (id INT PRIMARY KEY, wall DATETIME(6), moment TIMESTAMP(6))").execute();
+					try {
+						List<Object> values = List.of(instant, instant.atOffset(ZoneOffset.ofHours(5)), Timestamp.from(instant));
+						for (int id = 1; id <= values.size(); id++)
+							database.query("INSERT INTO " + table + " VALUES (:id, :value, :value)")
+									.bind("id", id).bind("value", values.get(id - 1)).execute();
+						assertEquals(List.of(instant, instant, instant), database.query("SELECT moment FROM " + table + " ORDER BY id").fetchList(Instant.class), options);
+						assertEquals(List.of(instant, instant, instant), database.query("SELECT wall FROM " + table + " ORDER BY id").fetchList(Timestamp.class)
+								.stream().map(Timestamp::toInstant).toList(), options);
+						assertEquals(List.of(LocalDateTime.ofInstant(instant, ZoneOffset.UTC), LocalDateTime.ofInstant(instant, ZoneOffset.UTC),
+								LocalDateTime.ofInstant(instant, ZoneOffset.UTC)), database.query("SELECT wall FROM " + table + " ORDER BY id").fetchList(LocalDateTime.class));
+						for (BigDecimal stored : database.query("SELECT UNIX_TIMESTAMP(moment) FROM " + table + " ORDER BY id").fetchList(BigDecimal.class))
+							assertEquals(0, epoch.compareTo(stored), "The server's actual instant must match, not just a symmetric Java round trip: " + options);
+						assertEquals(3L, database.query("SELECT COUNT(*) FROM " + table + " WHERE wall=:value AND moment=:value")
+								.bind("value", instant).fetchObject(Long.class).orElseThrow());
+						try (Connection connection = source.getConnection(); Statement statement = connection.createStatement();
+								var rows = statement.executeQuery("SELECT @@session.time_zone, moment FROM " + table + " WHERE id=1")) {
+							assertTrue(rows.next());
+							assertEquals("+00:00", rows.getString(1), "The driver property must not silently change the server session in this control");
+							// Raw JDBC follows its driver's zone contract, independently of Pyranid's conversion policy.
+							assertEquals(LocalDateTime.ofInstant(instant, ZoneOffset.UTC).atZone(ZoneId.of(driverZone)).toInstant(),
+									rows.getTimestamp(2).toInstant(), options);
+						}
+						// Leaving Pyranid at its JVM-zone default can hide a server mismatch behind a symmetric Java round trip.
+						defaultZone.query("INSERT INTO " + table + " VALUES (9, :value, :value)").bind("value", instant).execute();
+						assertEquals(instant, defaultZone.query("SELECT moment FROM " + table + " WHERE id=9").fetchObject(Instant.class).orElseThrow());
+						Instant serverValue = LocalDateTime.ofInstant(instant, ZoneId.of("America/New_York")).toInstant(ZoneOffset.UTC);
+						assertNotEquals(instant, serverValue);
+						BigDecimal serverEpoch = BigDecimal.valueOf(serverValue.getEpochSecond()).add(BigDecimal.valueOf(serverValue.getNano(), 9));
+						assertEquals(0, serverEpoch.compareTo(database.query("SELECT UNIX_TIMESTAMP(moment) FROM " + table + " WHERE id=9")
+								.fetchObject(BigDecimal.class).orElseThrow()), options);
+					} finally {
+						database.query("DROP TABLE " + table).execute();
 					}
 				}
 			}

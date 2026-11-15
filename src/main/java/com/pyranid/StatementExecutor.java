@@ -744,6 +744,7 @@ final class StatementExecutor {
 
 				DefaultPreparedStatementBinder.ParameterSqlTypeResolver parameterSqlTypeResolver =
 						new DefaultPreparedStatementBinder.ParameterSqlTypeResolver(statementContext, preparedStatement);
+				prepareParameterSqlTypes(statementContext, parameterSqlTypeResolver, parameterGroups);
 				for (List<Object> parameterGroup : parameterGroups) {
 					if (parameterGroup.size() > 0)
 						performPreparedStatementBinding(statementContext, preparedStatement, parameterGroup, parameterSqlTypeResolver);
@@ -769,6 +770,7 @@ final class StatementExecutor {
 				Throwable chunkCleanupFailure = null;
 				DefaultPreparedStatementBinder.ParameterSqlTypeResolver parameterSqlTypeResolver =
 						new DefaultPreparedStatementBinder.ParameterSqlTypeResolver(statementContext, preparedStatement);
+				prepareParameterSqlTypes(statementContext, parameterSqlTypeResolver, parameterGroups);
 
 				try {
 					for (List<Object> parameterGroup : parameterGroups) {
@@ -967,8 +969,25 @@ final class StatementExecutor {
 
 	<T> void performPreparedStatementBinding(@NonNull StatementContext<T> statementContext,
 			@NonNull PreparedStatement preparedStatement, @NonNull List<Object> parameters) {
-		performPreparedStatementBinding(statementContext, preparedStatement, parameters,
-				new DefaultPreparedStatementBinder.ParameterSqlTypeResolver(statementContext, preparedStatement));
+		DefaultPreparedStatementBinder.ParameterSqlTypeResolver parameterSqlTypeResolver =
+				new DefaultPreparedStatementBinder.ParameterSqlTypeResolver(statementContext, preparedStatement);
+		prepareParameterSqlTypes(statementContext, parameterSqlTypeResolver, List.of(parameters));
+		performPreparedStatementBinding(statementContext, preparedStatement, parameters, parameterSqlTypeResolver);
+	}
+
+	private void prepareParameterSqlTypes(StatementContext<?> statementContext,
+			DefaultPreparedStatementBinder.ParameterSqlTypeResolver resolver, List<? extends List<Object>> parameterGroups) {
+		try {
+			if (preparedStatementBinderFor(statementContext) instanceof DefaultPreparedStatementBinder binder) {
+				binder.registerParameterSqlTypeDemands(statementContext, resolver, parameterGroups);
+				// Resolve trusted plans before any set* call. pgjdbc can otherwise describe a preceding
+				// group's input OIDs (e.g. VARCHAR), rather than the SQL target needed for temporal coercion.
+				// Opaque/custom plans stay ordered and lazy; no savepoint ever spans their application code.
+				resolver.prefetchRegisteredParameterSqlTypes();
+			}
+		} catch (Exception failure) {
+			throw databaseExceptionWithStatementContext(statementContext, failure);
+		}
 	}
 
 	private <T> void performPreparedStatementBinding(@NonNull StatementContext<T> statementContext,

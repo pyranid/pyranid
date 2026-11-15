@@ -100,6 +100,40 @@ final class PostgresDriverSupport {
 		}
 	};
 
+	/**
+	 * Implemented driver APIs are immutable class metadata. Store only JDK-owned arrays/classes, so a
+	 * longer-lived driver class cannot retain this bridge's loader through a library-owned cache value.
+	 * This is a lookup hint, not a cached decision about which driver a pooled connection wraps.
+	 */
+	private static final ClassValue<Class<?>[]> TRANSACTION_STATE_CONNECTION_APIS = new ClassValue<>() {
+		@Override
+		protected Class<?>[] computeValue(Class<?> connectionType) {
+			List<Class<?>> interfaces = new ArrayList<>();
+			try {
+				collectTransactionStateConnectionApis(connectionType, interfaces);
+			} catch (LinkageError | SecurityException unavailableHierarchy) {
+				// Keep the existing dynamic discovery path usable if optional hierarchy metadata is unavailable.
+				return new Class<?>[0];
+			}
+			return interfaces.toArray(Class<?>[]::new);
+		}
+	};
+
+	/**
+	 * Resolve once per actual unwrapped driver class, not per pool/proxy class. A missing method's message
+	 * is cached without its Throwable/backtrace, which could otherwise retain this bridge's loader.
+	 */
+	private static final ClassValue<Object[]> TRANSACTION_STATE_READERS = new ClassValue<>() {
+		@Override
+		protected Object[] computeValue(Class<?> driverType) {
+			try {
+				return new Object[]{driverType.getMethod("getTransactionState"), null};
+			} catch (NoSuchMethodException unavailable) {
+				return new Object[]{null, driverType.getName() + ".getTransactionState()"};
+			}
+		}
+	};
+
 	private PostgresDriverSupport() {}
 
 	enum TransactionState { USABLE, FAILED, UNKNOWN }
@@ -112,7 +146,7 @@ final class PostgresDriverSupport {
 		try {
 			for (ClassLoader loader : candidateClassLoaders(connection)) {
 				for (String root : CANDIDATE_DRIVER_ROOT_PACKAGES) {
-					Class<?> connectionApi = loadClass(root + "." + PG_CONNECTION_SIMPLE_CLASS_NAME, loader);
+					Class<?> connectionApi = transactionStateConnectionApi(connection.getClass(), root, loader);
 					if (connectionApi == null || !connectionApi.isInterface()) continue;
 					try {
 						Object driver;
@@ -120,7 +154,9 @@ final class PostgresDriverSupport {
 						else if (connection.isWrapperFor(connectionApi)) driver = connection.unwrap(connectionApi);
 						else continue;
 						if (driver == null) continue;
-						Object state = driver.getClass().getMethod("getTransactionState").invoke(driver);
+						Object[] reader = TRANSACTION_STATE_READERS.get(driver.getClass());
+						if (reader[0] == null) throw new NoSuchMethodException((String) reader[1]);
+						Object state = ((Method) reader[0]).invoke(driver);
 						if (!(state instanceof Enum<?> value)) continue;
 						TransactionState classified = switch (value.name()) {
 							case "OPEN", "IDLE" -> TransactionState.USABLE;
@@ -140,6 +176,26 @@ final class PostgresDriverSupport {
 			if (unavailable == null) unavailable = failure;
 		}
 		return new TransactionStateRead(TransactionState.UNKNOWN, unavailable);
+	}
+
+	private static void collectTransactionStateConnectionApis(Class<?> type, List<Class<?>> interfaces) {
+		if (type == null) return;
+		if (type.isInterface() && CANDIDATE_DRIVER_ROOT_PACKAGES.stream()
+				.anyMatch(root -> type.getName().equals(root + "." + PG_CONNECTION_SIMPLE_CLASS_NAME))
+				&& !interfaces.contains(type)) interfaces.add(type);
+		for (Class<?> implemented : type.getInterfaces())
+			collectTransactionStateConnectionApis(implemented, interfaces);
+		collectTransactionStateConnectionApis(type.getSuperclass(), interfaces);
+	}
+
+	private static Class<?> transactionStateConnectionApi(Class<?> connectionType, String root, ClassLoader loader) {
+		String name = root + "." + PG_CONNECTION_SIMPLE_CLASS_NAME;
+		for (Class<?> implemented : TRANSACTION_STATE_CONNECTION_APIS.get(connectionType)) {
+			// Reuse only an exact defining-loader identity. Other loaders may use different delegation
+			// or become able to see a driver later; preserve their existing discovery order and retries.
+			if (implemented.getClassLoader() == loader && implemented.getName().equals(name)) return implemented;
+		}
+		return loadClass(name, loader);
 	}
 
 	/**

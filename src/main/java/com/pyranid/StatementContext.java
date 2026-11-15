@@ -43,6 +43,9 @@ import static java.util.Objects.requireNonNull;
  */
 @ThreadSafe
 public final class StatementContext<T> {
+	// Opaque execution-local optimization. The mapper's holder uses weak identities only; it is not context value state.
+	@Nullable
+	private volatile Object schemaSignatureMemo;
 	@NonNull
 	private final Statement statement;
 	@NonNull
@@ -195,6 +198,15 @@ public final class StatementContext<T> {
 	@NonNull
 	public List<@Nullable String> getParameterNames() {
 		return this.parameterNames;
+	}
+
+	@Nullable
+	Object schemaSignatureMemo() {
+		return this.schemaSignatureMemo;
+	}
+
+	void schemaSignatureMemo(Object memo) {
+		this.schemaSignatureMemo = memo;
 	}
 
 	/**

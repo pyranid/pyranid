@@ -774,8 +774,8 @@ public class DatabaseNotificationTests {
 		List<String> expectedEvents = List.of(
 				"checkout",
 				"prepareStatement:SELECT pg_catalog.pg_notify(?, ?)",
-				"setObject:1:car_changed",
 				"getAutoCommit:true",
+				"setObject:1:car_changed",
 				"setNull:2:0",
 				"executePreparedStatement",
 				"closePreparedStatement",

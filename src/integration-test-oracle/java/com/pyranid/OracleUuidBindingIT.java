@@ -13,6 +13,7 @@ import org.testcontainers.utility.DockerImageName;
 
 import javax.sql.DataSource;
 import java.nio.ByteBuffer;
+import java.util.Locale;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -70,6 +71,51 @@ class OracleUuidBindingIT {
 			assertEquals(second, database.query("SELECT raw_id FROM " + table + " WHERE id = 1").fetchObject(UUID.class).orElseThrow());
 			assertEquals(1L, database.query("SELECT COUNT(*) FROM " + table + " WHERE text_id IS NULL AND char_id IS NULL AND ntext_id IS NULL "
 					+ "AND nchar_id IS NULL AND clob_id IS NULL AND nclob_id IS NULL AND raw_id IS NULL").fetchObject(Long.class).orElseThrow());
+		} finally {
+			database.query("DROP TABLE " + table).execute();
+		}
+	}
+
+	@Test
+	void legacyRawBoundHexTextNeedsWideningAndNormalizationBeforeCanonicalUuidBinding() {
+		Database database = database();
+		String table = "uuid_upgrade_" + UUID.randomUUID().toString().replace("-", "");
+		UUID uuid = UUID.fromString("f81d4fae-7dec-11d0-a765-00a0c91e6bf6");
+		byte[] bytes = ByteBuffer.allocate(16).putLong(uuid.getMostSignificantBits()).putLong(uuid.getLeastSignificantBits()).array();
+		database.query("CREATE TABLE " + table + " (id NUMBER(10) PRIMARY KEY, text_id VARCHAR2(32), char_id CHAR(32), raw_id RAW(16))").execute();
+		try {
+			// Reproduce the pre-4.9 Oracle binder: UUID bytes are bound as RAW even for character targets.
+			database.useRawConnection(connection -> {
+				try (var statement = connection.prepareStatement("INSERT INTO " + table + " VALUES (1, ?, ?, ?)")) {
+					statement.setBytes(1, bytes);
+					statement.setBytes(2, bytes);
+					statement.setBytes(3, bytes);
+					assertEquals(1, statement.executeUpdate());
+				}
+				return Optional.empty();
+			});
+			String hex = uuid.toString().replace("-", "").toUpperCase(Locale.ROOT);
+			assertEquals(hex, database.query("SELECT text_id FROM " + table + " WHERE id=1").fetchObject(String.class).orElseThrow());
+			assertEquals(hex, database.query("SELECT char_id FROM " + table + " WHERE id=1").fetchObject(String.class).orElseThrow());
+			for (String column : List.of("text_id", "char_id")) {
+				assertEquals(0L, database.query("SELECT COUNT(*) FROM " + table + " WHERE " + column + "=:uuid")
+						.bind("uuid", uuid).fetchObject(Long.class).orElseThrow());
+				DatabaseException tooWide = assertThrows(DatabaseException.class, () -> database.query("INSERT INTO " + table
+						+ " (id, " + column + ") VALUES (2, :uuid)").bind("uuid", uuid).execute());
+				assertEquals(Optional.of(12899), tooWide.getErrorCode(), "Canonical UUID text requires 36 character positions");
+			}
+			// This sample has no text-key dependencies; real schemas must migrate their dependent keys too.
+			database.query("ALTER TABLE " + table + " MODIFY (text_id VARCHAR2(36), char_id CHAR(36))").execute();
+			for (String column : List.of("text_id", "char_id")) {
+				String value = "TRIM(" + column + ")";
+				database.query("UPDATE " + table + " SET " + column + "=LOWER(SUBSTR(" + value + ",1,8)||'-'||SUBSTR(" + value
+						+ ",9,4)||'-'||SUBSTR(" + value + ",13,4)||'-'||SUBSTR(" + value + ",17,4)||'-'||SUBSTR(" + value + ",21,12))").execute();
+				assertEquals(uuid.toString(), database.query("SELECT " + column + " FROM " + table + " WHERE id=1").fetchObject(String.class).orElseThrow());
+			}
+			assertEquals(1L, database.query("SELECT COUNT(*) FROM " + table + " WHERE text_id=:uuid AND char_id=:uuid AND raw_id=:uuid")
+					.bind("uuid", uuid).fetchObject(Long.class).orElseThrow());
+			database.query("INSERT INTO " + table + " VALUES (2, :uuid, :uuid, :uuid)").bind("uuid", uuid).execute();
+			assertEquals(List.of(16, 16), database.query("SELECT UTL_RAW.LENGTH(raw_id) FROM " + table + " ORDER BY id").fetchList(Integer.class));
 		} finally {
 			database.query("DROP TABLE " + table).execute();
 		}
