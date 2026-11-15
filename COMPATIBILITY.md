@@ -110,6 +110,15 @@ Oracle UUID values in identified character columns now bind as canonical 36-char
 32-hex-digit character data and 32-character column widths need migration; RAW(16) storage is unchanged.
 See the [4.9.0 migration notes](CHANGELOG.md#release-4-9-0). Java 17 remains the minimum runtime.
 
+`SqlInterval` is an additive public value type for explicit native interval binding/mapping in 4.9.0. It keeps
+calendar months/days separate from elapsed time; conversions to Duration/Period are explicit and conservative.
+Oracle/GENERIC zero binding requires recognizable target-family metadata or a custom native-zero binder.
+Column qualifiers, fractional precision and SQL coercions can still change stored fields, and wider database
+year ranges can exceed its int32 total-month representation. Existing plain Duration/Period pass-through,
+matching driver-native properties, SQL NULLs, custom-hook precedence and Optional-property rejection remain
+unchanged. This adds no runtime dependency or compatibility-check exemption. See the
+[interval binding](README.md#sql-interval-binding) and [mapping](README.md#sql-interval-mapping) contracts.
+
 ### Historical compatibility notes
 
 The following intentional changes predate the current japicmp baseline and are kept here for the record:

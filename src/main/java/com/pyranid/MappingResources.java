@@ -31,6 +31,7 @@ import java.sql.Struct;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -57,6 +58,8 @@ final class MappingResources implements AutoCloseable {
 	private @Nullable MappingResources nested;
 	private @Nullable WeakReference<ResultSet> scalarResultSet;
 	private int scalarJdbcType;
+	private @Nullable WeakReference<ResultSet> intervalResultSet;
+	private @Nullable Map<Integer, SqlIntervalSupport.SourceColumn> intervalColumns;
 
 	/** Reuse only empty scopes; recursive mapper calls receive an independent scope. */
 	MappingResources acquire() {
@@ -76,6 +79,23 @@ final class MappingResources implements AutoCloseable {
 			this.scalarResultSet = cursor;
 		}
 		return this.scalarJdbcType;
+	}
+
+	/** Immutable interval declarations can outlive a row; the cursor identity remains weak. */
+	SqlIntervalSupport.SourceColumn intervalColumn(ResultSet resultSet, @Nullable ResultSetMetaData metadata,
+			int column) throws SQLException {
+		boolean sameCursor = this.intervalResultSet != null && this.intervalResultSet.refersTo(resultSet);
+		SqlIntervalSupport.SourceColumn cached = sameCursor && this.intervalColumns != null ? this.intervalColumns.get(column) : null;
+		if (cached != null) return cached;
+		// Do not publish a new cursor or a partial column after a metadata getter fails. Handled
+		// custom hooks never request this descriptor, so they gain no interval metadata demands.
+		SqlIntervalSupport.SourceColumn source = SqlIntervalSupport.sourceColumn(metadata == null ? resultSet.getMetaData() : metadata, column);
+		if (!sameCursor) {
+			this.intervalColumns = new HashMap<>();
+			this.intervalResultSet = new WeakReference<>(resultSet);
+		}
+		this.intervalColumns.put(column, source);
+		return source;
 	}
 
 	void registerArrayType(@Nullable Object value, int jdbcType) {

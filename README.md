@@ -54,6 +54,10 @@ separates local wall-clock values from instants, preserves nanoseconds and check
 4.9 also adds opt-in `ResultSetMapper.Builder.detachLobValues(true)` for bounded detachment of visible native
 Object/Map LOB values. Explicit JDBC handles and handled custom mapper results retain their ownership rules.
 
+`SqlInterval` adds explicit native interval binding and mapping without guessing month/day lengths. It preserves
+mixed calendar/elapsed fields, with strict conversions to Duration or Period; see [binding](#sql-interval-binding)
+and [mapping](#sql-interval-mapping) for supported families, zero handling and precision limits.
+
 `transactionWithOutcome(...)` returns the database result, attempted callback value and invocation failure together,
 after cleanup and post-transaction hooks. It runs the callback once and supports the same options and void callbacks
 as `transaction(...)`:
@@ -1123,6 +1127,27 @@ Some JDBC drivers expose temporal columns as strings instead of JDBC temporal ob
 
 Pyranid preserves the fractional-second precision returned by your JDBC driver; it does not round or truncate [`Instant`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/Instant.html), [`OffsetDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/OffsetDateTime.html), or [`ZonedDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/ZonedDateTime.html) values to milliseconds. The maximum precision is still determined by the database column and driver (for example, PostgreSQL timestamps are stored at microsecond precision).
 
+### SQL Interval Mapping
+
+[`SqlInterval`](https://javadoc.pyranid.com/com/pyranid/SqlInterval.html) maps native interval columns into independent signed total months, calendar days and a `Duration` time part. Scalar fetches return the existing outer Optional; nullable record components and bean properties use SqlInterval itself:
+
+```java
+record Policy(String name, SqlInterval timeout) {}
+
+SqlInterval timeout = database.query("SELECT timeout FROM policy WHERE name = :name")
+  .bind("name", "webhooks")
+  .fetchObject(SqlInterval.class).orElseThrow();
+Duration elapsed = timeout.toDuration();
+```
+
+`toDuration()` succeeds only when months and calendar days are zero. `toPeriod()` succeeds only when elapsed time is zero and normalizes total months into years/months. These are explicit conservative conversions: a subtraction result such as `3 days 02:00:00` remains representable but cannot become Duration automatically. For elapsed time between original instants, use `Duration.between(startedAt, finishedAt)`. SQL calendar arithmetic and Java can resolve DST overlaps differently; adding months, days and time in Java is an application policy, not guaranteed database emulation.
+
+PostgreSQL reads support all four IntervalStyle formats and the pinned driver's 16-byte binary interval representation without converting through PGInterval. Stored infinities fail. DuckDB text is parsed as a native interval. Oracle uses native YEAR-MONTH/ DAY-SECOND typed getters; DAY-SECOND's fixed 24-hour days become elapsed time. GENERIC support is driver-specific (HSQLDB tested) and requires positive interval-family metadata. Character/numeric columns are not guessed to contain intervals. Returned values beyond the int32 total-month/day representation fail; for example, Oracle can return a wider leading-year range. Database coercion that changes fields before the read is subject to the storage caveats in the binding contract.
+
+Field-wise equality distinguishes one calendar day from 24 elapsed hours and one month from 30 days; SQL equality may not. There is no ordering or TemporalAmount implementation. Optional-valued row properties remain unsupported, and interval ARRAY/STRUCT conversion is not included.
+
+Custom column mappers retain raw driver inputs and precedence. Under forced binary transfer, the pinned PostgreSQL driver can return a non-null PGInterval whose getValue() is null; hooks still receive that actual object. After a valid raw read falls back, the built-in interval target reads safely from the ResultSet, including decoding binary bytes. If a new interval plan also requires an incapable raw getter for a custom/native fan-out target, its failure is preserved; a non-NULL raw null is not fabricated into SQL NULL. Standalone Map/Object paths retain their driver representations and existing limitations. Handled custom outputs and LOB ownership/cleanup remain unchanged; SqlInterval itself holds no JDBC resource. Existing native Duration/Period properties and SQL NULLs retain their behavior; no automatic SQL-interval coercion to those types is added.
+
 ### SQL ARRAY and JSON Results
 
 SQL ARRAY columns can be mapped to Java array targets such as [`String[]`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/String.html) or [`UUID[]`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/UUID.html). They can also be mapped to [`List<T>`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/List.html) or [`Set<T>`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Set.html) when Pyranid can see the generic element type from a Record component or JavaBean setter, for example `record Row(List<String> tags, Set<String> labels) {}` or `void setTags(Set<String> tags)`. Raw scalar [`List.class`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/List.html) and [`Set.class`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Set.html) targets are supported too, but the element type is whatever the JDBC driver returns because Java's [`Class<List>`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Class.html) and [`Class<Set>`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Class.html) tokens carry no generic type argument. [`Set`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Set.html) targets use insertion order from the SQL ARRAY and apply normal Set semantics, so duplicates collapse and multiple SQL `NULL` elements become one `null`.
@@ -1481,6 +1506,65 @@ Live regressions with MySQL Connector/J 26.10.0 and MariaDB Connector/J 4.0.0 co
 SQLite writes instant-bearing values as UTC text with nine fractional digits, such as `2024-01-02T03:04:05.000000000Z`. `LocalDateTime`, including an instant converted by `TIMESTAMP_WITHOUT_TIME_ZONE`, uses local text with nine fractional digits and no offset. For years `0000`–`9999`, these consistent formats preserve textual ordering within each representation; signed or expanded years do not have that guarantee. Older formats remain readable, but equality, uniqueness and optimistic-lock matches can fail across old and new strings for the same timestamp; joins, grouping and range/order behavior are affected too. UTC normalization also loses the original offset. Choose one representation per column and follow the [tested SQLite migration recipe](https://www.pyranid.com/docs/database-specific-recipes#migrate-sq-lite-timestamp-text-for-4-9), including collision checks, before mixing formats. Pyranid does not migrate stored values automatically.
 
 For SQL Server legacy `DATETIME` columns, configure [`datetimeParameterType=datetime`](https://learn.microsoft.com/en-us/sql/connect/jdbc/setting-the-connection-properties?view=sql-server-ver17#datetimeparametertype) in the JDBC URL or DataSource. The driver's default `datetime2` parameter type can make a fetched `DATETIME` value fail an equality predicate, causing an optimistic-lock update to affect zero rows. This connection setting also applies to other date/timestamp parameters and can reduce their precision; choose connections and column types accordingly.
+
+### SQL Interval Binding
+
+[`SqlInterval`](https://javadoc.pyranid.com/com/pyranid/SqlInterval.html) represents independent signed total months, calendar days and elapsed time. It does not assume a month is 30 days or a calendar day is 24 hours:
+
+```java
+SqlInterval elapsed = SqlInterval.of(Duration.ofDays(3)); // 72 elapsed hours
+SqlInterval calendar = SqlInterval.of(Period.ofDays(3));  // 3 calendar days
+SqlInterval mixed = SqlInterval.of(Period.ofMonths(1), Duration.ofHours(2));
+
+database.query("UPDATE policy SET timeout = :timeout WHERE name = :name")
+  .bind("timeout", SqlInterval.of(Duration.ofMinutes(90)))
+  .bind("name", "webhooks").execute();
+```
+
+| Database | Built-in representation and limits |
+| --- | --- |
+| PostgreSQL | Typed native interval; preserves independent months/days/time through unrestricted targets. Time must fit an exact signed 64-bit number of microseconds. Sub-microsecond input, overflow and the two reserved infinity field combinations fail before binding. |
+| DuckDB | Interval text accepted by native interval targets, with the same microsecond/range limits. Use `CAST(:value AS INTERVAL)` for operator expressions; some contexts cannot infer an interval from its bound string. |
+| Oracle | Calendar-month-only values bind as YEAR TO MONTH; elapsed-time-only values use an exactly constructed driver-native DAY TO SECOND value. This avoids the pinned driver's direct Duration setter losing subsecond fractions or their signs. Nonzero calendar days and mixed months/time fail rather than being reinterpreted; supported nanoseconds are retained before column coercion. |
+| GENERIC | Driver-specific native Period/Duration support using the same family split; HSQLDB is tested. JDBC 4.2 compliance alone does not establish interval support. |
+| MySQL, MariaDB, SQL Server, SQLite | No native interval type; the default binder rejects SqlInterval. Choose an explicit representation through a custom binder. |
+
+`SqlInterval.ZERO` is the same value whichever factory created it, and so is any computed zero such as `SqlInterval.of(Duration.between(start, start))`. Oracle/GENERIC need recognizable parameter metadata to select YEAR TO MONTH versus DAY TO SECOND for zero. Missing, ambiguous or conflicting family metadata fails; Pyranid does not guess, and does not try a write with each type. An explicit SQL cast can help expose the target family but is not a universal conversion between families. PostgreSQL interval values, including zero, need no interval parameter describe; mixing them with other metadata-dependent values retains the shared protected snapshot. DuckDB also binds zero without metadata.
+
+On Oracle (observed with ojdbc11 23.26), the driver reports the interval family only when the parameter is assigned or compared directly to an interval column: `INSERT … VALUES`, `UPDATE … SET col = :v`, and comparisons such as `WHERE col = :v`, `BETWEEN` or `CASE`. Zero fails in expressions such as `SYSTIMESTAMP + :v`, `COALESCE(col, :v)` and `SELECT :v FROM dual`; in `MERGE`, both in a `USING` subquery and in `UPDATE SET col = :v`; in PL/SQL blocks; and in `INSERT … SELECT`, where family metadata is unavailable. Pyranid recognizes the tested driver's internal metadata-parser NPE during type/name lookup as unavailable optional metadata: plain NULL binding can use its existing fallback, while zero reports the interval-family error. Other runtime failures retain their normal failure behavior. Nonzero values bind in all of these, so a statement can pass tests with nonzero data and fail when a computed value is zero. If your statements use these shapes and an interval can be zero, register a binder that selects the family your schema uses:
+
+```java
+// Binds SqlInterval.ZERO as DAY TO SECOND. Every other value falls back to Pyranid's built-in binding.
+// Use Period.ZERO instead if your zero intervals target INTERVAL YEAR TO MONTH.
+final class DaySecondZeroBinder implements CustomParameterBinder {
+  @Override
+  public Boolean appliesTo(TargetType targetType) {
+    return targetType.matchesClass(SqlInterval.class);
+  }
+
+  @Override
+  public BindingResult bind(StatementContext<?> context, PreparedStatement statement,
+                            Integer index, Object parameter) throws SQLException {
+    if (!SqlInterval.ZERO.equals(parameter)) return BindingResult.fallback();
+    statement.setObject(index, Duration.ZERO);
+    return BindingResult.handled();
+  }
+}
+
+Database database = Database.with(dataSource, DatabaseType.ORACLE)
+  .preparedStatementBinder(PreparedStatementBinder.withCustomParameterBinders(List.of(new DaySecondZeroBinder())))
+  .build();
+```
+
+A zero of the wrong family is never stored silently: Oracle rejects it with ORA-00932. HSQLDB 2.7.4 reported interval metadata for each of the statement shapes above.
+
+Nonzero Oracle/GENERIC values select their native family from their fields. Cached metadata rejects them only when it positively identifies the opposite interval family; an enclosing expression's TIMESTAMP metadata must not reject an interval input. Reads and zero-family selection still require unambiguous interval metadata.
+
+Oracle also has a separate, pre-existing untyped-NULL limitation in expressions such as `SYSTIMESTAMP + :v`: the driver reports TIMESTAMP WITH TIME ZONE, so the default NULL binder supplies a datetime NULL and Oracle rejects the addition with ORA-30087. This also occurs with plain Duration batches on 4.8.0. If such an interval parameter can be SQL NULL, use a `TypedParameter` with a `CustomParameterBinder.bindNull` that explicitly selects the schema's family (`PreparedStatement.setNull(index, -104)` for Oracle DAY TO SECOND, or `-103` for YEAR TO MONTH). Return `fallback()` for nonzero values to retain built-in exact interval binding. The zero-only binder above does not handle SQL NULL.
+
+A bind/read `equals` round trip requires the target's field qualifier, precision and SQL coercions to preserve the fields. Restricted PostgreSQL interval columns can drop fields; Oracle can round fractions, and HSQLDB can truncate them. HSQLDB 2.7.4 also wraps some enormous YEAR(9) literals in the server before JDBC reads them; a wide declared year field is not an exactness guarantee. SQL normalization and triggers can change storage too. Pyranid preserves the stored value on read and does not promise to detect every column coercion.
+
+Existing plain Duration/Period driver pass-through and custom binders remain unchanged. The new type does not make that pass-through portable. Custom binders receive the original SqlInterval before built-in handling; whole-container custom overrides retain their precedence. Built-in SQL ARRAY elements and STRUCT attributes of SqlInterval are outside this release's scope and fail clearly. Plain nulls follow the existing null-binding path rather than the non-null zero-family rule.
 
 ### Special Parameters
 

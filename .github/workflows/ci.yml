@@ -65,7 +65,7 @@ jobs:
         include:
           - name: PostgreSQL
             profiles: integration
-            test: PostgreSqlIntegrationIT,PostgreSqlTransactionOutcomeIT,PostgreSqlParameterMetadataIT,PostgreSqlNullArrayIT,PostgreSqlLockClassificationIT,PostgreSqlBatchMetadataIT,PostgreSqlExceptionPositionIT,PostgreSqlSqlStateRedactionIT,PostgreSqlFloatingPointIT,PostgreSqlLexicalIT,PostgreSqlNotificationSanitationIT,PostgreSqlTypeRecipesIT,PostgreSqlIntervalRecipesIT,PostgreSqlProcedureRecipesIT,PostgreSqlMappingOptionsIT,ParameterNameRedactionIT,PostgreSqlTransactionRecipesIT,PostgreSqlBulkIdRecipesIT,PostgreSqlTenantContextIT,TemporalZoneResolutionIT,PostgreSqlTemporalRoundTripIT,PostgreSqlInfinityMappingIT,LocalTemporalZoneIT,PostgreSqlStreamingIT,PostgreSqlIdleSessionTimeoutIT,PostgreSqlNotificationFragmentedFrameIT,NotificationSupervisorReleaseIT
+            test: PostgreSqlIntegrationIT,PostgreSqlTransactionOutcomeIT,PostgreSqlParameterMetadataIT,PostgreSqlNullArrayIT,PostgreSqlLockClassificationIT,PostgreSqlBatchMetadataIT,PostgreSqlExceptionPositionIT,PostgreSqlSqlStateRedactionIT,PostgreSqlFloatingPointIT,PostgreSqlLexicalIT,PostgreSqlNotificationSanitationIT,PostgreSqlTypeRecipesIT,PostgreSqlIntervalRecipesIT,PostgreSqlIntervalIT,PostgreSqlProcedureRecipesIT,PostgreSqlMappingOptionsIT,ParameterNameRedactionIT,PostgreSqlTransactionRecipesIT,PostgreSqlBulkIdRecipesIT,PostgreSqlTenantContextIT,TemporalZoneResolutionIT,PostgreSqlTemporalRoundTripIT,PostgreSqlInfinityMappingIT,LocalTemporalZoneIT,PostgreSqlStreamingIT,PostgreSqlIdleSessionTimeoutIT,PostgreSqlNotificationFragmentedFrameIT,NotificationSupervisorReleaseIT
             experimental: false
           - name: PostgreSQL metadata (New York)
             profiles: integration
@@ -74,7 +74,7 @@ jobs:
             experimental: false
           - name: Temporal (New York)
             profiles: integration
-            test: PostgreSqlTemporalRoundTripIT,TemporalZoneResolutionIT,PostgreSqlTypeRecipesIT,PostgreSqlIntervalRecipesIT,PostgreSqlProcedureRecipesIT,YearMonthZoneOffsetMappingIT,PostgreSqlFloatingPointIT,DuckDbFloatingPointIT,PostgreSqlInfinityMappingIT,DuckDbTimestampRoundTripIT,DuckDbTypedMapIT,LocalTemporalZoneIT,MySqlTemporalBindingIT,SqliteTemporalOrderingIT,SqliteIntegrationIT,TemporalArrayMappingIntegrationIT
+            test: PostgreSqlTemporalRoundTripIT,TemporalZoneResolutionIT,PostgreSqlTypeRecipesIT,PostgreSqlIntervalRecipesIT,PostgreSqlIntervalIT,PostgreSqlProcedureRecipesIT,YearMonthZoneOffsetMappingIT,PostgreSqlFloatingPointIT,DuckDbFloatingPointIT,PostgreSqlInfinityMappingIT,DuckDbTimestampRoundTripIT,DuckDbTypedMapIT,LocalTemporalZoneIT,MySqlTemporalBindingIT,SqliteTemporalOrderingIT,SqliteIntegrationIT,TemporalArrayMappingIntegrationIT,DuckDbIntervalIT,GenericIntervalIT
             extraArgs: -Duser.timezone=America/New_York -Dtest=TemporalParameterBindingTests,TemporalResultSetMappingTests,TemporalArrayMappingTests,LocalTemporalRoundTripTests,TimestampRoundTripTests,TimeRoundTripTests,PostgreSqlTemporalArrayTests,VendorLocalTimeBindingTests,MySqlSqliteTemporalBindingTests,LegacyTemporalRangeTests,TypedMapMappingTests,TemporalColumnTypeDetectionTests,TemporalZoneResolutionTests,YearMonthZoneOffsetMappingTests,FloatingPointMappingTests
             experimental: false
           - name: MySQL
@@ -83,11 +83,11 @@ jobs:
             experimental: false
           - name: SQLite
             profiles: integration
-            test: SqliteIntegrationIT,SqliteLexicalIT,SqliteReadOnlyConfigurationIT,ScriptExecutionRecipesIT,MappingOptionsIT,SqliteRowIdClassificationIT,YearMonthZoneOffsetMappingIT,OptionalTargetValidationIT,SqliteTemporalOrderingIT,SqliteTimestampMigrationIT,PositionalParameterGuardIT,BooleanTextMappingIT,BeanFieldAnnotationIT,BeanPropertyNamingIT,MappingLocaleNormalizationIT
+            test: SqliteIntegrationIT,SqliteLexicalIT,SqliteReadOnlyConfigurationIT,ScriptExecutionRecipesIT,MappingOptionsIT,SqliteRowIdClassificationIT,YearMonthZoneOffsetMappingIT,OptionalTargetValidationIT,SqliteTemporalOrderingIT,SqliteTimestampMigrationIT,PositionalParameterGuardIT,BooleanTextMappingIT,BeanFieldAnnotationIT,BeanPropertyNamingIT,MappingLocaleNormalizationIT,GenericIntervalIT
             experimental: false
           - name: DuckDB
             profiles: integration
-            test: DuckDbIntegrationIT,DuckDbTransactionOutcomeIT,DuckDbMetricsIntegrationIT,DuckDbCommitClassificationIT,DuckDbTimestampRoundTripIT,DuckDbScalarParameterIT,DuckDbFloatingPointIT,DuckDbLexicalIT,DuckDbTypedMapIT,GenericRecordMappingIT,ScriptExecutionRecipesIT,MappingOptionsIT,BooleanTextMappingIT,LobMappingIntegrationIT,TemporalArrayMappingIntegrationIT
+            test: DuckDbIntegrationIT,DuckDbTransactionOutcomeIT,DuckDbMetricsIntegrationIT,DuckDbCommitClassificationIT,DuckDbTimestampRoundTripIT,DuckDbScalarParameterIT,DuckDbFloatingPointIT,DuckDbLexicalIT,DuckDbTypedMapIT,GenericRecordMappingIT,ScriptExecutionRecipesIT,MappingOptionsIT,BooleanTextMappingIT,LobMappingIntegrationIT,TemporalArrayMappingIntegrationIT,DuckDbIntervalIT
             experimental: false
           - name: MariaDB
             profiles: integration,it-mariadb
@@ -104,7 +104,7 @@ jobs:
             experimental: true
           - name: Oracle
             profiles: integration,it-oracle
-            test: OracleIntegrationIT,OracleTemporalCorrectnessIT,OracleUuidBindingIT,OracleLexicalIT,OracleMappingOptionsIT
+            test: OracleIntegrationIT,OracleTemporalCorrectnessIT,OracleUuidBindingIT,OracleLexicalIT,OracleMappingOptionsIT,OracleIntervalIT
             extraArgs: -Duser.timezone=America/New_York
             experimental: true
     steps:

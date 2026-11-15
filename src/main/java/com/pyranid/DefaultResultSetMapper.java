@@ -1103,6 +1103,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			}
 
 			Object resultSetValue = extractColumnValue(resultSetMetaData, statementContext, resultSet, 1, resources).orElse(null);
+			if (resultClass == SqlInterval.class)
+				requireIntervalRawNullEvidence(resultSet, resultSetValue);
 			customRaw = resultSetValue;
 			customRawRead = true;
 			resources.borrow(resultSetValue);
@@ -1163,11 +1165,14 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		// fetch for SQL NULL. Automatic Optional construction remains unsupported.
 		if (resultClass == Optional.class || resultClass.isArray())
 			rejectOptionalMappingTargets(targetType);
+		if (resultClass.isArray()) rejectIntervalContainerTargets(targetType);
 
 		// Target-aware JDBC readers preserve driver getter behavior. All detached values then
 		// pass through the same built-in conversion engine used by bean/record bindings.
 		Class<?> boxed = boxedClass(resultClass);
-		if (boxed == Byte.class || boxed == Short.class || boxed == Integer.class || boxed == Long.class
+		if (resultClass == SqlInterval.class) {
+			value = resources.intervalColumn(resultSet, resultSetMetaData, 1).read(resultSet, 1, statementContext).orElse(null);
+		} else if (boxed == Byte.class || boxed == Short.class || boxed == Integer.class || boxed == Long.class
 				|| boxed == Float.class || boxed == Double.class || boxed == Number.class) {
 			value = getNullableNumber(resultSet, 1, resultClass);
 		} else if (boxed == Boolean.class) {
@@ -1438,6 +1443,26 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		return raw instanceof Array array ? extractSqlArrayResultSetValue(array, resources) : raw;
 	}
 
+	/** A typed interval must be read before the driver can lose it through getObject/PGInterval. */
+	private static ColumnReader intervalColumnReader(SqlIntervalSupport.SourceColumn source) {
+		return (rows, context, column) -> source.read(rows, column, context).orElse(null);
+	}
+
+	private static void requireIntervalRawNullEvidence(ResultSet rows, @Nullable Object raw) throws SQLException {
+		if (raw == null && !rows.wasNull())
+			throw new DatabaseException("A non-NULL SQL interval has no raw driver representation for a custom/native target. "
+					+ "Use a direct SqlInterval target without a raw hook, or provide a ResultSetMapper for raw recovery.");
+	}
+
+	/** Preserve raw hooks/native siblings without changing standalone Map/Object read behavior. */
+	private static ColumnReader guardedIntervalRawReader(ColumnReader reader) {
+		return (rows, context, column) -> {
+			Object value = reader.read(rows, context, column);
+			requireIntervalRawNullEvidence(rows, value);
+			return value;
+		};
+	}
+
 	private ColumnReader columnReaderFor(ResultSetMetaData metadata, StatementContext<?> context, int column) throws SQLException {
 		int jdbcType = metadata.getColumnType(column);
 		// An array type name can itself contain "TIMESTAMP WITH TIME ZONE".
@@ -1461,7 +1486,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	private Object convertColumn(@Nullable Object raw, TargetType target, List<CustomColumnMapper> mappers,
 			ResultSet resultSet, StatementContext<?> context, InstanceProvider instances,
 			MappingResources resources, int column, String label, int jdbcType, @Nullable String containerTypeName,
-			boolean deferredContainerType) {
+			boolean deferredContainerType, boolean unsupportedIntervalContainer) {
 		if (raw == null) return null;
 		if (!mappers.isEmpty()) {
 			// Even a mapper returning fallback can retain the borrowed driver value.
@@ -1475,6 +1500,14 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			// An applicable whole-shape hook may construct inner Optionals itself. Declining it
 			// must not re-enable unsupported automatic mapping, including for empty containers.
 			rejectOptionalMappingTargets(target);
+		}
+		if (unsupportedIntervalContainer) throw unsupportedIntervalContainer();
+		if (builtInTargetType(target).getRawClass() == SqlInterval.class) {
+			try { return resources.intervalColumn(resultSet, null, column).read(resultSet, column, context).orElse(null); }
+			catch (SQLException failure) {
+				throw DatabaseException.wrapSafely("Unable to read SQL interval column", failure,
+						DatabaseDialect.forExceptionCause(failure));
+			}
 		}
 		Object value = MappingResources.requiresMaterialization(raw, target.getRawClass(), jdbcType)
 				? resources.materialize(raw, target.getRawClass(), jdbcType, "column '" + label + "'") : raw;
@@ -1510,6 +1543,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 	protected <T> Optional<Object> convertResultSetValueToTargetType(StatementContext<T> context,
 			@Nullable Object value, TargetType target) {
 		rejectOptionalMappingTargets(target);
+		rejectIntervalContainerTargets(target);
 		MappingResources resources = acquireMappingResources();
 		Throwable mappingFailure = null;
 		try {
@@ -1656,6 +1690,54 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		} finally {
 			path.remove(target.getType());
 		}
+	}
+
+	private static DatabaseException unsupportedIntervalContainer() {
+		return new DatabaseException("Built-in SqlInterval mapping requires a direct interval column; "
+				+ "SQL ARRAY elements and STRUCT attributes are unsupported. Use a whole-shape CustomColumnMapper or ResultSetMapper.");
+	}
+
+	private static void rejectIntervalContainerTargets(TargetType target) {
+		if (isIntervalContainerTarget(target)) throw unsupportedIntervalContainer();
+	}
+
+	private static boolean isIntervalContainerTarget(TargetType target) {
+		target = builtInTargetType(target);
+		Class<?> raw = target.getRawClass();
+		if (raw == SqlInterval.class || !(raw.isArray() || raw.isRecord()
+				|| Map.class.isAssignableFrom(raw) || Collection.class.isAssignableFrom(raw))) return false;
+		return containsIntervalTarget(target, new HashSet<>(), new HashSet<>());
+	}
+
+	private static boolean containsIntervalTarget(TargetType target, Set<Type> path, Set<Class<?>> recordPath) {
+		target = builtInTargetType(target);
+		Class<?> raw = target.getRawClass();
+		if (raw == SqlInterval.class) return true;
+		if (!path.add(target.getType())) return false;
+		try {
+			if (target.isArray())
+				return containsIntervalTarget(target.getArrayComponentType().orElse(TargetType.of(Object.class)), path, recordPath);
+			if (Map.class.isAssignableFrom(raw)) {
+				MapTargetTypes types = mapTargetTypes(target);
+				return containsIntervalTarget(types.key, path, recordPath) || containsIntervalTarget(types.value, path, recordPath);
+			}
+			if (Collection.class.isAssignableFrom(raw)) {
+				Type element = GenericPropertyTypes.resolve(target.getType(), Collection.class, Collection.class.getTypeParameters()[0]);
+				return containsIntervalTarget(TargetType.of(element), path, recordPath);
+			}
+			if (raw.isRecord()) {
+				for (TargetType argument : target.getTypeArguments())
+					if (containsIntervalTarget(argument, path, recordPath)) return true;
+			}
+			if (raw.isRecord() && recordPath.add(raw)) {
+				try {
+					for (RecordComponent component : raw.getRecordComponents())
+						if (containsIntervalTarget(TargetType.of(GenericPropertyTypes.resolve(target.getType(), raw,
+								component.getGenericType())), path, recordPath)) return true;
+				} finally { recordPath.remove(raw); }
+			}
+			return false;
+		} finally { path.remove(target.getType()); }
 	}
 
 	/** Validate the declared Map tree even when an outer container is empty. */
@@ -2528,6 +2610,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		requireNonNull(resultSetMetaData);
 
 		rejectOptionalMappingTargets(TargetType.of(resultSetRowType));
+		rejectIntervalContainerTargets(TargetType.of(resultSetRowType));
 		Object resultSetValue = extractColumnValue(resultSetMetaData, statementContext, resultSet, 1, resources).orElse(null);
 
 		if (resultSetValue != null)
@@ -3677,6 +3760,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		private final MappingResources resources;
 		private final @Nullable Object[] raw;
 		private final @Nullable boolean[] loaded;
+		private final @Nullable Object[] intervals;
+		private final @Nullable boolean[] intervalsLoaded;
 
 		RowReadScope(ResultSet resultSet, StatementContext<?> context, RowPlan<?> plan, MappingResources resources) {
 			this.resultSet = resultSet;
@@ -3684,16 +3769,20 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			this.resources = resources;
 			this.raw = plan.hasFanOut ? new Object[plan.columnCount + 1] : null;
 			this.loaded = plan.hasFanOut ? new boolean[plan.columnCount + 1] : null;
+			this.intervals = plan.hasFanOut && plan.hasIntervalReads ? new Object[plan.columnCount + 1] : null;
+			this.intervalsLoaded = plan.hasFanOut && plan.hasIntervalReads ? new boolean[plan.columnCount + 1] : null;
 		}
 
 		@Nullable Object read(ColumnBinding binding) throws SQLException {
 			if (this.raw == null) return readColumn(binding.reader, this.resultSet, this.context, binding.columnIndex, this.resources);
 			int column = binding.columnIndex;
-			if (!this.loaded[column]) {
-				this.raw[column] = readColumn(binding.reader, this.resultSet, this.context, column, this.resources);
-				this.loaded[column] = true;
+			Object[] values = binding.intervalRead ? this.intervals : this.raw;
+			boolean[] read = binding.intervalRead ? this.intervalsLoaded : this.loaded;
+			if (!read[column]) {
+				values[column] = readColumn(binding.reader, this.resultSet, this.context, column, this.resources);
+				read[column] = true;
 			}
-			return this.raw[column];
+			return values[column];
 		}
 	}
 
@@ -3707,6 +3796,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		final boolean targetIsPrimitive;        // original target declared as primitive?
 		final @NonNull Class<?> targetRawClass; // BOXED class for type checks
 		final @NonNull String propertyName;     // for helpful errors; empty if SKIP
+		final boolean intervalRead;            // separate representation from raw/native fan-out
 
 		ColumnBinding(int columnIndex,
 									int recordArgIndexOrMinusOne,
@@ -3715,7 +3805,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 									@NonNull Converter converter,
 									boolean targetIsPrimitive,
 									@NonNull Class<?> targetRawClass,
-									@NonNull String propertyName) {
+									@NonNull String propertyName, boolean intervalRead) {
 			this.columnIndex = columnIndex;
 			this.recordArgIndexOrMinusOne = recordArgIndexOrMinusOne;
 			this.setterOrNull = setterOrNull;
@@ -3724,6 +3814,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			this.targetIsPrimitive = targetIsPrimitive;
 			this.targetRawClass = requireNonNull(targetRawClass);
 			this.propertyName = requireNonNull(propertyName);
+			this.intervalRead = intervalRead;
 		}
 	}
 
@@ -3732,6 +3823,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 		final boolean isRecord;
 		final int columnCount;                   // for per-row raw caching
 		final boolean hasFanOut;                 // any column maps to multiple properties?
+		final boolean hasIntervalReads;
 		final int mappedColumnCount;             // selected columns that map to at least one property/component
 		final @NonNull List<ColumnBinding> bindings; // may contain multiple entries per column (fan-out)
 
@@ -3745,6 +3837,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 			this.hasFanOut = hasFanOut;
 			this.mappedColumnCount = mappedColumnCount;
 			this.bindings = List.copyOf(bindings);
+			this.hasIntervalReads = bindings.stream().anyMatch(binding -> binding.intervalRead);
 		}
 	}
 
@@ -3928,7 +4021,7 @@ class DefaultResultSetMapper implements ResultSetMapper {
 								(mapper, raw, rrs, cctx, ip, resources) -> raw,  // converter
 								false,                        // targetIsPrimitive (SKIP => false)
 								Object.class,                 // targetRawClass (boxed)
-								""                            // propertyName (empty for SKIP)
+									"", false                     // propertyName (empty for SKIP)
 						)
 				);
 				continue;
@@ -3938,6 +4031,9 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				hasFanOut = true;
 
 			++mappedColumnCount;
+			int columnBindingStart = bindings.size();
+			boolean intervalColumn = false;
+			SqlIntervalSupport.SourceColumn intervalSource = null;
 
 			// Create one binding per matched property
 			for (String prop : matchedProps) {
@@ -3963,6 +4059,8 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				int[] mapperIndices = customColumnMapperIndicesFor(ttype);
 				if (builtInTargetType(ttype).getRawClass() == Optional.class || mapperIndices.length == 0)
 					rejectOptionalMappingTargets(ttype);
+				boolean unsupportedIntervalContainer = isIntervalContainerTarget(ttype);
+				if (mapperIndices.length == 0 && unsupportedIntervalContainer) throw unsupportedIntervalContainer();
 
 				// Unboxed + boxed target, and primitive flag
 				final Class<?> rawTargetClassUnboxed = isRecord
@@ -3970,6 +4068,11 @@ class DefaultResultSetMapper implements ResultSetMapper {
 						: ttype.getRawClass();
 				final Class<?> rawTargetClassBoxed = boxedClass(rawTargetClassUnboxed);
 				final boolean targetIsPrimitive = rawTargetClassUnboxed.isPrimitive();
+				boolean intervalTarget = builtInTargetType(ttype).getRawClass() == SqlInterval.class;
+				intervalColumn |= intervalTarget;
+				boolean intervalRead = intervalTarget && mapperIndices.length == 0;
+				if (intervalRead && intervalSource == null)
+					intervalSource = SqlIntervalSupport.sourceColumn(jdbcType, resultSetMetaData.getColumnTypeName(i));
 
 				final TargetType targetTypeFinal = ttype;
 				final String propertyNameFinal = prop;
@@ -3984,11 +4087,21 @@ class DefaultResultSetMapper implements ResultSetMapper {
 				// Callbacks may refer back to the mapper, so neither they nor the mapper belong in a cached plan.
 				Converter converter = (mapper, raw, rrs, cctx, ip, resources) -> mapper.convertColumn(
 						raw, targetTypeFinal, mapper.customColumnMappersAtIndices(mapperIndices), rrs, cctx, ip, resources,
-						colIndexFinal, labelFinal, jdbcType, containerTypeName, deferredContainerType);
+						colIndexFinal, labelFinal, jdbcType, containerTypeName, deferredContainerType, unsupportedIntervalContainer);
+				if (intervalRead) converter = (mapper, raw, rrs, cctx, ip, resources) -> raw;
 
 
-				bindings.add(new ColumnBinding(i, recordArgIndex, setterMH, reader, converter,
-						targetIsPrimitive, rawTargetClassBoxed, propertyNameFinal));
+				bindings.add(new ColumnBinding(i, recordArgIndex, setterMH, intervalRead ? intervalColumnReader(intervalSource) : reader, converter,
+						targetIsPrimitive, rawTargetClassBoxed, propertyNameFinal, intervalRead));
+			}
+			if (intervalColumn) {
+				for (int bindingIndex = columnBindingStart; bindingIndex < bindings.size(); bindingIndex++) {
+					ColumnBinding binding = bindings.get(bindingIndex);
+					if (!binding.intervalRead)
+						bindings.set(bindingIndex, new ColumnBinding(binding.columnIndex, binding.recordArgIndexOrMinusOne,
+								binding.setterOrNull, guardedIntervalRawReader(binding.reader), binding.converter,
+								binding.targetIsPrimitive, binding.targetRawClass, binding.propertyName, false));
+				}
 			}
 		}
 

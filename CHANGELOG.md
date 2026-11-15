@@ -8,6 +8,12 @@ All notable changes to Pyranid will be documented in this file.
 
 ### Added
 
+- SqlInterval supplies an immutable native-interval value with independent signed total months, calendar days
+  and elapsed time, strict explicit Duration/Period conversions and field-wise equality. Built-in binding/mapping
+  covers PostgreSQL (all text styles and binary reads), DuckDB, Oracle's two interval families and tested HSQLDB
+  GENERIC support. Zero family selection, precision/range failures and column-coercion limits are explicit;
+  existing Duration/Period pass-through, custom hooks, raw values and Optional-property rules remain unchanged.
+
 - Opt-in ResultSetMapper.Builder.failOnUnmappedColumns(true) rejects unmapped source columns during standard
   bean/record planning, preserving default partial mapping, aliases, fan-out and scalar/Map/direct-STRUCT contracts.
 - Opt-in ResultSetMapper.Builder.detachLobValues(true) detaches visible native Map/Object LOBs and Object-valued
@@ -99,6 +105,12 @@ All notable changes to Pyranid will be documented in this file.
   class, preserving parameterized components, bounds and type variables for custom binder/mapper selection.
 
 ### Fixed
+
+- Oracle's verified internal parameter-metadata parser NPE during type/name lookup is treated as unavailable
+  optional metadata. NULL INSERT ... SELECT binds use the existing fallback; ambiguous SqlInterval.ZERO retains
+  its family error. Unrelated runtime failures, cancellation and interruption remain failures.
+- SqlInterval reads reuse immutable interval-family declarations in cached row plans and weak cursor-based
+  scalar/custom-fallback hints, avoiding repeated type-name parsing while preserving hook precedence and ownership.
 
 - PostgreSQL metadata protection no longer permanently marks a recovered transaction rollback-only when
   an internal savepoint is rejected with `25P02` and consistent prior statement-error evidence. Uncertain

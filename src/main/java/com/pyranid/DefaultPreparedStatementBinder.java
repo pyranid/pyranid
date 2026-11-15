@@ -377,6 +377,16 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			return;
 		}
 
+		if (normalizedParameter instanceof SqlInterval interval) {
+			Optional<ParameterSqlType> target = SqlIntervalSupport.needsZeroFamilyMetadata(statementContext.getDatabaseType(), interval)
+					? determineParameterSqlType(parameterSqlTypeResolver, parameterIndex)
+					: parameterSqlTypeResolver.peekParameterSqlType(parameterIndex);
+			SqlIntervalSupport.bind(preparedStatement, parameterIndex, statementContext, interval,
+					target.map(ParameterSqlType::getSqlType).orElse(null),
+					target.map(value -> value.typeName).orElse(null));
+			return;
+		}
+
 		// Everything else
 		preparedStatement.setObject(parameterIndex, normalizedParameter);
 	}
@@ -436,6 +446,8 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 				normalizedElements[i] = createSqlArray(statementContext, connection,
 						nestedSqlArrayParameter, createdArrays, nestingDepth + 1);
 			} else if (element != null) {
+				if (element instanceof SqlInterval)
+					throw new DatabaseException("SqlInterval SQL ARRAY elements require a whole-container CustomParameterBinder.");
 				Object normalizedElement = normalizeParameter(statementContext, element);
 				normalizedElements[i] = statementContext.getDatabaseDialect().normalizeSqlArrayElement(
 						sqlArrayParameter.getBaseTypeName(), normalizedElement, statementContext.getTimeZone());
@@ -476,6 +488,8 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 				normalizedAttributes[i] = createSqlArray(statementContext, connection,
 						nestedSqlArrayParameter, createdArrays, nestingDepth + 1);
 			} else if (attribute != null) {
+				if (attribute instanceof SqlInterval)
+					throw new DatabaseException("SqlInterval SQL STRUCT attributes require a whole-container CustomParameterBinder.");
 				Object normalizedAttribute = normalizeParameter(statementContext, attribute);
 				normalizedAttributes[i] = statementContext.getDatabaseDialect().normalizeSqlStructAttribute(
 						sqlStructParameter.getTypeName(), i, normalizedAttribute, statementContext.getTimeZone());
@@ -762,7 +776,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 				|| value instanceof Instant || value instanceof OffsetDateTime || value instanceof ZonedDateTime
 				|| value instanceof LocalDate || value instanceof LocalDateTime || value instanceof LocalTime
 				|| value instanceof java.time.OffsetTime || value instanceof Year || value instanceof YearMonth
-				|| value instanceof Locale || value instanceof Currency
+				|| value instanceof Locale || value instanceof Currency || value instanceof SqlInterval
 				// These JDK classes are extensible; a subclass can execute arbitrary code during normalization.
 				|| type == BigDecimal.class || type == java.math.BigInteger.class || type == Date.class
 				|| type == java.sql.Date.class || type == java.sql.Time.class || type == java.sql.Timestamp.class;
@@ -772,6 +786,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		@NonNull
 		private final PreparedStatement preparedStatement;
 		private final boolean protectPostgresMetadata;
+		private final boolean oracleMetadata;
 		private final Map<Integer, Optional<ParameterSqlType>> resolvedTypes = new HashMap<>();
 		@Nullable
 		private Set<Integer> parameterIndices;
@@ -782,16 +797,18 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		private ParameterMetaData parameterMetaData;
 
 		ParameterSqlTypeResolver(@NonNull PreparedStatement preparedStatement) {
-			this(preparedStatement, false);
+			this(preparedStatement, false, false);
 		}
 
 		ParameterSqlTypeResolver(@NonNull StatementContext<?> context, @NonNull PreparedStatement preparedStatement) {
-			this(preparedStatement, requireNonNull(context).getDatabaseType() == DatabaseType.POSTGRESQL);
+			this(preparedStatement, requireNonNull(context).getDatabaseType() == DatabaseType.POSTGRESQL,
+					context.getDatabaseType() == DatabaseType.ORACLE);
 		}
 
-		private ParameterSqlTypeResolver(PreparedStatement preparedStatement, boolean protectPostgresMetadata) {
+		private ParameterSqlTypeResolver(PreparedStatement preparedStatement, boolean protectPostgresMetadata, boolean oracleMetadata) {
 			this.preparedStatement = requireNonNull(preparedStatement);
 			this.protectPostgresMetadata = protectPostgresMetadata;
+			this.oracleMetadata = oracleMetadata;
 		}
 
 		void registerParameterIndices(Collection<Integer> parameterIndices) {
@@ -811,6 +828,12 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 					}
 				}
 			}
+		}
+
+		/** Existing evidence only: nonzero intervals must not introduce a new describe. */
+		Optional<ParameterSqlType> peekParameterSqlType(int parameterIndex) throws SQLException {
+			if (this.resolutionFailure != null) rethrowMetadataFailure(this.resolutionFailure);
+			return this.resolvedTypes.getOrDefault(parameterIndex, Optional.empty());
 		}
 
 		@NonNull
@@ -979,8 +1002,31 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 				}
 				ParameterMetaData metadata = ParameterSqlTypeResolver.this.parameterMetaData;
 				if (metadata == null) return Optional.empty();
-				this.sqlType = metadata.getParameterType(this.index);
-				return Optional.of(new ParameterSqlType(this.sqlType, metadata.getParameterTypeName(this.index)));
+				try {
+					this.sqlType = metadata.getParameterType(this.index);
+					return Optional.of(new ParameterSqlType(this.sqlType, metadata.getParameterTypeName(this.index)));
+				} catch (NullPointerException failure) {
+					if (!isUnavailableOracleMetadata(failure)) throw failure;
+					// ojdbc's optional parser cannot describe some INSERT ... SELECT binds. Its
+					// descriptor remains unusable for every index, so cache that absence once. A
+					// type already obtained before a name failure retains the usual code-only fallback.
+					ParameterSqlTypeResolver.this.parameterMetaData = null;
+					return fallback();
+				}
+			}
+
+			private boolean isUnavailableOracleMetadata(NullPointerException failure) {
+				if (!ParameterSqlTypeResolver.this.oracleMetadata || failure.getClass() != NullPointerException.class
+						|| Thread.currentThread().isInterrupted() || failure.getCause() != null || failure.getSuppressed().length != 0)
+					return false;
+				StackTraceElement[] frames = failure.getStackTrace();
+				if (frames.length < 5) return false;
+				String[] methods = {"storeParametersMetadata", "query", "parseAndQuery", "checkValidIndex"};
+				for (int index = 0; index < methods.length; index++)
+					if (!frames[index].getClassName().equals("oracle.jdbc.driver.OracleParameterMetaData")
+							|| !frames[index].getMethodName().equals(methods[index])) return false;
+				return frames[4].getClassName().equals("oracle.jdbc.driver.OracleParameterMetaData")
+						&& frames[4].getMethodName().equals(this.sqlType == null ? "getParameterType" : "getParameterTypeName");
 			}
 
 			private Optional<ParameterSqlType> fallback() {
