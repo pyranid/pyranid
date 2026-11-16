@@ -17,6 +17,8 @@ No new query languages to learn. No leaky object-relational abstractions. No kit
 
 Full documentation is available at [https://www.pyranid.com](https://www.pyranid.com).
 
+See the [changelog](CHANGELOG.md) for release notes and upgrade guidance.
+
 ### Design Goals
 
 * Small codebase
@@ -39,119 +41,6 @@ Similarly-flavored commercially-friendly OSS libraries are available.
 
 * [Soklet](https://www.soklet.com) - DI-friendly HTTP 1.1 (and SSE) server that supports [JEP 444 Virtual Threads](https://openjdk.org/jeps/444)
 * [Lokalized](https://www.lokalized.com) - natural-sounding translations (i18n) via expression language
-
-### 4.9.0
-
-This minor release deliberately changes `ParameterRedactor.redactParameter(...)` to return non-null
-`Optional<Object>`. Update and recompile implementations, lambdas and direct callers; old binaries can fail
-when diagnostics first invoke them. See the [compatibility exception](COMPATIBILITY.md#intentional-api-and-storage-changes-in-490)
-and [migration notes](CHANGELOG.md#release-4-9-0).
-
-Existing SQLite timestamp text needs a storage migration before mixing old and 4.9 writes in equality,
-uniqueness or optimistic-lock predicates. The [tested migration recipe](docs/sqlite-timestamp-migration.md)
-separates local wall-clock values from instants, preserves nanoseconds and checks for canonical-key collisions.
-
-MySQL/MariaDB instant-bearing writes now use the local timestamp in `Database.timeZone` when parameter metadata
-does not identify a zoned target. If that zone differs from the driver/session policy used for older writes, the
-same instant can produce a different stored value. Java round trips alone can hide this change; verify server
-values, equality/unique keys and optimistic-lock predicates before mixing old and new writers. Existing rows
-are not repaired automatically. Set the database, driver and session zones deliberately; see the
-[upgrade checklist](CHANGELOG.md#upgrading-to-490-action-required) and [compatibility notes](COMPATIBILITY.md#intentional-api-and-storage-changes-in-490).
-
-Oracle UUID character columns now use canonical 36-character text. Migrate legacy 32-hex-digit values and
-referencing keys, widen 32-character columns, and audit collisions; RAW(16) storage is unchanged. The upgrade
-checklist also covers stricter Boolean/Optional/generic-property mapping, invalid `@DatabaseColumn` annotations,
-legacy temporal infinity and stray positional SQL placeholders.
-
-4.9 also adds opt-in `ResultSetMapper.Builder.detachLobValues(true)` for bounded detachment of visible native
-Object/Map LOB values. Explicit JDBC handles and handled custom mapper results retain their ownership rules.
-
-`SqlInterval` adds explicit native interval binding and mapping without guessing month/day lengths. It preserves
-mixed calendar/elapsed fields, with strict conversions to Duration or Period; see [binding](#sql-interval-binding)
-and [mapping](#sql-interval-mapping) for supported families, zero handling and precision limits.
-
-`transactionWithOutcome(...)` returns the database result, attempted callback value and invocation failure together,
-after cleanup and post-transaction hooks. It runs the callback once and supports the same options and void callbacks
-as `transaction(...)`:
-
-```java
-TransactionOutcome<Receipt> outcome = database.transactionWithOutcome(() -> {
-  Receipt receipt = applyCommandAndPersistReceiptAndOutbox(command);
-  return Optional.of(receipt);
-});
-
-outcome.getFailure().ifPresent(failure -> {
-  if (!isRecognizedCompletionFailure(failure))
-    throw failure;
-});
-
-switch (outcome.getResult()) {
-  case COMMITTED -> {
-    outcome.getFailure().ifPresent(this::reportCompletionFailure);
-    respondFromReceipt(outcome.getAttemptedValue().orElseThrow());
-  }
-  case ROLLED_BACK -> handleAbortedAttempt(operationId, outcome.getFailure());
-  case IN_DOUBT -> recoverOrReportUnresolved(operationId);
-}
-```
-
-The receipt, classification and reporting helpers are application code; this callback promises a value on normal return. A value alone does not
-prove commit, and cleanup or hook failure can accompany `COMMITTED`. Returned failures can also be programming errors;
-rethrow failures your application does not recognize. Final `Error`s and pre-boundary argument validation still throw.
-The API is not a durable operation ledger and never retries. Use it at the owning command boundary; nesting it inside
-`transactionWithRetry(...)` opens an independent transaction and does not combine outcome handling with safe retries.
-
-PostgreSQL and DuckDB completion now detect observable aborted transactions before physical commit. A handled failure
-that leaves the transaction usable can still commit. Traditional `transaction(...)` throws if the transaction was
-aborted or a required pre-commit check cannot establish usability. Mixed or unreadable commit-failure evidence remains
-`IN_DOUBT`, preventing an automatic retry based solely on a secondary serialization diagnostic. See
-[migration notes](CHANGELOG.md#release-4-9-0) and [transaction documentation](https://www.pyranid.com/docs/transactions).
-
-Traditional nested transaction failures now follow the outcome API's ordinary interruption rule: cleanup and hooks
-finish before restoration, and an enclosing transaction prevents newly publishing a handled failure's interrupt.
-Retained cancellation still stops retries. PostgreSQL parameter describes use internal savepoint protection in
-manual-commit mode, and batch rows share statement-scoped metadata resolution. Negative driver update counts remain
-available to callers while metrics report them as unknown.
-
-### 4.8.0
-
-Version `4.8.0` adds managed notification supervision, transaction completion observers, retry budgets, and bounded LOB materialization.
-See [migration notes](CHANGELOG.md#480) before upgrading. Java 17 and zero runtime dependencies remain unchanged.
-
-```java
-ResultSetMapper mapper = ResultSetMapper.withPlanCachingEnabled(true)
-  .maxLobBytes(32L * 1024 * 1024)
-  .maxLobCharacters(16_777_216L)
-  .build();
-```
-
-Built-in LOB materialization defaults to 16 MiB binary or 8,388,608 UTF-16 code units per value. Positive limits
-apply equally to scalar, record, and bean targets. `unboundedLobMaterialization()` disables both limits;
-a later setter re-enables only its own limit. Driver buffers, custom mappers, VARCHAR, and whole-result size
-are outside these limits. Raw LOB/Object/Map values remain subject to JDBC lifetime rules.
-
-```java
-TransactionOptions options = TransactionOptions.withIsolation(TransactionIsolation.DEFAULT)
-  .completionObserver(completion -> auditOutcome(completion.getTransactionId(),
-    completion.getResult(), completion.getFailure()))
-  .build();
-```
-
-The observer runs once for each transaction scope after cleanup and business hooks, including each retry attempt.
-Observer failures are contained. Database outcome and caller-visible failure are independent: a post-commit hook
-can leave a `COMMITTED` completion with a failure. Scope IDs are local diagnostics, and nested transactions expose
-their enclosing scope ID.
-
-`RetryPolicy.Backoff.fullJitter(backoff)` decorates an existing delay policy. `retryPolicy.withMaxElapsedTime(Duration.ofSeconds(5))`
-bounds admission of retries, including time in attempts, cleanup, observers, policy decisions, and sleep. It always
-permits the initial attempt; it never cancels running JDBC work. Budget exhaustion rethrows the last original failure.
-
-Core `NotificationSupervisor.start()` manages listener and serialized reconciliation workers, using named daemon
-threads by default. Optional `pollEvery(Duration)` reconciles independently of listener reads and reconnects;
-polling is disabled by default. Readiness requires successful registration followed by a fresh reconciliation.
-Call `requestShutdown()` and `awaitShutdown()` for orderly cleanup; daemon threads are only a process-exit fallback.
-The legacy `start(Executor)` retains application-owned execution without managed polling. See the
-[notification guide](https://www.pyranid.com/docs/notifications) for lifecycle and retry configuration.
 
 ### Maven Installation
 
@@ -644,8 +533,8 @@ normal rollback, and PostgreSQL/DuckDB pre-commit validation can refuse an abort
 Traditional `transaction(...)` throws on that refusal after attempting rollback. Use `transactionWithOutcome(...)`
 when the owner needs the database result, normally returned callback value and final failure together. It runs
 one independent attempt without retries; `COMMITTED` can still accompany a later cleanup/hook failure, and
-`IN_DOUBT` requires reconciliation rather than automatic replay. See the [outcome example](#490) and the
-[transaction outcome contract](https://www.pyranid.com/docs/transactions#obtaining-a-transaction-outcome).
+`IN_DOUBT` requires reconciliation rather than automatic replay. See the
+[transaction outcome guide](https://www.pyranid.com/docs/transactions#obtaining-a-transaction-outcome) for an example and the full contract.
 
 ### Context
 

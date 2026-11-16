@@ -50,7 +50,10 @@ The detailed migration notes below include supported alternatives, scope limits 
 - `Database.transactionWithOutcome(...)` supplies a single-attempt `TransactionOutcome<T>` containing the final
   completion, database result, normally returned callback value and optional `RuntimeException`. All four returning/void
   and default/supplied-options overloads share the traditional transaction engine. Observers receive the same completion.
-  Attempted values survive rollback and completion failures; final `Error`s still escape after best-effort completion.
+  Attempted values survive rollback and completion failures; a value alone is not commit proof. Cleanup or hook failures
+  can accompany `COMMITTED`, and returned failures can include programming errors; rethrow failures the application
+  does not recognize. Final `Error`s still escape after best-effort completion, and pre-boundary argument validation
+  still throws. See the [outcome usage guide](https://www.pyranid.com/docs/transactions#obtaining-a-transaction-outcome).
   Shared pre-commit validation reads live PostgreSQL state through a loader-safe optional bridge and validates
   triggered opaque connections without inventing commit acknowledgment.
 - Managed PostgreSQL parameter describes/type lookups use recoverable internal savepoints in manual-commit mode.
@@ -414,11 +417,14 @@ The detailed migration notes below include supported alternatives, scope limits 
 - `TransactionOptions.completionObserver(...)` reports immutable `TransactionCompletion` records after cleanup
   and post-transaction hooks, with correlated scope IDs, database outcome, and the final throwable.
 - `RetryPolicy.Backoff.fullJitter(...)` and optional `withMaxElapsedTime(...)` retry budgets. Defaults are unchanged;
-  budgets govern admission of another attempt, not cancellation of an in-flight JDBC operation.
+  budgets govern admission of another attempt, not cancellation of an in-flight JDBC operation. The initial attempt
+  is always permitted; the budget includes attempts, cleanup, observers, policy decisions and sleep. Exhaustion
+  rethrows the last original failure.
 - `StatementLog.getElapsedDuration()` reports time from executor entry through resource release, separately
   from the existing phase-sum `getTotalDuration()`.
 - Configurable bounded LOB materialization through `ResultSetMapper.Builder.maxLobBytes(...)`,
-  `maxLobCharacters(...)`, and `unboundedLobMaterialization()`.
+  `maxLobCharacters(...)`, and `unboundedLobMaterialization()`. Unbounded mode disables both limits;
+  setting a later positive limit re-enables only that limit.
 
 ### Changed
 
@@ -622,13 +628,14 @@ The detailed migration notes below include supported alternatives, scope limits 
 - Built-in BLOB-to-`byte[]` and CLOB/NCLOB-to-`String` materialization now defaults to at most 16 MiB of bytes
   or 8,388,608 UTF-16 code units per value. This deliberate 4.8.0 behavior change can reject values accepted
   by earlier versions. Set larger positive limits or explicitly opt into unbounded materialization. Limits
-  apply before Pyranid's eager dialect conversion; driver buffering, custom mappers, ordinary VARCHAR values,
-  and aggregate result-list size are outside their scope.
+  apply to scalar, record and bean targets before Pyranid's eager dialect conversion; driver buffering,
+  custom mappers, ordinary VARCHAR values, and aggregate result-list size are outside their scope.
 - Raw LOB/Object/Map results retain their driver and cursor lifetime. A resource-bearing value passed to a
   custom mapper is borrowed even if that mapper declines it; Pyranid cannot know whether the mapper retained
   the value. Custom column mapper order, handled-null semantics, and nested-attribute behavior are unchanged.
 - Completion observer failures are contained. Existing post-transaction business hooks still propagate;
   a committed transaction can therefore report `COMMITTED` with a failure. Observe each retry attempt separately.
+  Scope IDs are local diagnostics; nested scopes expose their enclosing scope ID.
 - Notification readiness means registration plus a fresh initial reconciliation succeeded at least once. It is not
   durable delivery or a continuing health signal. Enable `pollEvery(...)` for independent fallback polling and keep
   reconciliation bounded and idempotent. Managed reconciliation runs on a dedicated serialized worker; requests
