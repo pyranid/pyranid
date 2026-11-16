@@ -185,6 +185,7 @@ final class TransactionCoordinator {
 				// manifestation. Never commit, or report success from a rollback-only path, through a partially initialized
 				// connection.
 				transaction.throwPhysicalTransactionBeginFailureIfPresent();
+				transaction.throwMetadataProtectionFailureIfPresent();
 
 				if (transaction.isRollbackOnly()) {
 					rollbackAttempted = true;

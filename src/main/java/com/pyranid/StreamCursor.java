@@ -100,25 +100,32 @@ final class StreamCursor<T> implements java.util.Iterator<T>, AutoCloseable {
 			this.connection = this.lease.acquire("open a stream on the transaction connection");
 			startTime = nanoTime();
 
+			ParameterBindingContext.Scope bindingScope = null;
 			try {
-				this.databaseStreamDialect = this.executor.connections.dialect();
-				this.databaseStreamState = this.databaseStreamDialect.configureStreamingConnection(requireNonNull(this.connection), this.lease.transactional());
+				try {
+					this.databaseStreamDialect = this.executor.connections.dialect();
+					this.databaseStreamState = this.databaseStreamDialect.configureStreamingConnection(requireNonNull(this.connection), this.lease.transactional());
 
-				this.preparedStatement = this.databaseStreamDialect.prepareStreamingStatement(requireNonNull(this.connection), this.statementContext);
-				this.executor.applyPreparedStatementCustomizer(this.statementContext, this.preparedStatement, this.preparedStatementCustomizer);
-				this.databaseStreamDialect.configureStreamingPreparedStatement(this.preparedStatement, this.databaseStreamState,
-						this.lease.transactional(), this.queryFetchSizeConfigured);
-				if (this.parameters.size() > 0)
-					this.executor.performPreparedStatementBinding(this.statementContext, this.preparedStatement, this.parameters);
-			} finally {
-				this.preparationDuration = Duration.ofNanos(nanoTime() - startTime);
-			}
+					this.preparedStatement = this.databaseStreamDialect.prepareStreamingStatement(requireNonNull(this.connection), this.statementContext);
+					bindingScope = ParameterBindingContext.activate(this.statementContext, this.preparedStatement,
+							new DefaultPreparedStatementBinder.ParameterSqlTypeResolver(this.statementContext, this.preparedStatement));
+					this.executor.applyPreparedStatementCustomizer(this.statementContext, this.preparedStatement, this.preparedStatementCustomizer);
+					this.databaseStreamDialect.configureStreamingPreparedStatement(this.preparedStatement, this.databaseStreamState,
+							this.lease.transactional(), this.queryFetchSizeConfigured);
+					if (this.parameters.size() > 0)
+						this.executor.performPreparedStatementBinding(this.statementContext, this.preparedStatement, this.parameters);
+				} finally {
+					this.preparationDuration = Duration.ofNanos(nanoTime() - startTime);
+				}
 
-			startTime = nanoTime();
-			try {
-				this.resultSet = this.preparedStatement.executeQuery();
+				startTime = nanoTime();
+				try {
+					this.resultSet = this.preparedStatement.executeQuery();
+				} finally {
+					this.executionDuration = Duration.ofNanos(nanoTime() - startTime);
+				}
 			} finally {
-				this.executionDuration = Duration.ofNanos(nanoTime() - startTime);
+				if (bindingScope != null) bindingScope.close();
 			}
 			this.executor.getMetricsCollectorDispatcher().didOpenStream(this.statementContext, Duration.ofNanos(nanoTime() - this.openStartTime));
 		} catch (DatabaseException e) {

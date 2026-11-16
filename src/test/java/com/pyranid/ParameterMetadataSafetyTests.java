@@ -229,6 +229,75 @@ class ParameterMetadataSafetyTests {
 	}
 
 	@Test
+	void concreteJsonAndSecureWrappersKeepCallbackFreeDemandsInOneProtectionWindow() throws Exception {
+		Probe probe = new Probe(DatabaseType.POSTGRESQL);
+		probe.requireProtectedGetters = true;
+		var resolver = probe.resolver();
+		new DefaultPreparedStatementBinder().registerParameterSqlTypeDemands(probe.context, resolver,
+				List.of(List.of(Instant.EPOCH, Parameters.json("{}"),
+						Parameters.secure(Optional.of(Parameters.secure(LocalDateTime.of(2026, 1, 1, 0, 0)))),
+						Parameters.secure(Optional.empty()))));
+		assertTrue(probe.events.isEmpty());
+		resolver.beginParameterGroup();
+		resolver.prefetchRegisteredParameterSqlTypes();
+		assertEquals(List.of(1, 3, 4), probe.typeReads);
+		assertEquals(1, probe.savepoints);
+		assertEquals(1, probe.releases);
+	}
+
+	@Test
+	void opaqueMetadataCannotFirstResolveALateBatchPositionFromEarlierInputTypes() throws Exception {
+		for (boolean firstGroupDescribed : new boolean[]{false, true}) {
+			Probe probe = new Probe(DatabaseType.POSTGRESQL);
+			var resolver = probe.resolver();
+			resolver.beginParameterGroup();
+			if (firstGroupDescribed) resolver.determineParameterSqlType(1);
+			int descriptions = probe.descriptions, savepoints = probe.savepoints;
+			resolver.beginParameterGroup();
+			SQLException failure = assertThrows(SQLException.class, () -> resolver.determineParameterSqlType(2));
+			assertEquals("0A000", failure.getSQLState());
+			assertTrue(failure.getMessage().contains("previously uncached PostgreSQL batch parameter 2"));
+			assertSame(failure, assertThrows(SQLException.class, () -> resolver.determineParameterSqlType(1)));
+			assertEquals(descriptions, probe.descriptions, "Do not describe already-contaminated input OIDs");
+			assertEquals(savepoints, probe.savepoints);
+		}
+	}
+
+	@Test
+	void lateSqlNullUsesUntypedBindingWithoutAuthorizingLaterTemporalCoercion() throws Exception {
+		for (boolean firstGroupDescribed : new boolean[]{false, true}) {
+			Probe probe = new Probe(DatabaseType.POSTGRESQL);
+			var resolver = probe.resolver();
+			resolver.beginParameterGroup(); resolver.noteParameterBound(1);
+			if (firstGroupDescribed) resolver.determineParameterSqlType(2);
+			int descriptions = probe.descriptions, savepoints = probe.savepoints;
+			resolver.beginParameterGroup();
+			assertTrue(resolver.determineNullParameterSqlType(1).isEmpty());
+			new DefaultPreparedStatementBinder().bindParameter(probe.context, probe.statement, 1, Optional.empty(), resolver);
+			assertEquals(descriptions, probe.descriptions);
+			assertEquals(savepoints, probe.savepoints);
+			SQLException unsafe = assertThrows(SQLException.class, () -> resolver.determineParameterSqlType(1));
+			assertEquals("0A000", unsafe.getSQLState(), "A late NULL must not freeze unavailable target metadata");
+			assertSame(unsafe, assertThrows(SQLException.class, () -> resolver.determineNullParameterSqlType(1)));
+		}
+	}
+
+	@Test
+	void aTrustedOpaqueMetadataPlanFreezesAllDemandedPositionsBeforeAnyGroupIsBound() throws Exception {
+		Probe probe = new Probe(DatabaseType.POSTGRESQL);
+		probe.requireProtectedGetters = true;
+		var resolver = probe.resolver();
+		new DefaultPreparedStatementBinder().registerParameterSqlTypeDemands(probe.context, resolver,
+				List.of(List.of(Instant.EPOCH, "2026-01-01"), List.of(Instant.EPOCH, LocalDateTime.of(2026, 1, 1, 0, 0))));
+		resolver.prefetchRegisteredParameterSqlTypes();
+		resolver.beginParameterGroup();
+		resolver.beginParameterGroup();
+		assertEquals(Types.TIMESTAMP, resolver.determineParameterSqlType(2).orElseThrow().getSqlType());
+		assertEquals(List.of(1, 2), probe.typeReads);
+		assertEquals(1, probe.savepoints);
+	}
+
+	@Test
 	void successfulMetadataAndTypeNameFallbackRemainCachedPerIndex() throws Exception {
 		for (boolean missingName : new boolean[]{false, true}) {
 			Probe probe = new Probe(DatabaseType.POSTGRESQL);
@@ -395,12 +464,12 @@ class ParameterMetadataSafetyTests {
 				}
 				return Optional.empty();
 			});
-			assertTrue(database.currentTransaction().orElseThrow().isRollbackOnly(), phase);
+			assertFalse(database.currentTransaction().orElseThrow().isRollbackOnly(), phase);
 			database.query("INSERT INTO work VALUES (3)").execute();
 			return Optional.of("attempted receipt");
 		});
 		assertEquals(TransactionResult.ROLLED_BACK, outcome.getResult(), phase);
-		assertTrue(outcome.getFailure().isEmpty());
+		assertTrue(outcome.getFailure().isPresent(), "Uncertain protection must refuse completion visibly: " + phase);
 		assertEquals(Optional.of("attempted receipt"), outcome.getAttemptedValue());
 		assertEquals(List.of(1), inspection.query("SELECT id FROM work ORDER BY id").fetchList(Integer.class));
 	}

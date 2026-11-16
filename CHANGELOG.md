@@ -113,11 +113,18 @@ All notable changes to Pyranid will be documented in this file.
   scalar/custom-fallback hints, avoiding repeated type-name parsing while preserving hook precedence and ownership.
 
 - PostgreSQL metadata protection no longer permanently marks a recovered transaction rollback-only when
-  an internal savepoint is rejected with `25P02` and consistent prior statement-error evidence. Uncertain
-  establishment failures and failed rollback/release cleanup still fence the owning transaction.
+  the physical driver confirms an already-aborted transaction rejected an internal savepoint with `25P02`.
+  Recovery no longer depends on an allow-list of historical SQLStates. Uncertain establishment failures and
+  failed rollback/release cleanup visibly refuse transaction completion instead of reporting an intentional
+  rollback. Unique named internal savepoints preserve application savepoints and avoid pgjdbc counter wrap.
 - Managed PostgreSQL binds resolve trusted built-in parameter metadata in one protected snapshot before
-  setters, reusing type/name results across batch groups and chunks. Custom/opaque binding paths retain
-  ordered, protected late resolution. LocalDate/LocalDateTime skip metadata on SQLite/MySQL/MariaDB;
+  setters, reusing type/name results across batch groups and chunks, including public default-binder delegates.
+  Native pgjdbc/Yugabyte parameter OIDs are copied before later setters can mutate them; known built-in types
+  share the initial protection window even with custom binders or JSON/secure wrappers. Opaque metadata and
+  user-defined type lookups retain ordered protection. A previously uncached PostgreSQL batch position fails
+  clearly if stable target metadata cannot be established after an earlier group has bound values, rather than
+  silently coercing a temporal value using that group's input type. SQL NULL can instead use an untyped bind
+  without establishing target evidence for later values. LocalDate/LocalDateTime skip metadata on SQLite/MySQL/MariaDB;
   dialects with zoned targets retain configured-zone coercion and Oracle UUID target typing is unchanged.
 - Timestamp type-name detection reuses a compiled pattern and skips regex matching for ordinary SQL types,
   avoiding repeated pattern compilation during uncached or churned mapping plans.

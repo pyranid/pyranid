@@ -110,6 +110,14 @@ Oracle UUID values in identified character columns now bind as canonical 36-char
 32-hex-digit character data and 32-character column widths need migration; RAW(16) storage is unchanged.
 See the [4.9.0 migration notes](CHANGELOG.md#release-4-9-0). Java 17 remains the minimum runtime.
 
+PostgreSQL batches retain stable target-type evidence across groups and chunks. With a custom binder or
+foreign parameter-metadata wrapper, first requesting a previously uncached parameter type after an earlier
+group has bound values can fail with SQLState `0A000` when that evidence cannot be frozen safely. SQL NULL can
+use an untyped bind without target-dependent conversion. This prevents
+temporal values from silently following an earlier group's input type. Use native pgjdbc/Yugabyte metadata,
+homogeneous groups, separate statements, or an explicit custom binder for that position. Custom callbacks and
+foreign metadata getters retain their normal ordering; Pyranid does not bypass a metadata wrapper via `unwrap`.
+
 `SqlInterval` is an additive public value type for explicit native interval binding/mapping in 4.9.0. It keeps
 calendar months/days separate from elapsed time; conversions to Duration/Period are explicit and conservative.
 Oracle/GENERIC zero binding requires recognizable target-family metadata or a custom native-zero binder.

@@ -743,7 +743,7 @@ final class StatementExecutor {
 				applyPreparedStatementCustomizer(statementContext, preparedStatement, preparedStatementCustomizer);
 
 				DefaultPreparedStatementBinder.ParameterSqlTypeResolver parameterSqlTypeResolver =
-						new DefaultPreparedStatementBinder.ParameterSqlTypeResolver(statementContext, preparedStatement);
+						parameterSqlTypeResolver(statementContext, preparedStatement);
 				prepareParameterSqlTypes(statementContext, parameterSqlTypeResolver, parameterGroups);
 				for (List<Object> parameterGroup : parameterGroups) {
 					if (parameterGroup.size() > 0)
@@ -769,7 +769,7 @@ final class StatementExecutor {
 				List<Long> result = new ArrayList<>(parameterGroups.size());
 				Throwable chunkCleanupFailure = null;
 				DefaultPreparedStatementBinder.ParameterSqlTypeResolver parameterSqlTypeResolver =
-						new DefaultPreparedStatementBinder.ParameterSqlTypeResolver(statementContext, preparedStatement);
+						parameterSqlTypeResolver(statementContext, preparedStatement);
 				prepareParameterSqlTypes(statementContext, parameterSqlTypeResolver, parameterGroups);
 
 				try {
@@ -970,9 +970,17 @@ final class StatementExecutor {
 	<T> void performPreparedStatementBinding(@NonNull StatementContext<T> statementContext,
 			@NonNull PreparedStatement preparedStatement, @NonNull List<Object> parameters) {
 		DefaultPreparedStatementBinder.ParameterSqlTypeResolver parameterSqlTypeResolver =
-				new DefaultPreparedStatementBinder.ParameterSqlTypeResolver(statementContext, preparedStatement);
-		prepareParameterSqlTypes(statementContext, parameterSqlTypeResolver, List.of(parameters));
-		performPreparedStatementBinding(statementContext, preparedStatement, parameters, parameterSqlTypeResolver);
+				parameterSqlTypeResolver(statementContext, preparedStatement);
+		try (var ignored = ParameterBindingContext.activate(statementContext, preparedStatement, parameterSqlTypeResolver)) {
+			prepareParameterSqlTypes(statementContext, parameterSqlTypeResolver, List.of(parameters));
+			performPreparedStatementBinding(statementContext, preparedStatement, parameters, parameterSqlTypeResolver);
+		}
+	}
+
+	private static DefaultPreparedStatementBinder.ParameterSqlTypeResolver parameterSqlTypeResolver(
+			StatementContext<?> context, PreparedStatement statement) {
+		DefaultPreparedStatementBinder.ParameterSqlTypeResolver current = ParameterBindingContext.current(context, statement);
+		return current == null ? new DefaultPreparedStatementBinder.ParameterSqlTypeResolver(context, statement) : current;
 	}
 
 	private void prepareParameterSqlTypes(StatementContext<?> statementContext,
@@ -996,6 +1004,7 @@ final class StatementExecutor {
 		requireNonNull(statementContext);
 		requireNonNull(preparedStatement);
 		requireNonNull(parameters);
+		parameterSqlTypeResolver.beginParameterGroup();
 
 		try {
 			PreparedStatementBinder preparedStatementBinder = preparedStatementBinderFor(statementContext);
@@ -1013,7 +1022,7 @@ final class StatementExecutor {
 						preparedStatementBinder.bindParameter(statementContext, preparedStatement, parameterIndex, parameter);
 					}
 				} else {
-					Integer sqlType = parameterSqlTypeResolver.determineParameterSqlType(parameterIndex)
+					Integer sqlType = parameterSqlTypeResolver.determineNullParameterSqlType(parameterIndex)
 							.map(DefaultPreparedStatementBinder.ParameterSqlType::getSqlType)
 							.orElse(Types.NULL);
 					try {
@@ -1027,6 +1036,7 @@ final class StatementExecutor {
 						preparedStatement.setNull(parameterIndex, Types.NULL);
 					}
 				}
+				parameterSqlTypeResolver.noteParameterBound(parameterIndex);
 			}
 		} catch (Exception e) {
 			throw databaseExceptionWithStatementContext(statementContext, e);
@@ -1086,7 +1096,8 @@ final class StatementExecutor {
 			try {
 				PreparedStatement preparedStatement = preparedStatementFactory.prepare(connection, statementContext);
 				Throwable statementFailure = null;
-				try {
+				try (var bindingScope = ParameterBindingContext.activate(statementContext, preparedStatement,
+						new DefaultPreparedStatementBinder.ParameterSqlTypeResolver(statementContext, preparedStatement))) {
 					try {
 						preparedStatementBindingOperation.perform(preparedStatement);
 					} finally {

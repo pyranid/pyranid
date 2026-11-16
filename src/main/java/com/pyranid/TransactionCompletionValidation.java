@@ -20,6 +20,11 @@ import java.util.List;
 final class TransactionCompletionValidation {
 	private TransactionCompletionValidation() {}
 
+	static DatabaseException metadataProtectionRefusal(Throwable failure, DatabaseType type) {
+		return refusal("Transaction completion refused after uncertain internal parameter-metadata protection", failure,
+				type.dialect(), List.of());
+	}
+
 	static void validate(Connection connection, DatabaseType type, @Nullable Throwable suspect,
 			boolean validationRequired) {
 		if (type != DatabaseType.POSTGRESQL && type != DatabaseType.DUCK_DB) return;

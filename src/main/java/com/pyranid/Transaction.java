@@ -99,6 +99,8 @@ public final class Transaction {
 	// Guarded by connectionLock. These describe the existing physical connection, never ambient work.
 	@Nullable
 	private Throwable firstSuspectFailure;
+	@Nullable
+	private Throwable metadataProtectionFailure;
 	private boolean completionValidationRequired;
 	@NonNull
 	private volatile PhysicalTransactionBeginState physicalTransactionBeginState;
@@ -502,6 +504,7 @@ public final class Transaction {
 			// the savepoint-scope guard itself. Guards, validation and pre-dispatch diagnostics cannot make the commit
 			// outcome uncertain because none has issued the physical commit yet.
 			assertSavepointScopeAccess();
+			throwMetadataProtectionFailureIfPresent();
 			TransactionCompletionValidation.validate(requireNonNull(this.connection), this.databaseType,
 					this.firstSuspectFailure, this.completionValidationRequired);
 
@@ -560,6 +563,15 @@ public final class Transaction {
 		if (this.connection != null && this.physicalTransactionBeginState == PhysicalTransactionBeginState.READY
 				&& this.completionPhase != CompletionPhase.COMPLETED)
 			this.completionValidationRequired = true;
+	}
+
+	/** Uncertain internal control failures must not look like an intentional rollback-only completion. */
+	void throwMetadataProtectionFailureIfPresent() {
+		assertConnectionLockHeld();
+		Throwable failure = this.metadataProtectionFailure;
+		if (failure instanceof Error error) throw error;
+		if (failure != null)
+			throw TransactionCompletionValidation.metadataProtectionRefusal(failure, this.databaseType);
 	}
 
 	private void clearSuspectFailure() {
@@ -944,6 +956,7 @@ public final class Transaction {
 			try {
 				this.completionPhase = CompletionPhase.COMPLETED;
 				this.firstSuspectFailure = null;
+				this.metadataProtectionFailure = null;
 				this.completionValidationRequired = false;
 			} finally {
 				this.lifecycleLock.unlock();
@@ -977,15 +990,31 @@ public final class Transaction {
 		}
 	}
 
-	/** A failed internal savepoint must fence only the transaction whose connection was actually used. */
-	static void markRollbackOnlyAfterMetadataFailure(Connection failedConnection) {
+	/** An uncertain internal control operation fences only its physical owner, with a visible failure. */
+	static void recordMetadataProtectionFailure(Connection failedConnection, Throwable failure) {
+		recordMetadataProtectionFailure(failedConnection, failure, true);
+	}
+
+	/** A provably rejected control operation retains ordinary, recoverable statement-failure evidence. */
+	static void recordMetadataProtectionRejection(Connection failedConnection, Throwable failure) {
+		recordMetadataProtectionFailure(failedConnection, failure, false);
+	}
+
+	private static void recordMetadataProtectionFailure(Connection failedConnection, Throwable failure, boolean uncertain) {
+		requireNonNull(failedConnection);
+		requireNonNull(failure);
 		Deque<Transaction> stack = TransactionCoordinator.TRANSACTION_STACK_HOLDER.get();
 		if (stack == null) return;
 		Set<Transaction> visited = Collections.newSetFromMap(new IdentityHashMap<>());
 		for (Transaction transaction : stack) {
 			if (visited.add(transaction) && transaction.connection == failedConnection
-					&& transaction.connectionLock.isHeldByCurrentThread())
-				transaction.markRollbackOnlyForCleanupFailure();
+					&& transaction.connectionLock.isHeldByCurrentThread()) {
+				transaction.recordSuspectFailure(failure);
+				transaction.requireCompletionValidation();
+				if (uncertain && transaction.physicalTransactionBeginState == PhysicalTransactionBeginState.READY
+						&& transaction.completionPhase != CompletionPhase.COMPLETED && transaction.metadataProtectionFailure == null)
+					transaction.metadataProtectionFailure = failure;
+			}
 		}
 	}
 

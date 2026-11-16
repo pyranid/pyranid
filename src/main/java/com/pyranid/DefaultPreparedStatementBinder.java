@@ -103,7 +103,9 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 																@NonNull PreparedStatement preparedStatement,
 																@NonNull Integer parameterIndex,
 																@NonNull Object parameter) throws SQLException {
-		bindParameter(statementContext, preparedStatement, parameterIndex, parameter, new ParameterSqlTypeResolver(statementContext, preparedStatement));
+		ParameterSqlTypeResolver resolver = ParameterBindingContext.current(statementContext, preparedStatement);
+		bindParameter(statementContext, preparedStatement, parameterIndex, parameter,
+				resolver == null ? new ParameterSqlTypeResolver(statementContext, preparedStatement) : resolver);
 	}
 
 	<T> void bindParameter(@NonNull StatementContext<T> statementContext,
@@ -128,7 +130,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		Object unwrappedParameter = unwrapOptionalValue(rawParameter);
 
 		if (unwrappedParameter == null) {
-			Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(parameterSqlTypeResolver, parameterIndex);
+			Optional<ParameterSqlType> sqlTypeOptional = parameterSqlTypeResolver.determineNullParameterSqlType(parameterIndex);
 			Integer sqlType = sqlTypeOptional.map(ParameterSqlType::getSqlType).orElse(null);
 			if (sqlType == null || sqlType == Types.NULL) {
 				sqlType = explicitTargetType == null
@@ -748,13 +750,20 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		for (List<Object> parameters : parameterGroups) {
 			for (int index = 0; index < parameters.size(); ++index) {
 				Object value = parameters.get(index);
-				// Only unwrap final JDK optionals. Secure/typed wrappers, callbacks and unknown objects can
-				// execute application code that changes the describe context; never prefetch across them.
-				while (value instanceof Optional<?> optional) value = optional.orElse(null);
+				// Only these concrete library/JDK wrappers are callback-free. Arbitrary implementations,
+				// typed values and subclasses can change the describe context and remain ordered barriers.
+				for (int depth = 0; depth < SecureParameterSupport.MAX_NESTING_DEPTH; ++depth) {
+					if (value instanceof Optional<?> optional) value = optional.orElse(null);
+					else if (value instanceof DefaultSecureParameter secure) value = secure.getValue().orElse(null);
+					else break;
+				}
 				if (value instanceof OptionalInt optional) value = optional.isPresent() ? optional.getAsInt() : null;
 				else if (value instanceof OptionalLong optional) value = optional.isPresent() ? optional.getAsLong() : null;
 				else if (value instanceof OptionalDouble optional) value = optional.isPresent() ? optional.getAsDouble() : null;
-				if (value != null && !isPlainParameter(value)) return;
+				if (value != null && !isPlainParameter(value)) {
+					if (indices != null) resolver.registerParameterIndices(indices);
+					return;
+				}
 				if (value == null || value instanceof Instant || value instanceof OffsetDateTime
 						|| value instanceof ZonedDateTime || value instanceof java.sql.Timestamp
 						|| (value instanceof Date && !(value instanceof java.sql.Date || value instanceof java.sql.Time))
@@ -770,7 +779,8 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 	private static boolean isPlainParameter(Object value) {
 		Class<?> type = value.getClass();
-		return value instanceof String || value instanceof UUID || value instanceof Boolean || value instanceof Character
+		return type == Parameters.DefaultJsonParameter.class
+				|| value instanceof String || value instanceof UUID || value instanceof Boolean || value instanceof Character
 				|| value instanceof Byte || value instanceof Short || value instanceof Integer || value instanceof Long
 				|| value instanceof Float || value instanceof Double || value instanceof Enum<?> || value instanceof byte[]
 				|| value instanceof Instant || value instanceof OffsetDateTime || value instanceof ZonedDateTime
@@ -791,6 +801,10 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		@Nullable
 		private Set<Integer> parameterIndices;
 		private boolean initialized;
+		private int parameterGroup;
+		private boolean immutablePostgresMetadata;
+		private final Set<Integer> boundParameterIndices = new LinkedHashSet<>();
+		private final Set<Integer> untrustedPostgresIndices = new LinkedHashSet<>();
 		@Nullable
 		private Throwable resolutionFailure;
 		@Nullable
@@ -818,6 +832,14 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			}
 		}
 
+		void beginParameterGroup() {
+			++this.parameterGroup;
+		}
+
+		void noteParameterBound(int parameterIndex) {
+			if (this.protectPostgresMetadata && !this.initialized) this.boundParameterIndices.add(parameterIndex);
+		}
+
 		void prefetchRegisteredParameterSqlTypes() throws SQLException {
 			if (this.resolutionFailure != null) rethrowMetadataFailure(this.resolutionFailure);
 			if (this.parameterIndices != null) {
@@ -836,6 +858,17 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			return this.resolvedTypes.getOrDefault(parameterIndex, Optional.empty());
 		}
 
+		Optional<ParameterSqlType> determineNullParameterSqlType(int parameterIndex) throws SQLException {
+			if (this.resolutionFailure != null) rethrowMetadataFailure(this.resolutionFailure);
+			Optional<ParameterSqlType> cached = this.resolvedTypes.get(parameterIndex);
+			if (cached != null) return cached;
+			// SQL NULL needs no temporal conversion. Let the server infer its type rather than reading
+			// an earlier group's input OID; do not cache absence as evidence for a later nonnull value.
+			if (this.protectPostgresMetadata && (this.untrustedPostgresIndices.contains(parameterIndex)
+					|| (this.parameterGroup > 1 && !this.immutablePostgresMetadata))) return Optional.empty();
+			return determineParameterSqlType(parameterIndex);
+		}
+
 		@NonNull
 		Optional<ParameterSqlType> determineParameterSqlType(@NonNull Integer parameterIndex) throws SQLException {
 			requireNonNull(parameterIndex);
@@ -843,6 +876,15 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			Optional<ParameterSqlType> cached = this.resolvedTypes.get(parameterIndex);
 			if (cached != null) return cached;
 			if (this.initialized && this.parameterMetaData == null) return Optional.empty();
+			if (this.protectPostgresMetadata && (this.untrustedPostgresIndices.contains(parameterIndex)
+					|| (this.parameterGroup > 1 && !this.immutablePostgresMetadata))) {
+				// Foreign metadata may alias the driver's mutable input types. After a preceding group
+				// has bound values, a new getter can describe those inputs rather than the SQL target.
+				// Respect wrapper/custom-callback semantics and refuse an unprovable temporal coercion.
+				SQLException failure = unsafeTargetMetadata(parameterIndex);
+				this.resolutionFailure = failure;
+				throw failure;
+			}
 
 			List<ParameterTypeLookup> lookups = new ArrayList<>();
 			lookups.add(new ParameterTypeLookup(parameterIndex));
@@ -867,7 +909,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 					}
 					snapshot.fallback();
 				} catch (SQLException failure) {
-					if (JdbcFallbacks.isTerminal(failure)) {
+					if (failure instanceof UnstableTargetMetadata || JdbcFallbacks.isTerminal(failure)) {
 						this.resolutionFailure = failure;
 						throw failure;
 					}
@@ -883,6 +925,10 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			return this.resolvedTypes.getOrDefault(parameterIndex, Optional.empty());
 		}
 
+		private static SQLException unsafeTargetMetadata(int parameterIndex) {
+			return new UnstableTargetMetadata(parameterIndex);
+		}
+
 		private void lookupProtected(MetadataSnapshot snapshot) throws SQLException {
 			if (!this.protectPostgresMetadata) {
 				snapshot.perform();
@@ -896,8 +942,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 					connection = rawConnection.metadataConnection();
 				autoCommit = connection.getAutoCommit();
 			} catch (Throwable failure) {
-				if (connection != null && !isRejectedAbortedTransaction(failure))
-					Transaction.markRollbackOnlyAfterMetadataFailure(connection);
+				if (connection != null) Transaction.recordMetadataProtectionFailure(connection, failure);
 				throw new MetadataProtectionFailure(failure);
 			}
 			if (autoCommit) {
@@ -908,9 +953,14 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			try {
 				// pgjdbc describes unknown parameters on the server. Even an optional describe can abort
 				// a transaction before the real, correctly typed execution. Keep that probe recoverable.
-				savepoint = requireNonNull(connection.setSavepoint(), "Driver returned no parameter metadata savepoint");
+				// Named savepoints do not consume pgjdbc's signed per-connection savepoint counter.
+				// A unique name also preserves an application's existing named savepoints.
+				savepoint = requireNonNull(connection.setSavepoint("pyranid_meta_" + UUID.randomUUID().toString().replace("-", "")),
+						"Driver returned no parameter metadata savepoint");
 			} catch (Throwable failure) {
-				if (!isRejectedAbortedTransaction(failure)) Transaction.markRollbackOnlyAfterMetadataFailure(connection);
+				if (isRejectedAbortedTransaction(connection, failure))
+					Transaction.recordMetadataProtectionRejection(connection, failure);
+				else Transaction.recordMetadataProtectionFailure(connection, failure);
 				throw new MetadataProtectionFailure(failure);
 			}
 
@@ -929,7 +979,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 					recovered = false;
 				}
 				if (!recovered) {
-					Transaction.markRollbackOnlyAfterMetadataFailure(connection);
+					Transaction.recordMetadataProtectionFailure(connection, primary);
 					throw new MetadataProtectionFailure(primary);
 				}
 				rethrowMetadataFailure(primary);
@@ -937,35 +987,26 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			}
 			try { connection.releaseSavepoint(savepoint); }
 			catch (Throwable failure) {
-				Transaction.markRollbackOnlyAfterMetadataFailure(connection);
+				Transaction.recordMetadataProtectionFailure(connection, failure);
 				throw new MetadataProtectionFailure(failure);
 			}
 		}
 
 		/** A rejected command in an already-aborted transaction can still be recovered by its caller's savepoint. */
-		private static boolean isRejectedAbortedTransaction(Throwable failure) {
+		private static boolean isRejectedAbortedTransaction(Connection connection, Throwable failure) {
 			if (!(failure instanceof SQLException sqlFailure) || Thread.currentThread().isInterrupted()) return false;
-			String primaryState;
 			try {
-				primaryState = sqlFailure.getSQLState();
-				if (!"25P02".equals(primaryState)) return false;
+				if (!"25P02".equals(sqlFailure.getSQLState())) return false;
 			} catch (Throwable inspectionFailure) {
 				ThrowableGraph.retainInspectionFailure(failure, inspectionFailure);
 				return false;
 			}
-			// pgjdbc attaches the original server statement error as the cause of a later 25P02.
-			// Accept those known recoverable statement profiles, but never transport, cancellation,
-			// transaction-abort, opaque or unreadable evidence. Read each foreign state only once.
-			int conflicting = ThrowableGraph.inspectRetainingFailures(failure, current -> {
-				if (!(current instanceof SQLException sql) || current instanceof java.sql.SQLTransientException
-						|| current instanceof java.sql.SQLRecoverableException
-						|| current instanceof java.sql.SQLNonTransientConnectionException) return 1;
-				String state = current == failure ? primaryState : sql.getSQLState();
-				return state != null && state.length() == 5 && ("25P02".equals(state) || "55P03".equals(state)
-						|| state.startsWith("22") || state.startsWith("23") || state.startsWith("42")
-						|| state.startsWith("P0") || state.startsWith("0A")) ? 0 : 1;
-			}, 1, current -> true, 1);
-			return conflicting == 0 && !Thread.currentThread().isInterrupted();
+			// The cause is pgjdbc's historical statement failure, whose SQLState can be any server
+			// code (including user-defined codes). Prove rejection from the physical transaction state
+			// instead of guessing from that history. Unknown state retains the visible completion fence.
+			PostgresDriverSupport.TransactionStateRead state = PostgresDriverSupport.transactionState(connection);
+			if (state.failure() != null) ThrowableGraph.retainInspectionFailure(failure, state.failure());
+			return state.state() == PostgresDriverSupport.TransactionState.FAILED && !Thread.currentThread().isInterrupted();
 		}
 
 		private final class MetadataSnapshot {
@@ -976,6 +1017,27 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			private boolean hasNext() { return this.next < this.lookups.size(); }
 
 			private void perform() throws SQLException {
+				if (!initialized) {
+					initialized = true;
+					parameterMetaData = preparedStatement.getParameterMetaData();
+					if (protectPostgresMetadata && parameterMetaData != null) {
+						PostgresParameterMetadataSnapshot.Snapshot frozen = PostgresParameterMetadataSnapshot.freeze(parameterMetaData);
+						if (frozen != null) {
+							parameterMetaData = frozen.metadata();
+							immutablePostgresMetadata = true;
+							// A first describe can already include earlier setters' input OIDs. Copying
+							// makes those immutable, not trustworthy target evidence for a later demand.
+							untrustedPostgresIndices.addAll(boundParameterIndices);
+							Set<Integer> scheduled = new LinkedHashSet<>();
+							for (ParameterTypeLookup lookup : this.lookups) scheduled.add(lookup.index);
+							for (int index : frozen.builtinIndices()) {
+								if (untrustedPostgresIndices.contains(index) || resolvedTypes.containsKey(index)) continue;
+								if (scheduled.add(index)) this.lookups.add(new ParameterTypeLookup(index));
+							}
+						}
+					}
+					boundParameterIndices.clear();
+				}
 				while (hasNext()) {
 					ParameterTypeLookup lookup = this.lookups.get(this.next);
 					resolvedTypes.put(lookup.index, lookup.perform());
@@ -996,10 +1058,8 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			private ParameterTypeLookup(int index) { this.index = index; }
 
 			private Optional<ParameterSqlType> perform() throws SQLException {
-				if (!ParameterSqlTypeResolver.this.initialized) {
-					ParameterSqlTypeResolver.this.initialized = true;
-					ParameterSqlTypeResolver.this.parameterMetaData = ParameterSqlTypeResolver.this.preparedStatement.getParameterMetaData();
-				}
+				if (ParameterSqlTypeResolver.this.untrustedPostgresIndices.contains(this.index))
+					throw unsafeTargetMetadata(this.index);
 				ParameterMetaData metadata = ParameterSqlTypeResolver.this.parameterMetaData;
 				if (metadata == null) return Optional.empty();
 				try {
@@ -1039,6 +1099,15 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			if (failure instanceof RuntimeException runtimeFailure) throw runtimeFailure;
 			if (failure instanceof Error error) throw error;
 			throw new SQLException("Parameter metadata lookup failed", failure);
+		}
+
+		/** Private control flow; never render or replace the original driver's failure. */
+		private static final class UnstableTargetMetadata extends SQLException {
+			private UnstableTargetMetadata(int parameterIndex) {
+				super("Cannot safely resolve previously uncached PostgreSQL batch parameter "
+						+ parameterIndex + " after earlier values were bound; establish target metadata before binding "
+						+ "or bind this parameter explicitly with a custom binder", "0A000");
+			}
 		}
 
 		/** Private control flow; never render or replace the original driver's failure. */
