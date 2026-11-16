@@ -51,6 +51,18 @@ Existing SQLite timestamp text needs a storage migration before mixing old and 4
 uniqueness or optimistic-lock predicates. The [tested migration recipe](docs/sqlite-timestamp-migration.md)
 separates local wall-clock values from instants, preserves nanoseconds and checks for canonical-key collisions.
 
+MySQL/MariaDB instant-bearing writes now use the local timestamp in `Database.timeZone` when parameter metadata
+does not identify a zoned target. If that zone differs from the driver/session policy used for older writes, the
+same instant can produce a different stored value. Java round trips alone can hide this change; verify server
+values, equality/unique keys and optimistic-lock predicates before mixing old and new writers. Existing rows
+are not repaired automatically. Set the database, driver and session zones deliberately; see the
+[upgrade checklist](CHANGELOG.md#upgrading-to-490-action-required) and [compatibility notes](COMPATIBILITY.md#intentional-api-and-storage-changes-in-490).
+
+Oracle UUID character columns now use canonical 36-character text. Migrate legacy 32-hex-digit values and
+referencing keys, widen 32-character columns, and audit collisions; RAW(16) storage is unchanged. The upgrade
+checklist also covers stricter Boolean/Optional/generic-property mapping, invalid `@DatabaseColumn` annotations,
+legacy temporal infinity and stray positional SQL placeholders.
+
 4.9 also adds opt-in `ResultSetMapper.Builder.detachLobValues(true)` for bounded detachment of visible native
 Object/Map LOB values. Explicit JDBC handles and handled custom mapper results retain their ownership rules.
 
@@ -68,6 +80,11 @@ TransactionOutcome<Receipt> outcome = database.transactionWithOutcome(() -> {
   return Optional.of(receipt);
 });
 
+outcome.getFailure().ifPresent(failure -> {
+  if (!isRecognizedCompletionFailure(failure))
+    throw failure;
+});
+
 switch (outcome.getResult()) {
   case COMMITTED -> {
     outcome.getFailure().ifPresent(this::reportCompletionFailure);
@@ -78,7 +95,7 @@ switch (outcome.getResult()) {
 }
 ```
 
-The receipt helpers are application code; this callback promises a value on normal return. A value alone does not
+The receipt, classification and reporting helpers are application code; this callback promises a value on normal return. A value alone does not
 prove commit, and cleanup or hook failure can accompany `COMMITTED`. Returned failures can also be programming errors;
 rethrow failures your application does not recognize. Final `Error`s and pre-boundary argument validation still throw.
 The API is not a durable operation ledger and never retries. Use it at the owning command boundary; nesting it inside
@@ -144,7 +161,7 @@ Java 17+
   <dependency>
   <groupId>com.pyranid</groupId>
   <artifactId>pyranid</artifactId>
-  <version>4.8.0</version>
+  <version>4.9.0</version>
 </dependency>
 ```
 
@@ -160,7 +177,7 @@ Java 8+ (legacy; only critical fixes will be applied)
 
 ### Direct Download
 
-For released builds, you can download the Pyranid jar directly from [Maven Central](https://repo1.maven.org/maven2/com/pyranid/pyranid/4.8.0/pyranid-4.8.0.jar).  No other dependencies are required.
+For released builds, you can download the Pyranid jar directly from [Maven Central](https://repo1.maven.org/maven2/com/pyranid/pyranid/4.9.0/pyranid-4.9.0.jar).  No other dependencies are required.
 
 ## Configuration
 
@@ -575,7 +592,7 @@ and uses them if available.
 
 ### Design goals
 
-* Closure-based API: rollback if exception bubbles out, commit at end of closure otherwise
+* Closure-based API: roll back if an exception escapes; a normal return attempts completion subject to rollback-only state and pre-commit validation
 * Data access APIs (e.g. [`Database::query`](https://javadoc.pyranid.com/com/pyranid/Database.html#query(java.lang.String))) automatically participate in transactions
 * No [`Connection`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/java/sql/Connection.html) is fetched from the [`DataSource`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/javax/sql/DataSource.html) until the first data access operation occurs
 * Must be able to share a transaction across multiple threads
@@ -621,6 +638,14 @@ Optional<BigDecimal> newBalance = database.transaction(() -> {
 ```
 
 Arithmetic updates avoid overwriting balances read earlier, and the row-count checks make a missing account fail the transaction. Business rules such as positive amounts, sufficient funds, or relationships across rows need their own constraints or conditional SQL; some workflows require explicit locking or Serializable isolation with retries.
+
+A normal closure return or returned value does not prove commit: an explicit rollback-only flag can cause a
+normal rollback, and PostgreSQL/DuckDB pre-commit validation can refuse an aborted or unverified transaction.
+Traditional `transaction(...)` throws on that refusal after attempting rollback. Use `transactionWithOutcome(...)`
+when the owner needs the database result, normally returned callback value and final failure together. It runs
+one independent attempt without retries; `COMMITTED` can still accompany a later cleanup/hook failure, and
+`IN_DOUBT` requires reconciliation rather than automatic replay. See the [outcome example](#490) and the
+[transaction outcome contract](https://www.pyranid.com/docs/transactions#obtaining-a-transaction-outcome).
 
 ### Context
 
@@ -881,7 +906,12 @@ TransactionRetryResult<Void> retryResult = database.transactionWithRetry(retryPo
 
 [`Database::transactionWithRetry(...)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transactionWithRetry(com.pyranid.RetryPolicy,com.pyranid.TransactionalOperation)) owns the transaction it retries. It rejects a call when the innermost ambient transaction on the calling thread uses the same [`DataSource`](https://docs.oracle.com/en/java/javase/26/docs/api/java.sql/javax/sql/DataSource.html) instance, including across different [`Database`](https://javadoc.pyranid.com/com/pyranid/Database.html) wrappers. It checks only that innermost transaction. If databases A and B use different sources, `A.transaction(() -> B.transaction(() -> A.transactionWithRetry(...)))` starts a new independent A transaction; its retries do not restart either surrounding transaction.
 
-Pyranid consults your retry condition only when replay is known to be safe. Failures before application transaction work could execute may be eligible, as may serialization failures and body-level deadlocks after a successful rollback. A commit-phase serialization failure requires a successful follow-up rollback. Other commit failures, rollback failures after application work could execute, and failures after a successful commit—including cleanup and post-transaction callback failures—are never replayed. Savepoint-scope ownership conflicts are not retried.
+Pyranid consults your retry condition only when replay is known to be safe. Failures before application transaction work could execute may be eligible, as may serialization failures and body-level deadlocks after a successful rollback. A physical commit failure is eligible only with a direct readable SQLState `40001`, the dialect's serialization classification, no conflicting or unreadable cause/next/suppressed evidence, and acknowledged follow-up rollback. Transport/I/O evidence, a missing or different subordinate SQLState, or vendor-only diagnostics such as Oracle `8177` and SQL Server `3960` prevent that proof. The currently tested DuckDB driver reports no SQLState for commit conflicts, so those are `IN_DOUBT` and are never automatically retried. Body-failure classification is unchanged. Other commit failures, rollback failures after application work could execute, and failures after a successful commit—including cleanup and post-transaction callback failures—are never replayed. Savepoint-scope ownership conflicts are not retried.
+
+Pre-commit validation can also refuse completion after a callback returns normally. Its failure may inherit
+classification from an earlier handled statement failure; after acknowledged rollback, an accepting retry policy
+can therefore rerun that callback. Make the whole callback safe to replay, including independently committed
+nested work, and keep non-idempotent external side effects outside it.
 
 Unlike [`Database::transaction(ReturningTransactionalOperation<T>)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transaction(com.pyranid.ReturningTransactionalOperation)), [`Database::transactionWithRetry(RetryPolicy, TransactionalOperation)`](https://javadoc.pyranid.com/com/pyranid/Database.html#transactionWithRetry(com.pyranid.RetryPolicy,com.pyranid.TransactionalOperation)) returns a [`TransactionRetryResult`](https://javadoc.pyranid.com/com/pyranid/TransactionRetryResult.html) so callers can inspect failures recovered before success. [`TransactionRetryResult::getValue()`](https://javadoc.pyranid.com/com/pyranid/TransactionRetryResult.html#getValue()) contains the successful transaction value, and [`TransactionRetryResult::getFailures()`](https://javadoc.pyranid.com/com/pyranid/TransactionRetryResult.html#getFailures()) contains failed attempts that Pyranid retried before the transaction eventually succeeded.
 
@@ -1495,6 +1525,10 @@ Temporal binding uses JDBC [`ParameterMetaData`](https://docs.oracle.com/en/java
 
 If parameter metadata is unavailable or identifies neither timestamp kind, [`Instant`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/Instant.html) and [`OffsetDateTime`](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/time/OffsetDateTime.html) generally default to [`TIMESTAMP_WITH_TIME_ZONE`](https://javadoc.pyranid.com/com/pyranid/AmbiguousTimestampBindingStrategy.html#TIMESTAMP_WITH_TIME_ZONE). MySQL and MariaDB instead bind the local timestamp in `Database.timeZone`, including with missing or generic parameter metadata. Their timestamp types do not carry an offset. For other drivers with ambiguous zone-less targets, configure [`Database.Builder::ambiguousTimestampBindingStrategy(TIMESTAMP_WITHOUT_TIME_ZONE)`](https://javadoc.pyranid.com/com/pyranid/Database.Builder.html#ambiguousTimestampBindingStrategy(com.pyranid.AmbiguousTimestampBindingStrategy)). That option also applies when metadata reports another type such as `VARCHAR` or `DATE`; positive `TIMESTAMP WITH TIME ZONE` metadata retains precedence.
 
+Oracle's recognized internal metadata-parser NPE is a stricter case: if it removes identifying temporal target metadata, Pyranid refuses nonnull temporal binding instead of guessing and silently changing the stored instant. This also applies after an earlier NULL triggered the parser fallback, and to local dates/date-times and legacy temporal values after normalization. A timestamp type code obtained before a type-name failure remains sufficient. Use a cast matching the actual target column, such as `SELECT CAST(:at AS TIMESTAMP(9)) FROM dual` or `CAST(:at AS TIMESTAMP(9) WITH TIME ZONE)`, or a custom binder that selects the intended JDBC type. Changing the ambiguous strategy alone does not bypass this parser-failure check. Plain NULL and interval-zero behavior is described below.
+
+Oracle `MERGE` can instead report ordinary unsupported or nonidentifying metadata, which retains the ambiguous strategy contract. For a known zone-less target, explicitly select `TIMESTAMP_WITHOUT_TIME_ZONE` or cast the parameter to the target timestamp family. The default zoned strategy is appropriate for zoned targets; Oracle's implicit conversion from a zoned bind into a zone-less column can preserve the input wall clock instead of the local timestamp in `Database.timeZone`. Regressions verify the explicit strategies and casts using server-rendered wall-clock fields and UTC instants.
+
 MySQL Connector/J’s [`connectionTimeZone`](https://dev.mysql.com/doc/connector-j/en/connector-j-time-instants.html) is separate from `Database.timeZone`, whose default is the JVM zone. Setting the connection to UTC does not change a Database left at a non-UTC JVM default. Set `Database.timeZone` explicitly for the wall-clock policy used by the actual connection/session; `forceConnectionTimeZoneToSession=false` does not itself align the server session. Direct JDBC temporal getters and custom/raw work can also use the driver’s conversion settings. [MariaDB Connector/J](https://mariadb.com/docs/connectors/mariadb-connector-j/about-mariadb-connector-j) has version-specific time-zone options and defaults; configure the actual driver/session rather than assuming identical behavior.
 
 Live regressions with MySQL Connector/J 26.10.0 and MariaDB Connector/J 4.0.0 cover client/server prepared statements, a New York JVM default, UTC sessions, and driver `connectionTimeZone` set to Los Angeles or UTC (`forceConnectionTimeZoneToSession=false`, `preserveInstants=true`). Explicit `Database.timeZone=UTC` preserves typed temporal round trips and the server’s `UNIX_TIMESTAMP`; raw JDBC `getTimestamp` follows the driver zone. Leaving Database at its New York default can still round-trip an `Instant` while storing a server instant four hours early for a July value. Check the stored instant as well as Java round trips when qualifying your configuration.
@@ -1531,7 +1565,17 @@ database.query("UPDATE policy SET timeout = :timeout WHERE name = :name")
 
 `SqlInterval.ZERO` is the same value whichever factory created it, and so is any computed zero such as `SqlInterval.of(Duration.between(start, start))`. Oracle/GENERIC need recognizable parameter metadata to select YEAR TO MONTH versus DAY TO SECOND for zero. Missing, ambiguous or conflicting family metadata fails; Pyranid does not guess, and does not try a write with each type. An explicit SQL cast can help expose the target family but is not a universal conversion between families. PostgreSQL interval values, including zero, need no interval parameter describe; mixing them with other metadata-dependent values retains the shared protected snapshot. DuckDB also binds zero without metadata.
 
-On Oracle (observed with ojdbc11 23.26), the driver reports the interval family only when the parameter is assigned or compared directly to an interval column: `INSERT … VALUES`, `UPDATE … SET col = :v`, and comparisons such as `WHERE col = :v`, `BETWEEN` or `CASE`. Zero fails in expressions such as `SYSTIMESTAMP + :v`, `COALESCE(col, :v)` and `SELECT :v FROM dual`; in `MERGE`, both in a `USING` subquery and in `UPDATE SET col = :v`; in PL/SQL blocks; and in `INSERT … SELECT`, where family metadata is unavailable. Pyranid recognizes the tested driver's internal metadata-parser NPE during type/name lookup as unavailable optional metadata: plain NULL binding can use its existing fallback, while zero reports the interval-family error. Other runtime failures retain their normal failure behavior. Nonzero values bind in all of these, so a statement can pass tests with nonzero data and fail when a computed value is zero. If your statements use these shapes and an interval can be zero, register a binder that selects the family your schema uses:
+On Oracle (observed with ojdbc11 23.26), the driver reports the interval family when the parameter is assigned or compared directly to an interval column: `INSERT … VALUES`, `UPDATE … SET col = :v`, and comparisons such as `WHERE col = :v`, `BETWEEN` or `CASE`. Zero fails in uncast expressions such as `SYSTIMESTAMP + :v`, `COALESCE(col, :v)` and `SELECT :v FROM dual`; in uncast `MERGE`, both in a `USING` subquery and in `UPDATE SET col = :v`; in PL/SQL blocks; and in uncast `INSERT … SELECT`, where family metadata is unavailable. Pyranid recognizes the tested driver's internal metadata-parser NPE during type/name lookup as unavailable optional metadata, including its stackless fast-throw form on native Oracle metadata: plain NULL binding can use its existing fallback, while zero reports the interval-family error. Other runtime failures retain their normal failure behavior. Nonzero values bind in all of these, so a statement can pass tests with nonzero data and fail when a computed value is zero.
+
+A matching explicit cast exposes the family in the tested SELECT, timestamp arithmetic, COALESCE, INSERT SELECT, MERGE USING and MERGE UPDATE shapes: use `INTERVAL YEAR TO MONTH` or `INTERVAL DAY TO SECOND` to match the actual target. For example:
+
+```java
+Optional<SqlInterval> zero = database.query("SELECT CAST(:amount AS INTERVAL DAY TO SECOND) FROM dual")
+  .bind("amount", SqlInterval.ZERO)
+  .fetchObject(SqlInterval.class);
+```
+
+Casts select metadata and remain subject to SQL coercion; they are not a universal conversion between families or a guarantee for PL/SQL. A DAY-SECOND cast assigned to a YEAR-MONTH column still fails with ORA-00932. For unsupported shapes, register a binder that selects the family your schema uses:
 
 ```java
 // Binds SqlInterval.ZERO as DAY TO SECOND. Every other value falls back to Pyranid's built-in binding.
@@ -1556,7 +1600,7 @@ Database database = Database.with(dataSource, DatabaseType.ORACLE)
   .build();
 ```
 
-A zero of the wrong family is never stored silently: Oracle rejects it with ORA-00932. HSQLDB 2.7.4 reported interval metadata for each of the statement shapes above.
+A zero of the wrong family is never stored silently: Oracle rejects it with ORA-00932. HSQLDB 2.7.4 supports direct interval-column targets, but bare `SELECT :v` and a MERGE USING bind report VARCHAR metadata and reject interval binding/mapping. Explicit matching-family casts are tested alternatives; zero and nonzero values both need appropriate target metadata on the generic path.
 
 Nonzero Oracle/GENERIC values select their native family from their fields. Cached metadata rejects them only when it positively identifies the opposite interval family; an enclosing expression's TIMESTAMP metadata must not reject an interval input. Reads and zero-family selection still require unambiguous interval metadata.
 
@@ -1860,7 +1904,18 @@ Only values explicitly wrapped with [`Parameters::secure(...)`](https://javadoc.
 
 `DatabaseException.toString()` omits server detail, hint, internal query and context fields; those remain available through explicit accessors. Record-construction failures report component names and types rather than row values. These protections do not sanitize arbitrary driver/application exception messages or cause chains, and parameter redaction does not generally redact fetched row data.
 
-Name-aware display redaction is available through `StatementContext.getParameterNames()` and the new four-argument `ParameterRedactor.redactParameter(context, index, name, value)` overload. Repeated/IN-list slots retain the original binding name; unknown or conflicting batch names are null. Both overloads now return non-null `Optional<Object>`. Custom implementations and three-argument lambdas must be updated and recompiled; for example, return `Optional.ofNullable(value)` instead of `value`, or `Optional.of("<redacted>")` for a mask. `Optional.empty()` displays null while retaining the slot. Secure masks take precedence, and batch values remain summarized. Name masking affects the parameter display; use `Parameters.secure(...)` for the separate best-effort driver-text scrub. See [Name-aware redaction](https://www.pyranid.com/docs/logging-and-diagnostics#redact-by-binding-name).
+Name-aware display redaction uses the single three-argument `ParameterRedactor.redactParameter(context, index, value)` method. Read the original binding name from `context.getParameterNames().get(index)`. Names have no leading colon; repeated/IN-list slots retain their original binding name, and unknown or conflicting batch names are null. Use a null-safe name check:
+
+```java
+ParameterRedactor redactor = (context, index, value) -> {
+  String name = context.getParameterNames().get(index);
+  return "password".equals(name) || "token".equals(name)
+    ? Optional.of("<redacted>")
+    : Optional.ofNullable(value);
+};
+```
+
+Diagnostics, direct callers and forwarding lambda decorators all invoke this same complete policy. The method returns non-null `Optional<Object>` in 4.9.0. Custom implementations, lambdas and direct callers must be updated and recompiled; for example, return `Optional.ofNullable(value)` instead of `value`, or `Optional.of("<redacted>")` for a mask. A pre-typed `Optional<String>` needs widening, for example `display.map(value -> (Object) value)`. `Optional.empty()` displays null while retaining the slot. Secure masks take precedence, and batch values remain summarized. Name masking affects the parameter display; use `Parameters.secure(...)` for the separate best-effort driver-text scrub. See [Name-aware redaction](https://www.pyranid.com/docs/logging-and-diagnostics#redact-by-binding-name).
 
 ### Custom Parameters
 

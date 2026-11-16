@@ -184,7 +184,7 @@ public final class StatementContext<T> {
 	}
 
 	/**
-	 * Gets original query binding names in expanded JDBC slot order. Repeated bindings and IN-list
+	 * Gets original query binding names, without a leading colon, in expanded JDBC slot order. Repeated bindings and IN-list
 	 * elements repeat their name; unknown names are {@code null}. The returned list is immutable.
 	 * <p>
 	 * For non-batch operations this aligns with {@link #getParameters()}. Batch parameters are grouped
@@ -234,7 +234,7 @@ public final class StatementContext<T> {
 			if (secureParameter != null)
 				redactedParameters.add(SecureParameterSupport.maskOf(secureParameter));
 			else
-				redactedParameters.add(requireNonNull(this.parameterRedactor.redactParameter(this, i, this.parameterNames.get(i), parameter),
+				redactedParameters.add(requireNonNull(this.parameterRedactor.redactParameter(this, i, parameter),
 						"ParameterRedactor must return a non-null Optional").orElse(null));
 		}
 
@@ -330,6 +330,11 @@ public final class StatementContext<T> {
 	 * Builder used to construct instances of {@link StatementContext}.
 	 * <p>
 	 * This class is intended for use by a single thread.
+	 * <p>
+	 * A {@link Statement} captured from an execution can carry original binding names, which this builder inherits
+	 * when their count matches the supplied parameters. Names are not part of {@code Statement} equality, but
+	 * effective names are part of {@code StatementContext} equality. Equal statements can therefore produce unequal
+	 * contexts. Supply {@link #parameterNames(List)} to choose the context's names explicitly.
 	 *
 	 * @author <a href="https://www.revetkn.com">Mark Allen</a>
 	 * @since 2.0.0
@@ -384,10 +389,11 @@ public final class StatementContext<T> {
 		}
 
 		/**
-		 * Supplies expanded JDBC slot names for a manually built context. The count must match the
-		 * parameters (each group's width for a batch), and individual unknown names may be {@code null}.
-		 * Passing {@code null} inherits compatible query metadata when present, otherwise all names are unknown.
-		 * The list is copied when {@link #build()} is called.
+		 * Supplies expanded JDBC slot names for a manually built context. The count must match the number of
+		 * supplied parameters, and individual unknown names may be {@code null}. Names have no leading colon.
+		 * Passing {@code null} inherits compatible query metadata carried by the statement when present;
+		 * incompatible or absent inherited names become unknown. An explicit list with an incompatible count
+		 * causes {@link #build()} to throw {@link IllegalArgumentException}. The list is copied when built.
 		 *
 		 * @param parameterNames expanded-slot names, or {@code null} to inherit available metadata
 		 * @return this builder
@@ -417,6 +423,13 @@ public final class StatementContext<T> {
 			return this;
 		}
 
+		/**
+		 * Builds a context with snapshots of the supplied parameters and effective binding names.
+		 *
+		 * @return the new context
+		 * @throws IllegalArgumentException if an explicitly supplied non-null name list does not match the
+		 *                                  number of supplied parameters
+		 */
 		@NonNull
 		public StatementContext build() {
 			return new StatementContext<>(this);

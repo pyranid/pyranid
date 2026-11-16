@@ -25,42 +25,39 @@ class OptionalParameterRedactorTests {
 	private static final String NULL_OPTIONAL_MESSAGE = "ParameterRedactor must return a non-null Optional";
 
 	@Test
-	void bothOverloadsDeclareOptionalObjectAndThreeArgumentsRemainTheFunctionalMethod() throws Exception {
+	void theSingleThreeArgumentPolicyDeclaresNonNullOptionalObject() throws Exception {
 		Method original = ParameterRedactor.class.getMethod("redactParameter", StatementContext.class, Integer.class, Object.class);
-		Method named = ParameterRedactor.class.getMethod("redactParameter", StatementContext.class, Integer.class, String.class, Object.class);
-		for (Method method : List.of(original, named)) {
-			assertEquals(Optional.class, method.getReturnType());
-			assertTrue(method.getAnnotatedReturnType().isAnnotationPresent(org.jspecify.annotations.NonNull.class));
-			ParameterizedType returnType = assertInstanceOf(ParameterizedType.class, method.getGenericReturnType());
-			assertArrayEquals(new Object[]{Object.class}, returnType.getActualTypeArguments());
-		}
+		assertEquals(Optional.class, original.getReturnType());
+		assertTrue(original.getAnnotatedReturnType().isAnnotationPresent(org.jspecify.annotations.NonNull.class));
+		ParameterizedType returnType = assertInstanceOf(ParameterizedType.class, original.getGenericReturnType());
+		assertArrayEquals(new Object[]{Object.class}, returnType.getActualTypeArguments());
 		assertTrue(Modifier.isAbstract(original.getModifiers()));
 		assertFalse(original.isDefault());
-		assertTrue(named.isDefault());
+		assertEquals(List.of(original), Arrays.stream(ParameterRedactor.class.getDeclaredMethods())
+				.filter(method -> method.getName().equals("redactParameter")).toList());
+		assertThrows(NoSuchMethodException.class, () -> ParameterRedactor.class.getMethod("redactParameter",
+				StatementContext.class, Integer.class, String.class, Object.class));
 		assertTrue(ParameterRedactor.class.isAnnotationPresent(FunctionalInterface.class));
 		assertEquals(List.of(original), Arrays.stream(ParameterRedactor.class.getDeclaredMethods())
 				.filter(method -> Modifier.isAbstract(method.getModifiers())).toList());
 	}
 
 	@Test
-	void builtInRedactorsReturnPresentValuesOrEmptyForNullOnBothOverloads() {
+	void builtInRedactorsReturnPresentValuesOrEmptyForNull() {
 		StatementContext<?> context = context(ParameterRedactor.none(), "original");
 		Object value = new Object();
 		ParameterRedactor none = ParameterRedactor.none();
 		assertSame(value, none.redactParameter(context, 0, value).orElseThrow());
-		assertSame(value, none.redactParameter(context, 0, "value", value).orElseThrow());
 		assertTrue(none.redactParameter(context, 0, null).isEmpty());
-		assertTrue(none.redactParameter(context, 0, "value", null).isEmpty());
 		ParameterRedactor all = ParameterRedactor.redactAll();
 		for (Object parameter : new Object[]{value, null}) {
 			assertEquals(Optional.of("<redacted>"), all.redactParameter(context, 0, parameter));
-			assertEquals(Optional.of("<redacted>"), all.redactParameter(context, 0, "value", parameter));
 		}
 		assertEquals(Arrays.asList(value, null), context(ParameterRedactor.none(), value, null).getRedactedParameters());
 	}
 
 	@Test
-	void defaultNamedOverloadReturnsTheSameOptionalAndDelegatesExactlyOnce() {
+	void directCallsAndDiagnosticsInvokeTheSameOptionalPolicyExactlyOnce() {
 		AtomicInteger calls = new AtomicInteger();
 		AtomicReference<StatementContext<?>> receivedContext = new AtomicReference<>();
 		Object raw = new Object(), safe = new Object();
@@ -71,7 +68,7 @@ class OptionalParameterRedactorTests {
 			return result;
 		};
 		StatementContext<?> context = context(redactor, raw);
-		assertSame(result, redactor.redactParameter(context, 0, "originalName", raw));
+		assertSame(result, redactor.redactParameter(context, 0, raw));
 		assertEquals(1, calls.get()); assertSame(context, receivedContext.get());
 		assertSame(safe, context.getRedactedParameters().get(0));
 		assertEquals(2, calls.get());
@@ -104,14 +101,11 @@ class OptionalParameterRedactorTests {
 	}
 
 	@Test
-	void secureMasksAndBatchSummariesBypassBothOverloads() {
+	void secureMasksAndBatchSummariesBypassTheRedactor() {
 		AtomicInteger calls = new AtomicInteger();
 		ParameterRedactor redactor = new ParameterRedactor() {
 			@Override public Optional<Object> redactParameter(StatementContext<?> context, Integer index, Object value) {
 				calls.incrementAndGet(); throw new AssertionError("Three-argument redactor was invoked");
-			}
-			@Override public Optional<Object> redactParameter(StatementContext<?> context, Integer index, String name, Object value) {
-				calls.incrementAndGet(); throw new AssertionError("Four-argument redactor was invoked");
 			}
 		};
 		Database database = Database.with(source(), DatabaseType.GENERIC).parameterRedactor(redactor).build();
@@ -128,25 +122,23 @@ class OptionalParameterRedactorTests {
 	}
 
 	@Test
-	void runtimeFailuresFromEitherOverloadPropagateWithoutFallback() {
-		for (boolean named : new boolean[]{false, true}) {
+	void runtimeFailuresFromDirectAndDecoratedPoliciesPropagateWithoutFallback() {
+		for (boolean decorated : new boolean[]{false, true}) {
 			IllegalStateException failure = new IllegalStateException("Redaction policy unavailable");
-			ParameterRedactor redactor = named ? new ParameterRedactor() {
-				@Override public Optional<Object> redactParameter(StatementContext<?> context, Integer index, Object value) { throw new AssertionError("Use named overload"); }
-				@Override public Optional<Object> redactParameter(StatementContext<?> context, Integer index, String name, Object value) { throw failure; }
-			} : (context, index, parameter) -> { throw failure; };
+			ParameterRedactor policy = (context, index, parameter) -> { throw failure; };
+			ParameterRedactor redactor = decorated ? (context, index, parameter) -> policy.redactParameter(context, index, parameter) : policy;
 			assertSame(failure, assertThrows(IllegalStateException.class, context(redactor, "private-value")::getRedactedParameters));
 		}
 	}
 
 	@Test
-	void nullOptionalsFromEitherOverloadFailFastWithValueFreeDiagnostics() {
-		for (boolean named : new boolean[]{false, true}) {
+	void nullOptionalsFromDirectAndDecoratedPoliciesFailFastWithValueFreeDiagnostics() {
+		for (boolean decorated : new boolean[]{false, true}) {
 			AtomicInteger rendered = new AtomicInteger();
 			Object privateValue = new Object() {
 				@Override public String toString() { rendered.incrementAndGet(); throw new AssertionError("Raw parameter was rendered"); }
 			};
-			StatementContext<?> context = context(nullRedactor(named), privateValue);
+			StatementContext<?> context = context(nullRedactor(decorated), privateValue);
 			NullPointerException failure = assertThrows(NullPointerException.class, context::getRedactedParameters);
 			assertEquals(NULL_OPTIONAL_MESSAGE, failure.getMessage());
 			assertEquals(NULL_OPTIONAL_MESSAGE, assertThrows(NullPointerException.class, context::toString).getMessage());
@@ -157,8 +149,8 @@ class OptionalParameterRedactorTests {
 	@Test
 	void illegalNullOptionalCannotExposeRawValuesOrReplaceDriverFailureEvidence() {
 		String secret = "private-null-optional-98127";
-		for (boolean named : new boolean[]{false, true}) {
-			Database database = Database.with(source(), DatabaseType.GENERIC).parameterRedactor(nullRedactor(named)).build();
+		for (boolean decorated : new boolean[]{false, true}) {
+			Database database = Database.with(source(), DatabaseType.GENERIC).parameterRedactor(nullRedactor(decorated)).build();
 			DatabaseException failure = assertThrows(DatabaseException.class, () -> database.query("SELECT CAST(:password AS VARCHAR(80)), "
 					+ "1 / CAST(:divisor AS INTEGER) FROM (VALUES(0))").bind("password", secret).bind("divisor", 0).fetchList(Object.class));
 			assertEquals("22012", failure.getSqlState().orElseThrow());
@@ -188,11 +180,9 @@ class OptionalParameterRedactorTests {
 	}
 
 	@SuppressWarnings("DataFlowIssue")
-	private static ParameterRedactor nullRedactor(boolean named) {
-		return named ? new ParameterRedactor() {
-			@Override public Optional<Object> redactParameter(StatementContext<?> context, Integer index, Object value) { throw new AssertionError("Use named overload"); }
-			@Override public Optional<Object> redactParameter(StatementContext<?> context, Integer index, String name, Object value) { return null; }
-		} : (context, index, parameter) -> null;
+	private static ParameterRedactor nullRedactor(boolean decorated) {
+		ParameterRedactor policy = (context, index, parameter) -> null;
+		return decorated ? (context, index, parameter) -> policy.redactParameter(context, index, parameter) : policy;
 	}
 
 	private static StatementContext<?> context(ParameterRedactor redactor, Object... parameters) {

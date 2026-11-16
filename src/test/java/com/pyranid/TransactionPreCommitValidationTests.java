@@ -13,6 +13,7 @@ import org.postgresql.core.TransactionState;
 
 import java.sql.SQLException;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -367,6 +368,71 @@ class TransactionPreCommitValidationTests {
 		assertEquals(1, fixture.validationStatementCloses.get());
 		assertEquals(0, fixture.commits.get());
 		assertEquals(List.of(), fixture.ids());
+	}
+
+	@Test
+	void normallyReturnedCallbacksCanRetryAnInheritedSerializationRefusalAfterAcknowledgedRollback() {
+		for (DatabaseType type : List.of(DatabaseType.POSTGRESQL, DatabaseType.DUCK_DB)) {
+			var fixture = new TransactionCommitHardeningTests.Fixture(type, null, false);
+			SQLException driverFailure = new SQLException("handled serialization failure", "40001");
+			DatabaseException handled = new DatabaseException("handled", driverFailure, type.dialect());
+			SQLException validationFailure = new SQLException("transaction aborted", "25P02");
+			AtomicInteger attempts = new AtomicInteger(), normalReturns = new AtomicInteger(), policies = new AtomicInteger();
+			AtomicReference<DatabaseException> observedRefusal = new AtomicReference<>();
+			List<TransactionCompletion> completions = new ArrayList<>();
+			RetryPolicy policy = RetryPolicy.ofMaxAttempts(2, RetryPolicy.Backoff.fixed(Duration.ZERO), failure -> {
+				policies.incrementAndGet();
+				observedRefusal.set(failure);
+				assertEquals(1, normalReturns.get(), "The first callback returned before completion refused it");
+				assertNotSame(handled, failure);
+				assertSame(handled, failure.getCause());
+				assertEquals(Optional.of("40001"), failure.getSqlState());
+				assertTrue(failure.isSerializationFailure());
+				assertFalse(failure.isTransactionOutcomeIndeterminate());
+				assertFalse(failure.isTransactionOutcomeCommitted());
+				assertEquals(1, fixture.rollbacks.get());
+				assertEquals(0, fixture.commits.get());
+				assertTrue(fixture.ids().isEmpty(), "The refused attempt must be rolled back before policy admission");
+				assertEquals(1, completions.size());
+				assertEquals(TransactionResult.ROLLED_BACK, completions.get(0).getResult());
+				return failure.isSerializationFailure();
+			});
+			TransactionRetryResult<String> result = fixture.database.transactionWithRetry(policy,
+					TransactionOptions.withReadOnly(null).completionObserver(completions::add).build(), () -> {
+						int attempt = attempts.incrementAndGet();
+						fixture.state = type == DatabaseType.POSTGRESQL ? TransactionState.OPEN : null;
+						fixture.validationFailure = null;
+						fixture.insert(attempt);
+						if (attempt == 1) {
+							if (type == DatabaseType.POSTGRESQL) fixture.state = TransactionState.FAILED;
+							else fixture.validationFailure = validationFailure;
+							record(fixture, handled, true);
+						}
+						normalReturns.incrementAndGet();
+						return Optional.of("receipt-" + attempt);
+					});
+			assertEquals(2, attempts.get());
+			assertEquals(2, normalReturns.get());
+			assertEquals(1, policies.get());
+			assertEquals(2, result.getAttemptCount());
+			assertTrue(result.wasRetried());
+			assertEquals(Optional.of("receipt-2"), result.getValue());
+			assertEquals(List.of(observedRefusal.get()), result.getFailures());
+			assertEquals(List.of(TransactionResult.ROLLED_BACK, TransactionResult.COMMITTED),
+					completions.stream().map(TransactionCompletion::getResult).toList());
+			assertSame(observedRefusal.get(), completions.get(0).getFailure().orElseThrow());
+			assertTrue(completions.get(1).getFailure().isEmpty());
+			assertEquals(type == DatabaseType.POSTGRESQL ? 0 : 1, fixture.validations.get());
+			if (type == DatabaseType.DUCK_DB)
+				assertTrue(List.of(observedRefusal.get().getSuppressed()).contains(validationFailure));
+			assertSame(driverFailure, handled.getCause());
+			assertEquals(0, handled.getSuppressed().length);
+			assertEquals(0, driverFailure.getSuppressed().length);
+			assertNull(driverFailure.getNextException());
+			assertEquals(1, fixture.commits.get());
+			assertEquals(1, fixture.rollbacks.get());
+			assertEquals(List.of(2), fixture.ids());
+		}
 	}
 
 	@Test

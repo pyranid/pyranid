@@ -18,6 +18,7 @@ package com.pyranid;
 
 import org.jspecify.annotations.NonNull;
 
+import javax.annotation.concurrent.ThreadSafe;
 import java.util.Optional;
 
 import static java.util.Objects.requireNonNull;
@@ -30,12 +31,14 @@ import static java.util.Objects.requireNonNull;
  * effects are outside this boundary's result. This result is process-local, not a durable business receipt or
  * permission to replay an operation.
  * <p>
- * The callback value and original failure are retained by reference. Neither is copied or guaranteed immutable
- * or thread-safe. A final {@link Error} escapes the invocation instead of being retained in an outcome.
+ * The outcome container is thread-safe. The callback value and original failure are retained by reference;
+ * neither is copied or guaranteed immutable or thread-safe, so access to their mutable state requires its own
+ * coordination. A final {@link Error} escapes the invocation instead of being retained in an outcome.
  *
  * @param <T> the callback value type
  * @since 4.9.0
  */
+@ThreadSafe
 public final class TransactionOutcome<T> {
 	@NonNull
 	private final TransactionCompletion completion;

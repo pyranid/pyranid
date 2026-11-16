@@ -243,7 +243,8 @@ public interface ResultSetMapper {
 		}
 
 		/**
-		 * Rejects source columns that do not match a writable bean property or record component.
+		 * Rejects source columns that do not match a writable bean property or record component by throwing
+		 * {@link DatabaseException} when the row is mapped.
 		 * Disabled by default. This checks by-name row mappings before built-in column bindings read values; it does not
 		 * require every target member to be selected. Map rows, scalar values, custom whole-row mappings,
 		 * and the direct single-STRUCT record fallback keep their existing mapping rules.
@@ -260,7 +261,8 @@ public interface ResultSetMapper {
 		}
 
 		/**
-		 * Detaches LOBs exposed by native Map/Object mapping as byte arrays or Strings.
+		 * Detaches LOBs exposed by native Map/Object mapping, including {@code Object}-typed bean properties
+		 * and record components, as byte arrays or Strings.
 		 * Disabled by default. BLOBs become {@code byte[]}; CLOBs, NCLOBs and SQLXML become
 		 * {@link String}. Existing byte/character materialization limits apply, including nested
 		 * Java arrays, collections and maps. Containers are copied without mutating driver values.

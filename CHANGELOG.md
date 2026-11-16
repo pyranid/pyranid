@@ -4,7 +4,30 @@ All notable changes to Pyranid will be documented in this file.
 
 <a id="release-4-9-0"></a>
 
-## 4.9.0-SNAPSHOT
+## 4.9.0
+
+### Upgrading to 4.9.0: action required
+
+1. **Recompile redactors and their callers.** The single three-argument method returns non-null
+   `Optional<Object>`. Update implementations/lambdas, direct callers and pre-typed Optional values; read names
+   from the context. See [the compatibility exception](COMPATIBILITY.md#intentional-api-and-storage-changes-in-490).
+2. **Plan timestamp storage migration.** Normalize existing SQLite text before mixing equality/unique-key/
+   optimistic-lock writes. On MySQL/MariaDB, compare the old driver/session policy with `Database.timeZone` and
+   verify actual server values; the new configured-zone writes can differ. No automatic rewrite occurs. See
+   [SQLite migration](docs/sqlite-timestamp-migration.md) and [temporal binding](README.md#supported-jdk-types).
+3. **Migrate Oracle UUID text.** Widen 32-character columns, convert legacy 32-hex-digit values/referencing keys
+   to canonical 36-character text, and audit collisions. RAW(16) storage is unchanged.
+4. **Audit completion and retry handling.** PostgreSQL/DuckDB `transaction()` can now throw after a normal
+   callback return when pre-commit validation refuses completion. Use the outcome API at the owner when needed;
+   a callback value is not commit proof. Keep retry callbacks safe to replay and reconcile `IN_DOUBT` results.
+5. **Check models and read targets.** Invalid Boolean text, Optional-valued mapped properties, invalid
+   `@DatabaseColumn` declarations and unresolved generic setters now fail clearly. Legacy temporal targets reject
+   PostgreSQL infinity/unrepresentable values; use matching `java.time` targets or explicit custom policies.
+6. **Review named SQL containing bare `?` slots.** Non-PostgreSQL named queries reject unquoted positional
+   placeholders before JDBC acquisition. Use named bindings; protected text and PostgreSQL operators retain
+   their dialect rules. Custom hooks using generic array components must account for declared types before erasure.
+
+The detailed migration notes below include supported alternatives, scope limits and driver-specific cases.
 
 ### Added
 
@@ -13,31 +36,42 @@ All notable changes to Pyranid will be documented in this file.
   covers PostgreSQL (all text styles and binary reads), DuckDB, Oracle's two interval families and tested HSQLDB
   GENERIC support. Zero family selection, precision/range failures and column-coercion limits are explicit;
   existing Duration/Period pass-through, custom hooks, raw values and Optional-property rules remain unchanged.
-
+  Cached row plans and weak scalar/custom-fallback hints reuse immutable interval-family declarations without
+  changing hook precedence or retaining JDBC ownership.
 - Opt-in ResultSetMapper.Builder.failOnUnmappedColumns(true) rejects unmapped source columns during standard
   bean/record planning, preserving default partial mapping, aliases, fan-out and scalar/Map/direct-STRUCT contracts.
 - Opt-in ResultSetMapper.Builder.detachLobValues(true) detaches visible native Map/Object LOBs and Object-valued
   properties, recursively copying Java containers under existing LOB limits. Raw custom hooks, handled custom
   results, explicit JDBC handles and opaque scalar JDBC Struct/Array values retain their ownership/model rules.
 - StatementContext.getParameterNames() and Builder.parameterNames(...) expose immutable expanded JDBC-slot
-  names. Repeated/IN-list names remain aligned; unknown/conflicting batch slots use null. A new four-argument
-  ParameterRedactor default overload supplies the binding name; both redactor overloads use the Optional return
-  contract described below, while secure masks retain precedence.
+  names without a leading colon. Repeated/IN-list names remain aligned; unknown/conflicting batch slots use null.
+  Name-aware ParameterRedactor lambdas read context.getParameterNames().get(index) through the single
+  three-argument functional method, while secure masks retain precedence.
 - `Database.transactionWithOutcome(...)` supplies a single-attempt `TransactionOutcome<T>` containing the final
   completion, database result, normally returned callback value and optional `RuntimeException`. All four returning/void
   and default/supplied-options overloads share the traditional transaction engine. Observers receive the same completion.
   Attempted values survive rollback and completion failures; final `Error`s still escape after best-effort completion.
+  Shared pre-commit validation reads live PostgreSQL state through a loader-safe optional bridge and validates
+  triggered opaque connections without inventing commit acknowledgment.
+- Managed PostgreSQL parameter describes/type lookups use recoverable internal savepoints in manual-commit mode.
+  Unique names avoid pgjdbc counter wrap and application-name collisions. A `25P02` rejection is recoverable
+  when the physical driver confirms FAILED; uncertain setup/recovery visibly refuses completion. Native OID
+  snapshots and execution-scoped resolvers preserve target evidence across parameters, delegates, rows and chunks.
+  Known built-in lookups share the first protection window; unknown types/foreign wrappers retain ordered protection
+  without speculative application callbacks. Unsafe late target-dependent conversions fail clearly; SQL NULL can
+  bind untyped without inventing evidence for later values.
 
 ### Changed
 
-- **Breaking:** ParameterRedactor.redactParameter(...) now returns non-null Optional<Object> in both overloads.
-  The existing three-argument method remains the functional method, but implementations and lambdas must return
+- **Breaking:** ParameterRedactor.redactParameter(context, index, value) now returns non-null Optional<Object>.
+  This three-argument method is the single functional redaction entry point. Implementations and lambdas must return
   Optional.of(value), Optional.ofNullable(value), or Optional.empty() instead of a bare object/null. Empty means
   a null diagnostic display entry; it never omits or shifts a parameter slot. A null Optional violates the contract.
   This deliberately breaks source and binary compatibility with 4.8.0 redactor implementations and direct callers;
   update and recompile them, including dependent libraries. Old implementations/lambdas can throw AbstractMethodError
   on their first diagnostic invocation; old direct Object-returning bytecode can throw NoSuchMethodError. A recompiled
   caller assigning the result to Object still compiles but receives an Optional. Audit those callers explicitly.
+  A pre-typed Optional<String> must be widened, for example with display.map(value -> (Object) value).
   Built-in none()/redactAll() factories keep their existing configuration call sites.
 - Independent transactions reject a proven connection reference already owned by an ambient transaction before
   reading/changing JDBC state or assuming ownership. A handled rejection leaves the original owner usable;
@@ -108,33 +142,16 @@ All notable changes to Pyranid will be documented in this file.
 
 - Oracle's verified internal parameter-metadata parser NPE during type/name lookup is treated as unavailable
   optional metadata. NULL INSERT ... SELECT binds use the existing fallback; ambiguous SqlInterval.ZERO retains
-  its family error. Unrelated runtime failures, cancellation and interruption remain failures.
-- SqlInterval reads reuse immutable interval-family declarations in cached row plans and weak cursor-based
-  scalar/custom-fallback hints, avoiding repeated type-name parsing while preserving hook precedence and ownership.
-
-- PostgreSQL metadata protection no longer permanently marks a recovered transaction rollback-only when
-  the physical driver confirms an already-aborted transaction rejected an internal savepoint with `25P02`.
-  Recovery no longer depends on an allow-list of historical SQLStates. Uncertain establishment failures and
-  failed rollback/release cleanup visibly refuse transaction completion instead of reporting an intentional
-  rollback. Unique named internal savepoints preserve application savepoints and avoid pgjdbc counter wrap.
-- Managed PostgreSQL binds resolve trusted built-in parameter metadata in one protected snapshot before
-  setters, reusing type/name results across batch groups and chunks, including public default-binder delegates.
-  Native pgjdbc/Yugabyte parameter OIDs are copied before later setters can mutate them; known built-in types
-  share the initial protection window even with custom binders or JSON/secure wrappers. Opaque metadata and
-  user-defined type lookups retain ordered protection. A previously uncached PostgreSQL batch position fails
-  clearly if stable target metadata cannot be established after an earlier group has bound values, rather than
-  silently coercing a temporal value using that group's input type. SQL NULL can instead use an untyped bind
-  without establishing target evidence for later values. LocalDate/LocalDateTime skip metadata on SQLite/MySQL/MariaDB;
-  dialects with zoned targets retain configured-zone coercion and Oracle UUID target typing is unchanged.
+  its family error, including after HotSpot replaces hot parser failures with stackless NPEs. Stackless fallback
+  requires native Oracle metadata; foreign proxies, unrelated runtime failures, cancellation and interruption
+  remain failures. Temporal values refuse binding if that parser failure removed identifying target metadata,
+  even after an earlier NULL cached its absence. Positive type-only timestamp evidence, including Oracle zoned
+  timestamp codes, remains usable. Explicit target-family SQL casts and handled custom binders provide tested
+  alternatives; ordinary ambiguous metadata still follows AmbiguousTimestampBindingStrategy.
 - Timestamp type-name detection reuses a compiled pattern and skips regex matching for ordinary SQL types,
   avoiding repeated pattern compilation during uncached or churned mapping plans.
 - Repeated rows reuse weak execution-local schema hints and empty mapping scopes, avoiding shared-cache
   contention and per-row scope allocation while preserving cursor, mapper and application-loader reclamation.
-- PostgreSQL pre-commit checks cache reflective state-reader metadata by the actual driver class and reuse
-  stable implemented driver interfaces. Each check still reads live state; pooled-driver selection and
-  context-class-loader discovery remain dynamic, without retaining otherwise unreachable application loaders.
-- PostgreSQL infinity mapping uses local sentinel constants, removing the mapper's optional PGStatement
-  class-file dependency while preserving existing java.time and legacy temporal conversion behavior.
 - Transaction completion preserves an acknowledged physical rollback even if subsequent success logging fails.
   Commit uncertainty now requires actual JDBC commit dispatch; a pre-dispatch diagnostic failure can roll back
   with a known outcome. Success/failure metrics follow the physical call, preserving original failure identities.
@@ -186,9 +203,6 @@ All notable changes to Pyranid will be documented in this file.
 - Execution capability checks reject batch-failure evidence even when nested diagnostics report no SQLState or an
   unsupported-feature state. They retain observed interruption and committed/in-doubt outcomes across changing
   diagnostic accessors, so later wrapping cannot lose cancellation or admit an unsafe transaction retry.
-- PostgreSQL parameter metadata inspection is protected by an internal savepoint in manual-commit mode, so an
-  optional describe failure cannot abort otherwise valid temporal SQL. Batch groups and chunks reuse one
-  prepared-statement resolver instead of requesting parameter metadata once per row.
 - Negative JDBC update counts are reported as unknown affected counts in metrics, including generated-key paths.
   Public update results retain the driver's count. Enabled metrics no longer turn DuckDB DDL or SET into failures.
 - Row-plan converters and scalar/driver reflection caches no longer retain discarded mappers or application
@@ -223,18 +237,11 @@ All notable changes to Pyranid will be documented in this file.
 
 ### Migration Notes
 
-- Custom ParameterRedactor implementations and lambdas must return Optional<Object>. For example, change
-  `(context, index, value) -> value` to `(context, index, value) -> Optional.ofNullable(value)` and
-  `(context, index, value) -> "<redacted>"` to `(context, index, value) -> Optional.of("<redacted>")`.
-  Return Optional.empty() to display null. Direct callers receive Optional<Object> and may use orElse(null)
-  when building a nullable display list. Recompile implementations and direct callers against 4.9.0; this is an
-  intentional source/binary break in this minor release. Both overloads reject null Optional results during
-  diagnostic rendering; SQL-error diagnostics retain their existing fail-closed fallback and original SQL failure.
-  An old implementation/lambda can throw AbstractMethodError when diagnostics first invoke it, and old direct callers
-  targeting the Object-returning descriptor can throw NoSuchMethodError. Recompiled calls assigned to Object can
-  silently receive an Optional; inspect those call sites. The exact three-argument erased method signature is the
-  only approved japicmp exception; the unfiltered API report still exposes the break. Built-in none()/redactAll()
-  calls need no source migration. See COMPATIBILITY.md for the deliberate minor-release exception.
+- Recompile custom ParameterRedactor implementations/lambdas and direct callers. Wrap displays with
+  Optional.ofNullable/Optional.of or return Optional.empty for a null slot; widen pre-typed Optional<String>
+  values when needed. Name-aware policies use context.getParameterNames().get(index). Audit Object-assigned
+  direct calls as well as compiler errors. Secure masks, batch summaries and fail-closed SQL-error diagnostics
+  retain their scope. See COMPATIBILITY.md for the deliberate source/binary exception and failure modes.
 - The new mapping options default to false. Strict mapping validates selected source columns, not completeness
   of target members. Detached native LOB results can change container element/array representations when enabled;
   driver allocation and aggregate result size remain outside per-LOB materialization bounds.
@@ -319,11 +326,6 @@ All notable changes to Pyranid will be documented in this file.
   now have internal savepoint protection; other built-in compatibility paths that internally swallow type lookup,
   SQL ARRAY metadata or typed-getter failures can still miss an abort if neither trigger exists. pgjdbc type-cache misses can
   execute catalog SQL. Readable PostgreSQL state covers these aborts; qualify opaque driver/pool combinations.
-- API compatibility now compares against 4.8.0, without the exclusions for APIs removed in that release. The approved
-  three-argument ParameterRedactor return-type change has one exact-method exception; the unfiltered report retains
-  that incompatibility. CI also executes the DuckDB LOB and temporal-array regression suites and a targeted
-  PostgreSQL metadata leg with a
-  non-UTC JVM timezone.
 - A selected JavaBean property with unresolved type variables now fails clearly at mapping-plan construction.
   Use a concrete subclass that binds those variables, an intentional `Object`/raw collection property, or a custom
   mapper. Unselected generic properties retain their defaults.
@@ -373,6 +375,12 @@ All notable changes to Pyranid will be documented in this file.
 
 ### Documentation
 
+- API compatibility compares against 4.8.0 with one exact exception for the approved three-argument redactor
+  return change; the unfiltered report retains it. CI includes DuckDB LOB/temporal arrays and non-UTC PostgreSQL
+  metadata checks. Release instructions coordinate verified artifacts, Javadoc, website and download assets.
+- Added the upgrade checklist, configured-zone MySQL/MariaDB storage warning and precise retry/pre-commit
+  contract. Clarified explicit interval casts, strict mapping/LOB ownership, builder names and optional private
+  PostgreSQL snapshot access under encapsulation restrictions.
 - Documented MariaDB Connector/J's default first-ID-only generated-key result for multi-row inserts, including
   singular/plural and named-key methods. The multi-row `INSERT ... RETURNING` recipe returns actual inserted IDs;
   the driver's legacy compatibility option is described separately.

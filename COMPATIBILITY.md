@@ -84,10 +84,11 @@ migration notes for LOB ownership, scoped savepoint thread ownership, timing sem
 
 4.9.0 is another explicitly documented exception to the usual minor-release compatibility expectation.
 `ParameterRedactor.redactParameter(StatementContext<?>, Integer, Object)` now returns non-null
-`Optional<Object>` instead of `Object`. The new name-aware four-argument overload also returns
-`Optional<Object>` and delegates to the three-argument functional method. Implementations and lambdas must
+`Optional<Object>` instead of `Object`. This is the single functional redaction method; name-aware policies
+read `context.getParameterNames().get(index)`, with a null-safe check for unknown names. Implementations and lambdas must
 return `Optional.of(value)`, `Optional.ofNullable(value)` or `Optional.empty()`. Empty displays a null slot;
 a null Optional violates the contract. Built-in `none()` and `redactAll()` configuration calls are unchanged.
+A pre-typed `Optional<String>` is not an `Optional<Object>`; widen it with `display.map(value -> (Object) value)`.
 
 Update and recompile redactor implementations, direct callers and dependent libraries against 4.9.0.
 A redactor lambda or implementation compiled against 4.8.0 can fail with `AbstractMethodError` when it is
@@ -106,9 +107,24 @@ normalize to UTC and do not preserve the original offset. Choose local-wall-cloc
 per column, normalize existing text with full precision, and check for canonical-key collisions before rewriting.
 Use the [tested SQLite migration recipe](docs/sqlite-timestamp-migration.md); no automatic data migration occurs.
 
+MySQL/MariaDB instant-bearing writes without identifying zoned-target metadata now use a local timestamp in
+`Database.timeZone`. Older versions let the JDBC driver's own zone policy control those values. When the
+database, driver and session zones differ, rebinding the same instant can therefore produce a different stored
+value even if a symmetric Java round trip succeeds. Audit actual server values, equality/join predicates,
+`UNIQUE`/upsert keys and optimistic-lock comparisons before mixed-version writes. Set all relevant zone policies
+explicitly and reconcile existing rows under the application's intended semantics; no automatic rewrite occurs.
+See the [upgrade checklist](CHANGELOG.md#upgrading-to-490-action-required) and [temporal binding contract](README.md#supported-jdk-types).
+
 Oracle UUID values in identified character columns now bind as canonical 36-character UUID text. Existing
 32-hex-digit character data and 32-character column widths need migration; RAW(16) storage is unchanged.
 See the [4.9.0 migration notes](CHANGELOG.md#release-4-9-0). Java 17 remains the minimum runtime.
+
+Oracle's recognized parameter-metadata parser failure permits NULL/interval-zero fallback even in a warm JVM,
+but nonnull temporal values fail when that failure removed identifying target metadata. This prevents a new
+fallback from silently storing a different instant. Use a SQL cast matching the target timestamp family or an
+explicit custom binder; a previously obtained timestamp type code remains usable. Ordinary ambiguous Oracle
+metadata, including unsupported MERGE metadata, retains the configured ambiguous timestamp strategy. See the
+[temporal binding contract](README.md#supported-jdk-types).
 
 PostgreSQL batches retain stable target-type evidence across groups and chunks. With a custom binder or
 foreign parameter-metadata wrapper, first requesting a previously uncached parameter type after an earlier
@@ -239,16 +255,23 @@ that adopt the MySQL wire protocol without MySQL's transactional semantics.
 * **Tested continuously:** JDK 17, 21, and 25 (unit suite); database integration tests run on JDK 21
   against PostgreSQL, MySQL, MariaDB, SQL Server, and Oracle via Testcontainers, and SQLite and DuckDB
   in-process. The SQL Server and Oracle legs are advisory (non-gating) in CI.
-* Pyranid uses no `sun.misc.Unsafe`, no `setAccessible`, and reflects over public members only -
-  `--add-opens` is never required, and strong-encapsulation tightening in future JDKs is not expected to
-  affect it.
+* Pyranid uses no `sun.misc.Unsafe`. Optional driver bridges normally invoke public APIs, including the
+  reflective PostgreSQL transaction-state read used for pre-commit validation. The native pgjdbc/Yugabyte
+  parameter snapshot is an explicit exception: it uses `trySetAccessible` on the exact native metadata class's
+  private connection/OID fields to detach mutable input types. This optimization is optional. If layout or
+  encapsulation restrictions deny access, Pyranid retains protected, ordered metadata lookups; a late batch
+  conversion without stable target evidence can fail with `0A000` instead of guessing. SQL NULL can use an
+  untyped bind. Normal use does not require opening driver packages, but qualifying a JDK/module/driver/pool
+  combination must include this fallback behavior; future private-layout or access changes can disable the
+  optimization. Pyranid does not automatically add module-opening flags or bypass foreign metadata wrappers.
 
 ## Dependencies
 
 The core `pyranid` artifact declares **zero runtime dependencies** - enforced at build time by a
 Maven Enforcer `bannedDependencies` rule and visible in the published POM. Compile-time-only dependencies are
 `provided` scope and never required for ordinary runtime use. The PostgreSQL driver is used for optional rich
-error metadata and notification receive; PostgreSQL notification sending remains pure SQL.
+error metadata, notification receive, live pre-commit state reads and the native parameter-type snapshot;
+PostgreSQL notification sending remains pure SQL. These bridges have no static driver-type linkage.
 
 The current tested DuckDB JDBC driver version is **2.0.0.1**. Pyranid uses it only in test scope and does not force
 it onto application classpaths; applications that connect to DuckDB must provide the driver themselves. Newly

@@ -68,8 +68,37 @@ class ParameterNameRedactionTests {
 				.parameters("unchanged").parameterNames(List.of("value")).build();
 		assertEquals(List.of("value:unchanged"), context.getRedactedParameters());
 		assertEquals(1, calls.get());
-		assertEquals(Optional.of("plain"), ParameterRedactor.none().redactParameter(context, 0, "value", "plain"));
-		assertEquals(Optional.of("<redacted>"), ParameterRedactor.redactAll().redactParameter(context, 0, "value", "plain"));
+		assertEquals(Optional.of("plain"), ParameterRedactor.none().redactParameter(context, 0, "plain"));
+		assertEquals(Optional.of("<redacted>"), ParameterRedactor.redactAll().redactParameter(context, 0, "plain"));
+	}
+
+	@Test
+	void namedPoliciesComposeThroughDirectCallsAndLambdaDecorators() {
+		String secret = "private-password-that-must-never-be-displayed";
+		String visible = "public-value-longer-than-twenty-characters";
+		ParameterRedactor inner = (context, index, value) -> "password".equals(context.getParameterNames().get(index))
+				? Optional.of("<named-password>") : Optional.ofNullable(value);
+		ParameterRedactor forwarding = (context, index, value) -> inner.redactParameter(context, index, value);
+		ParameterRedactor truncating = (context, index, value) -> inner.redactParameter(context, index, value)
+				.map(display -> display instanceof String text && text.length() > 20 ? text.substring(0, 20) : display);
+		for (ParameterRedactor redactor : List.of(inner, forwarding, truncating)) {
+			AtomicReference<StatementContext<?>> captured = new AtomicReference<>();
+			Database database = Database.with(source(), DatabaseType.GENERIC).parameterRedactor(redactor)
+					.statementLogger(log -> captured.set(log.getStatementContext())).build();
+			assertEquals(secret + visible, database.query("SELECT CAST(:password AS VARCHAR(80)) || CAST(:visible AS VARCHAR(80)) FROM (VALUES(0))")
+					.bind("password", secret).bind("visible", visible).fetchObject(String.class).orElseThrow(),
+					"Display decorators must not change the actual binding");
+			StatementContext<?> context = captured.get();
+			assertEquals(Optional.of("<named-password>"), redactor.redactParameter(context, 0, secret));
+			assertEquals("<named-password>", context.getRedactedParameters().get(0));
+			assertEquals(redactor == truncating ? visible.substring(0, 20) : visible, context.getRedactedParameters().get(1));
+			assertFalse(context.toString().contains(secret));
+			StatementContext<?> unknown = StatementContext.with(Statement.of("unknown-name", "VALUES(?)"), database)
+					.parameters((Object) null).build();
+			assertEquals(Arrays.asList((String) null), unknown.getParameterNames());
+			assertTrue(redactor.redactParameter(unknown, 0, null).isEmpty());
+			assertEquals(Arrays.asList((Object) null), unknown.getRedactedParameters());
+		}
 	}
 
 	@Test
@@ -261,9 +290,9 @@ class ParameterNameRedactionTests {
 	@Test
 	void namedRedactorFailuresRemainFailFastDirectlyAndFailClosedInDatabaseDiagnostics() {
 		IllegalStateException redactorFailure = new IllegalStateException("Name policy failed");
-		ParameterRedactor redactor = new ParameterRedactor() {
-			@Override public Optional<Object> redactParameter(StatementContext<?> context, Integer index, Object value) { throw new AssertionError("Use named overload"); }
-			@Override public Optional<Object> redactParameter(StatementContext<?> context, Integer index, String name, Object value) { throw redactorFailure; }
+		ParameterRedactor redactor = (context, index, value) -> {
+			assertNotNull(context.getParameterNames().get(index));
+			throw redactorFailure;
 		};
 		Database database = Database.with(source(), DatabaseType.GENERIC).parameterRedactor(redactor).build();
 		StatementContext<?> context = StatementContext.with(Statement.of("fail-closed", "VALUES(?)"), database)
@@ -282,12 +311,10 @@ class ParameterNameRedactionTests {
 		return count;
 	}
 	private static ParameterRedactor named(List<Call> calls) {
-		return new ParameterRedactor() {
-			@Override public Optional<Object> redactParameter(StatementContext<?> context, Integer index, Object value) { throw new AssertionError("Use named overload"); }
-			@Override public Optional<Object> redactParameter(StatementContext<?> context, Integer index, String name, Object value) {
-				calls.add(new Call(index, name, value));
-				return Optional.ofNullable("password".equals(name) ? "<named-password>" : value);
-			}
+		return (context, index, value) -> {
+			String name = context.getParameterNames().get(index);
+			calls.add(new Call(index, name, value));
+			return Optional.ofNullable("password".equals(name) ? "<named-password>" : value);
 		};
 	}
 	private static JDBCDataSource source() {

@@ -390,11 +390,22 @@ public final class Database {
 	 * The entire transaction closure may run more than once. Keep non-idempotent external side effects outside the closure
 	 * unless they are safe to repeat.
 	 * <p>
-	 * Pyranid consults the retry policy only when replay is known to be safe. This includes a failure before a physical
-	 * transaction becomes available to application work, even if best-effort rollback of that begin candidate fails, because
-	 * the candidate is discarded. It also includes a recognized serialization failure reported by physical commit when the
-	 * follow-up rollback succeeds. Other commit failures and rollback failures after application work could execute are
-	 * terminal because their outcome is indeterminate.
+	 * For a {@link DatabaseException}, Pyranid consults the retry policy only when replay is known to be safe. Body
+	 * failures require acknowledged rollback and no retained committed, in-doubt or cancellation evidence. A failure before
+	 * a physical transaction becomes available to application work can also be eligible even if best-effort rollback of that
+	 * discarded begin candidate fails. The retry policy still decides whether an eligible failure should be retried.
+	 * <p>
+	 * A physical commit failure is eligible only when the original driver's exception has a direct, readable SQLState
+	 * {@code 40001}, the dialect classifies it as a serialization failure, its cause/next/suppressed evidence is consistent
+	 * and readable, and the follow-up rollback succeeds. Transport or causal I/O failures, missing or different subordinate
+	 * SQLStates, and vendor-only diagnostics such as Oracle {@code 8177} or SQL Server {@code 3960} do not establish that
+	 * proof. The tested DuckDB driver supplies no SQLState for commit conflicts, so those outcomes remain
+	 * {@link TransactionResult#IN_DOUBT} and are not retried. Other uncertain commit outcomes, failed rollback after
+	 * application work could execute, and failures after successful commit are never replayed.
+	 * <p>
+	 * On PostgreSQL and DuckDB, pre-commit validation can refuse completion after a normal callback return. The refusal
+	 * can inherit classification from an earlier handled failure; after acknowledged rollback, an accepting retry policy
+	 * can therefore rerun that normally returned callback. Keep the entire callback safe to replay.
 	 * <p>
 	 * A savepoint-scope ownership conflict at completion is never replayed, with or without a successful rollback: the
 	 * guard raises an {@link IllegalStateException}, not a {@link DatabaseException}, so the conflict leaves this method
@@ -433,11 +444,22 @@ public final class Database {
 	 * The entire transaction closure may run more than once. Keep non-idempotent external side effects outside the closure
 	 * unless they are safe to repeat.
 	 * <p>
-	 * Pyranid consults the retry policy only when replay is known to be safe. This includes a failure before a physical
-	 * transaction becomes available to application work, even if best-effort rollback of that begin candidate fails, because
-	 * the candidate is discarded. It also includes a recognized serialization failure reported by physical commit when the
-	 * follow-up rollback succeeds. Other commit failures and rollback failures after application work could execute are
-	 * terminal because their outcome is indeterminate.
+	 * For a {@link DatabaseException}, Pyranid consults the retry policy only when replay is known to be safe. Body
+	 * failures require acknowledged rollback and no retained committed, in-doubt or cancellation evidence. A failure before
+	 * a physical transaction becomes available to application work can also be eligible even if best-effort rollback of that
+	 * discarded begin candidate fails. The retry policy still decides whether an eligible failure should be retried.
+	 * <p>
+	 * A physical commit failure is eligible only when the original driver's exception has a direct, readable SQLState
+	 * {@code 40001}, the dialect classifies it as a serialization failure, its cause/next/suppressed evidence is consistent
+	 * and readable, and the follow-up rollback succeeds. Transport or causal I/O failures, missing or different subordinate
+	 * SQLStates, and vendor-only diagnostics such as Oracle {@code 8177} or SQL Server {@code 3960} do not establish that
+	 * proof. The tested DuckDB driver supplies no SQLState for commit conflicts, so those outcomes remain
+	 * {@link TransactionResult#IN_DOUBT} and are not retried. Other uncertain commit outcomes, failed rollback after
+	 * application work could execute, and failures after successful commit are never replayed.
+	 * <p>
+	 * On PostgreSQL and DuckDB, pre-commit validation can refuse completion after a normal callback return. The refusal
+	 * can inherit classification from an earlier handled failure; after acknowledged rollback, an accepting retry policy
+	 * can therefore rerun that normally returned callback. Keep the entire callback safe to replay.
 	 * <p>
 	 * A savepoint-scope ownership conflict at completion is never replayed, with or without a successful rollback: the
 	 * guard raises an {@link IllegalStateException}, not a {@link DatabaseException}, so the conflict leaves this method
@@ -479,11 +501,22 @@ public final class Database {
 	 * The entire transaction closure may run more than once. Keep non-idempotent external side effects outside the closure
 	 * unless they are safe to repeat.
 	 * <p>
-	 * Pyranid consults the retry policy only when replay is known to be safe. This includes a failure before a physical
-	 * transaction becomes available to application work, even if best-effort rollback of that begin candidate fails, because
-	 * the candidate is discarded. It also includes a recognized serialization failure reported by physical commit when the
-	 * follow-up rollback succeeds. Other commit failures and rollback failures after application work could execute are
-	 * terminal because their outcome is indeterminate.
+	 * For a {@link DatabaseException}, Pyranid consults the retry policy only when replay is known to be safe. Body
+	 * failures require acknowledged rollback and no retained committed, in-doubt or cancellation evidence. A failure before
+	 * a physical transaction becomes available to application work can also be eligible even if best-effort rollback of that
+	 * discarded begin candidate fails. The retry policy still decides whether an eligible failure should be retried.
+	 * <p>
+	 * A physical commit failure is eligible only when the original driver's exception has a direct, readable SQLState
+	 * {@code 40001}, the dialect classifies it as a serialization failure, its cause/next/suppressed evidence is consistent
+	 * and readable, and the follow-up rollback succeeds. Transport or causal I/O failures, missing or different subordinate
+	 * SQLStates, and vendor-only diagnostics such as Oracle {@code 8177} or SQL Server {@code 3960} do not establish that
+	 * proof. The tested DuckDB driver supplies no SQLState for commit conflicts, so those outcomes remain
+	 * {@link TransactionResult#IN_DOUBT} and are not retried. Other uncertain commit outcomes, failed rollback after
+	 * application work could execute, and failures after successful commit are never replayed.
+	 * <p>
+	 * On PostgreSQL and DuckDB, pre-commit validation can refuse completion after a normal callback return. The refusal
+	 * can inherit classification from an earlier handled failure; after acknowledged rollback, an accepting retry policy
+	 * can therefore rerun that normally returned callback. Keep the entire callback safe to replay.
 	 * <p>
 	 * A savepoint-scope ownership conflict at completion is never replayed, with or without a successful rollback: the
 	 * guard raises an {@link IllegalStateException}, not a {@link DatabaseException}, so the conflict leaves this method
@@ -521,11 +554,22 @@ public final class Database {
 	 * The entire transaction closure may run more than once. Keep non-idempotent external side effects outside the closure
 	 * unless they are safe to repeat.
 	 * <p>
-	 * Pyranid consults the retry policy only when replay is known to be safe. This includes a failure before a physical
-	 * transaction becomes available to application work, even if best-effort rollback of that begin candidate fails, because
-	 * the candidate is discarded. It also includes a recognized serialization failure reported by physical commit when the
-	 * follow-up rollback succeeds. Other commit failures and rollback failures after application work could execute are
-	 * terminal because their outcome is indeterminate.
+	 * For a {@link DatabaseException}, Pyranid consults the retry policy only when replay is known to be safe. Body
+	 * failures require acknowledged rollback and no retained committed, in-doubt or cancellation evidence. A failure before
+	 * a physical transaction becomes available to application work can also be eligible even if best-effort rollback of that
+	 * discarded begin candidate fails. The retry policy still decides whether an eligible failure should be retried.
+	 * <p>
+	 * A physical commit failure is eligible only when the original driver's exception has a direct, readable SQLState
+	 * {@code 40001}, the dialect classifies it as a serialization failure, its cause/next/suppressed evidence is consistent
+	 * and readable, and the follow-up rollback succeeds. Transport or causal I/O failures, missing or different subordinate
+	 * SQLStates, and vendor-only diagnostics such as Oracle {@code 8177} or SQL Server {@code 3960} do not establish that
+	 * proof. The tested DuckDB driver supplies no SQLState for commit conflicts, so those outcomes remain
+	 * {@link TransactionResult#IN_DOUBT} and are not retried. Other uncertain commit outcomes, failed rollback after
+	 * application work could execute, and failures after successful commit are never replayed.
+	 * <p>
+	 * On PostgreSQL and DuckDB, pre-commit validation can refuse completion after a normal callback return. The refusal
+	 * can inherit classification from an earlier handled failure; after acknowledged rollback, an accepting retry policy
+	 * can therefore rerun that normally returned callback. Keep the entire callback safe to replay.
 	 * <p>
 	 * A savepoint-scope ownership conflict at completion is never replayed, with or without a successful rollback: the
 	 * guard raises an {@link IllegalStateException}, not a {@link DatabaseException}, so the conflict leaves this method
@@ -1769,6 +1813,8 @@ public final class Database {
 		 * Non-timestamp metadata such as {@code VARCHAR} or {@code DATE} is also ambiguous for these values.
 		 * MySQL and MariaDB prefer local timestamps in the configured zone regardless of this preference when the
 		 * metadata does not positively identify a zoned timestamp. SQLite's zoned/ambiguous path uses canonical UTC text.
+		 * Oracle's recognized internal metadata-parser failure refuses temporal binding when it removes identifying
+		 * target metadata; this preference does not bypass that check. Use a target-family SQL cast or custom binder.
 		 *
 		 * @param ambiguousTimestampBindingStrategy strategy to use, or {@code null} for the default
 		 * @return this {@code Builder}, for chaining

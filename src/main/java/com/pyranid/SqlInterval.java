@@ -32,10 +32,12 @@ import static java.util.Objects.requireNonNull;
  * <p>
  * Oracle and generic drivers need target-family metadata to bind {@link #ZERO}, because the value does not
  * remember which factory created it. Computed values such as {@code SqlInterval.of(Duration.between(a, a))}
- * are also {@code ZERO}. Oracle supplies that metadata only when the parameter is assigned or compared directly
- * to an interval column. In expressions, {@code MERGE}, PL/SQL blocks and {@code INSERT ... SELECT}, binding
- * {@code ZERO} fails even though nonzero values bind. A {@link CustomParameterBinder} that handles only
- * {@code ZERO} and returns {@code fallback()} otherwise can choose the family explicitly.
+ * are also {@code ZERO}. Oracle exposes that metadata for direct assignment/comparison with an interval column
+ * and supported explicit interval casts, such as {@code CAST(:value AS INTERVAL DAY TO SECOND)}. Uncast
+ * expressions, {@code MERGE}, PL/SQL blocks and {@code INSERT ... SELECT} can lack identifying metadata;
+ * {@code ZERO} then fails even though nonzero values bind. A cast must select the schema's actual interval
+ * family and is not a universal workaround; PL/SQL can still lack metadata. A {@link CustomParameterBinder}
+ * that handles only {@code ZERO} and returns {@code fallback()} otherwise can choose the family explicitly.
  *
  * @since 4.9.0
  */
@@ -116,15 +118,15 @@ public final class SqlInterval {
 		return months == 0 && days == 0 && time.isZero() ? ZERO : new SqlInterval(months, days, time);
 	}
 
-	/** @return total calendar months, with years already folded in */
+	/** {@return total calendar months, with years already folded in} */
 	@NonNull
 	public Integer getMonths() { return this.months; }
 
-	/** @return calendar days, independent of elapsed hours */
+	/** {@return calendar days, independent of elapsed hours} */
 	@NonNull
 	public Integer getDays() { return this.days; }
 
-	/** @return elapsed time, independent of calendar months and days */
+	/** {@return elapsed time, independent of calendar months and days} */
 	@NonNull
 	public Duration getTime() { return this.time; }
 

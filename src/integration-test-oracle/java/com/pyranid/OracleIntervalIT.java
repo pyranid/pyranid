@@ -92,25 +92,27 @@ class OracleIntervalIT {
 		Database database = database(true); String table = name();
 		database.query("CREATE TABLE " + table + " (id NUMBER(10) PRIMARY KEY, amount INTERVAL DAY(9) TO SECOND(9))").execute();
 		try {
-			List<Duration> values = List.of(Duration.ofNanos(1), Duration.ofNanos(-1), Duration.ofNanos(123_456_789),
-					Duration.ofNanos(-123_456_789), Duration.ofNanos(-999_999_999), Duration.ofSeconds(-2, 999_999_999),
-					Duration.ofHours(-27).minusNanos(1), Duration.ofHours(-27).plusNanos(123_456_789),
-					Duration.ofHours(27).plusNanos(123_456_789));
-			for (int id = 0; id < values.size(); id++) database.query("INSERT INTO " + table + " VALUES (:id, :amount)")
-					.bind("id", id).bind("amount", SqlInterval.of(values.get(id))).execute();
-			for (int id = 0; id < values.size(); id++) {
-				Duration expected = values.get(id);
-				assertEquals(SqlInterval.of(expected), database.query("SELECT amount FROM " + table + " WHERE id=:id")
-						.bind("id", id).fetchObject(SqlInterval.class).orElseThrow());
-				BigDecimal seconds = BigDecimal.valueOf(expected.getSeconds()).add(BigDecimal.valueOf(expected.getNano(), 9));
-				BigDecimal server = database.query("SELECT EXTRACT(DAY FROM amount)*86400 + EXTRACT(HOUR FROM amount)*3600"
-						+ " + EXTRACT(MINUTE FROM amount)*60 + EXTRACT(SECOND FROM amount) FROM " + table + " WHERE id=:id")
-						.bind("id", id).fetchObject(BigDecimal.class).orElseThrow();
-				assertEquals(0, seconds.compareTo(server), "Actual Oracle fields must match, not merely a symmetric Java round trip");
-				String rendered = database.query("SELECT TO_CHAR(amount) FROM " + table + " WHERE id=:id")
-						.bind("id", id).fetchObject(String.class).orElseThrow();
-				assertEquals(expected.isNegative(), rendered.trim().startsWith("-"), rendered);
-			}
+			database.transaction(() -> {
+				List<Duration> values = List.of(Duration.ofNanos(1), Duration.ofNanos(-1), Duration.ofNanos(123_456_789),
+						Duration.ofNanos(-123_456_789), Duration.ofNanos(-999_999_999), Duration.ofSeconds(-2, 999_999_999),
+						Duration.ofHours(-27).minusNanos(1), Duration.ofHours(-27).plusNanos(123_456_789),
+						Duration.ofHours(27).plusNanos(123_456_789));
+				for (int id = 0; id < values.size(); id++) database.query("INSERT INTO " + table + " VALUES (:id, :amount)")
+						.bind("id", id).bind("amount", SqlInterval.of(values.get(id))).execute();
+				for (int id = 0; id < values.size(); id++) {
+					Duration expected = values.get(id);
+					assertEquals(SqlInterval.of(expected), database.query("SELECT amount FROM " + table + " WHERE id=:id")
+							.bind("id", id).fetchObject(SqlInterval.class).orElseThrow());
+					BigDecimal seconds = BigDecimal.valueOf(expected.getSeconds()).add(BigDecimal.valueOf(expected.getNano(), 9));
+					BigDecimal server = database.query("SELECT EXTRACT(DAY FROM amount)*86400 + EXTRACT(HOUR FROM amount)*3600"
+							+ " + EXTRACT(MINUTE FROM amount)*60 + EXTRACT(SECOND FROM amount) FROM " + table + " WHERE id=:id")
+							.bind("id", id).fetchObject(BigDecimal.class).orElseThrow();
+					assertEquals(0, seconds.compareTo(server), "Actual Oracle fields must match, not merely a symmetric Java round trip");
+					String rendered = database.query("SELECT TO_CHAR(amount) FROM " + table + " WHERE id=:id")
+							.bind("id", id).fetchObject(String.class).orElseThrow();
+					assertEquals(expected.isNegative(), rendered.trim().startsWith("-"), rendered);
+				}
+			});
 		} finally { database.query("DROP TABLE " + table).execute(); }
 	}
 
@@ -159,7 +161,9 @@ class OracleIntervalIT {
 			database.query("CREATE TABLE " + table + " (id NUMBER(10) PRIMARY KEY, captured TIMESTAMP(9) WITH TIME ZONE,"
 					+ " due TIMESTAMP(9) WITH TIME ZONE)").execute();
 			try {
-				for (int id = 0; id < 5; id++) database.query("INSERT INTO " + table + " (id) VALUES (:id)").bind("id", id).execute();
+				database.transaction(() -> {
+					for (int id = 0; id < 5; id++) database.query("INSERT INTO " + table + " (id) VALUES (:id)").bind("id", id).execute();
+				});
 				String update = "UPDATE " + table + " SET captured = SYSTIMESTAMP, due = SYSTIMESTAMP + :grace WHERE id = :id";
 				String fields = "SELECT id, grace, EXTRACT(DAY FROM grace)*86400 + EXTRACT(HOUR FROM grace)*3600"
 						+ " + EXTRACT(MINUTE FROM grace)*60 + EXTRACT(SECOND FROM grace) AS seconds, missing"
@@ -177,21 +181,23 @@ class OracleIntervalIT {
 						// explicitly binds native interval NULL. Cached expression metadata must not
 						// reject subsequent nonzero values, which retain built-in exact binding.
 						assertEquals(values.size(), batch.executeBatch(groups).size(), label);
-						assertEquals(0L, database.query("SELECT COUNT(*) FROM " + table + " WHERE captured IS NULL")
-								.fetchObject(Long.class).orElseThrow(), label);
-						List<GraceRow> actual = database.query(fields).fetchList(GraceRow.class);
-						assertEquals(values.size(), actual.size(), label);
-						for (int id = 0; id < values.size(); id++) {
-							SqlInterval expected = values.get(id); GraceRow row = actual.get(id);
-							assertEquals(id, row.id(), label); assertEquals(expected, row.grace(), label);
-							assertEquals(expected == null ? 1 : 0, row.missing(), label);
-							if (expected == null) assertNull(row.seconds(), label);
-							else {
-								Duration time = expected.getTime();
-								BigDecimal seconds = BigDecimal.valueOf(time.getSeconds()).add(BigDecimal.valueOf(time.getNano(), 9));
-								assertEquals(0, seconds.compareTo(row.seconds()), label);
+						database.transaction(() -> {
+							assertEquals(0L, database.query("SELECT COUNT(*) FROM " + table + " WHERE captured IS NULL")
+									.fetchObject(Long.class).orElseThrow(), label);
+							List<GraceRow> actual = database.query(fields).fetchList(GraceRow.class);
+							assertEquals(values.size(), actual.size(), label);
+							for (int id = 0; id < values.size(); id++) {
+								SqlInterval expected = values.get(id); GraceRow row = actual.get(id);
+								assertEquals(id, row.id(), label); assertEquals(expected, row.grace(), label);
+								assertEquals(expected == null ? 1 : 0, row.missing(), label);
+								if (expected == null) assertNull(row.seconds(), label);
+								else {
+									Duration time = expected.getTime();
+									BigDecimal seconds = BigDecimal.valueOf(time.getSeconds()).add(BigDecimal.valueOf(time.getNano(), 9));
+									assertEquals(0, seconds.compareTo(row.seconds()), label);
+								}
 							}
-						}
+						});
 					}
 				}
 				assertEquals(12, nativeNulls.get());
@@ -259,6 +265,49 @@ class OracleIntervalIT {
 	}
 
 	@Test
+	void explicitIntervalCastsExposeZeroFamiliesAcrossExpressionsSelectsAndMergeShapes() {
+		for (boolean cached : new boolean[]{false, true}) {
+			Database database = database(cached); String table = name();
+			database.query("CREATE TABLE " + table + " (id NUMBER(10) PRIMARY KEY, ym INTERVAL YEAR(9) TO MONTH, "
+					+ "ds INTERVAL DAY(9) TO SECOND(9), due TIMESTAMP(9))").execute();
+			String ym = "CAST(:ym AS INTERVAL YEAR(9) TO MONTH)";
+			String ds = "CAST(:ds AS INTERVAL DAY(9) TO SECOND(9))";
+			try {
+				database.transaction(() -> {
+					assertEquals(new Pair(SqlInterval.ZERO, SqlInterval.ZERO), database.query("SELECT " + ym + " AS ym, " + ds + " AS ds FROM dual")
+							.bind("ym", SqlInterval.ZERO).bind("ds", SqlInterval.ZERO).fetchObject(Pair.class).orElseThrow());
+					assertEquals(1L, database.query("SELECT COUNT(*) FROM dual WHERE TIMESTAMP '2026-01-01 00:00:00' + " + ym
+							+ " = TIMESTAMP '2026-01-01 00:00:00' AND TIMESTAMP '2026-01-01 00:00:00' + " + ds
+							+ " = TIMESTAMP '2026-01-01 00:00:00'")
+							.bind("ym", SqlInterval.ZERO).bind("ds", SqlInterval.ZERO).fetchObject(Long.class).orElseThrow());
+					assertEquals(1L, database.query("INSERT INTO " + table + " (id,ym,ds) SELECT 1," + ym + "," + ds + " FROM dual")
+							.bind("ym", SqlInterval.ZERO).bind("ds", SqlInterval.ZERO).execute());
+					String mergeUsing = "MERGE INTO " + table + " t USING (SELECT 2 id," + ym + " ym," + ds
+							+ " ds FROM dual) s ON (t.id=s.id) WHEN NOT MATCHED THEN INSERT (id,ym,ds) VALUES (s.id,s.ym,s.ds)";
+					assertEquals(1L, database.query(mergeUsing).bind("ym", SqlInterval.ZERO).bind("ds", SqlInterval.ZERO).execute());
+					String mergeUpdate = "MERGE INTO " + table + " t USING (SELECT 2 id FROM dual) s ON (t.id=s.id) "
+							+ "WHEN MATCHED THEN UPDATE SET t.ym=" + ym + ",t.ds=" + ds;
+					assertEquals(1L, database.query(mergeUpdate).bind("ym", SqlInterval.ZERO).bind("ds", SqlInterval.ZERO).execute());
+					database.query("INSERT INTO " + table + " (id) VALUES (3)").execute();
+					assertEquals(1L, database.query("UPDATE " + table + " SET ym=COALESCE(ym," + ym + "),ds=COALESCE(ds,"
+							+ ds + "),due=TIMESTAMP '2026-01-01 00:00:00' + " + ds + " WHERE id=3")
+							.bind("ym", SqlInterval.ZERO).bind("ds", SqlInterval.ZERO).execute());
+					assertEquals(List.of(new Pair(SqlInterval.ZERO, SqlInterval.ZERO), new Pair(SqlInterval.ZERO, SqlInterval.ZERO),
+							new Pair(SqlInterval.ZERO, SqlInterval.ZERO)), database.query("SELECT ym,ds FROM " + table + " ORDER BY id").fetchList(Pair.class));
+					assertEquals("2026-01-01 00:00:00.000000000", database.query("SELECT TO_CHAR(due,'YYYY-MM-DD HH24:MI:SS.FF9') FROM "
+							+ table + " WHERE id=3").fetchObject(String.class).orElseThrow());
+					// Selecting the DAY-SECOND bind family is not a conversion into a YEAR-MONTH column.
+					DatabaseException wrongFamily = assertThrows(DatabaseException.class,
+							() -> database.query("INSERT INTO " + table + " (id,ym) SELECT 99," + ds + " FROM dual")
+									.bind("ds", SqlInterval.ZERO).execute());
+					assertEquals(932, wrongFamily.getErrorCode().orElseThrow());
+					assertEquals(0L, database.query("SELECT COUNT(*) FROM " + table + " WHERE id=99").fetchObject(Long.class).orElseThrow());
+				});
+			} finally { database.query("DROP TABLE " + table).execute(); }
+		}
+	}
+
+	@Test
 	void insertSelectParserMetadataFailureFallsBackForNullsAndKeepsZeroAmbiguous() {
 		for (boolean cached : new boolean[]{false, true}) {
 			Database database = database(cached); String table = name();
@@ -308,6 +357,31 @@ class OracleIntervalIT {
 						database.query("SELECT id, note, amount FROM " + table + " ORDER BY id").fetchList(MetadataRow.class));
 			} finally { database.query("DROP TABLE " + table).execute(); }
 		}
+	}
+
+	@Test
+	void repeatedInsertSelectNullBindingSurvivesWarmDriverParserFailuresAndKeepsZeroAmbiguous() {
+		Database database = database(true); String table = name();
+		database.query("CREATE TABLE " + table + " (id NUMBER(10) PRIMARY KEY, amount INTERVAL DAY(9) TO SECOND(9))").execute();
+		String insert = "INSERT INTO " + table + " (id, amount) SELECT :id, :amount FROM dual";
+		int iterations = 12_000;
+		try {
+			database.transaction(() -> {
+				for (int id = 0; id < iterations; id++) {
+					// Repeated failures at ojdbc's parser site become stackless fast-throw NPEs in
+					// a warm HotSpot JVM. The ordinary NULL fallback must survive that transition.
+					assertEquals(1L, database.query(insert).bind("id", id).bind("amount", null).execute(), "id=" + id);
+				}
+				DatabaseException zero = assertThrows(DatabaseException.class,
+						() -> database.query(insert).bind("id", -1).bind("amount", SqlInterval.ZERO).execute());
+				assertTrue(zero.getMessage().contains("Cannot choose the SQL interval family for SqlInterval.ZERO"), zero.getMessage());
+				for (Throwable cause = zero; cause != null; cause = cause.getCause())
+					assertFalse(cause instanceof NullPointerException, "A warm parser failure must retain the interval-family error");
+			});
+			assertEquals((long) iterations, database.query("SELECT COUNT(*) FROM " + table + " WHERE amount IS NULL")
+					.fetchObject(Long.class).orElseThrow());
+			assertEquals(0L, database.query("SELECT COUNT(*) FROM " + table + " WHERE id=-1").fetchObject(Long.class).orElseThrow());
+		} finally { database.query("DROP TABLE " + table).execute(); }
 	}
 
 	private static Database database(boolean cached) {

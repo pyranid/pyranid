@@ -22,6 +22,11 @@ package com.pyranid;
  * {@code TIMESTAMP WITH TIME ZONE}.
  * Metadata describing a non-timestamp type, such as {@code VARCHAR} or {@code DATE}, is also ambiguous
  * for these instant-bearing parameters. Positively identified zoned timestamps always retain their zone semantics.
+ * <p>
+ * Oracle's recognized internal metadata-parser failure is handled separately: if it removes identifying
+ * temporal target metadata, binding fails instead of applying this preference. Use an explicit SQL cast
+ * exposing the target timestamp family or a custom binder. Ordinary unsupported/nonidentifying Oracle
+ * metadata, including {@code MERGE} metadata, still follows this strategy.
  *
  * @author <a href="https://www.revetkn.com">Mark Allen</a>
  * @since 4.2.0

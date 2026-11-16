@@ -52,13 +52,12 @@ class ParameterNameRedactionIT {
 		for (int capacity : new int[]{0, 16}) {
 			AtomicReference<StatementContext<?>> captured = new AtomicReference<>();
 			List<String> redactedNames = new ArrayList<>();
-			ParameterRedactor redactor = new ParameterRedactor() {
-				@Override public Optional<Object> redactParameter(StatementContext<?> context, Integer index, Object value) { throw new AssertionError("Use named overload"); }
-				@Override public Optional<Object> redactParameter(StatementContext<?> context, Integer index, String name, Object value) {
-					redactedNames.add(name);
-					return Optional.ofNullable("password".equals(name) ? "<password>" : value);
-				}
+			ParameterRedactor policy = (context, index, value) -> {
+				String name = context.getParameterNames().get(index);
+				redactedNames.add(name);
+				return Optional.ofNullable("password".equals(name) ? "<password>" : value);
 			};
+			ParameterRedactor redactor = (context, index, value) -> policy.redactParameter(context, index, value);
 			Database database = Database.with(source, type).parsedSqlCacheCapacity(capacity).parameterRedactor(redactor)
 					.statementLogger(log -> captured.set(log.getStatementContext())).build();
 			String sql = "SELECT CAST(:visible AS VARCHAR(80)) AS value WHERE :visible=:password OR 1 IN (:ids)";
@@ -85,7 +84,7 @@ class ParameterNameRedactionIT {
 						.fetchList(String.class));
 				assertEquals(List.of("ids", "ids"), captured.get().getParameterNames());
 				assertEquals(List.of("<ids>", "<ids>"), captured.get().getRedactedParameters());
-				assertTrue(redactedNames.isEmpty(), "Secure masks bypass both overloads");
+				assertTrue(redactedNames.isEmpty(), "Secure masks bypass the redactor and its decorator");
 				DatabaseException failure = assertThrows(DatabaseException.class,
 						() -> database.query("SELECT CAST(:password AS VARCHAR(80)) FROM absent_named_table_" + UUID.randomUUID().toString().replace("-", ""))
 								.bind("password", "private-password-81927").fetchList(String.class));

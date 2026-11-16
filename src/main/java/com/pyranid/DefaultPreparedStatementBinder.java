@@ -186,7 +186,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		if (normalizedParameter instanceof LocalDate localDate) {
-			if (requiresLocalTemporalSqlType(statementContext) && determineParameterSqlType(parameterSqlTypeResolver, parameterIndex)
+			if (requiresLocalTemporalSqlType(statementContext) && determineTemporalParameterSqlType(parameterSqlTypeResolver, parameterIndex, true)
 					.map(ParameterSqlType::isTimestampWithTimeZone).orElse(false)) {
 				OffsetDateTime zoned = localDate.atStartOfDay(statementContext.getTimeZone()).toOffsetDateTime();
 				if (!trySetTemporalObject(statementContext, preparedStatement, parameterIndex, zoned, Types.TIMESTAMP_WITH_TIMEZONE))
@@ -211,7 +211,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		if (normalizedParameter instanceof LocalDateTime localDateTime) {
-			if (requiresLocalTemporalSqlType(statementContext) && determineParameterSqlType(parameterSqlTypeResolver, parameterIndex)
+			if (requiresLocalTemporalSqlType(statementContext) && determineTemporalParameterSqlType(parameterSqlTypeResolver, parameterIndex, true)
 					.map(ParameterSqlType::isTimestampWithTimeZone).orElse(false)) {
 				OffsetDateTime zoned = localDateTime.atZone(statementContext.getTimeZone()).toOffsetDateTime();
 				if (!trySetTemporalObject(statementContext, preparedStatement, parameterIndex, zoned, Types.TIMESTAMP_WITH_TIMEZONE))
@@ -225,7 +225,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		if (normalizedParameter instanceof OffsetDateTime offsetDateTime) {
-			Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(parameterSqlTypeResolver, parameterIndex);
+			Optional<ParameterSqlType> sqlTypeOptional = determineTemporalParameterSqlType(parameterSqlTypeResolver, parameterIndex, false);
 			ParameterSqlType sqlType = sqlTypeOptional.orElse(ParameterSqlType.UNKNOWN);
 
 			if (sqlType.isTimestampWithoutTimeZone() || shouldBindAsTimestampWithoutTimeZone(statementContext, sqlTypeOptional)) {
@@ -252,7 +252,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		if (normalizedParameter instanceof Instant instant) {
-			Optional<ParameterSqlType> sqlTypeOptional = determineParameterSqlType(parameterSqlTypeResolver, parameterIndex);
+			Optional<ParameterSqlType> sqlTypeOptional = determineTemporalParameterSqlType(parameterSqlTypeResolver, parameterIndex, false);
 			ParameterSqlType sqlType = sqlTypeOptional.orElse(ParameterSqlType.UNKNOWN);
 
 			if (sqlType.isTimestampWithoutTimeZone() || shouldBindAsTimestampWithoutTimeZone(statementContext, sqlTypeOptional)) {
@@ -733,6 +733,13 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		return parameterSqlTypeResolver.determineParameterSqlType(parameterIndex);
 	}
 
+	private Optional<ParameterSqlType> determineTemporalParameterSqlType(ParameterSqlTypeResolver resolver,
+			int parameterIndex, boolean localValue) throws SQLException {
+		Optional<ParameterSqlType> type = determineParameterSqlType(resolver, parameterIndex);
+		resolver.requireSafeOracleTemporalTarget(parameterIndex, type, localValue);
+		return type;
+	}
+
 	private static boolean requiresLocalTemporalSqlType(StatementContext<?> context) {
 		// These dialects have no zoned timestamp target to distinguish from DATE/local TIMESTAMP.
 		return switch (context.getDatabaseType()) {
@@ -809,6 +816,10 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		private Throwable resolutionFailure;
 		@Nullable
 		private ParameterMetaData parameterMetaData;
+		@Nullable
+		private NullPointerException oracleParserFailure;
+		@Nullable
+		private Set<Integer> unavailableOracleIndices;
 
 		ParameterSqlTypeResolver(@NonNull PreparedStatement preparedStatement) {
 			this(preparedStatement, false, false);
@@ -867,6 +878,24 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			if (this.protectPostgresMetadata && (this.untrustedPostgresIndices.contains(parameterIndex)
 					|| (this.parameterGroup > 1 && !this.immutablePostgresMetadata))) return Optional.empty();
 			return determineParameterSqlType(parameterIndex);
+		}
+
+		private void requireSafeOracleTemporalTarget(int index, Optional<ParameterSqlType> type, boolean localValue) {
+			if (this.oracleParserFailure == null
+					|| ((this.unavailableOracleIndices == null || !this.unavailableOracleIndices.contains(index))
+							&& this.resolvedTypes.containsKey(index))) return;
+			// A successful earlier index retains its ordinary ambiguity policy. A parser fallback on this
+			// index (or an uncached index after the descriptor failed) must not invent a temporal target.
+			if (type.map(value -> value.isTimestampWithTimeZone() || value.isTimestampWithoutTimeZone()
+					|| (localValue && value.getSqlType() == Types.DATE)).orElse(false)) return;
+			throw new DatabaseException("Cannot determine the Oracle temporal target after parameter metadata parser failure. "
+					+ "Use an explicit SQL CAST that exposes TIMESTAMP or TIMESTAMP WITH TIME ZONE metadata, "
+					+ "or a CustomParameterBinder that selects the target type.", this.oracleParserFailure);
+		}
+
+		private void markUnavailableOracleIndex(int index) {
+			if (this.unavailableOracleIndices == null) this.unavailableOracleIndices = new LinkedHashSet<>();
+			this.unavailableOracleIndices.add(index);
 		}
 
 		@NonNull
@@ -1061,12 +1090,17 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 				if (ParameterSqlTypeResolver.this.untrustedPostgresIndices.contains(this.index))
 					throw unsafeTargetMetadata(this.index);
 				ParameterMetaData metadata = ParameterSqlTypeResolver.this.parameterMetaData;
-				if (metadata == null) return Optional.empty();
+				if (metadata == null) {
+					if (oracleParserFailure != null) markUnavailableOracleIndex(this.index);
+					return Optional.empty();
+				}
 				try {
 					this.sqlType = metadata.getParameterType(this.index);
-					return Optional.of(new ParameterSqlType(this.sqlType, metadata.getParameterTypeName(this.index)));
+					return Optional.of(new ParameterSqlType(this.sqlType, metadata.getParameterTypeName(this.index), oracleMetadata));
 				} catch (NullPointerException failure) {
 					if (!isUnavailableOracleMetadata(failure)) throw failure;
+					ParameterSqlTypeResolver.this.oracleParserFailure = failure;
+					markUnavailableOracleIndex(this.index);
 					// ojdbc's optional parser cannot describe some INSERT ... SELECT binds. Its
 					// descriptor remains unusable for every index, so cache that absence once. A
 					// type already obtained before a name failure retains the usual code-only fallback.
@@ -1080,6 +1114,13 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 						|| Thread.currentThread().isInterrupted() || failure.getCause() != null || failure.getSuppressed().length != 0)
 					return false;
 				StackTraceElement[] frames = failure.getStackTrace();
+				if (frames.length == 0) {
+					// HotSpot omits the stack/message of a hot implicit NPE. With no frames, only the
+					// actual native metadata class establishes provenance; never unwrap a foreign proxy.
+					ParameterMetaData metadata = ParameterSqlTypeResolver.this.parameterMetaData;
+					return failure.getMessage() == null && metadata != null
+							&& metadata.getClass().getName().equals("oracle.jdbc.driver.OracleParameterMetaData");
+				}
 				if (frames.length < 5) return false;
 				String[] methods = {"storeParametersMetadata", "query", "parseAndQuery", "checkValidIndex"};
 				for (int index = 0; index < methods.length; index++)
@@ -1090,7 +1131,7 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 			}
 
 			private Optional<ParameterSqlType> fallback() {
-				return this.sqlType == null ? Optional.empty() : Optional.of(new ParameterSqlType(this.sqlType, null));
+				return this.sqlType == null ? Optional.empty() : Optional.of(new ParameterSqlType(this.sqlType, null, oracleMetadata));
 			}
 		}
 
@@ -1122,16 +1163,18 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 
 	protected static final class ParameterSqlType {
 		@NonNull
-		private static final ParameterSqlType UNKNOWN = new ParameterSqlType(Types.OTHER, null);
+		private static final ParameterSqlType UNKNOWN = new ParameterSqlType(Types.OTHER, null, false);
 		@NonNull
 		private final Integer sqlType;
 		@Nullable
 		private final String typeName;
+		private final boolean oracleType;
 
 		private ParameterSqlType(@NonNull Integer sqlType,
-														 @Nullable String typeName) {
+													 @Nullable String typeName, boolean oracleType) {
 			this.sqlType = requireNonNull(sqlType);
 			this.typeName = typeName;
+			this.oracleType = oracleType;
 		}
 
 		@NonNull
@@ -1140,7 +1183,8 @@ class DefaultPreparedStatementBinder implements PreparedStatementBinder {
 		}
 
 		private boolean isTimestampWithTimeZone() {
-			if (getSqlType() == Types.TIMESTAMP_WITH_TIMEZONE)
+			if (getSqlType() == Types.TIMESTAMP_WITH_TIMEZONE
+					|| (this.oracleType && (getSqlType() == -101 || getSqlType() == -102)))
 				return true;
 
 			String typeName = this.typeName;

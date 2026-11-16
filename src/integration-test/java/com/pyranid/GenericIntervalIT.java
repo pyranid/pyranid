@@ -14,6 +14,7 @@ import java.lang.reflect.Proxy;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLFeatureNotSupportedException;
+import java.sql.Types;
 import java.time.Duration;
 import java.time.Period;
 import java.util.Arrays;
@@ -128,6 +129,41 @@ class GenericIntervalIT {
 				database.query("SELECT ym, ds FROM intervals WHERE id=0").fetchObject(Pair.class).orElseThrow());
 		// Existing nullable Duration/Period properties must not gain a blanket planning-time rejection.
 		assertEquals(new NativePair(null, null), database.query("SELECT ym, ds FROM intervals WHERE id=1").fetchObject(NativePair.class).orElseThrow());
+	}
+
+	@Test
+	void expressionMetadataDoesNotGuessAnIntervalFamilyWithoutAnExplicitCast() throws Exception {
+		for (boolean cached : new boolean[]{false, true}) {
+			JDBCDataSource source = source();
+			Database database = Database.with(source, DatabaseType.GENERIC)
+					.resultSetMapper(ResultSetMapper.withPlanCachingEnabled(cached).build()).build();
+			database.query("CREATE TABLE intervals (id INT PRIMARY KEY, amount INTERVAL DAY(9) TO SECOND(9))").execute();
+			database.query("INSERT INTO intervals VALUES (1, INTERVAL '1' HOUR)").execute();
+			String select = "SELECT :amount FROM intervals WHERE id=1";
+			String merge = "MERGE INTO intervals t USING (SELECT 1 AS id, :amount AS amount FROM (VALUES(0))) s "
+					+ "ON (t.id=s.id) WHEN MATCHED THEN UPDATE SET t.amount=s.amount";
+			try (Connection connection = source.getConnection()) {
+				for (String sql : List.of(select, merge)) {
+					try (PreparedStatement statement = connection.prepareStatement(sql.replace(":amount", "?"))) {
+						assertEquals(Types.VARCHAR, statement.getParameterMetaData().getParameterType(1), sql);
+						assertEquals("VARCHAR", statement.getParameterMetaData().getParameterTypeName(1), sql);
+					}
+					DatabaseException failure = assertThrows(DatabaseException.class,
+							() -> database.query(sql).bind("amount", SqlInterval.ZERO).execute());
+					assertTrue(failure.getMessage().contains("Cannot choose the SQL interval family for SqlInterval.ZERO"), failure.getMessage());
+				}
+			}
+			assertEquals(SqlInterval.of(Duration.ofHours(1)), database.query("SELECT amount FROM intervals")
+					.fetchObject(SqlInterval.class).orElseThrow(), "A refused expression must not change the existing interval");
+			assertThrows(DatabaseException.class, () -> database.query(select).bind("amount", SqlInterval.of(Duration.ofHours(1)))
+					.fetchObject(SqlInterval.class), "Nonzero fields do not make an untyped VARCHAR expression a supported interval path");
+			assertThrows(DatabaseException.class, () -> database.query(merge).bind("amount", SqlInterval.of(Duration.ofHours(1))).execute());
+			String cast = "CAST(:amount AS INTERVAL DAY(9) TO SECOND(9))";
+			assertEquals(SqlInterval.ZERO, database.query(select.replace(":amount", cast)).bind("amount", SqlInterval.ZERO)
+					.fetchObject(SqlInterval.class).orElseThrow());
+			assertEquals(1L, database.query(merge.replace(":amount", cast)).bind("amount", SqlInterval.ZERO).execute());
+			assertEquals(SqlInterval.ZERO, database.query("SELECT amount FROM intervals").fetchObject(SqlInterval.class).orElseThrow());
+		}
 	}
 
 	@Test

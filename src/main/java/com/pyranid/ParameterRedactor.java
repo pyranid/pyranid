@@ -54,6 +54,12 @@ public interface ParameterRedactor {
 	 * <p>
 	 * Since 4.9.0 this method returns a non-null Optional rather than a nullable Object. Implementations, lambdas
 	 * and direct callers compiled against the earlier contract must be updated and recompiled.
+	 * <p>
+	 * Read the original binding name with
+	 * {@code statementContext.getParameterNames().get(parameterIndex)}. Names have no leading colon;
+	 * repeated bindings and IN-list elements retain their original name, and unknown names are {@code null}.
+	 * For example, {@code "password".equals(name)} is a null-safe name check. This method is the single
+	 * redaction entry point for diagnostics, direct callers and lambda decorators.
 	 *
 	 * @param statementContext current SQL context
 	 * @param parameterIndex   zero-based index into {@link StatementContext#getParameters()} after IN-list expansion
@@ -64,29 +70,6 @@ public interface ParameterRedactor {
 	Optional<Object> redactParameter(@NonNull StatementContext<?> statementContext,
 												 @NonNull Integer parameterIndex,
 												 @Nullable Object parameter);
-
-	/**
-	 * Redacts a single non-secure parameter with its original query binding name, when known.
-	 * <p>
-	 * Repeated parameters and every slot expanded from an IN list retain the same name. The name is
-	 * {@code null} when metadata is unknown; a manual context can supply names through its builder. The default
-	 * implementation delegates directly to the three-argument method, which remains the functional method.
-	 * Secure parameters still bypass both overloads, and batch summaries do not invoke either.
-	 *
-	 * @param statementContext current SQL context
-	 * @param parameterIndex zero-based expanded JDBC parameter index
-	 * @param parameterName original named binding, or {@code null} if unknown
-	 * @param parameter parameter value to render safely
-	 * @return the safe display value, or an empty Optional to render {@code null}; never {@code null}
-	 * @since 4.9.0
-	 */
-	@NonNull
-	default Optional<Object> redactParameter(@NonNull StatementContext<?> statementContext,
-															 @NonNull Integer parameterIndex,
-															 @Nullable String parameterName,
-															 @Nullable Object parameter) {
-		return redactParameter(statementContext, parameterIndex, parameter);
-	}
 
 	/**
 	 * Acquires the default redactor, which renders non-secure values verbatim for non-batch executions.
